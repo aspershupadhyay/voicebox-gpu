@@ -74,7 +74,7 @@ ENGINES = {
     "whisper": {
         "kind": "asr",
         "port": 8105,
-        "gpu_gb": 4.0,
+        "gpu_gb": 6.0,  # large-v3 fp16 weights + batch-4 activations
         "packages": "torch transformers accelerate soundfile scipy",
         "about": "Whisper large-v3 (OpenAI). Best open subtitle model: word-level timestamps, 99 languages.",
         "voices": [],

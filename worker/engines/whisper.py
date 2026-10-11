@@ -46,7 +46,8 @@ class Engine:
         """Several files through the GPU together (each long file is still chunked at 30 s)."""
         audios = [load_16k(p) for p in paths]
         outs = self.pipe([{"raw": a, "sampling_rate": 16000} for a in audios], return_timestamps="word",
-                         chunk_length_s=30, batch_size=16, generate_kwargs=self._gen(language))
+                         chunk_length_s=30, batch_size=4, generate_kwargs=self._gen(language))
+        torch.cuda.empty_cache() if self.dev == "cuda" else None
         return [self._words(o, len(a) / 16000, language) for o, a in zip(outs, audios)]
 
     def transcribe(self, path, language=None, prompt=None):

@@ -121,7 +121,8 @@ class Engines:
                 logf = open(os.path.join(LOGS_DIR, f"{name}.log"), "a")
                 venv_bin = os.path.dirname(py)
                 env = {**os.environ, "VOICEBOX_HOME": HOME, "PATH": venv_bin + os.pathsep + os.environ.get("PATH", ""),
-                       "VLLM_USE_FLASHINFER_SAMPLER": "0", "TOKENIZERS_PARALLELISM": "false"}
+                       "VLLM_USE_FLASHINFER_SAMPLER": "0", "TOKENIZERS_PARALLELISM": "false",
+                       "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
                 p = subprocess.Popen([py, os.path.join(HERE, "engine_host.py"), "--engine", name,
                                       "--port", str(C.ENGINES[name]["port"])], stdout=logf, stderr=logf, env=env, cwd=HERE,
                                      start_new_session=True)  # own process group: stop() also kills vLLM's children
@@ -562,7 +563,15 @@ def run_tts(job):
         log(f"job {job['id']} {engine}/{voice} {len(job['results'])}/{len(job['lines'])} lines")
 
     if job["subtitles"]:
-        subtitle_tts(job, jdir)
+        try:
+            subtitle_tts(job, jdir)
+        except Cancelled:
+            raise
+        except Exception as e:  # the voiceover is done; don't lose it over subtitles
+            traceback.print_exc()
+            job["warnings"].append(f"subtitles failed ({type(e).__name__}); audio is saved, run subtitles again from the Library")
+            for r in job["results"]:
+                r.pop("words", None); r.pop("subs", None)
 
 
 def subtitle_tts(job, jdir):
@@ -570,8 +579,8 @@ def subtitle_tts(job, jdir):
     job["stage"] = "subtitles"
     res_by_id = {r["id"]: r for r in job["results"]}
     ids = [r["id"] for r in job["results"]]
-    for i in range(0, len(ids), 8):
-        batch = ids[i:i + 8]
+    for i in range(0, len(ids), 4):
+        batch = ids[i:i + 4]
         audio_s = sum(res_by_id[x]["duration"] for x in batch)
         t0 = time.time()
         outs = _run_unit(job, RATES["whisper"] * audio_s,
