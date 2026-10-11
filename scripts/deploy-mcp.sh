@@ -20,8 +20,8 @@ rsync -a --exclude node_modules --exclude .next --exclude '.env*' ./ "$tmp/"
 (cd "$tmp" && npx -y vercel@latest deploy --prod --yes >/dev/null 2>&1)
 # stable production alias (deployment URLs sit behind Vercel deployment protection)
 project=$(python3 -c 'import json;print(json.load(open(".vercel/project.json"))["projectName"])')
-url=$(npx -y vercel@latest project inspect "$project" 2>/dev/null | grep -o "https://[a-z0-9.-]*vercel.app" | head -1)
-url=${PUBLIC_URL:-$url}
+url=$(npx -y vercel@latest project inspect "$project" 2>/dev/null | grep -o "https://[a-z0-9.-]*vercel.app" | head -1 || true)
+url=${PUBLIC_URL:-${url:-$(cat ../.local-deploy-url 2>/dev/null || true)}}
 echo "deployed: $url"
 echo "MCP endpoint:  $url/api/mcp"
 echo "REGISTER_URL:  $url/api/register   (put this in Colab Secrets)"
