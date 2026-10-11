@@ -111,6 +111,10 @@ def main():
     if os.environ.get("VOICEBOX_VRAM_GB") is None and setting("VOICEBOX_VRAM_GB"):
         os.environ["VOICEBOX_VRAM_GB"] = setting("VOICEBOX_VRAM_GB")
     cf = ensure_tools()
+    # a previous run in this runtime may have left processes behind (e.g. after "interrupt" + re-run)
+    for pat in ("gateway.py", "engine_host.py", "cloudflared tunnel"):
+        subprocess.call(["pkill", "-f", pat])
+    time.sleep(2)
     gw = start_gateway(secret)
     h = health(secret)
     log(f"gateway up · GPU {h['gpu']['name']} {h['gpu']['total_gb']} GB · VRAM budget {h['vram_budget_gb']} GB")

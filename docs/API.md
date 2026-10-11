@@ -8,15 +8,17 @@ Two layers. You normally only touch the first.
 |---|---|
 | `worker_status` | Online? GPU, VRAM, loaded engines, queue. Says "re-run the notebook" if the heartbeat is older than 4 min. |
 | `list_voices` | Engines, voices, presets, every parameter with default/min/max, uploaded references. |
-| `voice_lines` | `{engine, voice?, lines:[{id?, text, window?, params?}], params?, post?, label?, wait_seconds?}` → job. Blocks up to 45 s, then returns progress + a hint to call `get_job`. |
+| `voice_lines` | `{engine, voice?, lines:[{id?, text, window?, start?, params?}], params?, post?, subtitles?, language?, label?, wait_seconds?}` → job. Blocks up to 45 s, then returns progress + a hint to call `get_job`. |
 | `get_job` | `{job_id, wait_seconds?}` long-poll. When done, each result has `duration`, `fits` (vs `window`) and a signed `url`; the job has `zip_url`. Links expire after 6 h. |
 | `list_jobs` | Last 30 jobs. |
 | `cancel_job` | Cancel a queued job, or stop a running one after the current line. |
-| `add_reference_voice` | `{name, url? \| audio_b64?, transcript?}` → a voice Chatterbox/Dia can clone. Dia needs the transcript. |
+| `add_reference_voice` | `{name, url? \| audio_b64?, transcript?}` → a voice Chatterbox can clone. |
+| `transcribe` | `{sources:[{url, name?, text?}] \| library_job, language?}` → Whisper large-v3 subtitles (SRT/VTT/JSON, word timing). |
+| `list_library` | Saved jobs in the dashboard library. |
 | `engine` | `{name, action: load\|unload}` prewarm or free VRAM. |
 
 `voice` resolves as: `female` / `male` preset → engine voice name (`tara`, `af_heart`, …) → uploaded reference.
-For Chatterbox and Dia, the `female` / `male` presets are reference clips that Orpheus speaks (`tara` / `dan`) on first use, so all three
+For Chatterbox, the `female` / `male` presets are reference clips that Orpheus speaks (`tara` / `dan`) on first use, so both
 engines can share the same two voices.
 
 ## 2 · Worker gateway (Colab, behind a Cloudflare quick tunnel)
@@ -44,15 +46,15 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 |---|---|---|---|
 | `kokoro` | 0 GB | `af_heart` / `am_michael` | Kokoro-82M. Fast, clean, flat delivery. Best for drafts and timing. |
 | `chatterbox` | 4 GB | `female` / `male` | Chatterbox 0.5B (Resemble AI, MIT). Emotion dial + zero-shot cloning; 23 languages incl. Hindi. |
-| `orpheus` | 9 GB | `tara` / `dan` | Orpheus 3B. Most human-sounding; inline tags <laugh> <chuckle> <sigh> <cough> <sniffle> <groan> <yawn> <gasp>. |
-| `dia` | 7 GB | `female` / `male` | Dia 1.6B (Nari Labs). Dialogue-native ([S1]/[S2]), non-verbals like (laughs) (sighs); clones from a reference. |
+| `orpheus` | 10 GB | `tara` / `dan` | Orpheus 3B on vLLM. Most human-sounding; inline tags <laugh> <chuckle> <sigh> <cough> <sniffle> <groan> <yawn> <gasp>. |
+| `whisper` | 4 GB | n/a (subtitles) | Whisper large-v3 (OpenAI). Best open subtitle model: word-level timestamps, 99 languages. |
 
 #### `kokoro` params
 
 | Param | Default | Range | Notes |
 |---|---|---|---|
 | `speed` | `1.0` | 0.5 – 2 | speaking rate |
-| `lang` | `''` |  | phonemizer override, e.g. en-us, en-gb, hi |
+| `lang` | `''` |  | leave empty: picked from the voice (h* = Hindi, b* = British...) |
 
 #### `chatterbox` params
 
@@ -68,21 +70,15 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 
 | Param | Default | Range | Notes |
 |---|---|---|---|
-| `temperature` | `0.6` | 0.1 – 1.5 |  |
+| `temperature` | `0.6` | 0.1 – 1.5 | lower = steadier and more literal, higher = more expressive but riskier |
 | `top_p` | `0.95` | 0.1 – 1 |  |
-| `repetition_penalty` | `1.1` | 1 – 2 | >= 1.1 needed for stable output |
-| `max_new_tokens` | `1800` | 200 – 4000 |  |
-| `seed` | `7` |  |  |
+| `repetition_penalty` | `1.1` | 1 – 2 | >= 1.1 needed for stable output; raise if words repeat |
+| `seed` | `7` |  | change it to get a different take of the same line |
 
-#### `dia` params
+#### `whisper` params
 
 | Param | Default | Range | Notes |
 |---|---|---|---|
-| `cfg_scale` | `3.0` | 1 – 5 |  |
-| `temperature` | `1.3` | 0.5 – 2 |  |
-| `top_p` | `0.95` | 0.5 – 1 |  |
-| `cfg_filter_top_k` | `45` | 10 – 100 |  |
-| `seed` | `7` |  |  |
 
 #### Post-processing (`post`)
 

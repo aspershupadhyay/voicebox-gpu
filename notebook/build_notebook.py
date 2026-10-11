@@ -42,26 +42,16 @@ Turns this Colab runtime into the voice engine behind your **voicebox MCP** (Kok
 |---|---|
 | `WORKER_SECRET` | the `WORKER_SECRET` line from `.secrets.local` |
 | `REGISTER_URL` | `https://<your-vercel-app>/api/register` |
-| `PREWARM` *(optional)* | engines to load at start, e.g. `orpheus,chatterbox` |
+| `PREWARM` *(optional)* | engines to load at start, e.g. `orpheus,whisper` |
 
 **Every session:** Runtime → Change runtime type → **L4** (or A100) → *Run all*. The last cell stays busy while the worker serves;
 stop it (or disconnect the runtime) when you're done to save compute units.
 """
 
 UNPACK = """
-# 1 · GPU check + unpack the worker (embedded, version {version})
-import base64, io, os, subprocess, tarfile
+# 1 · GPU check + secrets + worker code (latest from your server; embedded v{version} as fallback)
+import base64, io, os, subprocess, tarfile, urllib.request
 print(subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], capture_output=True, text=True).stdout or "No GPU! Runtime → Change runtime type → L4")
-APP = "/content/voicebox/app"
-os.makedirs(APP, exist_ok=True)
-BUNDLE = "{bundle}"
-tarfile.open(fileobj=io.BytesIO(base64.b64decode(BUNDLE)), mode="r:gz").extractall(APP, filter="data")
-print("worker unpacked to", APP, sorted(os.listdir(APP)))
-"""
-
-RUN = """
-# 2 · Start: gateway + Cloudflare tunnel + heartbeat to the MCP server. Keeps running.
-import os, runpy, sys
 from google.colab import userdata
 for k in ("WORKER_SECRET", "REGISTER_URL", "PREWARM", "VOICEBOX_VRAM_GB"):
     try:
@@ -70,7 +60,26 @@ for k in ("WORKER_SECRET", "REGISTER_URL", "PREWARM", "VOICEBOX_VRAM_GB"):
     except Exception:
         pass  # optional secrets may be missing
 assert len(os.environ.get("WORKER_SECRET", "")) >= 24, "Add WORKER_SECRET in Secrets (🔑) and allow notebook access"
-if not os.environ.get("REGISTER_URL"): print("⚠ REGISTER_URL not set — the MCP server won't find this worker")
+APP = "/content/voicebox/app"
+os.makedirs(APP, exist_ok=True)
+BUNDLE = "{bundle}"
+data, source = base64.b64decode(BUNDLE), "embedded v{version}"
+if os.environ.get("REGISTER_URL"):
+    try:
+        req = urllib.request.Request(os.environ["REGISTER_URL"].rsplit("/api/", 1)[0] + "/api/bundle",
+                                     headers={"Authorization": "Bearer " + os.environ["WORKER_SECRET"]})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data, source = r.read(), "server v" + r.headers.get("X-Worker-Version", "?")
+    except Exception as e:
+        print("server bundle unavailable, using embedded:", e)
+tarfile.open(fileobj=io.BytesIO(data), mode="r:gz").extractall(APP, filter="data")
+print("worker", source, "→", APP)
+"""
+
+RUN = """
+# 2 · Start: gateway + Cloudflare tunnel + heartbeat to the MCP server. Keeps running.
+import os, runpy, sys
+if not os.environ.get("REGISTER_URL"): print("⚠ REGISTER_URL not set — the dashboard won't find this worker")
 sys.argv = ["launcher.py"]
 runpy.run_path("/content/voicebox/app/launcher.py", run_name="__main__")
 """

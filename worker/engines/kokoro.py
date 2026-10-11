@@ -13,6 +13,9 @@ def _fetch(name, folder):
     return path
 
 
+LANG_BY_PREFIX = {"a": "en-us", "b": "en-gb", "e": "es", "f": "fr-fr", "h": "hi", "i": "it", "j": "ja", "p": "pt-br", "z": "cmn"}
+
+
 class Engine:
     def __init__(self):
         from kokoro_onnx import Kokoro
@@ -23,6 +26,8 @@ class Engine:
 
     def synth(self, text, voice, params, ref_path=None, ref_text=None):
         voice = voice or "af_heart"
-        lang = params.get("lang") or ("en-gb" if voice.startswith("b") else "hi" if voice.startswith("h") else "en-us")
+        # the voice's first letter is its language: a=US English, b=UK English, e=Spanish, f=French, h=Hindi,
+        # i=Italian, j=Japanese, p=Brazilian Portuguese, z=Mandarin
+        lang = params.get("lang") or LANG_BY_PREFIX.get(voice[0], "en-us")
         audio, sr = self.k.create(text, voice=voice, speed=float(params.get("speed", 1.0)), lang=lang)
         return audio, sr
