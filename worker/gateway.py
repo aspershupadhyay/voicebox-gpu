@@ -119,7 +119,9 @@ class Engines:
                 self._evict_for(name)
                 self._set(name, "loading")
                 logf = open(os.path.join(LOGS_DIR, f"{name}.log"), "a")
-                env = {**os.environ, "VOICEBOX_HOME": HOME}
+                venv_bin = os.path.dirname(py)
+                env = {**os.environ, "VOICEBOX_HOME": HOME, "PATH": venv_bin + os.pathsep + os.environ.get("PATH", ""),
+                       "VLLM_USE_FLASHINFER_SAMPLER": "0", "TOKENIZERS_PARALLELISM": "false"}
                 p = subprocess.Popen([py, os.path.join(HERE, "engine_host.py"), "--engine", name,
                                       "--port", str(C.ENGINES[name]["port"])], stdout=logf, stderr=logf, env=env, cwd=HERE)
                 self.procs[name] = p
@@ -296,9 +298,29 @@ def learn_rate(name, seconds, units):
         pass
 
 
+ONES = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
+TENS = "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()
+
+
+def num_words(n):
+    if n < 20:
+        return ONES[n]
+    if n < 100:
+        return TENS[n // 10] + ("" if n % 10 == 0 else " " + ONES[n % 10])
+    if n < 1000:
+        return ONES[n // 100] + " hundred" + ("" if n % 100 == 0 else " " + num_words(n % 100))
+    if n < 1_000_000:
+        return num_words(n // 1000) + " thousand" + ("" if n % 1000 == 0 else " " + num_words(n % 1000))
+    return str(n)
+
+
 def norm_words(s):
     s = re.sub(r"<[^>]{1,20}>|\([a-z ]{2,20}\)", " ", s.lower())
-    return re.findall(r"[\w']+", s)
+    s = re.sub(r"\b((?:[a-z]\.){2,})", lambda m: m.group(1).replace(".", ""), s)  # g.p.s. -> gps
+    s = re.sub(r"(?<=\w)-(?=\w)", "", s)  # non-stop -> nonstop
+    s = re.sub(r"\d[\d,]*", lambda m: num_words(int(m.group(0).replace(",", ""))) if m.group(0).replace(",", "").isdigit() and len(m.group(0)) < 8 else m.group(0), s)
+    s = s.replace("percent", "per cent").replace("%", " per cent")
+    return re.findall(r"[\w']+", s.replace("per cent", "percent"))
 
 
 def match_score(script, heard):
@@ -431,15 +453,18 @@ class Cancelled(Exception):
     pass
 
 
-def _run_unit(job, est, fn):
-    """Run one unit of work while the job view interpolates progress from the speed model."""
+def _run_unit(job, est, fn, label=""):
+    """Run one unit of work while the job view interpolates progress from the speed model.
+    If the unit overruns its estimate, the job total grows with it so progress never stalls or jumps back."""
     if job["cancel"]:
         raise Cancelled()
-    job["cur"] = {"t0": time.time(), "est": max(est, 0.5)}
+    job["cur"] = {"t0": time.time(), "est": max(est, 0.5), "label": label}
     try:
         return fn()
     finally:
-        job["est_done"] += est
+        spent = time.time() - job["cur"]["t0"]
+        job["est_total"] += spent - job["cur"]["est"]  # replace the guess with what it really took
+        job["est_done"] += spent
         job["cur"] = None
 
 
@@ -486,7 +511,7 @@ def run_tts(job):
 
     # group lines: big batches on batch engines (vLLM), one line at a time elsewhere
     groups, cur, n = [], [], 0
-    batch_size = 24 if ENG.batch.get(engine) else 1
+    batch_size = 8 if ENG.batch.get(engine) else 1
     for item in plan:
         cur.append(item); n += len(item[1])
         if n >= batch_size:
@@ -504,8 +529,13 @@ def run_tts(job):
                 owners.append(ln["id"])
         chars = sum(len(it["text"]) for it in items)
         t0 = time.time()
-        res = _run_unit(job, RATES[engine] * chars, lambda: ENG.synth_batch(engine, items))
-        learn_rate(engine, time.time() - t0, chars)
+        first, last = len(job["results"]) + 1, len(job["results"]) + len(group)
+        label = f"line {first} of {len(job['lines'])}" if first == last else f"lines {first}–{last} of {len(job['lines'])} together"
+        res = _run_unit(job, RATES[engine] * chars, lambda: ENG.synth_batch(engine, items), label)
+        if ENG.batch.get(engine) and len(items) > 1:
+            learn_rate(engine, time.time() - t0, chars)
+        elif not ENG.batch.get(engine):
+            learn_rate(engine, time.time() - t0, chars)
         errs = [r["error"] for r in res if "error" in r]
         if errs:
             raise RuntimeError(errs[0])
@@ -663,16 +693,20 @@ def _progress(job):
         detail = f"{name}: first run downloads the model" if st == "installing" else f"loading {name} into memory"
         extra = left
     cur = job.get("cur")
-    partial = min(0.95, (now - cur["t0"]) / cur["est"]) * cur["est"] if cur else 0.0
+    total = job["est_total"]
+    if cur:
+        el = now - cur["t0"]
+        eff = max(cur["est"], el * 1.25)  # overrunning: assume ~25% more to go, keeps moving
+        total += eff - cur["est"]
+        partial = el
+    else:
+        partial = 0.0
     done = job["est_done"] + partial
-    total = max(job["est_total"], done + 0.1)
+    total = max(total, done + 0.1)
     frac = min(0.99, done / total)
-    # scale ETA by how this job is actually running vs the model
-    spent = now - job.get("started", now)
-    speed = (spent / done) if done > 2 and not extra else 1.0
-    eta = (total - done) * min(max(speed, 0.5), 3.0) + extra
+    eta = (total - done) + extra
     if stage == "generating":
-        detail = f"line {min(len(job['results']) + 1, len(job['lines']))} of {len(job['lines'])}"
+        detail = (cur or {}).get("label") or f"line {min(len(job['results']) + 1, len(job['lines']))} of {len(job['lines'])}"
     elif stage == "subtitles":
         detail = "Whisper large-v3, word timestamps"
     elif stage == "transcribing":

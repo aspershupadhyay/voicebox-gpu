@@ -1,6 +1,7 @@
 // Permanent storage for finished jobs: private Vercel Blob under library/<jobId>/.
 // Audio is served to the browser through short-lived presigned CDN URLs (fast), with a proxy fallback.
 import { del, get, issueSignedToken, list, presignUrl, put } from "@vercel/blob";
+import { unzip } from "./zip";
 
 export type Word = { w: string; s: number; e: number };
 export type LibLine = {
@@ -50,7 +51,7 @@ type WorkerResult = LibLine & { url?: string; srt_url?: string; vtt_url?: string
 type WorkerJob = {
   id: string; kind?: "tts" | "transcribe"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; created?: number; status: string; results: WorkerResult[];
-  subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; attach_to?: string;
+  subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; attach_to?: string; zip_url?: string;
 };
 
 /** Copy a finished worker job (audio + subtitles via signed worker URLs) into the library. Idempotent. */
@@ -59,19 +60,22 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   if (job.attach_to) return attachSubtitles(job);
   const existing = await getLibJob(job.id);
   if (existing) return existing;
-  const copies: [string, string][] = [];
-  for (const r of job.results) {
-    if (r.url) copies.push([`${r.id}.wav`, r.url]);
-    if (r.srt_url) copies.push([`${r.id}.subs.srt`, r.srt_url], [`${r.id}.subs.vtt`, r.vtt_url!], [`${r.id}.subs.json`, r.json_url!]);
+  const copied = job.zip_url ? await copyFromZip(job.id, job.zip_url).catch(() => false) : false;
+  if (!copied) {
+    const copies: [string, string][] = [];
+    for (const r of job.results) {
+      if (r.url) copies.push([`${r.id}.wav`, r.url]);
+      if (r.srt_url) copies.push([`${r.id}.subs.srt`, r.srt_url], [`${r.id}.subs.vtt`, r.vtt_url!], [`${r.id}.subs.json`, r.json_url!]);
+    }
+    for (const [ext, url] of Object.entries(job.subs_urls ?? {})) copies.push([`subtitles.${ext}`, url]);
+    await Promise.all(
+      copies.map(async ([name, url]) => {
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) throw new Error(`fetch ${name}: ${res.status}`);
+        await putFile(job.id, name, await res.arrayBuffer());
+      }),
+    );
   }
-  for (const [ext, url] of Object.entries(job.subs_urls ?? {})) copies.push([`subtitles.${ext}`, url]);
-  await Promise.all(
-    copies.map(async ([name, url]) => {
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) throw new Error(`fetch ${name}: ${res.status}`);
-      await putFile(job.id, name, await res.arrayBuffer());
-    }),
-  );
   const lib: LibJob = {
     id: job.id, kind: job.kind ?? "tts", engine: job.engine, voice: job.voice, label: job.label, language: job.language,
     params: job.params, created: Math.round((job.created ?? Date.now() / 1000) * 1000), archived: Date.now(), source: "worker",
@@ -80,6 +84,17 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   };
   await putLibJob(lib);
   return lib;
+}
+
+/** One download through the tunnel (the job zip), then parallel writes to Blob. */
+async function copyFromZip(jobId: string, zipUrl: string) {
+  const res = await fetch(zipUrl, { cache: "no-store" });
+  if (!res.ok) return false;
+  const files = await unzip(new Uint8Array(await res.arrayBuffer()));
+  const keep = [...files.entries()].filter(([n]) => FILE_RE.test(n));
+  if (!keep.length) return false;
+  await Promise.all(keep.map(([n, data]) => putFile(jobId, n, data.slice().buffer)));
+  return true;
 }
 
 /** A transcribe job run over an existing library job: copy its subtitles onto that job. */

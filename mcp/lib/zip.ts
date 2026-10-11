@@ -38,3 +38,26 @@ export function zip(files: { name: string; data: Uint8Array }[]): Uint8Array {
   for (const c of all) { out.set(c, p); p += c.length; }
   return out;
 }
+
+/** Read a ZIP (stored or deflated entries) into name -> bytes, via the central directory. */
+export async function unzip(buf: Uint8Array): Promise<Map<string, Uint8Array>> {
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error("not a zip");
+  const count = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  const out = new Map<string, Uint8Array>();
+  for (let n = 0; n < count; n++) {
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+    const nlen = dv.getUint16(p + 28, true), elen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+    const local = dv.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(buf.subarray(p + 46, p + 46 + nlen));
+    const start = local + 30 + dv.getUint16(local + 26, true) + dv.getUint16(local + 28, true);
+    const raw = buf.subarray(start, start + csize);
+    if (method === 0) out.set(name, raw);
+    else if (method === 8) out.set(name, new Uint8Array(await new Response(new Blob([raw.slice()]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer()));
+    p += 46 + nlen + elen + clen;
+  }
+  return out;
+}
