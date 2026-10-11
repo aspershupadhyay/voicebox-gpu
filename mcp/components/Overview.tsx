@@ -5,12 +5,13 @@ import { ago, api, fmtS, pct, type Job } from "./api";
 import { useStatus } from "./Shell";
 import { useDialog } from "./Dialog";
 
-type Lib = { id: string; kind?: string; engine: string; voice: string; label?: string; created: number; match?: number | null; subs?: unknown; results: { duration: number }[] };
+type Lib = { id: string; kind?: string; engine: string; voice: string; label?: string; created: number; match?: number | null; subs?: unknown; results: { duration: number }[]; video?: { duration: number } };
+const libSeconds = (j: Lib) => j.video?.duration ?? j.results.reduce((a, r) => a + r.duration, 0);
 
 const ENGINES: Record<string, { what: string; vram: string }> = {
   orpheus: { what: "Most human · English · emotion tags", vram: "10 GB" },
   chatterbox: { what: "Emotion dial · cloning · 23 languages", vram: "4 GB" },
-  kokoro: { what: "Instant drafts · CPU", vram: "CPU" },
+  kokoro: { what: "Instant drafts · many languages", vram: "CPU" },
   whisper: { what: "Subtitles · word timing · 99 languages", vram: "4 GB" },
 };
 const stClass = (s?: string) => (s === "ready" ? "ok" : s === "loading" || s === "installing" ? "warn" : s === "error" ? "bad" : "");
@@ -51,7 +52,7 @@ export default function Overview() {
   }
 
   const vramP = st?.gpu?.total_gb ? Math.round((st.gpu.used_gb / st.gpu.total_gb) * 100) : 0;
-  const audio = (lib ?? []).reduce((s, j) => s + j.results.reduce((a, r) => a + r.duration, 0), 0);
+  const audio = (lib ?? []).filter((j) => j.kind !== "video").reduce((s, j) => s + libSeconds(j), 0);
   const active = jobs.filter((j) => ["queued", "running"].includes(j.status));
 
   return (
@@ -137,8 +138,8 @@ export default function Overview() {
             {(lib ?? []).slice(0, 7).map((j) => (
               <tr key={j.id}>
                 <td style={{ maxWidth: 220 }}><Link href={`/library#${j.id}`} style={{ color: "var(--ink)" }}><b>{j.label || j.id}</b></Link><div className="dim tiny">{ago(j.created)}</div></td>
-                <td><span className={`pill ${j.kind === "transcribe" ? "blue" : ""}`}>{j.kind === "transcribe" ? "subtitles" : j.engine}</span></td>
-                <td className="mono small dim">{fmtS(j.results.reduce((a, r) => a + r.duration, 0))}</td>
+                <td><span className={`pill ${j.kind === "transcribe" ? "blue" : j.kind === "video" ? "bad" : ""}`}>{j.kind === "transcribe" ? "subtitles" : j.kind === "video" ? "video" : j.engine}</span></td>
+                <td className="mono small dim">{fmtS(libSeconds(j))}</td>
                 <td>{j.match != null ? <span className={`pill ${j.match >= 0.95 ? "ok" : "warn"}`}>{pct(j.match)}</span> : null}</td>
               </tr>
             ))}
