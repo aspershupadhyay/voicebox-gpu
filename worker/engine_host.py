@@ -5,6 +5,8 @@
 POST /synth        {"text", "voice", "params", "ref_path"?, "ref_text"?, "out_path"} -> {"duration", "sample_rate"}
 POST /synth_batch  {"items": [<synth payload>, ...]} -> {"results": [{"duration", "sample_rate"} | {"error"}]}
 POST /transcribe   {"paths": [...], "language"?, "prompt"?} -> {"results": [{"text", "words", "duration"}]}
+POST /video        {"prompt", "width", "height", "num_frames", "fps", "steps", "seed", "out_path", "progress_path", ...}
+                   -> {"frames", "width", "height", "fps", "duration", "has_audio"}
 GET  /ready        -> {"ready": true, "batch": bool}
 Only binds to 127.0.0.1: the gateway is the only thing that talks to engines.
 Everything runs under __main__ so engines that spawn worker processes (vLLM) can re-import this file safely.
@@ -76,6 +78,8 @@ def main():
                                 traceback.print_exc()
                                 res.append({"error": f"{type(e).__name__}: {e}"})
                         return self._send(200, {"results": res})
+                    if self.path == "/video":
+                        return self._send(200, engine.video(req))
                     if self.path == "/transcribe":
                         if hasattr(engine, "transcribe_batch"):
                             return self._send(200, {"results": engine.transcribe_batch(req["paths"], req.get("language"))})

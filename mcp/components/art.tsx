@@ -23,6 +23,9 @@ export function Logo({ size = 28 }: { size?: number }) {
   );
 }
 
+/** Two decimals: the server and the browser disagree on the last float digits of trig results (hydration warnings). */
+const q2 = (n: number) => Math.round(n * 100) / 100;
+
 const TONES = ["var(--signal)", "var(--glacier)", "var(--sand)", "var(--ok)", "var(--rose)"];
 
 /** A generative "sound portrait" per voice: radial bars whose rhythm is seeded by the voice name. */
@@ -42,14 +45,15 @@ export function VoiceGlyph({ name, size = 40, active = false }: { name: string; 
       <circle r="5" fill="currentColor" />
       {bars.map(({ a, v }, i) => {
         const r0 = 17, r1 = 17 + v * 26;
-        return <line key={i} x1={Math.cos(a) * r0} y1={Math.sin(a) * r0} x2={Math.cos(a) * r1} y2={Math.sin(a) * r1}
-          stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" opacity={0.35 + v * 0.65} />;
+        return <line key={i} x1={q2(Math.cos(a) * r0)} y1={q2(Math.sin(a) * r0)} x2={q2(Math.cos(a) * r1)} y2={q2(Math.sin(a) * r1)}
+          stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" opacity={q2(0.35 + v * 0.65)} />;
       })}
     </svg>
   );
 }
 
-/** Engine illustrations. Orpheus = the mythic musician's lyre; Kokoro = "heart" (心); Chatterbox = speech + emotion dial; Whisper = captions being written. */
+/** Engine illustrations. Orpheus = the mythic musician's lyre; Kokoro = "heart" (心); Chatterbox = speech + emotion dial;
+ *  Qwen = your voice mirrored into its clone; Wan = a subject in motion over a timeline; LTX = film strip + its soundtrack; Whisper = captions. */
 export function EngineArt({ engine, live = false }: { engine: string; live?: boolean }) {
   const cls = `eart ${live ? "live" : ""}`;
   if (engine === "orpheus") return (
@@ -80,6 +84,38 @@ export function EngineArt({ engine, live = false }: { engine: string; live?: boo
       <circle cx="26" cy="68" r="9" className="ink" /><path d="M26 68l5-5" className="accent-stroke" />
     </svg>
   );
+  if (engine === "qwen") return (
+    // your voice, copied: the recorded waveform on the left is mirrored into the clone on the right
+    <svg viewBox="0 0 120 84" className={cls} aria-hidden>
+      <rect x="51" y="12" width="18" height="34" rx="9" className="ink" />
+      <path d="M45 36a15 15 0 0 0 30 0M60 51v12M50 66h20" className="ink" />
+      {[0.35, 0.7, 0.5, 0.9, 0.45].map((v, i) => <path key={`l${i}`} d={`M${16 + i * 6} ${38 - v * 13}V${38 + v * 13}`} className="bar dim-bar" style={{ animationDelay: `${i * 0.1}s` }} />)}
+      {[0.45, 0.9, 0.5, 0.7, 0.35].map((v, i) => <path key={`r${i}`} d={`M${80 + i * 6} ${38 - v * 13}V${38 + v * 13}`} className="bar" style={{ animationDelay: `${(4 - i) * 0.1}s` }} />)}
+      <circle cx="60" cy="24" r="2.6" className="accent-fill" />
+    </svg>
+  );
+  if (engine === "wan") return (
+    // a frame with a subject in motion (ghosted trail) over a timeline with a playhead
+    <svg viewBox="0 0 120 84" className={cls} aria-hidden>
+      <rect x="16" y="10" width="88" height="52" rx="6" className="ink" />
+      <path d="M16 50l22-16 16 10 18-18 32 26" className="ink dim-ink" />
+      {[0, 1, 2].map((i) => <circle key={i} cx={46 + i * 13} cy={28 - i * 2} r={5} className="trail" style={{ opacity: 0.25 + i * 0.3, animationDelay: `${i * 0.12}s` }} />)}
+      <path d="M16 72h88" className="ink dim-ink" />
+      {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => <path key={i} d={`M${16 + i * 11} 69v6`} className="ink dim-ink" />)}
+      <path d="M66 66v12" className="accent-stroke playhead" />
+    </svg>
+  );
+  if (engine === "ltx") return (
+    // picture and sound born together: a film strip above its own soundtrack
+    <svg viewBox="0 0 120 84" className={cls} aria-hidden>
+      <rect x="12" y="10" width="96" height="34" rx="4" className="ink" />
+      {Array.from({ length: 10 }, (_, i) => <rect key={`p${i}`} x={16 + i * 9.4} y="12.5" width="4" height="3" rx="1" className="perf" />)}
+      {Array.from({ length: 10 }, (_, i) => <rect key={`q${i}`} x={16 + i * 9.4} y="38.5" width="4" height="3" rx="1" className="perf" />)}
+      {[0, 1, 2, 3].map((i) => <rect key={i} x={17 + i * 23} y="19" width="19" height="16" rx="2" className="cap" style={{ animationDelay: `${i * 0.18}s` }} />)}
+      <path d="M12 62c5-9 8 9 13 0s8-12 13 0 8 10 13 0 8-14 13 0 8 8 13 0 8-10 13 0 8 6 10 0" className="trace base" />
+      <path d="M12 62c5-9 8 9 13 0s8-12 13 0 8 10 13 0 8-14 13 0 8 8 13 0 8-10 13 0 8 6 10 0" className="trace comet" />
+    </svg>
+  );
   return (
     <svg viewBox="0 0 120 84" className={cls} aria-hidden>
       <path d="M14 26c8-8 14-8 22 0s14 8 22 0 14-8 22 0 14 8 22 0" className="trace soft" />
@@ -104,7 +140,7 @@ export function StyleGlyph({ style, active = false }: { style: string; active?: 
   return (
     <svg viewBox={`0 0 ${n * 4} 32`} className={`sglyph ${active ? "on" : ""}`} aria-hidden preserveAspectRatio="none">
       {Array.from({ length: n }, (_, i) => {
-        const h = Math.max(2, env(i) * 28);
+        const h = q2(Math.max(2, env(i) * 28));
         return <rect key={i} x={i * 4 + 0.6} y={16 - h / 2} width="2.2" height={h} rx="1.1" style={{ animationDelay: `${(i % 7) * 0.07}s` }} />;
       })}
     </svg>
@@ -133,8 +169,8 @@ export function CassetteArt() {
       <path d="M48 45h70M48 53h46" className="ink faint" />
       <circle cx="74" cy="88" r="15" className="ink" /><circle cx="146" cy="88" r="15" className="ink" />
       {[0, 60, 120, 180, 240, 300].map((a) => (
-        <g key={a}><path d={`M74 88l${Math.cos((a * Math.PI) / 180) * 9} ${Math.sin((a * Math.PI) / 180) * 9}`} className="ink spoke" />
-          <path d={`M146 88l${Math.cos((a * Math.PI) / 180) * 9} ${Math.sin((a * Math.PI) / 180) * 9}`} className="ink spoke" /></g>
+        <g key={a}><path d={`M74 88l${q2(Math.cos((a * Math.PI) / 180) * 9)} ${q2(Math.sin((a * Math.PI) / 180) * 9)}`} className="ink spoke" />
+          <path d={`M146 88l${q2(Math.cos((a * Math.PI) / 180) * 9)} ${q2(Math.sin((a * Math.PI) / 180) * 9)}`} className="ink spoke" /></g>
       ))}
       <path d="M89 88h42" className="ink faint" />
       <path d="M62 124l10-14h76l10 14" className="ink" />
@@ -177,11 +213,38 @@ export function Orb() {
       <g className="orb-spin">
         {Array.from({ length: n }, (_, i) => {
           const a = (i / n) * Math.PI * 2, v = 0.3 + 0.7 * Math.abs(Math.sin(i * 0.31)) * (0.6 + r() * 0.4);
-          return <line key={i} x1={Math.cos(a) * 50} y1={Math.sin(a) * 50} x2={Math.cos(a) * (50 + v * 18)} y2={Math.sin(a) * (50 + v * 18)}
+          return <line key={i} x1={q2(Math.cos(a) * 50)} y1={q2(Math.sin(a) * 50)} x2={q2(Math.cos(a) * (50 + v * 18))} y2={q2(Math.sin(a) * (50 + v * 18))}
             stroke={i % 9 === 0 ? "var(--signal)" : "var(--ink2)"} strokeOpacity={i % 9 === 0 ? 1 : 0.45} strokeWidth="2" strokeLinecap="round" />;
         })}
       </g>
       <circle cx="94" cy="0" r="3.5" fill="var(--glacier)" className="orb-sat" />
+    </svg>
+  );
+}
+
+/** Empty video state: a clapperboard with a frame waiting to be shot. */
+export function ClapperArt() {
+  return (
+    <svg viewBox="0 0 220 140" className="illus" aria-hidden>
+      <rect x="44" y="52" width="132" height="72" rx="8" className="ink" />
+      <path d="M44 52l6-24 130 0-6 24" className="ink" />
+      {[0, 1, 2, 3, 4].map((i) => <path key={i} d={`M${62 + i * 24} 28l-8 24`} className="ink faint" />)}
+      <path d="M84 74l34 14-34 14z" className="accent-fill float" />
+      <path d="M150 74h12M150 84h8" className="ink faint" />
+    </svg>
+  );
+}
+
+/** Recorder idle state: a studio mic with sound rings. */
+export function MicArt() {
+  return (
+    <svg viewBox="0 0 220 140" className="illus" aria-hidden>
+      <rect x="92" y="22" width="36" height="62" rx="18" className="ink" />
+      {[0, 1, 2, 3].map((i) => <path key={i} d={`M92 ${38 + i * 10}h36`} className="ink faint" />)}
+      <path d="M80 66a30 30 0 0 0 60 0M110 96v20M92 118h36" className="ink" />
+      <path d="M62 46a52 52 0 0 0 0 40M158 46a52 52 0 0 1 0 40" className="ink faint float" />
+      <path d="M48 36a72 72 0 0 0 0 60M172 36a72 72 0 0 1 0 60" className="ink faint float" style={{ animationDelay: ".4s" }} />
+      <circle cx="110" cy="40" r="4" className="accent-fill" />
     </svg>
   );
 }

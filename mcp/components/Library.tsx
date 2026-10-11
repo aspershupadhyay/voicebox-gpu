@@ -1,10 +1,10 @@
 "use client";
 import {
-  CaretRight, ClosedCaptioning, DownloadSimple, FileZip, FilmStrip, MagnifyingGlass, Microphone, Play, Plus, Stop, TrashSimple, X,
+  CaretRight, ClosedCaptioning, DownloadSimple, FileZip, FilmSlate, FilmStrip, MagnifyingGlass, Microphone, Play, Plus, Stop, TrashSimple, X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ago, api, fileUrl, fmtS, matchClass, pct } from "./api";
+import { ago, api, fileUrl, fmtS, matchClass, pct, type Gen } from "./api";
 import { CassetteArt, VoiceGlyph } from "./art";
 import LineRow, { type Line } from "./LineRow";
 import { useStatus } from "./Shell";
@@ -13,7 +13,8 @@ import { useDialog } from "./Dialog";
 type LibJob = {
   id: string; kind?: "tts" | "transcribe" | "video"; engine: string; voice: string; label?: string; created: number; source?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; subs?: { cues: number; timeline: string } | null; match?: number | null; results: (Line & { audio?: string | null })[];
-  video?: { width: number; height: number; duration: number; size: number; voice_job?: string }; video_url?: string; poster_url?: string | null;
+  video?: { width: number; height: number; duration: number; size: number; voice_job?: string; has_audio?: boolean }; video_url?: string; poster_url?: string | null;
+  gen?: Gen;
 };
 type CardProps = { j: LibJob; open: boolean; selected: boolean; onSelect: (shift: boolean) => void; onDelete: () => void };
 
@@ -35,7 +36,8 @@ function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) {
         <div style={{ minWidth: 0 }}>
           <div className="lc-title">{j.label || j.id}</div>
           <div className="lc-meta">
-            <span className="pill sig"><FilmStrip size={11} weight="bold" />video</span>
+            <span className="pill sig"><FilmStrip size={11} weight="bold" />{j.gen ? (j.gen.model === "ltx" ? "LTX-2.3" : "Wan 2.2") : "video"}</span>
+            {j.video?.has_audio && <span className="pill">sound</span>}
             {j.subs && <span className="pill blue">CC · {j.subs.cues}</span>}
             {v && <span className="dim tiny mono">{fmtS(v.duration)} · {ago(j.created)}</span>}
           </div>
@@ -51,7 +53,10 @@ function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) {
             style={{ aspectRatio: v ? `${v.width}/${v.height}` : undefined }} />
           <div className="stack" style={{ gap: 18 }}>
             <dl className="facts">
-              <dt>Voice</dt><dd><span style={{ textTransform: "capitalize" }}>{j.engine}</span> · {j.voice}</dd>
+              {j.gen ? <>
+                <dt>Prompt</dt><dd className="small">{j.gen.prompt}</dd>
+                <dt>Render</dt><dd className="mono">{j.gen.mode === "i2v" ? "from image" : "from text"} · seed {j.gen.seed} · {j.gen.steps} steps</dd>
+              </> : <><dt>Voice</dt><dd><span style={{ textTransform: "capitalize" }}>{j.engine}</span> · {j.voice}</dd></>}
               {v && <><dt>Format</dt><dd className="mono">{v.width}×{v.height} · {fmtS(v.duration)} · {(v.size / 1e6).toFixed(1)} MB</dd></>}
               {j.subs && <><dt>Subtitles</dt><dd>{j.subs.cues} cues, timed to the video</dd></>}
               <dt>Made</dt><dd>{new Date(j.created).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd>
@@ -61,6 +66,7 @@ function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) {
               {j.subs && <a className="btn ghost sm" href={fileUrl(j.id, "subtitles.srt", `${slug}.srt`)}><ClosedCaptioning size={14} />.srt</a>}
               {j.subs && <a className="btn ghost sm" href={fileUrl(j.id, "subtitles.vtt", `${slug}.vtt`)}>.vtt</a>}
               {v?.voice_job && <a className="btn quiet sm" href={`#${v.voice_job}`}><Microphone size={14} />Voice lines</a>}
+              {j.gen && <Link className="btn quiet sm" href={`/video?from=${j.id}`}><FilmSlate size={14} />Open in Video</Link>}
             </div>
           </div>
         </div>
@@ -244,7 +250,7 @@ export default function Library() {
         <div>
           <div className="eyebrow">Archive</div>
           <h1>The <em>library.</em></h1>
-          <p className="sub">Every take, subtitle and render, stored privately on Vercel Blob. It stays here after Colab shuts down.</p>
+          <p className="sub">Every take, subtitle and render, stored privately in your R2 bucket. It stays here after Colab shuts down.</p>
         </div>
         <Link href="/generate" className="btn sig"><Microphone size={16} weight="bold" />New voiceover</Link>
       </div>

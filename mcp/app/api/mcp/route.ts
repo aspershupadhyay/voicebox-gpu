@@ -1,15 +1,16 @@
-// Voicebox MCP: exposes the Colab GPU worker (Kokoro, Chatterbox, Orpheus TTS + Whisper subtitles) as MCP tools.
+// Voicebox MCP: exposes the Colab GPU worker (Kokoro, Chatterbox, Orpheus, Qwen TTS + Whisper subtitles + Wan / LTX video) as MCP tools.
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
 import { loadWorker, STALE_MS } from "@/lib/registry";
 import { call, safeEqual, WorkerOffline } from "@/lib/worker";
-import { archiveWorkerJob, listLibrary } from "@/lib/library";
+import { archiveWorkerJob, listLibrary, presignPath } from "@/lib/library";
+import { isCustomVoice, listMyVoices, refSync } from "@/lib/voices";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const ENGINES = ["kokoro", "chatterbox", "orpheus"] as const;
-const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "whisper"] as const;
+const ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen"] as const;
+const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "whisper", "wan", "ltx"] as const;
 const MAX_WAIT = 45; // seconds a tool call may block; Vercel caps the request at maxDuration
 
 type Job = { id: string; status: string; progress: { done: number; total: number }; [k: string]: unknown };
@@ -97,10 +98,10 @@ const handler = createMcpHandler(
         title: "Generate voiceover lines",
         description: [
           "Synthesise one or more lines on the GPU worker and return signed WAV links (48 kHz mono, trimmed, peak -3 dBFS by default).",
-          "Engines: kokoro (fast drafts, many languages), chatterbox (emotion dial + cloning, 23 languages incl. Hindi), orpheus (most human, English; tags like <laugh> <sigh>).",
+          "Engines: kokoro (fast drafts, many languages), chatterbox (emotion dial + cloning, 23 languages incl. Hindi), orpheus (most human, English; tags like <laugh> <sigh>), qwen (best cloning of the user's recorded voice; 10 languages, no Hindi; params.language takes names like English).",
           "No length limit: long text is split at sentences, voiced in one batch and re-joined.",
           "subtitles: true adds Whisper large-v3 word-timed SRT/VTT per line and for the whole timeline (uses each line's start when given), plus a match score vs the script.",
-          "voice: 'female' / 'male' presets, an engine voice (e.g. tara, dan, af_heart), or an uploaded reference name.",
+          "voice: 'female' / 'male' presets, an engine voice (e.g. tara, dan, af_heart), or the name of a recorded voice from my_voices (qwen or chatterbox).",
           "style sets the delivery (default 'tech'): tech = bright YouTube-tech pace (~185 wpm), hype = max energy for promos, narrator = calm documentary (~165 wpm), neutral = engine defaults. Explicit params override the style. For energy the voice matters most (Orpheus temperature does not add energy): orpheus mia/leo, kokoro am_fenrir/af_bella; chatterbox via exaggeration.",
           "First use of an engine installs + loads it (several minutes); the job keeps running, so poll with get_job.",
         ].join(" "),
@@ -127,8 +128,63 @@ const handler = createMcpHandler(
       },
       async ({ wait_seconds, ...body }) => {
         try {
-          const job = await call<Job>("/jobs", { body });
+          const ref = body.voice && isCustomVoice(body.voice) ? await refSync(body.voice) : null;
+          const job = await call<Job>("/jobs", { body: ref ? { ...body, ref } : body });
           return text(withHint(await waitFor(job.id, wait_seconds ?? MAX_WAIT)));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "my_voices",
+      {
+        title: "List the user's recorded voices",
+        description: "Voices the user recorded in the dashboard (Voices page). Use a name as `voice` with engine qwen (best match) or chatterbox (Hindi, emotion dial).",
+        inputSchema: z.object({}),
+      },
+      async () => {
+        try {
+          return text((await listMyVoices(false)).map((v) => ({ name: v.name, label: v.label, seconds: v.duration, transcript: v.transcript })));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "animate",
+      {
+        title: "Generate a video clip",
+        description: [
+          "Render a short video on the GPU worker and save it to the library (MP4 + poster).",
+          "model wan: Wan 2.2 TI2V 5B, sharp 720p, best prompt following, silent, up to 5 s; quality fast = 4-step Turbo (a few minutes), full = 30 steps (~10x slower).",
+          "model ltx: LTX-2.3 distilled, picture + matching soundtrack from the same prompt, up to 10 s, softer detail. Describe sounds too (\"Audio: ...\").",
+          "Prompts: subject, action, place, camera move, light, style; 40-100 words for wan. With a start frame (image_url or from_library) describe the motion, not the look.",
+          "Video and voice engines never share the GPU: this unloads voice engines first. First use downloads the weights (wan ~23 GB, ltx ~48 GB).",
+          "Rendering takes minutes: this returns a job id; poll get_job until done (the finished clip is archived to the library).",
+        ].join(" "),
+        inputSchema: z.object({
+          prompt: z.string().min(3).max(4000),
+          model: z.enum(["wan", "ltx"]).optional().describe("default wan"),
+          aspect: z.enum(["9:16", "16:9", "1:1"]).optional().describe("default 9:16"),
+          seconds: z.number().min(1).max(10).optional().describe("default 5 (wan max 5, ltx max 10)"),
+          quality: z.enum(["fast", "full"]).optional().describe("wan only; default fast"),
+          seed: z.number().int().optional(),
+          negative: z.string().max(2000).optional().describe("things to avoid"),
+          audio: z.boolean().optional().describe("ltx only: generate the soundtrack (default true)"),
+          image_url: z.string().url().optional().describe("start frame (public or signed https URL)"),
+          from_library: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional().describe("start from a library video's poster frame"),
+          label: z.string().max(80).optional(),
+          wait_seconds: z.number().min(0).max(MAX_WAIT).optional().describe("block up to this long (default 10; renders take minutes)"),
+        }),
+      },
+      async ({ wait_seconds, from_library, ...body }) => {
+        try {
+          const image_url = from_library ? await presignPath(`library/${from_library}/poster.jpg`, 3600) : body.image_url;
+          const job = await call<Job>("/jobs", { body: { ...body, image_url, kind: "video" } });
+          return text(withHint(await waitFor(job.id, wait_seconds ?? 10)));
         } catch (e) {
           return fail(e);
         }
@@ -268,7 +324,7 @@ const handler = createMcpHandler(
         title: "Load or unload an engine",
         description:
           "Prewarm an engine before a batch (install + load runs in the background) or unload it to free VRAM. Engines are also loaded on demand and evicted LRU.",
-        inputSchema: z.object({ name: z.enum(ALL_ENGINES), action: z.enum(["load", "unload"]) }),
+        inputSchema: z.object({ name: z.enum(ALL_ENGINES), action: z.enum(["load", "unload", "forget"]).describe("forget = unload and delete its downloaded weights to free disk") }),
       },
       async ({ name, action }) => {
         try {

@@ -1,13 +1,14 @@
 "use client";
-import { ArrowSquareOut, CaretDown, ClosedCaptioning, DownloadSimple, Eye, Flask, Microphone, SlidersHorizontal, Sparkle, WarningCircle } from "@phosphor-icons/react";
+import { ArrowSquareOut, CaretDown, ClosedCaptioning, DownloadSimple, Eye, Flask, Microphone, Plus, SlidersHorizontal, Sparkle, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, fmtS, pct, rangeFill, type Job } from "./api";
+import { api, fmtS, pct, rangeFill, type Job, type MyVoice } from "./api";
 import { EngineArt, StyleGlyph, VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
-import { GUIDES, KOKORO_LANG, LANGUAGES } from "./guides";
+import { GUIDES, KOKORO_LANG, LANGUAGES, QWEN_LANG } from "./guides";
 import JobProgress from "./JobProgress";
 import LineRow from "./LineRow";
+import { SampleButton, useSamples } from "./Sample";
 import { useStatus } from "./Shell";
 
 type Param = { type: "number" | "integer" | "string"; default: number | string; min?: number; max?: number; about?: string };
@@ -16,12 +17,13 @@ type Style = { label: string; about: string; params: Record<string, Record<strin
 type Catalogue = { engines: Record<string, Engine>; references: string[]; styles?: Record<string, Style>; default_style?: string };
 type ParsedLine = { id: string; text: string; window?: number; start?: number; params?: Record<string, number> };
 
-const TTS = ["orpheus", "chatterbox", "kokoro"] as const;
-const BLURB: Record<string, string> = { orpheus: "Most human · English", chatterbox: "Emotion · cloning · 23 langs", kokoro: "Instant drafts · CPU" };
+const TTS = ["orpheus", "qwen", "chatterbox", "kokoro"] as const;
+const BLURB: Record<string, string> = { orpheus: "Most human · English", qwen: "Your voice · best cloning", chatterbox: "Emotion · cloning · 23 langs", kokoro: "Instant drafts · CPU" };
+const CLONERS = ["qwen", "chatterbox"];
 const STYLE_ORDER = ["tech", "hype", "narrator", "neutral"];
 const TAGS = ["<laugh>", "<chuckle>", "<sigh>", "<gasp>", "<groan>", "<yawn>", "<sniffle>", "<cough>"];
-const LOAD_S: Record<string, number> = { orpheus: 120, chatterbox: 45, kokoro: 5, whisper: 40 };
-const RATE: Record<string, number> = { orpheus: 0.03, chatterbox: 0.06, kokoro: 0.004, whisper: 0.06 };
+const LOAD_S: Record<string, number> = { orpheus: 120, chatterbox: 45, kokoro: 5, whisper: 40, qwen: 60 };
+const RATE: Record<string, number> = { orpheus: 0.03, chatterbox: 0.06, kokoro: 0.004, whisper: 0.06, qwen: 0.05 };
 const SAMPLE = `This little dot knows exactly where you are.
 But... how?
 It's listening to clocks in space. About thirty satellites, high above.`;
@@ -61,6 +63,9 @@ export default function Generate() {
   const [job, setJob] = useState<Job | null>(null);
   const [lib, setLib] = useState<{ results: { id: string; audio: string }[] } | null>(null);
   const [err, setErr] = useState("");
+  const [mine, setMine] = useState<MyVoice[]>([]);
+  const [mineLoaded, setMineLoaded] = useState(false);
+  const samples = useSamples();
   const ta = useRef<HTMLTextAreaElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loaded = useRef(false);
@@ -69,6 +74,11 @@ export default function Generate() {
     const s = JSON.parse(localStorage.getItem("vb-gen2") || "{}");
     if (s.engine) setEngine(s.engine); if (s.voice) setVoice(s.voice); if (s.script) setScript(s.script);
     if (s.params) setParams(s.params); if (s.style) setStyle(s.style); if (s.lang) setLang(s.lang); if (s.subtitles !== undefined) setSubtitles(s.subtitles);
+    // deep links from the Voices page: /generate?engine=qwen&voice=<name>
+    const q = new URLSearchParams(location.search);
+    if (q.get("engine") && (TTS as readonly string[]).includes(q.get("engine")!)) { setEngine(q.get("engine")!); setParams({}); }
+    if (q.get("voice")) { setVoice(q.get("voice")!); if (/^[a-z]{2}_/.test(q.get("voice")!)) setLang(KOKORO_LANG[q.get("voice")![0]] ?? "en"); }
+    api<{ voices: MyVoice[] }>("myvoices").then((r) => setMine(r.voices)).catch(() => {}).finally(() => setMineLoaded(true));
     loaded.current = true;
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, []);
@@ -87,14 +97,17 @@ export default function Generate() {
     if (engine === "kokoro") return (eng?.voices ?? []).filter((v) => KOKORO_LANG[v[0]] === lang);
     if (engine === "orpheus") return eng?.voices ?? [];
     const base = ["female", "male", ...(eng?.voices ?? []).filter((v) => !v.startsWith("<") && v !== "female" && v !== "male")];
-    return engine === "chatterbox" ? [...base, ...(cat?.references ?? []).filter((r) => !base.includes(r))] : base;
-  }, [eng, engine, lang, cat]);
+    return CLONERS.includes(engine) ? [...mine.map((m) => m.name), ...base.filter((b) => !mine.some((m) => m.name === b))] : base;
+  }, [eng, engine, lang, mine]);
+  const myVoice = (v: string) => mine.find((m) => m.name === v);
 
   useEffect(() => {
     if (!langs.some((l) => l.code === lang)) setLang("en");
     if (engine === "kokoro" && voices.length && !voices.includes(voice)) setVoice(voices[0]);
-    if (engine !== "kokoro" && !voices.includes(voice) && voices.length) setVoice(engine === "orpheus" ? (voice === "male" ? "dan" : "tara") : "female");
-  }, [engine, lang, voices, voice, langs]);
+    if (engine === "orpheus" && !voices.includes(voice) && voices.length) setVoice(voice === "male" ? "dan" : "tara");
+    // cloners: wait for your voices to load so a deep-linked recording isn't replaced by a preset
+    if (CLONERS.includes(engine) && !voices.includes(voice) && mineLoaded) setVoice(mine[0]?.name ?? "female");
+  }, [engine, lang, voices, voice, langs, mine, mineLoaded]);
 
   const rate = status?.rates?.[engine] ?? eng?.seconds_per_char ?? RATE[engine];
   const audioS = chars / 14.5;
@@ -128,6 +141,7 @@ export default function Generate() {
     setErr(""); setJob(null); setLib(null);
     const p = { ...params };
     if (engine === "chatterbox") p.language = lang;
+    if (engine === "qwen") p.language = QWEN_LANG[lang] ?? "English";
     try {
       const j = await api<Job>("jobs", {
         body: {
@@ -190,7 +204,7 @@ export default function Generate() {
           </div>
           <div className="card">
             <div className="card-head"><h2>Engine</h2></div>
-            <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+            <div className="grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
               {TTS.map((n) => (
                 <button key={n} className={`pick engine-tile ${engine === n ? "on" : ""}`} onClick={() => { setEngine(n); setParams({}); }}>
                   <span className="art"><EngineArt engine={n} live={engine === n} /></span>
@@ -238,6 +252,7 @@ export default function Generate() {
                 {langs.map((l) => <option key={l.code} value={l.code}>{l.name}{l.script ? ` · ${l.script}` : ""}</option>)}
               </select>
               {engine === "orpheus" && <div className="dim tiny" style={{ marginTop: 5 }}>Orpheus speaks English only. Use Chatterbox for Hindi and 21 more languages.</div>}
+              {engine === "qwen" && <div className="dim tiny" style={{ marginTop: 5 }}>Your voice can speak any of these, even ones you didn't record in. Hindi: use Chatterbox.</div>}
               {lang !== "en" && <div className="dim tiny" style={{ marginTop: 5 }}>Write in {LANGUAGES.find((l) => l.code === lang)?.script ?? "the language's own spelling"}, not romanised text.</div>}
             </div>
             <div className="field">
@@ -246,19 +261,30 @@ export default function Generate() {
               <div className="voices">
                 {[...voices.filter((v) => lively.includes(v)), ...voices.filter((v) => !lively.includes(v))].map((v) => {
                   const real = eng?.presets[v] && eng.presets[v] !== v ? eng.presets[v] : v;
+                  const mv = myVoice(v);
+                  const sample = mv ? mv.url : samples?.voices[engine]?.[v]?.url;
                   return (
-                    <button key={v} className={`pick voice-pick ${voice === v ? "on" : ""}`} onClick={() => setVoice(v)}>
+                    <button key={v} className={`pick voice-pick ${voice === v ? "on" : ""} ${mv ? "mine" : ""}`} onClick={() => setVoice(v)}>
                       {lively.includes(v) && <Sparkle size={12} weight="fill" className="star" />}
-                      <VoiceGlyph name={real} size={46} active={voice === v} />
-                      <span className="vn">{v}</span>
-                      <span className="vs">{real !== v ? real : engine === "kokoro" ? KOKORO_LANG[v[0]] ?? "" : engine}</span>
+                      <span className="vplay"><SampleButton id={`gen/${engine}/${v}`} url={sample} size={24} label={mv?.label ?? v} /></span>
+                      <VoiceGlyph name={CLONERS.includes(engine) && !mv ? (v === "male" ? "dan" : "tara") : real} size={46} active={voice === v} />
+                      <span className="vn">{mv?.label ?? v}</span>
+                      <span className="vs">{mv ? "your voice" : real !== v ? real : engine === "kokoro" ? KOKORO_LANG[v[0]] ?? "" : engine}</span>
                     </button>
                   );
                 })}
+                {CLONERS.includes(engine) && (
+                  <Link href="/voices" className="pick voice-pick add-voice">
+                    <span className="plus"><Plus size={20} weight="bold" /></span>
+                    <span className="vn">{mine.length ? "Record another" : "Record yours"}</span>
+                    <span className="vs">20 seconds</span>
+                  </Link>
+                )}
               </div>
+              {engine === "qwen" && !mine.length && <div className="dim tiny" style={{ marginTop: 8 }}>Qwen shines with a recording of you. Until then it clones the female/male presets.</div>}
               {!voices.length && <span className="dim small">No {engine} voices for this language.</span>}
             </div>
-            {eng && Object.entries(eng.params).filter(([k]) => !(engine === "chatterbox" && k === "language") && !(engine === "kokoro" && k === "lang")).map(([k, p]) => {
+            {eng && Object.entries(eng.params).filter(([k]) => !((engine === "chatterbox" || engine === "qwen") && k === "language") && !(engine === "kokoro" && k === "lang")).map(([k, p]) => {
               const v = params[k] ?? styleParams[k] ?? p.default;
               if (p.min === undefined) return (
                 <div className="field" key={k}><label className="f">{k}</label>
@@ -294,7 +320,7 @@ export default function Generate() {
         <VoiceGlyph name={eng?.presets[voice] && eng.presets[voice] !== voice ? eng.presets[voice] : voice} size={40} active={running} />
         <input placeholder="Name this take (optional)" value={label} onChange={(e) => setLabel(e.target.value)} style={{ flex: "0 1 240px" }} />
         <div className="sum">
-          <div><div className="label">Voice</div><b><span style={{ textTransform: "capitalize" }}>{engine}</span> · {voice}</b></div>
+          <div><div className="label">Voice</div><b><span style={{ textTransform: "capitalize" }}>{engine}</span> · {myVoice(voice)?.label ?? voice}</b></div>
           <div><div className="label">Length</div><b>{lines.length} · ≈{fmtS(audioS)}</b></div>
           <div title={!ready ? "includes warm-up" : undefined}><div className="label">Ready in</div><b>≈{fmtS(estS)}</b></div>
         </div>

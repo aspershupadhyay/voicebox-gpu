@@ -1,9 +1,8 @@
 "use client";
-import { upload } from "@vercel/blob/client";
 import { ArrowSquareOut, ClosedCaptioning, FileAudio, Plus, X } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { api, fileUrl, fmtS, pct, type Job, type Word } from "./api";
+import { api, fileUrl, fmtS, pct, uploadFile, type Job, type Word } from "./api";
 import { CaptionArt, VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
 import { LANGUAGES } from "./guides";
@@ -84,11 +83,9 @@ export default function Subtitles() {
     setErr(""); setJob(null); setUploading(true);
     try {
       const done = await Promise.all(items.map(async (it, i) => {
-        const r = await upload(`uploads/${it.id}${it.file.name.match(/\.[^.]+$/)?.[0] ?? ""}`, it.file, {
-          access: "private", handleUploadUrl: "/api/upload", multipart: it.file.size > 8 * 1024 * 1024,
-          onUploadProgress: (e) => setItems((cur) => cur.map((x, k) => (k === i ? { ...x, frac: e.percentage / 100 } : x))),
-        });
-        return { id: it.id, name: it.file.name, blob: r.pathname };
+        const key = await uploadFile(it.file, `${it.id}${it.file.name.match(/\.[^.]+$/)?.[0] ?? ""}`,
+          (f) => setItems((cur) => cur.map((x, k) => (k === i ? { ...x, frac: f } : x))));
+        return { id: it.id, name: it.file.name, blob: key };
       }));
       setUploading(false);
       const j = await api<Job>("jobs", { body: { kind: "transcribe", sources: done, language: lang || undefined, label: items.length === 1 ? items[0].file.name : `${items.length} files` } });

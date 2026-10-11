@@ -5,29 +5,34 @@ import { fmtS, type Job } from "./api";
 
 const TTS_STEPS = [["queued", "Queued"], ["prepare", "Warm up"], ["generating", "Voicing"], ["subtitles", "Subtitles"], ["saving", "Saving"], ["done", "Done"]] as const;
 const ASR_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["downloading", "Fetch"], ["prepare", "Warm up"], ["transcribing", "Transcribe"], ["saving", "Saving"], ["done", "Done"]] as const;
+const VIDEO_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["prepare", "Warm up"], ["rendering", "Render"], ["encoding", "Encode"], ["saving", "Saving"], ["done", "Done"]] as const;
+const REF_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["cleaning", "Clean"], ["prepare", "Warm up"], ["transcribing", "Transcribe"], ["saving", "Saving"], ["done", "Done"]] as const;
+const saved = (job: Job | null) => !!(job?.library || job?.myvoice);
 
 function stepKey(job: Job | null, uploading: boolean) {
   if (uploading) return "upload";
   if (!job) return "queued";
   const s = job.progress.stage;
-  if (job.status === "done") return job.library ? "done" : "saving";
+  if (job.status === "done") return saved(job) ? "done" : "saving";
+  if (job.kind === "reference" && s === "downloading") return "cleaning";
   if (["installing", "loading", "reference"].includes(s)) return "prepare";
   if (s === "packaging") return "saving";
   return s;
 }
 
 /** Live job progress: stage stepper + a bar that glides between polls using the worker's ETA. */
-export default function JobProgress({ job, uploading, uploadFrac, onCancel }: {
-  job: Job | null; uploading?: boolean; uploadFrac?: number; onCancel?: () => void;
+export default function JobProgress({ job, uploading, uploadFrac, onCancel, kind: kindHint }: {
+  job: Job | null; uploading?: boolean; uploadFrac?: number; onCancel?: () => void; kind?: Job["kind"];
 }) {
   const [shown, setShown] = useState(0);
   const [, tick] = useState(0);
   const anchor = useRef({ f: 0, eta: 0, at: 0 });
-  const kind = job?.kind ?? (uploading ? "transcribe" : "tts");
-  const steps = (kind === "transcribe" ? ASR_STEPS : TTS_STEPS).filter(([k]) => k !== "subtitles" || job?.subtitles);
+  const kind = job?.kind ?? kindHint ?? (uploading ? "transcribe" : "tts");
+  const all: readonly (readonly [string, string])[] = kind === "transcribe" ? ASR_STEPS : kind === "video" ? VIDEO_STEPS : kind === "reference" ? REF_STEPS : TTS_STEPS;
+  const steps = all.filter(([k]) => (k !== "subtitles" || job?.subtitles) && (k !== "upload" || kind === "transcribe" || kind === "reference" || uploading || job?.gen?.source));
   const key = stepKey(job, !!uploading);
   const idx = Math.max(0, steps.findIndex(([k]) => k === key));
-  const running = uploading || (job && ["queued", "running"].includes(job.status)) || (job?.status === "done" && !job.library);
+  const running = uploading || (job && ["queued", "running"].includes(job.status)) || (job?.status === "done" && !saved(job));
   const prep = key === "prepare";
 
   useEffect(() => {
@@ -57,12 +62,14 @@ export default function JobProgress({ job, uploading, uploadFrac, onCancel }: {
   const headline = uploading ? `Uploading… ${Math.round((uploadFrac ?? 0) * 100)}%`
     : !job ? "Starting…"
     : job.status === "queued" ? `Queued${job.queue_position ? ` · #${job.queue_position} in line` : ""}`
-    : job.status === "done" ? (job.library ? "Done · saved to library" : "Saving to library…")
+    : job.status === "done" ? (saved(job) ? (kind === "reference" ? "Done · your voice is ready" : "Done · saved to library") : kind === "reference" ? "Saving your voice…" : "Saving to library…")
     : job.status === "error" ? "Failed" : job.status === "cancelled" ? "Cancelled"
     : prep ? (p!.stage === "installing" ? "Installing engine (first run only)" : "Loading model onto the GPU")
-    : key === "generating" ? `Voicing ${p!.detail}` : key === "subtitles" ? "Writing subtitles" : key === "transcribing" ? `Transcribing ${p!.detail}` : key === "downloading" ? "Fetching your files" : "Working";
+    : key === "generating" ? `Voicing ${p!.detail}` : key === "subtitles" ? "Writing subtitles" : key === "transcribing" ? (kind === "reference" ? "Writing down what you said" : `Transcribing ${p!.detail}`)
+    : key === "downloading" ? (kind === "video" ? "Fetching the start frame" : "Fetching your files") : key === "rendering" ? `Rendering · ${p!.detail}` : key === "encoding" ? "Encoding the MP4"
+    : key === "cleaning" ? "Cleaning up your recording" : "Working";
 
-  const done = job?.status === "done" && !!job.library;
+  const done = job?.status === "done" && saved(job);
   const failed = job?.status === "error" || job?.status === "cancelled";
   const N = 48, lit = Math.round(shown * N);
 
@@ -73,7 +80,7 @@ export default function JobProgress({ job, uploading, uploadFrac, onCancel }: {
           <span className={`recdot ${done ? "done" : ""}`} style={failed ? { color: "var(--dim)" } : undefined}><i style={failed ? { background: "var(--faint)", boxShadow: "none", animation: "none" } : undefined} />{done ? "SAVED" : failed ? "STOPPED" : running ? "REC" : "READY"}</span>
           <h3>{headline}</h3>
           <div className="dim small" style={{ marginTop: 4 }}>
-            {prep ? p?.detail : job?.status === "running" ? `${p?.done ?? 0} of ${p?.total ?? 0} ${kind === "transcribe" ? "files" : "lines"} finished` : job?.error ?? " "}
+            {prep ? p?.detail : job?.status === "running" ? (kind === "video" || kind === "reference" ? p?.detail || " " : `${p?.done ?? 0} of ${p?.total ?? 0} ${kind === "transcribe" ? "files" : "lines"} finished`) : job?.error ?? " "}
           </div>
         </div>
         <div className="row" style={{ gap: 22, alignItems: "flex-start" }}>

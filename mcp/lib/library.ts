@@ -1,6 +1,6 @@
-// Permanent storage for finished jobs: private Vercel Blob under library/<jobId>/.
-// Audio is served to the browser through short-lived presigned CDN URLs (fast), with a proxy fallback.
-import { del, get, issueSignedToken, list, parseStoreIdFromDelegationToken, presignUrl, put } from "@vercel/blob";
+// Permanent storage for finished jobs: the private R2 bucket under library/<jobId>/.
+// Files are served to the browser (and handed to the worker) through short-lived presigned URLs.
+import { delPrefix, getJson, getObj, listObjs, presign, putJson, putObj, typeOf } from "./store";
 import { call } from "./worker";
 import { unzip } from "./zip";
 
@@ -13,47 +13,32 @@ export type LibJob = {
   id: string; kind?: "tts" | "transcribe" | "video"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; created: number; archived: number; source?: string;
   subs?: { cues: number; timeline: string } | null; match?: number | null; results: LibLine[];
-  video?: { width: number; height: number; duration: number; size: number; poster?: boolean; voice_job?: string };
+  video?: { width: number; height: number; duration: number; size: number; poster?: boolean; voice_job?: string; has_audio?: boolean };
+  gen?: { model: string; mode: "t2v" | "i2v"; prompt: string; negative?: string; seed: number; steps: number; fps: number; frames: number; seconds: number; source?: boolean };
 };
 
 const ROOT = "library/";
-const opts = { access: "private" as const, addRandomSuffix: false, allowOverwrite: true };
-export const FILE_RE = /^(?:[A-Za-z0-9_-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json)|subtitles\.(?:srt|vtt|json)|video\.mp4|poster\.jpg)$/;
-const TYPES: Record<string, string> = { wav: "audio/wav", srt: "application/x-subrip", vtt: "text/vtt", json: "application/json", mp4: "video/mp4", jpg: "image/jpeg" };
-export const typeOf = (name: string) => TYPES[name.split(".").pop() ?? ""] ?? "application/octet-stream";
+export const FILE_RE = /^(?:[A-Za-z0-9_-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json)|subtitles\.(?:srt|vtt|json)|video\.mp4|poster\.jpg|source\.(?:jpg|png|webp))$/;
+export { typeOf };
 
-async function readJson<T>(path: string): Promise<T | null> {
-  try {
-    const r = await get(path, { access: "private", useCache: false });
-    if (!r || r.statusCode !== 200) return null;
-    return JSON.parse(await new Response(r.stream).text()) as T;
-  } catch {
-    return null;
-  }
-}
+export const getLibJob = (id: string) => getJson<LibJob>(`${ROOT}${id}/job.json`).catch(() => null);
 
-export const getLibJob = (id: string) => readJson<LibJob>(`${ROOT}${id}/job.json`);
+export const putLibJob = (job: LibJob) => putJson(`${ROOT}${job.id}/job.json`, job);
 
-export async function putLibJob(job: LibJob) {
-  await put(`${ROOT}${job.id}/job.json`, JSON.stringify(job, null, 2), { ...opts, contentType: "application/json" });
-}
-
-export async function putFile(jobId: string, name: string, data: ArrayBuffer | Blob | ReadableStream | string) {
-  await put(`${ROOT}${jobId}/${name}`, data, { ...opts, contentType: typeOf(name) });
-}
+export const putFile = (jobId: string, name: string, data: BodyInit) => putObj(`${ROOT}${jobId}/${name}`, data);
 export const putAudio = (jobId: string, lineId: string, data: ArrayBuffer) => putFile(jobId, `${lineId}.wav`, data);
 
-export async function readFile(jobId: string, name: string) {
-  const r = await get(`${ROOT}${jobId}/${name}`, { access: "private", useCache: false });
-  return r && r.statusCode === 200 ? r : null;
-}
+export const readFile = (jobId: string, name: string) => getObj(`${ROOT}${jobId}/${name}`);
+export const listFiles = async (jobId: string) => (await listObjs(`${ROOT}${jobId}/`)).map((o) => ({ ...o, name: o.key.slice(`${ROOT}${jobId}/`.length) }));
 export const readAudio = (jobId: string, lineId: string) => readFile(jobId, `${lineId}.wav`);
 
 type WorkerResult = LibLine & { url?: string; srt_url?: string; vtt_url?: string; json_url?: string };
 type WorkerJob = {
   id: string; kind?: "tts" | "transcribe" | "video"; engine: string; voice: string; label?: string; language?: string | null;
-  params?: Record<string, unknown>; style?: string; created?: number; status: string; results: WorkerResult[];
+  params?: Record<string, unknown>; style?: string; created?: number; status: string;
   subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; attach_to?: string; zip_url?: string;
+  gen?: LibJob["gen"] & Record<string, unknown>; video?: { width: number; height: number; duration: number; size: number; has_audio?: boolean; fps?: number; frames?: number } | null;
+  results: (WorkerResult & { poster_url?: string })[];
 };
 
 /** Copy a finished worker job (audio + subtitles via signed worker URLs) into the library. Idempotent. */
@@ -62,6 +47,7 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   if (job.attach_to) return attachSubtitles(job);
   const existing = await getLibJob(job.id);
   if (existing) return existing;
+  if (job.kind === "video") return archiveVideo(job);
   const names: string[] = [];
   for (const r of job.results) {
     if (r.url) names.push(`${r.id}.wav`);
@@ -95,15 +81,37 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   return lib;
 }
 
-/** Presigned PUT URLs (15 min) for files in one library job, plus the headers Blob expects on each PUT. */
+/** A generated clip: the MP4, its poster frame and the source image (image-to-video) go straight from the worker to R2. */
+async function archiveVideo(job: WorkerJob): Promise<LibJob> {
+  const g = job.gen!;
+  const names = ["video.mp4", "poster.jpg", ...(g.source ? ["source.jpg"] : [])];
+  const pushed = await pushFromWorker(job.id, job.id, names).catch(() => false);
+  if (!pushed) {
+    const r = job.results[0];
+    for (const [name, url] of [["video.mp4", r?.url], ["poster.jpg", r?.poster_url]] as const) {
+      if (!url) continue;
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`fetch ${name}: ${res.status}`);
+      await putFile(job.id, name, await res.arrayBuffer());
+    }
+  }
+  const v = job.video!;
+  const lib: LibJob = {
+    id: job.id, kind: "video", engine: job.engine, voice: "", label: job.label || g.prompt.slice(0, 80),
+    created: Math.round((job.created ?? Date.now() / 1000) * 1000), archived: Date.now(), source: "generated", results: [],
+    video: { width: v.width, height: v.height, duration: v.duration, size: v.size, poster: true, has_audio: !!v.has_audio },
+    gen: { model: g.model, mode: g.mode, prompt: g.prompt, negative: g.negative || undefined, seed: g.seed, steps: g.steps, fps: g.fps,
+      frames: g.frames, seconds: g.seconds, source: !!g.source },
+  };
+  await putLibJob(lib);
+  return lib;
+}
+
+/** Presigned PUT URLs (15 min) for files in one library job. */
 export async function presignPuts(libJob: string, names: string[]) {
-  const token = await issueSignedToken({ operations: ["put"], validUntil: Date.now() + 15 * 60 * 1000 });
   const targets: Record<string, string> = {};
-  await Promise.all(names.map(async (n) => {
-    targets[n] = (await presignUrl(token, { operation: "put", pathname: `${ROOT}${libJob}/${n}`, access: "private", allowOverwrite: true, addRandomSuffix: false })).presignedUrl;
-  }));
-  const headers = { "x-api-version": "12", "x-vercel-blob-store-id": parseStoreIdFromDelegationToken(token.delegationToken), "x-vercel-blob-access": "private" };
-  return { targets, headers };
+  await Promise.all(names.map(async (n) => { targets[n] = await presign(`${ROOT}${libJob}/${n}`, "PUT", 15 * 60); }));
+  return { targets, headers: {} as Record<string, string> };
 }
 
 /** Ask the worker to upload files straight to Blob with presigned PUT URLs (fast path; the tunnel is slow). */
@@ -149,7 +157,7 @@ async function attachSubtitles(job: WorkerJob): Promise<LibJob | null> {
     const off = line.start ?? t;
     if (r?.json_url) {
       const f = await readFile(target.id, `${r.id}.subs.json`);
-      const j = f ? await new Response(f.stream).json().catch(() => null) : null;
+      const j = f ? await f.json().catch(() => null) : null;
       for (const c of j?.cues ?? []) allCues.push({ s: +(c.s + off).toFixed(3), e: +(c.e + off).toFixed(3), text: c.text });
     }
     if (r) Object.assign(line, { heard: r.heard, match: r.match, subs: true });
@@ -171,50 +179,29 @@ async function attachSubtitles(job: WorkerJob): Promise<LibJob | null> {
 }
 
 export async function listLibrary(): Promise<LibJob[]> {
-  const paths: string[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await list({ prefix: ROOT, cursor, limit: 1000 });
-    paths.push(...page.blobs.map((b) => b.pathname).filter((p) => p.endsWith("/job.json")));
-    cursor = page.hasMore ? page.cursor : undefined;
-  } while (cursor);
-  const jobs = (await Promise.all(paths.map((p) => readJson<LibJob>(p)))).filter(Boolean) as LibJob[];
+  const keys = (await listObjs(ROOT)).map((o) => o.key).filter((k) => k.endsWith("/job.json"));
+  const jobs = (await Promise.all(keys.map((k) => getJson<LibJob>(k).catch(() => null)))).filter(Boolean) as LibJob[];
   return jobs.sort((a, b) => b.created - a.created);
 }
 
-export async function deleteLibJob(id: string) {
-  let cursor: string | undefined;
-  do {
-    const page = await list({ prefix: `${ROOT}${id}/`, cursor, limit: 1000 });
-    if (page.blobs.length) await del(page.blobs.map((b) => b.url));
-    cursor = page.hasMore ? page.cursor : undefined;
-  } while (cursor);
+export const deleteLibJob = (id: string) => delPrefix(`${ROOT}${id}/`);
+
+/** Presigned GET URLs for library files. */
+export async function signer(ttlSec = 6 * 3600) {
+  return async (jobId: string, name: string) => presign(`${ROOT}${jobId}/${name}`, "GET", ttlSec);
 }
 
-/** Presigned CDN GET URLs for many library files with one token; proxy URLs if presigning is unavailable. */
-export async function signer(ttlMs = 6 * 3600 * 1000) {
-  try {
-    const token = await issueSignedToken({ operations: ["get"], validUntil: Date.now() + ttlMs });
-    return async (jobId: string, name: string) =>
-      (await presignUrl(token, { operation: "get", pathname: `${ROOT}${jobId}/${name}`, access: "private" })).presignedUrl;
-  } catch {
-    return async (jobId: string, name: string) => `/api/file/${jobId}/${name}`;
-  }
-}
-
-/** Presigned GET for an arbitrary blob pathname (e.g. an upload the worker must fetch). */
-export async function presignPath(pathname: string, ttlMs = 6 * 3600 * 1000) {
-  const token = await issueSignedToken({ operations: ["get"], pathname, validUntil: Date.now() + ttlMs });
-  return (await presignUrl(token, { operation: "get", pathname, access: "private" })).presignedUrl;
-}
+/** Presigned GET for any stored key (e.g. an upload the worker must fetch). */
+export const presignPath = (key: string, ttlSec = 6 * 3600, download?: string) => presign(key, "GET", ttlSec, download);
 
 export async function withUrls(job: LibJob, sign: (j: string, n: string) => Promise<string>) {
   const results = await Promise.all(job.results.map(async (r) => ({
     ...r, audio: job.kind === "tts" || !job.kind ? await sign(job.id, `${r.id}.wav`) : null,
   })));
   if (job.kind === "video") {
-    const [video_url, poster_url] = await Promise.all([sign(job.id, "video.mp4"), job.video?.poster ? sign(job.id, "poster.jpg") : null]);
-    return { ...job, results, video_url, poster_url };
+    const [video_url, poster_url, source_url] = await Promise.all([sign(job.id, "video.mp4"), job.video?.poster ? sign(job.id, "poster.jpg") : null,
+      job.gen?.source ? sign(job.id, "source.jpg") : null]);
+    return { ...job, results, video_url, poster_url, source_url };
   }
   return { ...job, results };
 }

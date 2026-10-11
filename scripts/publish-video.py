@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a rendered video to the dashboard library (private Vercel Blob), optionally with subtitles.
+"""Publish a rendered video to the dashboard library (private R2 bucket), optionally with subtitles.
 
   scripts/publish-video.py renders/film.mp4 --label "GPS · final" \
       [--poster poster.jpg] [--engine orpheus --voice tara] [--voice-job <library id>] \

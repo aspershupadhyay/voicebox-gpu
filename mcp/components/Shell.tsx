@@ -1,6 +1,6 @@
 "use client";
 import {
-  ArrowsClockwise, Books, ClosedCaptioning, Cpu, Fire, MagnifyingGlass, Microphone, Power, SignOut, SquaresFour, Waveform,
+  ArrowsClockwise, Books, ClosedCaptioning, Cpu, FilmSlate, Fire, HardDrives, MagnifyingGlass, Microphone, Power, SignOut, SquaresFour, UserSound, Waveform,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -15,10 +15,15 @@ export const useStatus = () => useContext(StatusCtx);
 const NAV = [
   { href: "/", name: "Overview", Icon: SquaresFour },
   { href: "/generate", name: "Generate", Icon: Microphone },
+  { href: "/voices", name: "Voices", Icon: UserSound },
+  { href: "/video", name: "Video", Icon: FilmSlate },
   { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning },
   { href: "/library", name: "Library", Icon: Books },
 ] as const;
-const ENGINE_ORDER = ["orpheus", "chatterbox", "kokoro", "whisper"];
+const ENGINE_ORDER = ["orpheus", "chatterbox", "kokoro", "qwen", "whisper", "wan", "ltx"];
+const ALL_ENGINES = ["orpheus", "chatterbox", "kokoro", "qwen", "whisper", "wan", "ltx"];
+const MODE: Record<string, string> = { voice: "Voice mode", visual: "Video mode", idle: "Idle · GPU free", mixed: "Switching" };
+const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 const stateClass = (s?: string) => (s === "ready" ? "ready" : s === "loading" || s === "installing" || s === "busy" ? "busy" : s === "error" ? "err" : "");
 
 export function fmtUptime(s?: number) {
@@ -93,8 +98,8 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
     };
     return [
       ...NAV.map((n) => ({ id: `go-${n.href}`, label: n.name, group: "Go to", Icon: n.Icon as typeof Fire, run: () => router.push(n.href) })),
-      ...["orpheus", "whisper", "chatterbox", "kokoro"].map((n) => ({ id: `warm-${n}`, label: `Warm up ${n}`, group: "Engines", Icon: Fire, run: engine(n, "load") })),
-      ...["orpheus", "whisper", "chatterbox"].map((n) => ({ id: `unload-${n}`, label: `Unload ${n}`, group: "Engines", Icon: Power, run: engine(n, "unload") })),
+      ...ALL_ENGINES.map((n) => ({ id: `warm-${n}`, label: `Warm up ${n}`, group: "Engines", Icon: Fire, run: engine(n, "load") })),
+      ...ALL_ENGINES.map((n) => ({ id: `unload-${n}`, label: `Unload ${n}`, group: "Engines", Icon: Power, run: engine(n, "unload") })),
       { id: "refresh", label: "Refresh worker status", group: "System", Icon: ArrowsClockwise, run: () => refresh() },
       { id: "signout", label: "Sign out", group: "System", Icon: SignOut, run: async () => { await fetch("/api/login", { method: "DELETE" }); location.href = "/login"; } },
     ];
@@ -102,13 +107,17 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((p) => !p); }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((p) => !p); return; }
+      const t = e.target as HTMLElement;
+      if (e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable]")) return;
+      const n = Number(e.key);
+      if (n >= 1 && n <= NAV.length) router.push(NAV[n - 1].href);
     };
     const onScroll = () => setScrolled(window.scrollY > 8);
     window.addEventListener("keydown", onKey);
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("scroll", onScroll); };
-  }, []);
+  }, [router]);
 
   return (
     <div className="app">
@@ -133,9 +142,22 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
               <div className="meta">{status.gpu?.name?.replace("NVIDIA ", "")} · up {fmtUptime(status.uptime_s)}</div>
               <div style={{ margin: "12px 0 4px" }}><LedMeter value={vram} segments={18} label="GPU memory" /></div>
               <div className="eng" style={{ marginBottom: 6 }}><span>VRAM</span><b style={{ color: "var(--ink2)" }}>{status.gpu?.used_gb} / {status.gpu?.total_gb} GB</b></div>
-              {ENGINE_ORDER.filter((n) => status.engines?.[n]).map((n) => (
-                <div key={n} className="eng"><span className={`dot ${status.engines![n] === "ready" ? "ok" : stateClass(status.engines![n]) === "busy" ? "warn" : "off"}`} style={{ width: 6, height: 6, boxShadow: "none", animation: "none" }} />{n}<b className={stateClass(status.engines![n])}>{status.engines![n]}</b></div>
-              ))}
+              {status.mode && <div className={`mode-chip ${status.mode}`}>{status.mode === "visual" ? <FilmSlate size={13} weight="fill" /> : <Waveform size={13} weight="bold" />}{MODE[status.mode] ?? status.mode}</div>}
+              {ENGINE_ORDER.filter((n) => status.engines?.[n] && (status.engines[n] !== "idle" || n === "kokoro" || n === "orpheus")).map((n) => {
+                const left = status.idle_unload_s?.[n];
+                return (
+                  <div key={n} className="eng" title={left != null ? `unloads after ${status.idle_min ?? 10} idle minutes` : undefined}>
+                    <span className={`dot ${status.engines![n] === "ready" ? "ok" : stateClass(status.engines![n]) === "busy" ? "warn" : "off"}`} style={{ width: 6, height: 6, boxShadow: "none", animation: "none" }} />{n}
+                    <b className={stateClass(status.engines![n])}>{left != null && left < 600 ? `idle ${mmss(left)}` : status.engines![n]}</b>
+                  </div>
+                );
+              })}
+              {(status.ram?.total_gb || status.disk?.total_gb) ? (
+                <div className="res">
+                  {status.ram?.total_gb ? <div className="eng"><span>RAM</span><b style={{ color: "var(--ink2)" }}>{status.ram.used_gb} / {status.ram.total_gb} GB</b></div> : null}
+                  {status.disk?.total_gb ? <div className="eng" title={Object.entries(status.disk.weights_gb).map(([k, v]) => `${k} ${v} GB`).join(" · ") || "no weights downloaded"}><span><HardDrives size={11} /> Disk free</span><b style={{ color: status.disk.free_gb < 25 ? "var(--warn)" : "var(--ink2)" }}>{Math.round(status.disk.free_gb)} GB</b></div> : null}
+                </div>
+              ) : null}
             </>
           ) : (
             <div className="meta" style={{ lineHeight: 1.6 }}>{status?.reason === "heartbeat stale" ? "The Colab runtime stopped. Run the notebook to bring it back." : "Waiting for the Colab worker to check in."}</div>

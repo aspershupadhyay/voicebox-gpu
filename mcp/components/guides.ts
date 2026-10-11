@@ -2,18 +2,18 @@
 export type Guide = { title: string; tagline: string; sections: { h: string; body: string[]; example?: string }[] };
 
 export const LANGUAGES: { code: string; name: string; engines: string[]; kokoro?: string[]; script?: string }[] = [
-  { code: "en", name: "English", engines: ["orpheus", "chatterbox", "kokoro", "whisper"], kokoro: ["af_heart", "af_bella", "am_michael", "am_fenrir", "bf_emma", "bm_george"] },
+  { code: "en", name: "English", engines: ["qwen", "orpheus", "chatterbox", "kokoro", "whisper"], kokoro: ["af_heart", "af_bella", "am_michael", "am_fenrir", "bf_emma", "bm_george"] },
   { code: "hi", name: "Hindi", engines: ["chatterbox", "kokoro", "whisper"], kokoro: ["hf_alpha", "hf_beta", "hm_omega", "hm_psi"], script: "Devanagari (हिन्दी)" },
-  { code: "es", name: "Spanish", engines: ["chatterbox", "kokoro", "whisper"], kokoro: ["ef_dora", "em_alex"] },
-  { code: "fr", name: "French", engines: ["chatterbox", "kokoro", "whisper"], kokoro: ["ff_siwis"] },
-  { code: "it", name: "Italian", engines: ["chatterbox", "kokoro", "whisper"], kokoro: ["if_sara", "im_nicola"] },
-  { code: "pt", name: "Portuguese", engines: ["chatterbox", "kokoro", "whisper"], kokoro: ["pf_dora", "pm_alex"] },
-  { code: "ja", name: "Japanese", engines: ["chatterbox", "kokoro", "whisper"], kokoro: ["jf_alpha", "jf_gongitsune", "jm_kumo"], script: "Japanese script (kana/kanji)" },
-  { code: "zh", name: "Chinese (Mandarin)", engines: ["chatterbox", "kokoro", "whisper"], kokoro: ["zf_xiaobei", "zf_xiaoxiao", "zm_yunjian", "zm_yunxi"], script: "Simplified Chinese" },
-  { code: "de", name: "German", engines: ["chatterbox", "whisper"] },
+  { code: "es", name: "Spanish", engines: ["qwen", "chatterbox", "kokoro", "whisper"], kokoro: ["ef_dora", "em_alex"] },
+  { code: "fr", name: "French", engines: ["qwen", "chatterbox", "kokoro", "whisper"], kokoro: ["ff_siwis"] },
+  { code: "it", name: "Italian", engines: ["qwen", "chatterbox", "kokoro", "whisper"], kokoro: ["if_sara", "im_nicola"] },
+  { code: "pt", name: "Portuguese", engines: ["qwen", "chatterbox", "kokoro", "whisper"], kokoro: ["pf_dora", "pm_alex"] },
+  { code: "ja", name: "Japanese", engines: ["qwen", "chatterbox", "kokoro", "whisper"], kokoro: ["jf_alpha", "jf_gongitsune", "jm_kumo"], script: "Japanese script (kana/kanji)" },
+  { code: "zh", name: "Chinese (Mandarin)", engines: ["qwen", "chatterbox", "kokoro", "whisper"], kokoro: ["zf_xiaobei", "zf_xiaoxiao", "zm_yunjian", "zm_yunxi"], script: "Simplified Chinese" },
+  { code: "de", name: "German", engines: ["qwen", "chatterbox", "whisper"] },
   { code: "ar", name: "Arabic", engines: ["chatterbox", "whisper"], script: "Arabic script" },
-  { code: "ru", name: "Russian", engines: ["chatterbox", "whisper"], script: "Cyrillic" },
-  { code: "ko", name: "Korean", engines: ["chatterbox", "whisper"], script: "Hangul" },
+  { code: "ru", name: "Russian", engines: ["qwen", "chatterbox", "whisper"], script: "Cyrillic" },
+  { code: "ko", name: "Korean", engines: ["qwen", "chatterbox", "whisper"], script: "Hangul" },
   { code: "tr", name: "Turkish", engines: ["chatterbox", "whisper"] },
   { code: "nl", name: "Dutch", engines: ["chatterbox", "whisper"] },
   { code: "pl", name: "Polish", engines: ["chatterbox", "whisper"] },
@@ -26,6 +26,9 @@ export const LANGUAGES: { code: string; name: string; engines: string[]; kokoro?
   { code: "ms", name: "Malay", engines: ["chatterbox", "whisper"] },
   { code: "sw", name: "Swahili", engines: ["chatterbox", "whisper"] },
 ];
+
+/** Qwen3-TTS takes language names, not codes. */
+export const QWEN_LANG: Record<string, string> = { en: "English", zh: "Chinese", ja: "Japanese", ko: "Korean", de: "German", fr: "French", ru: "Russian", pt: "Portuguese", es: "Spanish", it: "Italian" };
 
 export const KOKORO_LANG: Record<string, string> = { a: "en", b: "en", e: "es", f: "fr", h: "hi", i: "it", j: "ja", p: "pt", z: "zh" };
 
@@ -197,6 +200,92 @@ export const GUIDES: Record<string, Guide> = {
         body: [
           "Clean audio wins. Music beds and long silences are where Whisper invents words. Transcribe the voice track before it's mixed with music.",
           "Any audio or video format works (wav, mp3, m4a, mp4, mov…). Files go straight from your browser to private storage, so size isn't a problem.",
+        ],
+      },
+    ],
+  },
+  qwen: {
+    title: "Your voice · Qwen3-TTS",
+    tagline: "The best cloner here: 10-20 seconds of you becomes a voice that reads any script. 10 languages.",
+    sections: [
+      {
+        h: "Record a good reference",
+        body: [
+          "10-20 seconds of one person talking. Longer is trimmed to ~20 s at a word boundary; under 8 s still works but sounds less like you.",
+          "A quiet room with soft furnishings beats a big echoey one. No music, TV or fans behind you: the cloner copies the room as well as the voice.",
+          "Hold the phone or mic a hand's width (15-20 cm) from your mouth, slightly off to the side so p and b sounds don't pop.",
+          "Read in the energy you want back. The clone copies your pace and attitude, so for tech videos read like you're excited to show something.",
+        ],
+      },
+      {
+        h: "What happens to it",
+        body: [
+          "The recording is cleaned (rumble and hiss removed, silence trimmed, level evened out) and Whisper writes down exactly what you said. The cloner needs those words to line up your voice with the text.",
+          "It's stored privately in your R2 bucket, so it survives the Colab runtime being recycled. The worker fetches it again when needed.",
+        ],
+      },
+      {
+        h: "Settings",
+        body: [
+          "Temperature 0.7 stays closest to your recording; 0.85-0.9 is livelier. The Tech style uses 0.85.",
+          "Change the seed for a different take of the same line, like a second read in the booth.",
+          "Your voice can speak any of the 10 languages, even ones you didn't record in. For Hindi use Chatterbox with the same recording.",
+        ],
+      },
+    ],
+  },
+};
+
+/** Prompting guides for the video models. */
+export const VIDEO_GUIDES: Record<string, Guide> = {
+  wan: {
+    title: "Wan 2.2",
+    tagline: "Sharp 720p, strong motion and the best prompt following of the two. Silent clips up to 5 s.",
+    sections: [
+      {
+        h: "Write the shot",
+        body: [
+          "Subject, action, place, camera, light, style. In that order. Wan likes detail: 40-100 words beats a one-liner.",
+          "Name the camera move: slow dolly in, tracking shot, orbit around, aerial drone, handheld, static tripod.",
+          "Name the light and the look: soft window light, neon rim light, golden hour; cinematic, macro, isometric 3D, flat motion graphics.",
+        ],
+        example: "Close-up of a glowing GPS chip on a dark circuit board, tiny signal rings pulsing outward from it in teal light. Slow dolly in, shallow depth of field, cinematic, high contrast, subtle dust in the air.",
+      },
+      {
+        h: "Start from a picture",
+        body: [
+          "With a start frame, the image IS the first frame. Describe what moves and how the camera moves, not what things look like.",
+          "Keep the motion believable for 5 seconds: one main action, one camera move.",
+        ],
+      },
+      {
+        h: "Fast or full",
+        body: [
+          "Fast is the 4-step Turbo distill: a few minutes per clip and very good. Use it for everything first.",
+          "Full runs the original model for 30 steps: a little more detail, about 10x slower. Use it for the final hero shot once the seed and prompt are right.",
+          "Text in the frame (titles, labels) comes out garbled in every video model. Add text in HyperFrames instead.",
+        ],
+      },
+    ],
+  },
+  ltx: {
+    title: "LTX-2.3",
+    tagline: "Video and matching sound in one pass. Up to 10 s, 8 steps. Softer detail than Wan (it runs in 4-bit on the L4).",
+    sections: [
+      {
+        h: "Write it like a scene",
+        body: [
+          "Describe the shot in time order, in present tense: what we see first, what moves, where the camera goes. 4-8 sentences.",
+          "Describe the sound too. LTX generates audio from the same prompt: \"Audio: soft server hum, quick keyboard clicks, a short rising whoosh.\"",
+          "Spoken lines can be written in quotes, but lip sync is rough. For narration use a voice engine and mix it in.",
+        ],
+        example: "A dark desk lit by one monitor. Lines of code scroll quickly as the camera slowly pushes in toward the screen. A notification pops up and glows orange. Audio: low room tone, fast mechanical keyboard typing, a soft chime when the notification appears.",
+      },
+      {
+        h: "Good uses",
+        body: [
+          "Atmospheric b-roll with built-in sound effects, loops of motion behind captions, and anything longer than 5 s.",
+          "Turn the sound off when you only need picture: you'll mix your own audio anyway.",
         ],
       },
     ],

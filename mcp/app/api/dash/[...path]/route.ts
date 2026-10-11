@@ -3,6 +3,23 @@ import { isAuthed } from "@/lib/session";
 import { call, WorkerOffline } from "@/lib/worker";
 import { loadWorker, STALE_MS } from "@/lib/registry";
 import { archiveWorkerJob, deleteLibJob, FILE_RE, getLibJob, listLibrary, presignPath, presignPuts, putFile, putLibJob, signer, withUrls, type LibJob } from "@/lib/library";
+import { deleteMyVoice, getMyVoice, getSamples, isCustomVoice, listMyVoices, putMyVoice, recordSample, refSync, samplePutUrl, VOICE_RE, voicePutUrl } from "@/lib/voices";
+
+type RefJob = { id: string; kind: string; status: string; voice: string; label?: string; version?: string; warnings?: string[];
+  results: { id: string; text: string; duration: number; level_db?: number }[] };
+
+/** A finished voice recording job: copy the cleaned reference into R2 (voices/<name>/) and save its metadata. Idempotent. */
+async function archiveReference(job: RefJob) {
+  const have = await getMyVoice(job.voice);
+  if (have && have.version === job.version) return have;
+  const r = job.results[0];
+  const res = await call<{ failed: Record<string, string> }>(`/jobs/${job.id}/push`, { body: { targets: { "reference.wav": await voicePutUrl(job.voice) }, headers: {} }, timeoutMs: 55_000 });
+  if (Object.keys(res.failed).length) throw new Error(`could not store the recording: ${Object.values(res.failed)[0]}`);
+  const v = { name: job.voice, label: job.label || job.voice, transcript: r.text, duration: r.duration, version: job.version || String(Date.now()),
+    created: have?.created ?? Date.now(), warnings: job.warnings ?? [], level_db: r.level_db };
+  await putMyVoice(v);
+  return v;
+}
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -34,10 +51,17 @@ export async function GET(req: Request, ctx: Ctx) {
       }
     }
     if (a === "voices") return Response.json(await call("/voices"));
+    if (a === "samples") return Response.json(await getSamples());
+    if (a === "myvoices") return Response.json({ voices: await listMyVoices() });
     if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
     if (a === "jobs" && !b) return Response.json(await call("/jobs"));
     if (a === "jobs" && b) {
       const job = await call<Parameters<typeof archiveWorkerJob>[0]>(`/jobs/${b}`);
+      if (new URL(req.url).searchParams.has("raw")) return Response.json(job); // status only, no archiving (sample script)
+      if (job.kind === ("reference" as string)) {
+        const myvoice = job.status === "done" ? await archiveReference(job as unknown as RefJob) : null;
+        return Response.json({ ...job, myvoice });
+      }
       const lib = job.status === "done" ? await archiveWorkerJob(job) : null;
       return Response.json({ ...job, library: lib });
     }
@@ -63,7 +87,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const body = await req.json().catch(() => ({}));
     if (a === "jobs" && !b) {
       if (body.kind === "transcribe") {
-        // uploads live in private Blob: hand the worker short-lived presigned links
+        // uploads live in the private bucket: hand the worker short-lived presigned links
         body.sources = await Promise.all(
           (body.sources ?? []).map(async (s: { blob?: string; url?: string }) =>
             s.blob ? { ...s, url: await presignPath(s.blob), blob: undefined } : s),
@@ -78,10 +102,44 @@ export async function POST(req: Request, ctx: Ctx) {
           body.attach_to = lib.id;
         }
       }
+      if (body.kind === "video") {
+        // the start frame: an upload (uploads/...) or a library video's poster/source frame
+        if (body.image_key) {
+          if (!/^uploads\/[A-Za-z0-9._-]+$/.test(String(body.image_key))) throw new Error("bad image_key");
+          body.image_url = await presignPath(String(body.image_key), 3600);
+        } else if (body.image_from) {
+          const lib = await getLibJob(String(body.image_from));
+          if (!lib?.video?.poster) throw new Error("that library item has no frame to start from");
+          body.image_url = await presignPath(`library/${lib.id}/${body.image_frame === "source" && lib.gen?.source ? "source.jpg" : "poster.jpg"}`, 3600);
+        }
+        delete body.image_key; delete body.image_from;
+      }
+      if (!body.kind && typeof body.voice === "string" && isCustomVoice(body.voice)) {
+        // a recorded voice: hand the worker a link to it (its disk is wiped whenever Colab recycles the runtime)
+        const ref = await refSync(body.voice);
+        if (ref) body.ref = ref;
+      }
       return Response.json(await call("/jobs", { body }), { status: 202 });
     }
+    if (a === "myvoices" && !b) {
+      // POST {name, label?, key}: clean + transcribe an uploaded recording on the worker, then keep it in R2
+      const name = String(body.name ?? "").toLowerCase();
+      if (!VOICE_RE.test(name) || !isCustomVoice(name)) return Response.json({ error: "name: lowercase letters, digits, - or _ (not female/male/default)" }, { status: 400 });
+      if (!/^uploads\/[A-Za-z0-9._-]+$/.test(String(body.key ?? ""))) return Response.json({ error: "upload the recording first" }, { status: 400 });
+      const job = await call("/jobs", { body: { kind: "reference", name, url: await presignPath(String(body.key), 3600), label: String(body.label ?? name).slice(0, 60),
+        version: Date.now().toString(36), language: body.language || undefined } });
+      return Response.json(job, { status: 202 });
+    }
+    if (a === "samples" && b && c) {
+      // POST {job, line, duration, text}: store one finished line as the audition sample for <engine>/<voice> (used by scripts/make-samples.py)
+      if (!/^[a-z]+$/.test(b) || !/^[A-Za-z0-9_-]{1,40}$/.test(c) || !ID.test(String(body.job ?? "")) || !ID.test(String(body.line ?? ""))) return Response.json({ error: "bad sample" }, { status: 400 });
+      const res = await call<{ failed: Record<string, string> }>(`/jobs/${body.job}/push`, { body: { targets: { [`${body.line}.wav`]: await samplePutUrl(b, c) }, headers: {} }, timeoutMs: 55_000 });
+      if (Object.keys(res.failed).length) throw new Error(Object.values(res.failed)[0]);
+      await recordSample(b, c, Number(body.duration) || 0, String(body.text ?? ""));
+      return Response.json({ ok: true });
+    }
     if (a === "jobs" && c === "cancel") return Response.json(await call(`/jobs/${b}/cancel`, { body: {} }));
-    if (a === "engines" && b && (c === "load" || c === "unload")) return Response.json(await call(`/engines/${b}/${c}`, { body: {} }));
+    if (a === "engines" && b && (c === "load" || c === "unload" || c === "forget")) return Response.json(await call(`/engines/${b}/${c}`, { body: {} }));
     if (a === "library" && b && c === "presign") {
       // large uploads (videos) go straight to Blob: POST /library/<job>/presign {files: ["video.mp4", ...]}
       const files: string[] = Array.isArray(body.files) ? body.files.map(String) : [];
@@ -115,6 +173,11 @@ export async function DELETE(req: Request, ctx: Ctx) {
   const g = await guard(req, ctx);
   if (g.deny) return g.deny;
   const [a, b] = g.path;
+  if (a === "myvoices" && b) {
+    if (!isCustomVoice(b)) return Response.json({ error: "bad voice" }, { status: 400 });
+    await deleteMyVoice(b);
+    return Response.json({ ok: true });
+  }
   if (a === "library" && !b) {
     // bulk delete: { ids: [...] }
     const body = await req.json().catch(() => ({}));

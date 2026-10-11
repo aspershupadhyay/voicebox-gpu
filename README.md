@@ -11,9 +11,9 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
 - **Engines:** Orpheus 3B on vLLM (most human, English), Chatterbox (emotion dial, cloning, 23 languages incl. Hindi), Kokoro (instant drafts).
   Each one has `female` and `male` presets; all parameters are listed in [docs/API.md](docs/API.md). No length limits: long text is split at sentences and re-joined.
 - **Subtitles:** Whisper large-v3 with word timestamps → SRT / VTT / JSON, per line and for the whole timeline, plus a script-match score.
-- **Dashboard:** `https://<app>/` (sign in with `MCP_TOKEN`): Overview, Generate, Subtitles, Library (private Blob storage).
+- **Dashboard:** `https://<app>/` (sign in with `MCP_TOKEN`): Overview, Generate, Subtitles, Library (private Cloudflare R2 storage).
 - **Output:** 48 kHz mono WAV, trimmed and peak-normalised, plus a `fits` flag when you pass the line's timeline `window`.
-- **Security:** two random secrets, both outside git. The tunnel URL is only stored in a private Blob. Downloads are HMAC-signed and expire after 6 h.
+- **Security:** two random secrets, both outside git. The tunnel URL is only stored in the private R2 bucket. Downloads are HMAC-signed and expire after 6 h.
 
 ## Setup (once)
 

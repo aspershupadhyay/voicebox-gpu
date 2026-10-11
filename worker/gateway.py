@@ -19,8 +19,8 @@ import config as C  # noqa: E402
 
 SECRET = os.environ.get("WORKER_SECRET", "")
 HOME = C.HOME
-JOBS_DIR, REFS_DIR, LOGS_DIR = (os.path.join(HOME, d) for d in ("jobs", "refs", "logs"))
-for d in (JOBS_DIR, REFS_DIR, LOGS_DIR):
+JOBS_DIR, REFS_DIR, LOGS_DIR, CACHE_DIR = (os.path.join(HOME, d) for d in ("jobs", "refs", "logs", "hf"))
+for d in (JOBS_DIR, REFS_DIR, LOGS_DIR, CACHE_DIR):
     os.makedirs(d, exist_ok=True)
 HERE = os.path.dirname(os.path.abspath(__file__))
 STARTED = time.time()
@@ -64,22 +64,105 @@ def gpu_info():
         return {"name": "none (CPU)", "total_gb": 0.0, "used_gb": 0.0}
 
 
+def mem_info():
+    """System RAM in GB (Linux /proc/meminfo); zeros elsewhere."""
+    try:
+        m = {l.split(":")[0]: int(l.split()[1]) for l in open("/proc/meminfo")}
+        return {"total_gb": round(m["MemTotal"] / 2**20, 1), "used_gb": round((m["MemTotal"] - m["MemAvailable"]) / 2**20, 1)}
+    except Exception:
+        return {"total_gb": 0.0, "used_gb": 0.0}
+
+
+# --------------------------------------------------------------------------------------- disk
+def cache_dir(name):
+    """Every engine downloads its weights into its own folder, so one engine's weights can be dropped alone."""
+    return os.path.join(CACHE_DIR, name)
+
+
+_SIZES = {}
+
+
+def dir_gb(path, max_age=60):
+    hit = _SIZES.get(path)
+    if hit and time.time() - hit[0] < max_age:
+        return hit[1]
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.lstat(os.path.join(root, f)).st_size
+            except OSError:
+                pass
+    _SIZES[path] = (time.time(), round(total / 1e9, 2))
+    return _SIZES[path][1]
+
+
+def disk_info():
+    du = shutil.disk_usage(HOME)
+    return {"total_gb": round(du.total / 1e9, 1), "free_gb": round(du.free / 1e9, 1),
+            "weights_gb": {n: dir_gb(cache_dir(n)) for n in C.ENGINES if os.path.isdir(cache_dir(n))}}
+
+
+USAGE_PATH = os.path.join(HOME, "usage.json")
+try:
+    USAGE = json.load(open(USAGE_PATH))
+except Exception:
+    USAGE = {}
+
+
+def mark_used(name):
+    USAGE[name] = time.time()
+    try:
+        json.dump(USAGE, open(USAGE_PATH, "w"))
+    except OSError:
+        pass
+
+
 # --------------------------------------------------------------------------------------- engines
 class Engines:
-    """Starts engine processes lazily; evicts the least-recently-used one when VRAM would overflow."""
+    """Starts engine processes lazily and keeps the machine lean:
+      - one resource group at a time: a video engine stops every voice engine and vice versa (VRAM + RAM),
+      - least-recently-used eviction inside a group when VRAM would overflow,
+      - idle engines are unloaded after C.IDLE_MIN minutes,
+      - weights download on first use only, and old weights are deleted when the disk runs short."""
 
     def __init__(self):
         self.procs = OrderedDict()   # name -> Popen, in LRU order
         self.state = {n: "idle" for n in C.ENGINES}
         self.since = {n: time.time() for n in C.ENGINES}
+        self.last = {n: 0.0 for n in C.ENGINES}   # last request served (for idle unload)
+        self.inflight = {n: 0 for n in C.ENGINES}
         self.batch = {}
         self.errors = {}
         self.lock = threading.RLock()
         self.budget = float(os.environ.get("VOICEBOX_VRAM_GB") or gpu_info()["total_gb"] or 0) - 1.5
+        threading.Thread(target=self._reaper, daemon=True).start()
 
     def _set(self, name, state):
         self.state[name] = state
         self.since[name] = time.time()
+
+    @property
+    def mode(self):
+        groups = {C.ENGINES[n]["group"] for n in self.procs}
+        return groups.pop() if len(groups) == 1 else ("mixed" if groups else "idle")
+
+    def idle_left(self):
+        """Seconds until each loaded, unused engine is unloaded."""
+        out = {}
+        for n in list(self.procs):
+            if self.state[n] == "ready" and not self.inflight[n]:
+                out[n] = max(0, round(C.IDLE_MIN * 60 - (time.time() - max(self.last[n], self.since[n]))))
+        return out
+
+    def _reaper(self):
+        while True:
+            time.sleep(20)
+            busy = any(j["status"] == "running" for j in list(JOBS.values()))
+            for n, left in self.idle_left().items():
+                if left <= 0 and not busy:
+                    log(f"unloading {n}: idle for {C.IDLE_MIN:g} min")
+                    self.stop(n)
 
     def _install(self, name):
         py = C.python_for(name)
@@ -88,10 +171,43 @@ class Engines:
         self._set(name, "installing")
         venv = os.path.dirname(os.path.dirname(py))
         logf = open(os.path.join(LOGS_DIR, f"{name}-install.log"), "a")
+        apt = C.ENGINES[name].get("apt")
+        if apt and shutil.which("apt-get") and not all(shutil.which(b) for b in apt.split()):
+            subprocess.run(f"apt-get install -y -qq {apt}", shell=True, stdout=logf, stderr=logf)
         subprocess.run(["uv", "venv", "--python", "3.11", venv, "-q", "--allow-existing"], check=True, stdout=logf, stderr=logf)
         subprocess.run(f'uv pip install --python {py} -q {C.ENGINES[name]["packages"]}', shell=True, check=True,
                        stdout=logf, stderr=logf)
         return py
+
+    def _switch_group(self, name):
+        group = C.ENGINES[name]["group"]
+        others = [n for n in self.procs if C.ENGINES[n]["group"] != group]
+        busy = [n for n in others if self.inflight[n]]
+        if busy:
+            raise RuntimeError(f"{busy[0]} is busy right now; {name} can start when it finishes")
+        for other in others:
+            log(f"stopping {other}: switching to {group} models")
+            self.stop(other)
+
+    def _ensure_disk(self, name):
+        """Make room for a first download by deleting the least-recently-used weights of stopped engines."""
+        have = dir_gb(cache_dir(name), max_age=0) if os.path.isdir(cache_dir(name)) else 0.0
+        need = max(0.0, C.ENGINES[name].get("disk_gb", 0) - have) + C.DISK_RESERVE_GB
+        free = shutil.disk_usage(HOME).free / 1e9
+        if free >= need:
+            return
+        legacy = os.path.expanduser("~/.cache/huggingface")
+        victims = ([legacy] if os.path.isdir(legacy) else []) + [
+            cache_dir(n) for n in sorted(C.ENGINES, key=lambda n: USAGE.get(n, 0))
+            if n != name and n not in self.procs and os.path.isdir(cache_dir(n))]
+        for v in victims:
+            log(f"disk: deleting {v} ({dir_gb(v):.1f} GB) to make room for {name}")
+            shutil.rmtree(v, ignore_errors=True)
+            _SIZES.pop(v, None)
+            free = shutil.disk_usage(HOME).free / 1e9
+            if free >= need:
+                return
+        raise RuntimeError(f"not enough disk for {name}: needs ~{need:.0f} GB free, {free:.0f} GB left")
 
     def _evict_for(self, name):
         need = C.ENGINES[name]["gpu_gb"]
@@ -115,12 +231,17 @@ class Engines:
                 self.procs.move_to_end(name)
                 return
             try:
+                self._switch_group(name)
+                self._ensure_disk(name)
                 py = self._install(name)
                 self._evict_for(name)
                 self._set(name, "loading")
+                mark_used(name)
                 logf = open(os.path.join(LOGS_DIR, f"{name}.log"), "a")
                 venv_bin = os.path.dirname(py)
+                cache = cache_dir(name)
                 env = {**os.environ, "VOICEBOX_HOME": HOME, "PATH": venv_bin + os.pathsep + os.environ.get("PATH", ""),
+                       "HF_HOME": cache, "KOKORO_MODEL_DIR": cache, "HF_HUB_ENABLE_HF_TRANSFER": "0",
                        "VLLM_USE_FLASHINFER_SAMPLER": "0", "TOKENIZERS_PARALLELISM": "false",
                        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
                 p = subprocess.Popen([py, os.path.join(HERE, "engine_host.py"), "--engine", name,
@@ -166,15 +287,20 @@ class Engines:
             if not keep_state:
                 self._set(name, "idle")
 
-    def _post(self, name, path, payload):
+    def _post(self, name, path, payload, timeout=60 * 60):
         self.ensure(name)
         req = urllib.request.Request(f"http://127.0.0.1:{C.ENGINES[name]['port']}{path}",
                                      data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+        self.inflight[name] += 1
         try:
-            with urllib.request.urlopen(req, timeout=60 * 60) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
             raise RuntimeError(json.loads(e.read() or b"{}").get("error", str(e)))
+        finally:
+            self.inflight[name] -= 1
+            self.last[name] = time.time()
+            mark_used(name)
 
     def synth(self, name, payload):
         return self._post(name, "/synth", payload)
@@ -185,6 +311,9 @@ class Engines:
     def transcribe(self, paths, language=None):
         return self._post("whisper", "/transcribe", {"paths": paths, "language": language})["results"]
 
+    def video(self, name, payload):
+        return self._post(name, "/video", payload, timeout=3 * 60 * 60)
+
 
 ENG = Engines()
 
@@ -194,9 +323,21 @@ def ref_paths(name):
     return os.path.join(REFS_DIR, f"{name}.wav"), os.path.join(REFS_DIR, f"{name}.json")
 
 
-def get_ref(name):
-    """Return (wav_path, transcript) for a reference voice, building the female/male presets on demand."""
+def get_ref(name, sync=None):
+    """Return (wav_path, transcript) for a reference voice, building the female/male presets on demand.
+    sync = {"url", "transcript"}: the dashboard's permanent copy (R2), fetched when this worker lacks it or
+    holds an older version (the Colab disk is wiped whenever the runtime is recycled)."""
     wav, meta = ref_paths(name)
+    if sync and sync.get("url"):
+        have = json.load(open(meta)) if os.path.exists(meta) else {}
+        if not os.path.exists(wav) or have.get("version") != sync.get("version"):
+            if not ID_RE.match(name):
+                raise ValueError("bad reference name")
+            log(f"syncing reference '{name}' from storage")
+            with urllib.request.urlopen(sync["url"], timeout=120) as r, open(wav + ".dl", "wb") as f:
+                shutil.copyfileobj(r, f)
+            os.replace(wav + ".dl", wav)
+            json.dump({"transcript": sync.get("transcript"), "version": sync.get("version"), "source": "storage"}, open(meta, "w"))
     if not os.path.exists(wav) and name in C.PRESET_REFS:
         engine, voice = C.PRESET_REFS[name]
         log(f"building preset reference '{name}' with {engine}:{voice}")
@@ -444,6 +585,10 @@ def _base_job(kind, body):
 def make_job(body):
     if body.get("kind") == "transcribe":
         return make_transcribe_job(body)
+    if body.get("kind") == "video":
+        return make_video_job(body)
+    if body.get("kind") == "reference":
+        return make_reference_job(body)
     engine = body.get("engine")
     if engine not in C.TTS_ENGINES:
         raise ValueError(f"engine must be one of {C.TTS_ENGINES}")
@@ -468,7 +613,7 @@ def make_job(body):
     job.update({"engine": engine, "voice": resolve_voice(engine, body.get("voice")), "style": style,
                 "params": {**style_params, **(body.get("params") or {})},
                 "post": {**C.POST_DEFAULTS, **style_post, **(body.get("post") or {})}, "lines": clean,
-                "subtitles": bool(body.get("subtitles"))})
+                "subtitles": bool(body.get("subtitles")), "ref": body.get("ref") if isinstance(body.get("ref"), dict) else None})
     chars = sum(len(l["text"]) for l in clean)
     job["est_total"] = RATES[engine] * chars + (RATES["whisper"] * chars / 14 if job["subtitles"] else 0)
     return _enqueue(job)
@@ -489,6 +634,60 @@ def make_transcribe_job(body):
     job.update({"engine": "whisper", "voice": "", "lines": clean, "params": {}, "post": {},
                 "combine": bool(body.get("combine")), "attach_to": str(body.get("attach_to") or "")[:64]})
     job["est_total"] = len(clean) * 30 * RATES["whisper"]  # refined once durations are known
+    return _enqueue(job)
+
+
+def make_video_job(body):
+    model = body.get("model") or "wan"
+    if model not in C.VIDEO_ENGINES:
+        raise ValueError(f"model must be one of {C.VIDEO_ENGINES}")
+    spec = C.ENGINES[model]
+    prompt = str(body.get("prompt") or "").strip()
+    if not 3 <= len(prompt) <= 4000:
+        raise ValueError("prompt must be 3-4000 characters")
+    aspect = body.get("aspect") or "9:16"
+    if aspect not in spec["sizes"]:
+        raise ValueError(f"aspect must be one of {list(spec['sizes'])}")
+    quality = body.get("quality") or "fast"
+    if quality not in spec["qualities"]:
+        raise ValueError(f"quality must be one of {list(spec['qualities'])} for {model}")
+    q = spec["qualities"][quality]
+    w, h = spec["sizes"][aspect]
+    fps, step = spec["fps"], spec["frame_step"]
+    seconds = max(1.0, min(spec["max_seconds"], float(body.get("seconds") or 5)))
+    frames = max(1, round(seconds * fps / step)) * step + 1
+    steps = q["steps"] if model == "ltx" else max(1, min(60, int(body.get("steps") or q["steps"])))
+    image = str(body.get("image_url") or "")
+    if image and not image.startswith(("https://", "http://")):
+        raise ValueError("image_url must be an http(s) URL")
+    seed = body.get("seed")
+    job = _base_job("video", body)
+    job.update({"engine": model, "voice": "", "lines": [], "params": {}, "post": {}, "image_url": image or None,
+                "gen": {"model": model, "mode": "i2v" if image else "t2v", "prompt": prompt,
+                        "negative": str(body.get("negative") or "")[:2000], "seed": int(seed) if seed not in (None, "") else 7,
+                        "steps": steps, "guidance": float(q["guidance"]), "quality": quality, "aspect": aspect, "fps": fps,
+                        "frames": frames, "seconds": round((frames - 1) / fps, 2), "width": w, "height": h,
+                        "audio": bool(body.get("audio", True)) and model == "ltx"}})
+    job["est_total"] = video_estimate(job["gen"]) + 25
+    return _enqueue(job)
+
+
+def video_estimate(g):
+    """Seconds to render: learned seconds per (step x frame x megapixel), doubled when CFG runs two passes."""
+    return RATES[g["model"]] * g["steps"] * g["frames"] * g["width"] * g["height"] / 1e6 * (2 if g["guidance"] > 1 else 1)
+
+
+def make_reference_job(body):
+    name = str(body.get("name") or "")
+    if not ID_RE.match(name) or name in C.PRESET_REFS or name == "default":
+        raise ValueError("name: 1-64 letters, digits, - or _ (and not female/male/default)")
+    url = str(body.get("url") or "")
+    if not url.startswith(("https://", "http://")):
+        raise ValueError("url must point at the recording")
+    job = _base_job("reference", body)
+    job.update({"engine": "whisper", "voice": name, "lines": [{"id": "reference", "url": url}], "params": {}, "post": {},
+                "transcript": str(body.get("transcript") or "").strip() or None, "version": str(body.get("version") or "")[:40]})
+    job["est_total"] = 25.0
     return _enqueue(job)
 
 
@@ -538,9 +737,9 @@ def run_tts(job):
     engine, voice = job["engine"], job["voice"]
     jdir = os.path.join(JOBS_DIR, job["id"])
     ref_path = ref_text = None
-    if engine == "chatterbox" and voice != "default":
+    if C.ENGINES[engine].get("clone") or (engine == "chatterbox" and voice != "default"):
         job["stage"] = "reference"
-        ref_path, ref_text = get_ref(voice)
+        ref_path, ref_text = get_ref(voice, job.get("ref"))
     voice_arg = voice if engine in ("kokoro", "orpheus") else None
     _prepare(job, engine)
     job["stage"] = "generating"
@@ -688,8 +887,105 @@ def run_transcribe(job):
     job["subs"] = {"cues": len(cues_all), "timeline": "sequential"}
 
 
+def _download(url, path, limit=600 * 1024 * 1024):
+    with urllib.request.urlopen(url, timeout=300) as r, open(path, "wb") as f:
+        n = 0
+        while True:
+            chunk = r.read(1 << 20)
+            if not chunk:
+                break
+            n += len(chunk)
+            if n > limit:
+                raise ValueError("download too large")
+            f.write(chunk)
+
+
+def run_video(job):
+    g, model = job["gen"], job["engine"]
+    jdir = os.path.join(JOBS_DIR, job["id"])
+    payload = {k: g[k] for k in ("prompt", "negative", "seed", "steps", "guidance", "quality", "fps", "audio")}
+    payload.update({"width": g["width"], "height": g["height"], "num_frames": g["frames"],
+                    "out_path": os.path.join(jdir, "video.mp4"), "progress_path": os.path.join(jdir, "progress.json")})
+    if job.get("image_url"):
+        job["stage"] = "downloading"
+        raw = os.path.join(jdir, "source.in")
+        _download(job["image_url"], raw, 40 * 1024 * 1024)
+        src = os.path.join(jdir, "source.jpg")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", raw, "-frames:v", "1", "-q:v", "2", src], check=True)
+        os.remove(raw)
+        payload["image_path"] = src
+        g["source"] = True
+    _prepare(job, model)
+    job["stage"] = "rendering"
+    job["progress_file"] = payload["progress_path"]
+    units = g["steps"] * g["frames"] * g["width"] * g["height"] / 1e6 * (2 if g["guidance"] > 1 else 1)
+    t0 = time.time()
+    try:
+        info = _run_unit(job, video_estimate(g), lambda: ENG.video(model, payload), f"{g['seconds']:g} s at {g['width']}x{g['height']}")
+    except RuntimeError:
+        if job["cancel"]:
+            raise Cancelled()
+        raise
+    learn_rate(model, time.time() - t0, units)
+    job["stage"] = "packaging"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", payload["out_path"], "-frames:v", "1", "-q:v", "3",
+                    os.path.join(jdir, "poster.jpg")], check=True)
+    info["size"] = os.path.getsize(payload["out_path"])
+    job["video"] = {**info, "poster": True}
+    job["results"] = [{"id": "video", "text": g["prompt"], "duration": info["duration"]}]
+
+
+def run_reference(job):
+    """Turn a raw recording into a clean cloning reference: mono, rumble + hiss removed, silence trimmed,
+    level normalised, cut to <= ~20 s at a word boundary, transcribed by Whisper (cloners need the words)."""
+    import numpy as np
+    import soundfile as sf
+    jdir = os.path.join(JOBS_DIR, job["id"])
+    job["stage"] = "downloading"
+    raw = os.path.join(jdir, "recording.in")
+    _download(job["lines"][0]["url"], raw, 60 * 1024 * 1024)
+    job["stage"] = "cleaning"
+    clean = os.path.join(jdir, "clean.wav")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", raw, "-ac", "1", "-ar", "44100",
+                    "-af", "highpass=f=70,lowpass=f=14000,afftdn=nf=-30", clean], check=True)
+    a, sr = sf.read(clean, dtype="float32")
+    peak = float(np.max(np.abs(a))) if len(a) else 0.0
+    rms_db = float(20 * np.log10(max(1e-9, float(np.sqrt(np.mean(a ** 2)))))) if len(a) else -120.0
+    if peak > 0.98:
+        job["warnings"].append("the recording clips (too loud): move back a little or lower the input gain")
+    if rms_db < -38:
+        job["warnings"].append("the recording is very quiet: move closer to the mic")
+    out = os.path.join(jdir, "reference.wav")
+    dur = postprocess(clean, out, {"trim": True, "trim_db": -45, "normalize_dbfs": -3, "sample_rate": None})
+    os.remove(raw); os.remove(clean)
+    if dur < 4:
+        raise ValueError(f"only {dur:.1f} s of speech: record at least 6-10 seconds")
+    words, heard = [], job.get("transcript")
+    if not heard or dur > 24:
+        _prepare(job, "whisper")
+        job["stage"] = "transcribing"
+        o = _run_unit(job, RATES["whisper"] * dur + 2, lambda: ENG.transcribe([out], job.get("language"))[0])
+        words, heard = o["words"], heard or o["text"]
+    cut = False
+    if dur > 24 and words:  # long takes: keep the first ~20 s, ending on a finished word
+        end = max((w["e"] for w in words if w["e"] <= 20.0), default=20.0)
+        a, sr = sf.read(out, dtype="float32")
+        sf.write(out, a[: int((end + 0.15) * sr)], sr, subtype="PCM_16")
+        heard = re.sub(r"\s+(?=[.,!?;:%\u2019])", "", " ".join(w["w"] for w in words if w["e"] <= end + 0.01))
+        dur, cut = end + 0.15, True
+    if dur < 8:
+        job["warnings"].append("under 8 s: cloning works, but 10-20 s of varied speech sounds much more like you")
+    name = job["voice"]
+    shutil.copy(out, ref_paths(name)[0])
+    json.dump({"transcript": heard, "version": job.get("version"), "source": "recording"}, open(ref_paths(name)[1], "w"))
+    job["results"] = [{"id": "reference", "text": heard, "duration": round(dur, 2), "cut": cut,
+                       "level_db": round(rms_db, 1), "peak": round(peak, 3)}]
+
+
 def package(job):
     job["stage"] = "packaging"
+    if job["kind"] in ("video", "reference"):
+        return  # single files, served directly; no zip copy of a large video
     jdir = os.path.join(JOBS_DIR, job["id"])
     with zipfile.ZipFile(os.path.join(JOBS_DIR, f"{job['id']}.zip"), "w") as z:
         for f in sorted(os.listdir(jdir)):
@@ -698,7 +994,8 @@ def package(job):
         z.writestr("manifest.json", json.dumps(job_view(job, urls=False), indent=2))
 
 
-PUSH_TYPES = {".wav": "audio/wav", ".srt": "application/x-subrip", ".vtt": "text/vtt", ".json": "application/json"}
+PUSH_TYPES = {".wav": "audio/wav", ".srt": "application/x-subrip", ".vtt": "text/vtt", ".json": "application/json",
+              ".mp4": "video/mp4", ".jpg": "image/jpeg"}
 
 
 def push_files(job_id, targets, headers):
@@ -713,13 +1010,13 @@ def push_files(job_id, targets, headers):
         if not os.path.isfile(path) or not url.startswith("https://"):
             return name, "missing"
         ext = os.path.splitext(path)[1]
-        hdrs = {**{k: str(v) for k, v in headers.items() if k.lower().startswith("x-")},
-                "x-content-type": PUSH_TYPES.get(ext, "application/octet-stream")}
+        ctype = PUSH_TYPES.get(ext, "application/octet-stream")
+        hdrs = {**{k: str(v) for k, v in headers.items() if k.lower().startswith("x-")}, "Content-Type": ctype}
         for attempt in range(3):
             try:
                 with open(path, "rb") as f:
                     req = urllib.request.Request(url, data=f.read(), method="PUT", headers=hdrs)
-                with urllib.request.urlopen(req, timeout=120) as r:
+                with urllib.request.urlopen(req, timeout=600) as r:
                     if r.status < 300:
                         return name, None
             except Exception as e:  # noqa: BLE001
@@ -743,7 +1040,7 @@ def worker_loop():
             continue
         job["status"], job["started"] = "running", time.time()
         try:
-            (run_transcribe if job["kind"] == "transcribe" else run_tts)(job)
+            {"transcribe": run_transcribe, "video": run_video, "reference": run_reference}.get(job["kind"], run_tts)(job)
             package(job)
             job["status"], job["stage"] = "done", "done"
         except Cancelled:
@@ -777,6 +1074,22 @@ def _progress(job):
         stage = "installing" if st == "installing" else "loading"
         detail = f"{name}: first run downloads the model" if st == "installing" else f"loading {name} into memory"
         extra = left
+    if job["kind"] == "video" and stage == "rendering" and job.get("progress_file"):
+        try:
+            pf = json.load(open(job["progress_file"]))
+        except Exception:
+            pf = {"phase": "encoding prompt", "step": 0, "total": job["gen"]["steps"], "t": 0}
+        el = now - job["cur"]["t0"] if job.get("cur") else 0
+        step, steps = pf.get("step", 0), max(1, pf.get("total", 1))
+        if pf["phase"] == "denoising" and step:
+            per = el / (step + 0.5)  # elapsed includes the prompt encode (~half a step)
+            eta = per * (steps - step) + 30
+            frac = 0.05 + 0.85 * step / steps
+            return min(0.97, frac), round(eta), "rendering", f"step {step} of {steps}"
+        if pf["phase"] == "encoding video":
+            return 0.93, 15, "encoding", "decoding frames and writing the MP4"
+        left = max(10, job["cur"]["est"] - el) if job.get("cur") else job["est_total"]
+        return 0.03, round(left), "rendering", "encoding the prompt"
     cur = job.get("cur")
     total = job["est_total"]
     if cur:
@@ -795,12 +1108,16 @@ def _progress(job):
     elif stage == "subtitles":
         detail = "Whisper large-v3, word timestamps"
     elif stage == "transcribing":
-        detail = f"file {min(len(job['results']) + 1, len(job['lines']))} of {len(job['lines'])}"
+        detail = "Whisper is writing down what you said" if job["kind"] == "reference" else f"file {min(len(job['results']) + 1, len(job['lines']))} of {len(job['lines'])}"
+    elif stage == "cleaning":
+        detail = "removing rumble and hiss, levelling"
     return frac, round(eta), stage, detail
 
 
 def job_view(job, urls=True):
-    v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to")}
+    v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version")}
+    if job["kind"] == "video":
+        v["gen"] = job["gen"]
     if job["kind"] == "tts":
         v["params"] = C.resolve_params(job["engine"], job["params"])
         v["post"] = job["post"]
@@ -816,15 +1133,18 @@ def job_view(job, urls=True):
     for r in job["results"]:
         r = {k: val for k, val in r.items() if k != "words"} if urls else dict(r)
         if urls:
-            if job["kind"] == "tts":
+            if job["kind"] in ("tts", "reference"):
                 r["url"] = sign(f"/files/{job['id']}/{r['id']}.wav")
+            if job["kind"] == "video" and job["status"] == "done":
+                r["url"] = sign(f"/files/{job['id']}/video.mp4")
+                r["poster_url"] = sign(f"/files/{job['id']}/poster.jpg")
             if r.get("subs"):
                 r["srt_url"] = sign(f"/files/{job['id']}/{r['id']}.subs.srt")
                 r["vtt_url"] = sign(f"/files/{job['id']}/{r['id']}.subs.vtt")
                 r["json_url"] = sign(f"/files/{job['id']}/{r['id']}.subs.json")
         res.append(r)
     v["results"] = res
-    if urls and job["status"] == "done":
+    if urls and job["status"] == "done" and job["kind"] not in ("video", "reference"):
         v["zip_url"] = sign(f"/files/{job['id']}.zip")
         if job.get("subs"):
             v["subs_urls"] = {ext: sign(f"/files/{job['id']}/subtitles.{ext}") for ext in ("srt", "vtt", "json")}
@@ -837,17 +1157,21 @@ def job_view(job, urls=True):
 def catalogue():
     out = {}
     for name, spec in C.ENGINES.items():
-        out[name] = {k: spec.get(k) for k in ("kind", "about", "voices", "presets", "params", "gpu_gb", "chunk_chars")}
+        out[name] = {k: spec[k] for k in ("kind", "about", "voices", "presets", "params", "gpu_gb", "chunk_chars", "group",
+                                          "disk_gb", "sizes", "qualities", "max_seconds", "fps", "languages", "clone") if k in spec}
         out[name]["state"] = ENG.state[name]
-        out[name]["seconds_per_char" if spec["kind"] == "tts" else "seconds_per_audio_second"] = RATES.get(name)
+        out[name]["downloaded"] = os.path.isdir(cache_dir(name)) and dir_gb(cache_dir(name)) > 0.05
+        unit = {"tts": "seconds_per_char", "asr": "seconds_per_audio_second", "video": "seconds_per_step_frame_megapixel"}[spec["kind"]]
+        out[name][unit] = RATES.get(name)
     refs = sorted(f[:-4] for f in os.listdir(REFS_DIR) if f.endswith(".wav"))
     return {"engines": out, "references": refs, "preset_references": list(C.PRESET_REFS),
             "post_defaults": C.POST_DEFAULTS, "subtitle_style": C.SUBTITLE_STYLE,
-            "styles": C.STYLES, "default_style": C.DEFAULT_STYLE}
+            "styles": C.STYLES, "default_style": C.DEFAULT_STYLE, "groups": C.GROUPS, "idle_min": C.IDLE_MIN}
 
 
 def health():
     return {"ok": True, "version": C.VERSION, "uptime_s": int(time.time() - STARTED), "gpu": gpu_info(),
+            "ram": mem_info(), "disk": disk_info(), "mode": ENG.mode, "idle_unload_s": ENG.idle_left(), "idle_min": C.IDLE_MIN,
             "vram_budget_gb": round(ENG.budget, 1), "engines": ENG.state, "engine_errors": ENG.errors,
             "loaded": list(ENG.procs), "queue": len(QUEUE), "rates": RATES,
             "running": [j["id"] for j in JOBS.values() if j["status"] == "running"], "public_url": public_url()}
@@ -921,6 +1245,9 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r"^/jobs/([a-f0-9]{12})/cancel$", u.path)
             if m and m.group(1) in JOBS:
                 JOBS[m.group(1)]["cancel"] = True
+                pf = JOBS[m.group(1)].get("progress_file")
+                if pf:  # a running video: the engine checks this file between denoising steps
+                    open(pf + ".cancel", "w").close()
                 with QCOND:
                     if m.group(1) in QUEUE:
                         QUEUE.remove(m.group(1))
@@ -935,9 +1262,13 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     raise ValueError("send audio_b64 or url")
                 return self._json(201, add_ref(body.get("name", ""), data, body.get("transcript")))
-            m = re.match(r"^/engines/([a-z]+)/(load|unload)$", u.path)
+            m = re.match(r"^/engines/([a-z]+)/(load|unload|forget)$", u.path)
             if m and m.group(1) in C.ENGINES:
-                if m.group(2) == "unload":
+                if m.group(2) == "forget":  # delete downloaded weights (frees disk; re-downloads on next use)
+                    ENG.stop(m.group(1))
+                    shutil.rmtree(cache_dir(m.group(1)), ignore_errors=True)
+                    _SIZES.pop(cache_dir(m.group(1)), None)
+                elif m.group(2) == "unload":
                     ENG.stop(m.group(1))
                 else:
                     threading.Thread(target=ENG.ensure, args=(m.group(1),), daemon=True).start()
@@ -952,7 +1283,7 @@ class Handler(BaseHTTPRequestHandler):
     def _file(self, u):
         if not check_sig(u.path, parse_qs(u.query)):
             return self._json(403, {"error": "bad or expired signature"})
-        m = re.match(r"^/files/([a-f0-9]{12})(?:/([A-Za-z0-9_\-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json))|\.zip)$", u.path)
+        m = re.match(r"^/files/([a-f0-9]{12})(?:/([A-Za-z0-9_\-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json)|video\.mp4|poster\.jpg|source\.jpg)|\.zip)$", u.path)
         if not m:
             return self._json(404, {"error": "not found"})
         path = os.path.join(JOBS_DIR, m.group(1), m.group(2)) if m.group(2) else os.path.join(JOBS_DIR, f"{m.group(1)}.zip")
@@ -960,7 +1291,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(404, {"error": "not found"})
         self.send_response(200)
         ctype = {".wav": "audio/wav", ".zip": "application/zip", ".srt": "application/x-subrip", ".vtt": "text/vtt",
-                 ".json": "application/json"}[os.path.splitext(path)[1]]
+                 ".json": "application/json", ".mp4": "video/mp4", ".jpg": "image/jpeg"}[os.path.splitext(path)[1]]
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(os.path.getsize(path)))
         self.send_header("Content-Disposition", f'attachment; filename="{os.path.basename(path)}"')

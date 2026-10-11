@@ -1,5 +1,5 @@
 "use client";
-import { ArrowRight, ClosedCaptioning, FilmStrip, Fire, Microphone, Power, Terminal, X } from "@phosphor-icons/react";
+import { ArrowRight, Broom, ClosedCaptioning, FilmSlate, FilmStrip, Fire, Microphone, Power, Terminal, X } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ago, api, fmtS, pct, type Job } from "./api";
@@ -13,15 +13,20 @@ type Lib = {
 };
 const libSeconds = (j: Lib) => j.video?.duration ?? j.results.reduce((a, r) => a + r.duration, 0);
 
-const ENGINES: Record<string, { role: string; lang: string; mem: string }> = {
-  orpheus: { role: "The most human voice. Laughs, sighs, breath.", lang: "English", mem: "≈10 GB" },
-  chatterbox: { role: "Emotion dial and zero-shot voice cloning.", lang: "23 languages", mem: "≈4 GB" },
-  kokoro: { role: "Instant drafts for timing, on the CPU.", lang: "9 languages", mem: "CPU" },
-  whisper: { role: "Word-timed subtitles from any audio.", lang: "99 languages", mem: "≈4 GB" },
+const ENGINES: Record<string, { role: string; lang: string; mem: string; group: "voice" | "visual" }> = {
+  orpheus: { role: "The most human voice. Laughs, sighs, breath.", lang: "English", mem: "≈10 GB", group: "voice" },
+  qwen: { role: "Your own voice, cloned from 20 seconds.", lang: "10 languages", mem: "≈6 GB", group: "voice" },
+  chatterbox: { role: "Emotion dial and zero-shot voice cloning.", lang: "23 languages", mem: "≈4 GB", group: "voice" },
+  kokoro: { role: "Instant drafts for timing, on the CPU.", lang: "9 languages", mem: "CPU", group: "voice" },
+  whisper: { role: "Word-timed subtitles from any audio.", lang: "99 languages", mem: "≈4 GB", group: "voice" },
+  wan: { role: "Sharp 720p clips from text or a start frame.", lang: "720p · silent", mem: "≈20 GB", group: "visual" },
+  ltx: { role: "Video with its own soundtrack, up to 10 s.", lang: "video + sound", mem: "≈20 GB", group: "visual" },
 };
+const CLIP_UNITS: Record<string, number> = { wan: 4 * 121 * 0.9, ltx: 8 * 121 * 0.59 }; // steps x frames x megapixels for a 5 s clip
 
 function speed(name: string, rate?: number) {
   if (!rate) return "—";
+  if (CLIP_UNITS[name]) return `≈${fmtS(rate * CLIP_UNITS[name] + 25)} per 5 s clip`;
   const rtf = name === "whisper" ? rate : rate * 14.5; // compute seconds per second of audio
   return rtf < 1 ? `${(1 / rtf).toFixed(1)}× realtime` : `${rtf.toFixed(1)}s / audio s`;
 }
@@ -30,7 +35,7 @@ const greeting = (h: number) => (h < 5 ? "Late session" : h < 12 ? "Good morning
 
 export default function Overview() {
   const { status: st, refresh } = useStatus();
-  const { toast } = useDialog();
+  const { toast, confirm } = useDialog();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [lib, setLib] = useState<Lib[] | null>(null);
   const [busy, setBusy] = useState("");
@@ -58,6 +63,14 @@ export default function Overview() {
     setBusy("");
   }
 
+  async function forget(name: string, gb: number) {
+    if (!(await confirm({ title: `Delete ${name}'s weights?`, body: `Frees ${gb} GB on the Colab disk. They download again the next time ${name} is used.`, confirm: `Free ${Math.round(gb)} GB`, danger: true }))) return;
+    setBusy(name);
+    await api(`engines/${name}/forget`, { body: {} }).then(() => toast(`Freed ${Math.round(gb)} GB`, "ok")).catch((e) => toast(e.message, "bad"));
+    await refresh();
+    setBusy("");
+  }
+
   const vram = st?.gpu?.total_gb ? st.gpu.used_gb / st.gpu.total_gb : 0;
   const audio = (lib ?? []).filter((j) => j.kind !== "video").reduce((s, j) => s + libSeconds(j), 0);
   const active = jobs.filter((j) => ["queued", "running"].includes(j.status));
@@ -81,6 +94,7 @@ export default function Overview() {
           <p className="sub">{sentence}</p>
           <div className="row" style={{ marginTop: 22 }}>
             <Link href="/generate" className="btn sig"><Microphone size={16} weight="bold" />New voiceover</Link>
+            <Link href="/video" className="btn ghost"><FilmSlate size={16} />Render a clip</Link>
             <Link href="/subtitles" className="btn ghost"><ClosedCaptioning size={16} />Subtitle a file</Link>
           </div>
         </div>
@@ -114,40 +128,50 @@ export default function Overview() {
         </div>
       )}
 
-      <div className="row between" style={{ margin: "30px 0 14px" }}>
-        <h2 style={{ margin: 0 }}>Engines</h2>
-        <span className="dim small">They load on first use and swap out when memory runs short. Warm one up before a big batch.</span>
-      </div>
-      <div className="modules">
-        {Object.keys(ENGINES).map((name) => {
-          const s = st?.engines?.[name];
-          const loading = s === "loading" || s === "installing";
-          return (
-            <div key={name} className={`card module ${s === "ready" ? "ready" : ""}`}>
-              <div className="art"><EngineArt engine={name} live={s === "ready" || loading} /></div>
-              <div className="body">
-                <div className="row between">
-                  <span className="name" style={{ textTransform: "capitalize" }}>{name}</span>
-                  <span className={`pill ${s === "ready" ? "ok" : loading ? "warn" : s === "error" ? "bad" : ""}`}>{s === "ready" ? "warm" : s ?? "—"}</span>
+      {(["voice", "visual"] as const).map((group) => (
+        <section key={group}>
+          <div className="row between" style={{ margin: "30px 0 14px" }}>
+            <h2 style={{ margin: 0 }} className="row">{group === "voice" ? "Voice engines" : "Video engines"}
+              {st?.mode === group && <span className="pill ok" style={{ marginLeft: 10 }}>on the GPU</span>}</h2>
+            <span className="dim small">{group === "voice"
+              ? "Load on first use, swap out when memory runs short, unload after " + (st?.idle_min ?? 10) + " idle minutes."
+              : "Only one group holds the GPU: rendering video unloads the voice engines, and the reverse."}</span>
+          </div>
+          <div className="modules">
+            {Object.keys(ENGINES).filter((n) => ENGINES[n].group === group).map((name) => {
+              const s = st?.engines?.[name];
+              const loading = s === "loading" || s === "installing";
+              const disk = st?.disk?.weights_gb?.[name];
+              return (
+                <div key={name} className={`card module ${s === "ready" ? "ready" : ""}`}>
+                  <div className="art"><EngineArt engine={name} live={s === "ready" || loading} /></div>
+                  <div className="body">
+                    <div className="row between">
+                      <span className="name" style={{ textTransform: name === "ltx" ? "uppercase" : "capitalize" }}>{name}</span>
+                      <span className={`pill ${s === "ready" ? "ok" : loading ? "warn" : s === "error" ? "bad" : ""}`}>{s === "ready" ? "warm" : s ?? "—"}</span>
+                    </div>
+                    <div className="dim small">{ENGINES[name].role}</div>
+                    <div className="spec">
+                      <div><span>{group === "voice" ? "speaks" : "makes"}</span><b>{ENGINES[name].lang}</b></div>
+                      <div><span>memory</span><b>{ENGINES[name].mem}</b></div>
+                      <div><span>on disk</span><b>{disk ? `${disk} GB` : "not yet"}</b></div>
+                      <div><span>speed here</span><b>{speed(name, st?.rates?.[name])}</b></div>
+                    </div>
+                    {st?.engine_errors?.[name] && <div className="err tiny">{st.engine_errors[name].slice(0, 140)}</div>}
+                    <div className="foot">
+                      {s === "ready"
+                        ? <button className="ghost sm" disabled={busy === name} onClick={() => engine(name, "unload")}><Power size={14} />Unload</button>
+                        : <button className="ghost sm" disabled={!st?.online || busy === name || loading} onClick={() => engine(name, "load")}><Fire size={14} weight="duotone" />{loading ? "Loading…" : "Warm up"}</button>}
+                      <button className="quiet sm" disabled={!st?.online} onClick={() => showLogs(name)}><Terminal size={14} />Logs</button>
+                      {disk ? <button className="quiet sm" disabled={!st?.online || s === "ready" || loading} title="Delete the downloaded weights to free disk (downloads again on next use)" onClick={() => forget(name, disk)}><Broom size={14} />Free {Math.round(disk)} GB</button> : null}
+                    </div>
+                  </div>
                 </div>
-                <div className="dim small">{ENGINES[name].role}</div>
-                <div className="spec">
-                  <div><span>speaks</span><b>{ENGINES[name].lang}</b></div>
-                  <div><span>memory</span><b>{ENGINES[name].mem}</b></div>
-                  <div style={{ gridColumn: "1 / -1" }}><span>speed on this GPU</span><b>{speed(name, st?.rates?.[name])}</b></div>
-                </div>
-                {st?.engine_errors?.[name] && <div className="err tiny">{st.engine_errors[name].slice(0, 140)}</div>}
-                <div className="foot">
-                  {s === "ready"
-                    ? <button className="ghost sm" disabled={busy === name} onClick={() => engine(name, "unload")}><Power size={14} />Unload</button>
-                    : <button className="ghost sm" disabled={!st?.online || busy === name || loading} onClick={() => engine(name, "load")}><Fire size={14} weight="duotone" />{loading ? "Loading…" : "Warm up"}</button>}
-                  <button className="quiet sm" disabled={!st?.online} onClick={() => showLogs(name)}><Terminal size={14} />Logs</button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        </section>
+      ))}
 
       <div className="card">
         <div className="card-head"><h2>Recent takes</h2><Link href="/library" className="btn quiet sm">Open library <ArrowRight size={14} /></Link></div>

@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Deploy the MCP server to Vercel and push the secrets as env vars.
-# Needs: `npx vercel login` done once. Blob store: create it in the Vercel dashboard
-# (Storage -> Blob -> Private) and connect it to the project; that adds BLOB_READ_WRITE_TOKEN.
+# Needs: `npx vercel login` done once, and a private Cloudflare R2 bucket whose R2_* keys are in .secrets.local
+# (bucket CORS: docs/r2-cors.json).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ -f .secrets.local ]] || scripts/gen-secrets.sh
 set -a; source .secrets.local; set +a
 cd mcp
 npx -y vercel@latest link --yes ${VERCEL_SCOPE:+--scope "$VERCEL_SCOPE"} >/dev/null
-for name in MCP_TOKEN WORKER_SECRET; do
+for name in R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET; do
+  [[ -n "${!name:-}" ]] || { echo "missing $name in .secrets.local" >&2; exit 1; }
+done
+for name in MCP_TOKEN WORKER_SECRET R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET; do
   for env in production preview; do
     npx -y vercel@latest env rm "$name" "$env" --yes >/dev/null 2>&1 || true
     printf '%s' "${!name}" | npx -y vercel@latest env add "$name" "$env" >/dev/null
