@@ -1,0 +1,12 @@
+.secrets.local
+.env*
+!.env.example
+node_modules/
+.next/
+.vercel/
+mcp/next-env.d.ts
+mcp/tsconfig.tsbuildinfo
+__pycache__/
+*.pyc
+.local/
+notebook/*.ipynb.bak

@@ -1,0 +1,95 @@
+"""Build notebook/voicebox_worker.ipynb with worker/ embedded (so Colab never needs repo access).
+
+  python3 notebook/build_notebook.py
+"""
+import base64, io, json, os, tarfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUT = os.path.join(ROOT, "notebook", "voicebox_worker.ipynb")
+
+
+def bundle():
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for dirpath, dirnames, files in os.walk(os.path.join(ROOT, "worker")):
+            dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+            for f in sorted(files):
+                if f.endswith(".py"):
+                    full = os.path.join(dirpath, f)
+                    info = tar.gettarinfo(full, os.path.relpath(full, os.path.join(ROOT, "worker")))
+                    info.mtime, info.uid, info.gid, info.uname, info.gname = 0, 0, 0, "", ""
+                    with open(full, "rb") as fh:
+                        tar.addfile(info, fh)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def md(src):
+    return {"cell_type": "markdown", "metadata": {}, "source": src.strip().splitlines(True)}
+
+
+def code(src):
+    return {"cell_type": "code", "metadata": {}, "execution_count": None, "outputs": [], "source": src.strip().splitlines(True)}
+
+
+INTRO = """
+# Voicebox GPU worker
+
+Turns this Colab runtime into the voice engine behind your **voicebox MCP** (Kokoro, Chatterbox, Orpheus, Dia).
+
+**Once:** open the 🔑 *Secrets* panel (left sidebar), add and enable notebook access for:
+
+| Secret | Value |
+|---|---|
+| `WORKER_SECRET` | the `WORKER_SECRET` line from `.secrets.local` |
+| `REGISTER_URL` | `https://<your-vercel-app>/api/register` |
+| `PREWARM` *(optional)* | engines to load at start, e.g. `orpheus,chatterbox` |
+
+**Every session:** Runtime → Change runtime type → **L4** (or A100) → *Run all*. The last cell stays busy while the worker serves;
+stop it (or disconnect the runtime) when you're done to save compute units.
+"""
+
+UNPACK = """
+# 1 · GPU check + unpack the worker (embedded, version {version})
+import base64, io, os, subprocess, tarfile
+print(subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], capture_output=True, text=True).stdout or "No GPU! Runtime → Change runtime type → L4")
+APP = "/content/voicebox/app"
+os.makedirs(APP, exist_ok=True)
+BUNDLE = "{bundle}"
+tarfile.open(fileobj=io.BytesIO(base64.b64decode(BUNDLE)), mode="r:gz").extractall(APP, filter="data")
+print("worker unpacked to", APP, sorted(os.listdir(APP)))
+"""
+
+RUN = """
+# 2 · Start: gateway + Cloudflare tunnel + heartbeat to the MCP server. Keeps running.
+import os, runpy, sys
+from google.colab import userdata
+for k in ("WORKER_SECRET", "REGISTER_URL", "PREWARM", "VOICEBOX_VRAM_GB"):
+    try:
+        v = userdata.get(k)
+        if v: os.environ[k] = v
+    except Exception:
+        pass  # optional secrets may be missing
+assert len(os.environ.get("WORKER_SECRET", "")) >= 24, "Add WORKER_SECRET in Secrets (🔑) and allow notebook access"
+if not os.environ.get("REGISTER_URL"): print("⚠ REGISTER_URL not set — the MCP server won't find this worker")
+sys.argv = ["launcher.py"]
+runpy.run_path("/content/voicebox/app/launcher.py", run_name="__main__")
+"""
+
+LOGS = """
+# (debug) tail the logs — run this in a *second* tab/scratch cell while the worker runs
+!tail -n 40 /content/voicebox/logs/gateway.log; ls /content/voicebox/logs
+"""
+
+if __name__ == "__main__":
+    import sys
+    sys.path.insert(0, os.path.join(ROOT, "worker"))
+    import config
+    nb = {
+        "nbformat": 4, "nbformat_minor": 0,
+        "metadata": {"accelerator": "GPU", "colab": {"provenance": [], "gpuType": "L4"},
+                     "kernelspec": {"name": "python3", "display_name": "Python 3"}},
+        "cells": [md(INTRO), code(UNPACK.replace("{bundle}", bundle()).replace("{version}", config.VERSION)),
+                  code(RUN), code(LOGS)],
+    }
+    json.dump(nb, open(OUT, "w"), indent=1)
+    print(f"wrote {OUT} ({os.path.getsize(OUT) // 1024} KB)")
