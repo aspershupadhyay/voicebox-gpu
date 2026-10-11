@@ -1,6 +1,7 @@
 // Permanent storage for finished jobs: private Vercel Blob under library/<jobId>/.
 // Audio is served to the browser through short-lived presigned CDN URLs (fast), with a proxy fallback.
-import { del, get, issueSignedToken, list, presignUrl, put } from "@vercel/blob";
+import { del, get, issueSignedToken, list, parseStoreIdFromDelegationToken, presignUrl, put } from "@vercel/blob";
+import { call } from "./worker";
 import { unzip } from "./zip";
 
 export type Word = { w: string; s: number; e: number };
@@ -60,7 +61,14 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   if (job.attach_to) return attachSubtitles(job);
   const existing = await getLibJob(job.id);
   if (existing) return existing;
-  const copied = job.zip_url ? await copyFromZip(job.id, job.zip_url).catch(() => false) : false;
+  const names: string[] = [];
+  for (const r of job.results) {
+    if (r.url) names.push(`${r.id}.wav`);
+    if (r.srt_url) names.push(`${r.id}.subs.srt`, `${r.id}.subs.vtt`, `${r.id}.subs.json`);
+  }
+  for (const ext of Object.keys(job.subs_urls ?? {})) names.push(`subtitles.${ext}`);
+  const pushed = await pushFromWorker(job.id, job.id, names).catch(() => false);
+  const copied = pushed || (job.zip_url ? await copyFromZip(job.id, job.zip_url).catch(() => false) : false);
   if (!copied) {
     const copies: [string, string][] = [];
     for (const r of job.results) {
@@ -86,6 +94,19 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   return lib;
 }
 
+/** Ask the worker to upload files straight to Blob with presigned PUT URLs (fast path; the tunnel is slow). */
+export async function pushFromWorker(workerJob: string, libJob: string, names: string[]) {
+  if (!names.length) return true;
+  const token = await issueSignedToken({ operations: ["put"], validUntil: Date.now() + 15 * 60 * 1000 });
+  const targets: Record<string, string> = {};
+  await Promise.all(names.map(async (n) => {
+    targets[n] = (await presignUrl(token, { operation: "put", pathname: `${ROOT}${libJob}/${n}`, access: "private", allowOverwrite: true, addRandomSuffix: false })).presignedUrl;
+  }));
+  const headers = { "x-api-version": "12", "x-vercel-blob-store-id": parseStoreIdFromDelegationToken(token.delegationToken), "x-vercel-blob-access": "private" };
+  const res = await call<{ pushed: string[]; failed: Record<string, string> }>(`/jobs/${workerJob}/push`, { body: { targets, headers }, timeoutMs: 55_000 });
+  return Object.keys(res.failed).length === 0;
+}
+
 /** One download through the tunnel (the job zip), then parallel writes to Blob. */
 async function copyFromZip(jobId: string, zipUrl: string) {
   const res = await fetch(zipUrl, { cache: "no-store" });
@@ -102,12 +123,16 @@ async function attachSubtitles(job: WorkerJob): Promise<LibJob | null> {
   const target = await getLibJob(job.attach_to!);
   if (!target) return null;
   if (target.subs && target.archived >= Math.round((job.created ?? 0) * 1000)) return target;
-  const copies: [string, string][] = [];
-  for (const r of job.results) if (r.srt_url) copies.push([`${r.id}.subs.srt`, r.srt_url], [`${r.id}.subs.vtt`, r.vtt_url!], [`${r.id}.subs.json`, r.json_url!]);
-  await Promise.all(copies.map(async ([name, url]) => {
-    const res = await fetch(url, { cache: "no-store" });
-    if (res.ok) await putFile(target.id, name, await res.arrayBuffer());
-  }));
+  const names = job.results.filter((r) => r.srt_url).flatMap((r) => [`${r.id}.subs.srt`, `${r.id}.subs.vtt`, `${r.id}.subs.json`]);
+  const pushed = await pushFromWorker(job.id, target.id, names).catch(() => false);
+  if (!pushed) {
+    const copies: [string, string][] = [];
+    for (const r of job.results) if (r.srt_url) copies.push([`${r.id}.subs.srt`, r.srt_url], [`${r.id}.subs.vtt`, r.vtt_url!], [`${r.id}.subs.json`, r.json_url!]);
+    await Promise.all(copies.map(async ([name, url]) => {
+      const res = await fetch(url, { cache: "no-store" });
+      if (res.ok) await putFile(target.id, name, await res.arrayBuffer());
+    }));
+  }
   // rebuild the timeline subtitle files from the per-line words, honouring starts
   const byId = new Map(job.results.map((r) => [r.id, r]));
   const allCues: { s: number; e: number; text: string }[] = [];
@@ -116,7 +141,8 @@ async function attachSubtitles(job: WorkerJob): Promise<LibJob | null> {
     const r = byId.get(line.id);
     const off = line.start ?? t;
     if (r?.json_url) {
-      const j = await fetch(r.json_url, { cache: "no-store" }).then((x) => x.json()).catch(() => null);
+      const f = await readFile(target.id, `${r.id}.subs.json`);
+      const j = f ? await new Response(f.stream).json().catch(() => null) : null;
       for (const c of j?.cues ?? []) allCues.push({ s: +(c.s + off).toFixed(3), e: +(c.e + off).toFixed(3), text: c.text });
     }
     if (r) Object.assign(line, { heard: r.heard, match: r.match, subs: true });

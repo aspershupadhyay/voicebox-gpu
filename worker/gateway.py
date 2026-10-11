@@ -664,6 +664,40 @@ def package(job):
         z.writestr("manifest.json", json.dumps(job_view(job, urls=False), indent=2))
 
 
+PUSH_TYPES = {".wav": "audio/wav", ".srt": "application/x-subrip", ".vtt": "text/vtt", ".json": "application/json"}
+
+
+def push_files(job_id, targets, headers):
+    """Upload job files straight to object storage via presigned PUT URLs (much faster than pulling
+    them back through the tunnel). targets: {file name in the job dir: presigned url}."""
+    from concurrent.futures import ThreadPoolExecutor
+    jdir = os.path.join(JOBS_DIR, job_id)
+
+    def one(item):
+        name, url = item
+        path = os.path.join(jdir, os.path.basename(name))
+        if not os.path.isfile(path) or not url.startswith("https://"):
+            return name, "missing"
+        ext = os.path.splitext(path)[1]
+        hdrs = {**{k: str(v) for k, v in headers.items() if k.lower().startswith("x-")},
+                "x-content-type": PUSH_TYPES.get(ext, "application/octet-stream")}
+        for attempt in range(3):
+            try:
+                with open(path, "rb") as f:
+                    req = urllib.request.Request(url, data=f.read(), method="PUT", headers=hdrs)
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    if r.status < 300:
+                        return name, None
+            except Exception as e:  # noqa: BLE001
+                err = f"{type(e).__name__}: {e}"
+                time.sleep(1 + attempt)
+        return name, err
+
+    with ThreadPoolExecutor(8) as ex:
+        results = list(ex.map(one, targets.items()))
+    return {"pushed": [n for n, e in results if not e], "failed": {n: e for n, e in results if e}}
+
+
 def worker_loop():
     while True:
         with QCOND:
@@ -846,6 +880,9 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             if u.path == "/jobs":
                 return self._json(202, job_view(make_job(body)))
+            m = re.match(r"^/jobs/([a-f0-9]{12})/push$", u.path)
+            if m and m.group(1) in JOBS:
+                return self._json(200, push_files(m.group(1), body.get("targets") or {}, body.get("headers") or {}))
             m = re.match(r"^/jobs/([a-f0-9]{12})/cancel$", u.path)
             if m and m.group(1) in JOBS:
                 JOBS[m.group(1)]["cancel"] = True
