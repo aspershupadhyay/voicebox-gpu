@@ -2,7 +2,7 @@
 import { isAuthed } from "@/lib/session";
 import { call, WorkerOffline } from "@/lib/worker";
 import { loadWorker, STALE_MS } from "@/lib/registry";
-import { archiveWorkerJob, deleteLibJob, FILE_RE, getLibJob, listLibrary, presignPath, putFile, putLibJob, signer, withUrls, type LibJob } from "@/lib/library";
+import { archiveWorkerJob, deleteLibJob, FILE_RE, getLibJob, listLibrary, presignPath, presignPuts, putFile, putLibJob, signer, withUrls, type LibJob } from "@/lib/library";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -82,6 +82,12 @@ export async function POST(req: Request, ctx: Ctx) {
     }
     if (a === "jobs" && c === "cancel") return Response.json(await call(`/jobs/${b}/cancel`, { body: {} }));
     if (a === "engines" && b && (c === "load" || c === "unload")) return Response.json(await call(`/engines/${b}/${c}`, { body: {} }));
+    if (a === "library" && b && c === "presign") {
+      // large uploads (videos) go straight to Blob: POST /library/<job>/presign {files: ["video.mp4", ...]}
+      const files: string[] = Array.isArray(body.files) ? body.files.map(String) : [];
+      if (!ID.test(b) || !files.length || !files.every((f) => FILE_RE.test(f))) return Response.json({ error: "bad job id or file names" }, { status: 400 });
+      return Response.json(await presignPuts(b, files));
+    }
     if (a === "refs") return Response.json(await call("/refs", { body, timeoutMs: 55_000 }));
     return Response.json({ error: "not found" }, { status: 404 });
   } catch (e) {

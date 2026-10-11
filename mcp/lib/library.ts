@@ -95,15 +95,21 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   return lib;
 }
 
-/** Ask the worker to upload files straight to Blob with presigned PUT URLs (fast path; the tunnel is slow). */
-export async function pushFromWorker(workerJob: string, libJob: string, names: string[]) {
-  if (!names.length) return true;
+/** Presigned PUT URLs (15 min) for files in one library job, plus the headers Blob expects on each PUT. */
+export async function presignPuts(libJob: string, names: string[]) {
   const token = await issueSignedToken({ operations: ["put"], validUntil: Date.now() + 15 * 60 * 1000 });
   const targets: Record<string, string> = {};
   await Promise.all(names.map(async (n) => {
     targets[n] = (await presignUrl(token, { operation: "put", pathname: `${ROOT}${libJob}/${n}`, access: "private", allowOverwrite: true, addRandomSuffix: false })).presignedUrl;
   }));
   const headers = { "x-api-version": "12", "x-vercel-blob-store-id": parseStoreIdFromDelegationToken(token.delegationToken), "x-vercel-blob-access": "private" };
+  return { targets, headers };
+}
+
+/** Ask the worker to upload files straight to Blob with presigned PUT URLs (fast path; the tunnel is slow). */
+export async function pushFromWorker(workerJob: string, libJob: string, names: string[]) {
+  if (!names.length) return true;
+  const { targets, headers } = await presignPuts(libJob, names);
   const res = await call<{ pushed: string[]; failed: Record<string, string> }>(`/jobs/${workerJob}/push`, { body: { targets, headers }, timeoutMs: 55_000 });
   return Object.keys(res.failed).length === 0;
 }
