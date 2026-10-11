@@ -353,8 +353,7 @@ def cues_from_words(words, offset=0.0, style=C.SUBTITLE_STYLE):
         sentences.append(cur)
 
     def text(ws):
-        t = re.sub(r"\s+(?=[.,!?;:%\u2019]|-\S)", "", " ".join(x["w"] for x in ws))  # "non -stop" -> "non-stop"
-        return t[:1].upper() + t[1:]
+        return re.sub(r"\s+(?=[.,!?;:%\u2019]|-\S)", "", " ".join(x["w"] for x in ws))  # "non -stop" -> "non-stop"
 
     def split(ws):
         t, dur = text(ws), ws[-1]["e"] - ws[0]["s"]
@@ -372,11 +371,14 @@ def cues_from_words(words, offset=0.0, style=C.SUBTITLE_STYLE):
 
     out = []
     for sent in sentences:
-        for c in split(sent):
+        for k, c in enumerate(split(sent)):
             st, en = c[0]["s"] + offset, c[-1]["e"] + offset
             if out and st < out[-1]["e"] + style["min_gap"]:
                 out[-1]["e"] = max(out[-1]["s"] + 0.2, st - style["min_gap"])
-            out.append({"s": round(st, 3), "e": round(max(en, st + 0.3), 3), "text": text(c)})
+            t = text(c)
+            if k == 0:  # Whisper sometimes lower-cases a sentence that opens a 30 s window
+                t = t[:1].upper() + t[1:]
+            out.append({"s": round(st, 3), "e": round(max(en, st + 0.3), 3), "text": t})
     return out
 
 
