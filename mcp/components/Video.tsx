@@ -11,19 +11,23 @@ import { GuideButton } from "./GuideDrawer";
 import JobProgress from "./JobProgress";
 import { useStatus } from "./Shell";
 
-type Spec = { about: string; sizes: Record<string, [number, number]>; qualities: Record<string, { steps: number; guidance: number; about: string }>; max_seconds: number; fps: number; disk_gb: number; downloaded?: boolean };
+type Spec = { about: string; sizes: Record<string, [number, number]>; qualities: Record<string, { steps: number; guidance: number; about: string }>; max_seconds: number; fps: number; disk_gb: number; downloaded?: boolean; image_only?: boolean; adult?: boolean; min_gpu_gb?: number };
 type LibVideo = { id: string; kind?: string; label?: string; created: number; engine: string; gen?: Gen; video?: { width: number; height: number; duration: number; has_audio?: boolean; size: number }; video_url?: string; poster_url?: string | null };
 
 // Mirrors worker/config.py so the page is usable (and estimates work) before the worker reports in.
 const SPECS: Record<string, Spec> = {
   wan: { about: "Sharp 720p, strong motion, best prompt following. Silent, up to 5 s.", sizes: { "16:9": [1280, 704], "9:16": [704, 1280], "1:1": [960, 960] },
     qualities: { fast: { steps: 4, guidance: 1, about: "Turbo · 4 steps" }, full: { steps: 30, guidance: 5, about: "Original · 30 steps, ~10× slower" } }, max_seconds: 5, fps: 24, disk_gb: 23 },
+  wan14: { about: "Full-size Wan (2 × 14B experts, Lightning 4-step). Steadiest faces, hands and motion. Animates a start frame; A100 only.", sizes: { "16:9": [832, 480], "9:16": [480, 832], "1:1": [640, 640] },
+    qualities: { fast: { steps: 4, guidance: 1, about: "Lightning · 4 steps" } }, max_seconds: 5, fps: 16, disk_gb: 69, image_only: true, adult: true, min_gpu_gb: 38 },
   ltx: { about: "Picture and matching sound in one pass. Up to 10 s, softer detail.", sizes: { "16:9": [1024, 576], "9:16": [576, 1024], "1:1": [768, 768] },
     qualities: { fast: { steps: 8, guidance: 1, about: "Distilled · 8 steps" } }, max_seconds: 10, fps: 24, disk_gb: 48 },
 };
-const NAMES: Record<string, string> = { wan: "Wan 2.2", ltx: "LTX-2.3" };
-const PRIOR: Record<string, number> = { wan: 0.3, ltx: 0.35 };
-const LOAD_S: Record<string, number> = { wan: 150, ltx: 300 };
+const NAMES: Record<string, string> = { wan: "Wan 2.2", wan14: "Wan 14B", ltx: "LTX-2.3" };
+const PRIOR: Record<string, number> = { wan: 0.3, wan14: 1.2, ltx: 0.35 };
+const LOAD_S: Record<string, number> = { wan: 150, wan14: 240, ltx: 300 };
+const MODELS = ["wan", "wan14", "ltx"] as const;
+const TAGS: Record<string, string> = { wan: "720p · silent · ≤5 s", wan14: "best Wan · from image", ltx: "with sound · ≤10 s" };
 const MB_PER_S = 150; // typical Colab download speed from Hugging Face
 const CHIPS = {
   Camera: ["slow dolly in", "orbit around the subject", "tracking shot", "aerial drone shot", "handheld, slight shake", "static tripod shot"],
@@ -53,10 +57,12 @@ export default function Video() {
   const [quality, setQuality] = useState("fast");
   const [seed, setSeed] = useState(7);
   const [audio, setAudio] = useState(true);
+  const [adult, setAdult] = useState(false);
   const [frameMode, setFrameMode] = useState<"none" | "upload" | "library">("none");
   const [file, setFile] = useState<{ file: File; url: string } | null>(null);
   const [fromLib, setFromLib] = useState<string | null>(null);
   const [history, setHistory] = useState<LibVideo[]>([]);
+  const libFrames = useMemo(() => history.filter((v) => v.poster_url), [history]);
   const [job, setJob] = useState<Job | null>(null);
   const [lib, setLib] = useState<LibVideo | null>(null);
   const [upFrac, setUpFrac] = useState<number | null>(null);
@@ -79,21 +85,24 @@ export default function Video() {
   useEffect(() => {
     if (!status?.online) return;
     // live sizes / qualities / download state from the worker; keep this page's own short descriptions
-    api<{ engines: Record<string, Spec> }>("voices").then((c) => setSpecs((cur) => ({ wan: { ...cur.wan, ...c.engines.wan, about: cur.wan.about }, ltx: { ...cur.ltx, ...c.engines.ltx, about: cur.ltx.about } }))).catch(() => {});
+    api<{ engines: Record<string, Spec> }>("voices").then((c) => setSpecs((cur) =>
+      Object.fromEntries(MODELS.map((m) => [m, { ...cur[m], ...c.engines[m], about: cur[m].about }])))).catch(() => {});
   }, [status?.online]);
 
   const spec = specs[model];
   useEffect(() => {
     if (!spec.qualities[quality]) setQuality("fast");
     if (seconds > spec.max_seconds) setSeconds(spec.max_seconds);
-  }, [model, spec, quality, seconds]);
+    if (!spec.sizes[aspect]) setAspect("9:16");
+    if (spec.image_only && frameMode === "none") setFrameMode(libFrames.length ? "library" : "upload");
+  }, [model, spec, quality, seconds, aspect, frameMode]);
 
   function refreshHistory() {
     api<{ jobs: LibVideo[] }>("library").then((r) => setHistory(r.jobs.filter((j) => j.kind === "video"))).catch(() => {});
   }
 
   const q = spec.qualities[quality] ?? spec.qualities.fast;
-  const [w, h] = spec.sizes[aspect];
+  const [w, h] = spec.sizes[aspect] ?? spec.sizes["9:16"];
   const step = model === "ltx" ? 8 : 4;
   const frames = Math.max(1, Math.round((seconds * spec.fps) / step)) * step + 1;
   const units = q.steps * frames * (w * h) / 1e6 * (q.guidance > 1 ? 2 : 1);
@@ -101,10 +110,9 @@ export default function Video() {
   const downloaded = spec.downloaded ?? !!status?.disk?.weights_gb?.[model];
   const fetchS = downloaded ? 0 : ((spec.disk_gb + (quality === "full" ? 20 : 0)) * 1000) / MB_PER_S;
   const estS = (status?.rates?.[model] ?? PRIOR[model]) * units + 25 + (state === "ready" ? 0 : LOAD_S[model] + fetchS);
-  const voiceLoaded = Object.entries(status?.engines ?? {}).filter(([n, s]) => s === "ready" && !["wan", "ltx"].includes(n)).map(([n]) => n);
+  const voiceLoaded = Object.entries(status?.engines ?? {}).filter(([n, s]) => s === "ready" && !(MODELS as readonly string[]).includes(n)).map(([n]) => n);
   const running = !!job && (["queued", "running"].includes(job.status) || (job.status === "done" && !job.library)) || upFrac !== null;
   const recent = useMemo(() => history.filter((v) => v.gen && v.poster_url), [history]);
-  const libFrames = useMemo(() => history.filter((v) => v.poster_url), [history]);
 
   async function poll(id: string) {
     try {
@@ -118,7 +126,7 @@ export default function Video() {
   async function submit() {
     setErr(""); setJob(null); setLib(null);
     try {
-      const body: Record<string, unknown> = { kind: "video", model, prompt, negative: negative || undefined, aspect, seconds, quality, seed, audio: model === "ltx" ? audio : undefined };
+      const body: Record<string, unknown> = { kind: "video", model, prompt, negative: negative || undefined, aspect, seconds, quality, seed, audio: model === "ltx" ? audio : undefined, adult: spec.adult ? adult : undefined };
       if (frameMode === "upload" && file) {
         setUpFrac(0);
         body.image_key = await uploadFile(file.file, file.file.name, setUpFrac);
@@ -141,7 +149,7 @@ export default function Video() {
   }
 
   const addChip = (c: string) => setPrompt((p) => (p.trim() ? `${p.trim().replace(/[.,]$/, "")}, ${c}` : c));
-  const frameReady = frameMode === "none" || (frameMode === "upload" && !!file) || (frameMode === "library" && !!fromLib);
+  const frameReady = (frameMode === "none" && !spec.image_only) || (frameMode === "upload" && !!file) || (frameMode === "library" && !!fromLib);
   const shown = lib ?? null;
 
   return (
@@ -150,7 +158,7 @@ export default function Video() {
         <div>
           <div className="eyebrow">Direct</div>
           <h1>Describe it, <em>watch it.</em></h1>
-          <p className="sub">Text or a start frame in, a 24 fps clip out. Two models, one GPU: starting a render unloads the voice engines and brings them back when you need them.</p>
+          <p className="sub">Text or a start frame in, a 24 fps clip out. Three models, one GPU: starting a render unloads the voice engines and brings them back when you need them.</p>
         </div>
         <GuideButton engine={model} label="Prompting guide" />
       </div>
@@ -177,9 +185,9 @@ export default function Video() {
           </div>
 
           <div className="card">
-            <div className="card-head"><h2>Start frame</h2><span className="dim tiny">optional · the image becomes frame one</span></div>
+            <div className="card-head"><h2>Start frame</h2><span className="dim tiny">{spec.image_only ? "required for " + NAMES[model] : "optional"} · the image becomes frame one</span></div>
             <div className="seg" style={{ marginBottom: 14 }}>
-              <button className={frameMode === "none" ? "on" : ""} onClick={() => setFrameMode("none")}>From text</button>
+              <button className={frameMode === "none" ? "on" : ""} onClick={() => setFrameMode("none")} disabled={spec.image_only} title={spec.image_only ? `${NAMES[model]} only animates a start frame` : undefined}>From text</button>
               <button className={frameMode === "upload" ? "on" : ""} onClick={() => setFrameMode("upload")}>Upload image</button>
               <button className={frameMode === "library" ? "on" : ""} onClick={() => setFrameMode("library")} disabled={!libFrames.length}>From library</button>
             </div>
@@ -220,17 +228,21 @@ export default function Video() {
         <div className="stack" style={{ gap: 16 }}>
           <div className="card">
             <div className="card-head"><h2>Model</h2></div>
-            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              {(["wan", "ltx"] as const).map((n) => (
-                <button key={n} className={`pick engine-tile ${model === n ? "on" : ""}`} onClick={() => setModel(n)}>
+            <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+              {MODELS.map((n) => {
+                const small = !!specs[n].min_gpu_gb && !!status?.gpu?.total_gb && status.gpu.total_gb < specs[n].min_gpu_gb!;
+                return (
+                <button key={n} className={`pick engine-tile ${model === n ? "on" : ""}`} onClick={() => setModel(n)} disabled={small}
+                  title={small ? `Needs a ${specs[n].min_gpu_gb} GB+ GPU (A100); this runtime has ${status?.gpu?.total_gb} GB` : undefined}>
                   <span className="art"><EngineArt engine={n} live={model === n} /></span>
                   <span className="row between" style={{ marginTop: 10 }}>
                     <span style={{ font: "400 21px var(--display)" }}>{NAMES[n]}</span>
                     <span className={`dot ${status?.engines?.[n] === "ready" ? "ok" : ["loading", "installing"].includes(status?.engines?.[n] ?? "") ? "warn" : "off"}`} title={status?.engines?.[n] ?? ""} />
                   </span>
-                  <span className="t2" style={{ display: "block" }}>{n === "wan" ? "720p · silent · ≤5 s" : "with sound · ≤10 s"}</span>
+                  <span className="t2" style={{ display: "block" }}>{small ? "needs an A100" : TAGS[n]}</span>
                 </button>
-              ))}
+                );
+              })}
             </div>
             <p className="dim small" style={{ margin: "14px 0 0" }}>{spec.about}</p>
             {!downloaded && <p className="tiny" style={{ margin: "8px 0 0", color: "var(--sand)" }}><DownloadSimple size={12} weight="bold" /> First use downloads ~{spec.disk_gb + (quality === "full" ? 20 : 0)} GB of weights onto the Colab disk (once per runtime).</p>}
@@ -264,6 +276,7 @@ export default function Video() {
                 <input type="number" value={seed} onChange={(e) => setSeed(+e.target.value)} />
               </div>
               <button className="ghost" onClick={() => setSeed(Math.floor(Math.random() * 1e6))} title="New random seed"><DiceFive size={16} />Roll</button>
+              {spec.adult && <button className={`ghost ${adult ? "" : "dim"}`} onClick={() => setAdult(!adult)} title="Opt-in community NSFW LoRA (lopi999). Adults only; never real people.">{adult ? <Sparkle size={16} weight="fill" /> : <Prohibit size={16} />}{adult ? "Adult on" : "Adult off"}</button>}
               {model === "ltx" && <button className={`ghost ${audio ? "" : "dim"}`} onClick={() => setAudio(!audio)} title="Generate the soundtrack">{audio ? <SpeakerHigh size={16} /> : <SpeakerSlash size={16} />}{audio ? "Sound on" : "Sound off"}</button>}
             </div>
             <div className="dim tiny" style={{ marginTop: 6 }}>Same seed + same prompt = the same clip. Roll for a different take.</div>
@@ -280,7 +293,7 @@ export default function Video() {
       <div className="sticky">
         <span className="thumb" style={{ color: "var(--signal)" }}><FilmSlate size={20} weight="duotone" /></span>
         <div className="sum">
-          <div><div className="label">Model</div><b>{NAMES[model]}{quality === "full" ? " · full" : ""}</b></div>
+          <div><div className="label">Model</div><b>{NAMES[model]}{quality === "full" ? " · full" : ""}{spec.adult && adult ? " · adult" : ""}</b></div>
           <div><div className="label">Clip</div><b>{aspect} · {((frames - 1) / spec.fps).toFixed(1)} s{frameMode !== "none" ? " · from image" : ""}</b></div>
           <div title={state !== "ready" ? "includes loading the model" : undefined}><div className="label">Ready in</div><b>≈{fmtS(estS)}</b></div>
         </div>

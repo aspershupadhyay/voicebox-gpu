@@ -94,7 +94,7 @@ export function EngineArt({ engine, live = false }: { engine: string; live?: boo
       <circle cx="60" cy="24" r="2.6" className="accent-fill" />
     </svg>
   );
-  if (engine === "wan") return (
+  if (engine === "wan" || engine === "wan14") return (
     // a frame with a subject in motion (ghosted trail) over a timeline with a playhead
     <svg viewBox="0 0 120 84" className={cls} aria-hidden>
       <rect x="16" y="10" width="88" height="52" rx="6" className="ink" />

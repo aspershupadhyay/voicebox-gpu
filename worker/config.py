@@ -131,6 +131,22 @@ ENGINES = {
                       "full": {"steps": 30, "guidance": 5.0, "about": "Original model, best detail, ~20-30 min on an L4"}},
         "voices": [], "presets": {}, "params": {},
     },
+    "wan14": {
+        "group": "visual",
+        "disk_gb": 69.0,   # both 14B experts in bf16 (Lightning merged) + UMT5 text encoder; adult LoRA adds ~1.2 GB
+        "kind": "video",
+        "port": 8112,
+        "gpu_gb": 32.0,
+        "min_gpu_gb": 38.0,  # one 14B expert on the GPU at a time: A100 / H100 class only
+        "image_only": True,
+        "adult": True,       # accepts adult: true (community LoRA, opt-in per job)
+        "packages": "torch diffusers>=0.41 transformers accelerate peft sentencepiece ftfy imageio imageio-ffmpeg pillow soundfile",
+        "about": "Wan 2.2 I2V A14B + Lightning (Alibaba, Apache-2.0). Best motion and detail of the Wan family; animates a start frame. 480p, 4 steps, A100 only.",
+        "sizes": {"16:9": [832, 480], "9:16": [480, 832], "1:1": [640, 640]},
+        "fps": 16, "max_seconds": 5.0, "frame_step": 4,
+        "qualities": {"fast": {"steps": 4, "guidance": 1.0, "about": "Lightning distill, 4 steps"}},
+        "voices": [], "presets": {}, "params": {},
+    },
     "ltx": {
         "group": "visual",
         "disk_gb": 48.0,   # distilled transformer (bf16) + 4-bit Gemma 3 text encoder
@@ -212,9 +228,9 @@ def style_settings(style, engine):
 # Speed priors (seconds of compute per character / per second of audio), refined live by the gateway.
 RATE_PRIORS = {"kokoro": 0.004, "chatterbox": 0.06, "orpheus": 0.03, "whisper": 0.06, "qwen": 0.05,
                # video: seconds per (step x frame x megapixel), x2 when CFG doubles the passes
-               "wan": 0.3, "ltx": 0.35}
-INSTALL_PRIORS = {"kokoro": 40, "chatterbox": 150, "orpheus": 240, "whisper": 120, "qwen": 150, "wan": 300, "ltx": 420}  # first install, seconds
-LOAD_PRIORS = {"kokoro": 5, "chatterbox": 45, "orpheus": 120, "whisper": 40, "qwen": 60, "wan": 240, "ltx": 480}  # first load includes the weight download
+               "wan": 0.3, "ltx": 0.35, "wan14": 1.2}
+INSTALL_PRIORS = {"kokoro": 40, "chatterbox": 150, "orpheus": 240, "whisper": 120, "qwen": 150, "wan": 300, "ltx": 420, "wan14": 300}  # first install, seconds
+LOAD_PRIORS = {"kokoro": 5, "chatterbox": 45, "orpheus": 120, "whisper": 40, "qwen": 60, "wan": 240, "ltx": 480, "wan14": 600}  # first load includes the weight download
 
 SUBTITLE_STYLE = {"max_chars": 42, "max_seconds": 3.5, "min_gap": 0.08}
 

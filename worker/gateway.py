@@ -660,6 +660,11 @@ def make_video_job(body):
     image = str(body.get("image_url") or "")
     if image and not image.startswith(("https://", "http://")):
         raise ValueError("image_url must be an http(s) URL")
+    if spec.get("image_only") and not image:
+        raise ValueError(f"{model} is image-to-video only: give it a start frame (image_url or from_library)")
+    if spec.get("min_gpu_gb") and gpu_info()["total_gb"] < spec["min_gpu_gb"]:
+        raise ValueError(f"{model} needs a {spec['min_gpu_gb']:g} GB+ GPU (A100 class); this runtime has {gpu_info()['total_gb']:g} GB")
+    adult = bool(body.get("adult")) and bool(spec.get("adult"))
     seed = body.get("seed")
     job = _base_job("video", body)
     job.update({"engine": model, "voice": "", "lines": [], "params": {}, "post": {}, "image_url": image or None,
@@ -667,7 +672,7 @@ def make_video_job(body):
                         "negative": str(body.get("negative") or "")[:2000], "seed": int(seed) if seed not in (None, "") else 7,
                         "steps": steps, "guidance": float(q["guidance"]), "quality": quality, "aspect": aspect, "fps": fps,
                         "frames": frames, "seconds": round((frames - 1) / fps, 2), "width": w, "height": h,
-                        "audio": bool(body.get("audio", True)) and model == "ltx"}})
+                        "audio": bool(body.get("audio", True)) and model == "ltx", "adult": adult}})
     job["est_total"] = video_estimate(job["gen"]) + 25
     return _enqueue(job)
 
@@ -903,7 +908,7 @@ def _download(url, path, limit=600 * 1024 * 1024):
 def run_video(job):
     g, model = job["gen"], job["engine"]
     jdir = os.path.join(JOBS_DIR, job["id"])
-    payload = {k: g[k] for k in ("prompt", "negative", "seed", "steps", "guidance", "quality", "fps", "audio")}
+    payload = {k: g.get(k) for k in ("prompt", "negative", "seed", "steps", "guidance", "quality", "fps", "audio", "adult")}
     payload.update({"width": g["width"], "height": g["height"], "num_frames": g["frames"],
                     "out_path": os.path.join(jdir, "video.mp4"), "progress_path": os.path.join(jdir, "progress.json")})
     if job.get("image_url"):
@@ -1160,7 +1165,8 @@ def catalogue():
     out = {}
     for name, spec in C.ENGINES.items():
         out[name] = {k: spec[k] for k in ("kind", "about", "voices", "presets", "params", "gpu_gb", "chunk_chars", "group",
-                                          "disk_gb", "sizes", "qualities", "max_seconds", "fps", "languages", "clone") if k in spec}
+                                          "disk_gb", "sizes", "qualities", "max_seconds", "fps", "languages", "clone",
+                                          "image_only", "adult", "min_gpu_gb") if k in spec}
         out[name]["state"] = ENG.state[name]
         out[name]["downloaded"] = os.path.isdir(cache_dir(name)) and dir_gb(cache_dir(name)) > 0.05
         unit = {"tts": "seconds_per_char", "asr": "seconds_per_audio_second", "video": "seconds_per_step_frame_megapixel"}[spec["kind"]]

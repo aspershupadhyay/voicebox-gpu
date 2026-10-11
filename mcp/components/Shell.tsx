@@ -20,8 +20,8 @@ const NAV = [
   { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning },
   { href: "/library", name: "Library", Icon: Books },
 ] as const;
-const ENGINE_ORDER = ["orpheus", "chatterbox", "kokoro", "qwen", "whisper", "wan", "ltx"];
-const ALL_ENGINES = ["orpheus", "chatterbox", "kokoro", "qwen", "whisper", "wan", "ltx"];
+const ENGINE_ORDER = ["orpheus", "chatterbox", "kokoro", "qwen", "whisper", "wan", "wan14", "ltx"];
+const ALL_ENGINES = ["orpheus", "chatterbox", "kokoro", "qwen", "whisper", "wan", "wan14", "ltx"];
 const MODE: Record<string, string> = { voice: "Voice mode", visual: "Video mode", idle: "Idle · GPU free", mixed: "Switching" };
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 const stateClass = (s?: string) => (s === "ready" ? "ready" : s === "loading" || s === "installing" || s === "busy" ? "busy" : s === "error" ? "err" : "");

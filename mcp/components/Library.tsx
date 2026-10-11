@@ -36,7 +36,7 @@ function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) {
         <div style={{ minWidth: 0 }}>
           <div className="lc-title">{j.label || j.id}</div>
           <div className="lc-meta">
-            <span className="pill sig"><FilmStrip size={11} weight="bold" />{j.gen ? (j.gen.model === "ltx" ? "LTX-2.3" : "Wan 2.2") : "video"}</span>
+            <span className="pill sig"><FilmStrip size={11} weight="bold" />{j.gen ? ({ ltx: "LTX-2.3", wan14: "Wan 14B" }[j.gen.model] ?? "Wan 2.2") : "video"}</span>
             {j.video?.has_audio && <span className="pill">sound</span>}
             {j.subs && <span className="pill blue">CC · {j.subs.cues}</span>}
             {v && <span className="dim tiny mono">{fmtS(v.duration)} · {ago(j.created)}</span>}

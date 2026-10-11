@@ -20,9 +20,10 @@ const ENGINES: Record<string, { role: string; lang: string; mem: string; group: 
   kokoro: { role: "Instant drafts for timing, on the CPU.", lang: "9 languages", mem: "CPU", group: "voice" },
   whisper: { role: "Word-timed subtitles from any audio.", lang: "99 languages", mem: "≈4 GB", group: "voice" },
   wan: { role: "Sharp 720p clips from text or a start frame.", lang: "720p · silent", mem: "≈20 GB", group: "visual" },
+  wan14: { role: "Top-quality Wan: animates a start frame. A100 only.", lang: "480p · from image", mem: "≈32 GB", group: "visual" },
   ltx: { role: "Video with its own soundtrack, up to 10 s.", lang: "video + sound", mem: "≈20 GB", group: "visual" },
 };
-const CLIP_UNITS: Record<string, number> = { wan: 4 * 121 * 0.9, ltx: 8 * 121 * 0.59 }; // steps x frames x megapixels for a 5 s clip
+const CLIP_UNITS: Record<string, number> = { wan: 4 * 121 * 0.9, ltx: 8 * 121 * 0.59, wan14: 4 * 81 * 0.4 }; // steps x frames x megapixels for a 5 s clip
 
 function speed(name: string, rate?: number) {
   if (!rate) return "—";
@@ -147,7 +148,7 @@ export default function Overview() {
                   <div className="art"><EngineArt engine={name} live={s === "ready" || loading} /></div>
                   <div className="body">
                     <div className="row between">
-                      <span className="name" style={{ textTransform: name === "ltx" ? "uppercase" : "capitalize" }}>{name}</span>
+                      <span className="name" style={{ textTransform: name === "ltx" ? "uppercase" : "capitalize" }}>{name === "wan14" ? "Wan 14B" : name}</span>
                       <span className={`pill ${s === "ready" ? "ok" : loading ? "warn" : s === "error" ? "bad" : ""}`}>{s === "ready" ? "warm" : s ?? "—"}</span>
                     </div>
                     <div className="dim small">{ENGINES[name].role}</div>

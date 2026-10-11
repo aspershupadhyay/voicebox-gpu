@@ -268,6 +268,28 @@ export const VIDEO_GUIDES: Record<string, Guide> = {
       },
     ],
   },
+  wan14: {
+    title: "Wan 2.2 14B",
+    tagline: "The full-size Wan (two 14B experts) with the 4-step Lightning distill. Animates a start frame at 480p, 16 fps, up to 5 s. Needs an A100.",
+    sections: [
+      {
+        h: "Start from a picture",
+        body: [
+          "This model only animates: the start frame IS frame one. Upload an image or pick a library frame.",
+          "Describe the motion and the camera, not the look: what moves, how fast, where the camera goes. One main action, one camera move.",
+          "It keeps faces, hands and fabric far steadier than the 5B Wan. Use it for the hero shot once the frame is right.",
+        ],
+        example: "The woman turns her head toward the window and smiles as wind lifts her hair. Slow push in, soft daylight, gentle film grain.",
+      },
+      {
+        h: "Adult mode",
+        body: [
+          "Off by default. When on, the job adds a community LoRA (lopi999/Wan2.2-I2V_General-NSFW-LoRA, downloaded once, ~1.2 GB) and its trigger word.",
+          "Adults only, and never real people's likeness: both are illegal or against Colab's terms whatever the model allows.",
+        ],
+      },
+    ],
+  },
   ltx: {
     title: "LTX-2.3",
     tagline: "Video and matching sound in one pass. Up to 10 s, 8 steps. Softer detail than Wan (it runs in 4-bit on the L4).",

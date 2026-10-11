@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen"] as const;
-const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "whisper", "wan", "ltx"] as const;
+const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "whisper", "wan", "wan14", "ltx"] as const;
 const MAX_WAIT = 45; // seconds a tool call may block; Vercel caps the request at maxDuration
 
 type Job = { id: string; status: string; progress: { done: number; total: number }; [k: string]: unknown };
@@ -160,20 +160,22 @@ const handler = createMcpHandler(
         description: [
           "Render a short video on the GPU worker and save it to the library (MP4 + poster).",
           "model wan: Wan 2.2 TI2V 5B, sharp 720p, best prompt following, silent, up to 5 s; quality fast = 4-step Turbo (a few minutes), full = 30 steps (~10x slower).",
+          "model wan14: Wan 2.2 I2V A14B + Lightning, best Wan quality, image-to-video ONLY (needs image_url or from_library), 480p 16 fps, up to 5 s, A100 only; adult: true adds an opt-in community NSFW LoRA (adults only, never real people).",
           "model ltx: LTX-2.3 distilled, picture + matching soundtrack from the same prompt, up to 10 s, softer detail. Describe sounds too (\"Audio: ...\").",
           "Prompts: subject, action, place, camera move, light, style; 40-100 words for wan. With a start frame (image_url or from_library) describe the motion, not the look.",
-          "Video and voice engines never share the GPU: this unloads voice engines first. First use downloads the weights (wan ~23 GB, ltx ~48 GB).",
+          "Video and voice engines never share the GPU: this unloads voice engines first. First use downloads the weights (wan ~23 GB, wan14 ~69 GB, ltx ~48 GB).",
           "Rendering takes minutes: this returns a job id; poll get_job until done (the finished clip is archived to the library).",
         ].join(" "),
         inputSchema: z.object({
           prompt: z.string().min(3).max(4000),
-          model: z.enum(["wan", "ltx"]).optional().describe("default wan"),
+          model: z.enum(["wan", "wan14", "ltx"]).optional().describe("default wan"),
           aspect: z.enum(["9:16", "16:9", "1:1"]).optional().describe("default 9:16"),
           seconds: z.number().min(1).max(10).optional().describe("default 5 (wan max 5, ltx max 10)"),
           quality: z.enum(["fast", "full"]).optional().describe("wan only; default fast"),
           seed: z.number().int().optional(),
           negative: z.string().max(2000).optional().describe("things to avoid"),
           audio: z.boolean().optional().describe("ltx only: generate the soundtrack (default true)"),
+          adult: z.boolean().optional().describe("wan14 only: enable the adult LoRA (default false)"),
           image_url: z.string().url().optional().describe("start frame (public or signed https URL)"),
           from_library: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional().describe("start from a library video's poster frame"),
           label: z.string().max(80).optional(),
