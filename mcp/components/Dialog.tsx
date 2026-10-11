@@ -13,6 +13,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
   const [ask, setAsk] = useState<(Ask & { resolve: (v: boolean) => void }) | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const okRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const seq = useRef(0);
 
   const confirm = useCallback((a: Ask) => new Promise<boolean>((resolve) => setAsk({ ...a, resolve })), []);
@@ -25,7 +26,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
   const close = useCallback((v: boolean) => { setAsk((a) => { a?.resolve(v); return null; }); }, []);
   useEffect(() => {
     if (!ask) return;
-    okRef.current?.focus();
+    (ask.danger ? cancelRef : okRef).current?.focus();  // Enter must never delete by accident
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(false); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -42,7 +43,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
             <h3 id="dlg-title">{ask.title}</h3>
             {ask.body && <div className="modal-body">{ask.body}</div>}
             <div className="row" style={{ justifyContent: "flex-end", marginTop: 22 }}>
-              <button className="ghost" onClick={() => close(false)}>{ask.cancel ?? "Cancel"}</button>
+              <button ref={cancelRef} className="ghost" onClick={() => close(false)}>{ask.cancel ?? "Cancel"}</button>
               <button ref={okRef} className={ask.danger ? "danger" : "sig"} onClick={() => close(true)}>{ask.confirm ?? "OK"}</button>
             </div>
           </div>
