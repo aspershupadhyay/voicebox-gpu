@@ -101,7 +101,7 @@ const handler = createMcpHandler(
           "No length limit: long text is split at sentences, voiced in one batch and re-joined.",
           "subtitles: true adds Whisper large-v3 word-timed SRT/VTT per line and for the whole timeline (uses each line's start when given), plus a match score vs the script.",
           "voice: 'female' / 'male' presets, an engine voice (e.g. tara, dan, af_heart), or an uploaded reference name.",
-          "style sets the delivery (default 'tech'): tech = bright YouTube-tech pace (~180 wpm), hype = max energy for promos, narrator = calm documentary (~135 wpm), neutral = engine defaults. Explicit params override the style. Liveliest voices for tech/hype: orpheus mia/leo/tara, kokoro am_fenrir/af_bella.",
+          "style sets the delivery (default 'tech'): tech = bright YouTube-tech pace (~185 wpm), hype = max energy for promos, narrator = calm documentary (~165 wpm), neutral = engine defaults. Explicit params override the style. For energy the voice matters most (Orpheus temperature does not add energy): orpheus mia/leo, kokoro am_fenrir/af_bella; chatterbox via exaggeration.",
           "First use of an engine installs + loads it (several minutes); the job keeps running, so poll with get_job.",
         ].join(" "),
         inputSchema: z.object({

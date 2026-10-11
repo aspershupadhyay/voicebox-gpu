@@ -10,7 +10,7 @@ import { useStatus } from "./Shell";
 
 type Param = { type: "number" | "integer" | "string"; default: number | string; min?: number; max?: number; about?: string };
 type Engine = { kind: string; about: string; voices: string[]; presets: Record<string, string>; params: Record<string, Param>; state: string; seconds_per_char?: number };
-type Style = { label: string; about: string; params: Record<string, Record<string, number>>; post: { tempo?: number }; voices: Record<string, string[]> };
+type Style = { label: string; about: string; params: Record<string, Record<string, number>>; post: { tempo?: number }; post_by_engine?: Record<string, { tempo?: number }>; voices: Record<string, string[]> };
 type Catalogue = { engines: Record<string, Engine>; references: string[]; styles?: Record<string, Style>; default_style?: string };
 const STYLE_ICON: Record<string, string> = { tech: "⚡", hype: "🚀", narrator: "🎙", neutral: "◌" };
 type ParsedLine = { id: string; text: string; window?: number; start?: number; params?: Record<string, number> };
@@ -76,7 +76,7 @@ export default function Generate() {
   const eng = cat?.engines[engine];
   const styles: Record<string, Style> = cat?.styles ?? {};
   const styleParams: Record<string, number> = styles[style]?.params?.[engine] ?? {};
-  const effTempo = tempo ?? styles[style]?.post?.tempo ?? 1;
+  const effTempo = tempo ?? styles[style]?.post_by_engine?.[engine]?.tempo ?? styles[style]?.post?.tempo ?? 1;
   const lines = useMemo(() => parse(script), [script]);
   const chars = lines.reduce((s, l) => s + l.text.length, 0);
   const langs = LANGUAGES.filter((l) => l.engines.includes(engine));

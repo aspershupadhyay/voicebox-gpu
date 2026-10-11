@@ -96,8 +96,8 @@ A style sets engine params and `post` defaults; explicit values in the request w
 
 | Style | About | orpheus | chatterbox | kokoro | post |
 |---|---|---|---|---|---|
-| `tech` | Bright, quick, confident. YouTube-tech pace (~180 wpm). | temperature=0.85, top_p=0.95, repetition_penalty=1.1 | exaggeration=0.9, cfg_weight=0.3, temperature=0.8 | speed=1.1 | — |
-| `hype` | Maximum energy for promos and hooks (~200 wpm). Check takes: more variation. | temperature=0.9, top_p=0.95, repetition_penalty=1.1 | exaggeration=1.05, cfg_weight=0.3, temperature=0.85 | speed=1.2 | tempo=1.05 |
-| `narrator` | Measured documentary read with room to breathe (~135 wpm). | temperature=0.6, top_p=0.95, repetition_penalty=1.1 | exaggeration=0.4, cfg_weight=0.5, temperature=0.8 | speed=0.95 | — |
+| `tech` | Bright, quick, confident. YouTube-tech pace (~185 wpm). | temperature=0.65, top_p=0.95, repetition_penalty=1.1 | exaggeration=0.9, cfg_weight=0.3, temperature=0.8 | speed=1.1 | tempo=1.05 |
+| `hype` | Maximum energy for promos and hooks (~200 wpm). Best with mia or leo. | temperature=0.7, top_p=0.95, repetition_penalty=1.1 | exaggeration=1.05, cfg_weight=0.3, temperature=0.85 | speed=1.2 | tempo=1.08 |
+| `narrator` | Measured documentary read with room to breathe (~165 wpm). | temperature=0.6, top_p=0.95, repetition_penalty=1.1 | exaggeration=0.4, cfg_weight=0.5, temperature=0.8 | speed=0.95 | tempo=0.95 |
 | `neutral` | Engine defaults, no styling. | defaults | defaults | defaults | — |
 <!-- engines:end -->

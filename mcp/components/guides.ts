@@ -74,8 +74,9 @@ export const GUIDES: Record<string, Guide> = {
       {
         h: "Parameters",
         body: [
-          "temperature is the energy dial. Measured on tara: 0.6 = calm, 131 words/min with long pauses; 0.75 = 153 wpm; 0.85–0.9 = 180–190 wpm, bright tech-video pace, still word-perfect. The Delivery styles set it for you (Tech 0.85, Hype 0.9, Calm narrator 0.6).",
-          "Liveliest voices: mia and leo have the most pitch movement; tara is warm and clear; zoe and zac are flatter. For hooks and launches try mia or leo with the Hype style.",
+          "temperature is a variation dial, not an energy dial. Measured on an 8-line tech script, tara read at ~175 words/min whether temperature was 0.6 or 0.85, and got slightly flatter and less accurate above 0.85 (95% word match at 0.9). Keep it at 0.6–0.7.",
+          "The voice is the energy lever: mia had 36% more pitch movement than tara and read at 192 wpm, word-perfect. leo is the lively male voice; tara is warm and clear; zoe and zac are flatter. Use mia or leo for tech and hype, tara for calm narration.",
+          "Pace comes from the Delivery style's tempo (pitch-preserving): Tech 1.05×, Hype 1.08×, Calm 0.95×.",
           "Energy comes from the script too: short punchy sentences, exclamation marks on the hook, and a question before a reveal (\"But how?\") all lift the read.",
           "repetition_penalty: keep it at 1.1 or higher. If a word repeats or the audio loops at the end, raise it to 1.2–1.3.",
           "top_p: 0.9–0.95. Lower makes it more conservative.",
