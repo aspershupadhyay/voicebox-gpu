@@ -1,8 +1,10 @@
-export default function Home() {
-  return (
-    <main>
-      <h1>voicebox</h1>
-      <p>MCP endpoint: /api/mcp (Bearer token required).</p>
-    </main>
-  );
+import Nav from "@/components/Nav";
+import Dashboard from "@/components/Dashboard";
+import { requireLogin } from "@/lib/guard";
+
+export const dynamic = "force-dynamic";
+
+export default async function Page() {
+  await requireLogin();
+  return <div className="shell"><Nav /><Dashboard /></div>;
 }

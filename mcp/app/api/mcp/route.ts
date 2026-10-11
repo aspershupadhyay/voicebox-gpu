@@ -3,6 +3,7 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
 import { loadWorker, STALE_MS } from "@/lib/registry";
 import { call, safeEqual, WorkerOffline } from "@/lib/worker";
+import { archiveWorkerJob, listLibrary } from "@/lib/library";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -22,6 +23,14 @@ async function waitFor(id: string, seconds: number): Promise<Job> {
   while (["queued", "running"].includes(job.status) && Date.now() < until) {
     await sleep(Math.min(4000, Math.max(0, until - Date.now())));
     job = await call<Job>(`/jobs/${id}`);
+  }
+  if (job.status === "done") {
+    try {
+      const lib = await archiveWorkerJob(job as unknown as Parameters<typeof archiveWorkerJob>[0]);
+      if (lib) job = { ...job, library: { saved: true, dashboard: `/library#${lib.id}`, zip: `/api/zip/${lib.id}` } };
+    } catch (e) {
+      job = { ...job, library: { saved: false, error: (e as Error).message } };
+    }
   }
   return job;
 }
@@ -130,6 +139,25 @@ const handler = createMcpHandler(
       async ({ job_id, wait_seconds }) => {
         try {
           return text(withHint(await waitFor(job_id, wait_seconds ?? MAX_WAIT)));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "list_library",
+      {
+        title: "List saved voiceovers",
+        description:
+          "Every finished job saved permanently in the dashboard library (survives the Colab runtime). Download with Bearer MCP_TOKEN: GET /api/zip/<id> (all lines) or /api/audio/<id>/<line>.wav.",
+        inputSchema: z.object({ limit: z.number().int().min(1).max(200).optional() }),
+      },
+      async ({ limit }) => {
+        try {
+          const jobs = (await listLibrary()).slice(0, limit ?? 30);
+          return text(jobs.map((j) => ({ id: j.id, engine: j.engine, voice: j.voice, label: j.label, created: new Date(j.created).toISOString(),
+            lines: j.results.length, seconds: +j.results.reduce((s, r) => s + r.duration, 0).toFixed(1), zip: `/api/zip/${j.id}` })));
         } catch (e) {
           return fail(e);
         }
