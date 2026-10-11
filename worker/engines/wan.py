@@ -8,7 +8,7 @@ pipeline stays on the GPU.
 import gc, os
 import torch
 
-from engines._video import RESIDENT, Progress, encode_mp4, load_image
+from engines._video import RESIDENT, TILE_VAE, Progress, encode_mp4, load_image
 
 TURBO = os.environ.get("WAN_TURBO_MODEL", "yetter-ai/Wan2.2-TI2V-5B-Turbo-Diffusers")
 FULL = os.environ.get("WAN_FULL_MODEL", "Wan-AI/Wan2.2-TI2V-5B-Diffusers")
@@ -21,7 +21,7 @@ class Engine:
         vae = AutoencoderKLWan.from_pretrained(TURBO, subfolder="vae", torch_dtype=torch.float32)  # fp32 VAE: cleaner decode
         t2v = WanPipeline.from_pretrained(TURBO, vae=vae, torch_dtype=self.dtype)
         t2v.scheduler = UniPCMultistepScheduler.from_config(t2v.scheduler.config, flow_shift=5.0)
-        if hasattr(t2v.vae, "enable_tiling"):
+        if TILE_VAE and hasattr(t2v.vae, "enable_tiling"):
             t2v.vae.enable_tiling()  # 121 frames of 720p would otherwise need ~20 GB to decode
         self.pipes, self.active, self.quality = {"t2v": t2v}, None, "fast"
         self._pipe(False)

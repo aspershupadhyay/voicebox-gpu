@@ -8,7 +8,7 @@ download is ~48 GB instead of ~100 GB. Model CPU offload keeps one component on 
 import gc, os
 import torch
 
-from engines._video import RESIDENT, Progress, encode_mp4, load_image
+from engines._video import RESIDENT, TILE_VAE, Progress, encode_mp4, load_image
 
 REPO = os.environ.get("LTX_MODEL", "diffusers/LTX-2.3-Distilled-Diffusers")
 TEXT_ENCODER = os.environ.get("LTX_TEXT_ENCODER", "unsloth/gemma-3-12b-it-bnb-4bit")  # "repo" = use the repo's own
@@ -28,7 +28,8 @@ class Engine:
             from transformers import Gemma3ForConditionalGeneration
             extra["text_encoder"] = Gemma3ForConditionalGeneration.from_pretrained(TEXT_ENCODER, torch_dtype=torch.bfloat16)
         t2v = LTX2Pipeline.from_pretrained(local, transformer=transformer, torch_dtype=torch.bfloat16, **extra)
-        t2v.vae.enable_tiling()
+        if TILE_VAE:
+            t2v.vae.enable_tiling()
         from diffusers.pipelines.ltx2.utils import DEFAULT_NEGATIVE_PROMPT, DISTILLED_SIGMA_VALUES
         self.sigmas, self.negative = DISTILLED_SIGMA_VALUES, DEFAULT_NEGATIVE_PROMPT
         self.pipes, self.active = {"t2v": t2v}, None

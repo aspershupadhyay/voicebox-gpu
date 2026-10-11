@@ -11,6 +11,8 @@ torch.backends.cudnn.allow_tf32 = True
 GPU_GB = torch.cuda.get_device_properties(0).total_memory / 1e9 if torch.cuda.is_available() else 0
 # A100 / H100 class: keep the whole pipeline on the GPU (no per-call CPU<->GPU offload round-trips).
 RESIDENT = GPU_GB >= 38
+# 80 GB cards decode the whole clip in one pass; tiling (overlapping tiles) only pays off when memory is tight.
+TILE_VAE = GPU_GB < 70
 
 
 class Cancelled(Exception):
