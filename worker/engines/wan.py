@@ -2,12 +2,13 @@
 
 quality "fast" = the 4-step Turbo distill (no CFG); "full" = the original transformer (CFG, ~30 steps).
 Only one transformer is held at a time; the text encoder and VAE are shared. Model CPU offload keeps the
-GPU peak to one component at a time, so it fits a 24 GB L4 next to nothing else.
+GPU peak to one component at a time, so it fits a 24 GB L4 next to nothing else; on 40 GB+ cards the whole
+pipeline stays on the GPU.
 """
 import gc, os
 import torch
 
-from engines._video import Progress, encode_mp4, load_image
+from engines._video import RESIDENT, Progress, encode_mp4, load_image
 
 TURBO = os.environ.get("WAN_TURBO_MODEL", "yetter-ai/Wan2.2-TI2V-5B-Turbo-Diffusers")
 FULL = os.environ.get("WAN_FULL_MODEL", "Wan-AI/Wan2.2-TI2V-5B-Diffusers")
@@ -29,12 +30,16 @@ class Engine:
         """t2v and i2v share every module; only the active one carries the CPU-offload hooks."""
         want = "i2v" if i2v else "t2v"
         if self.active != want:
-            for p in self.pipes.values():
-                p.remove_all_hooks()
+            if not RESIDENT:
+                for p in self.pipes.values():
+                    p.remove_all_hooks()
             if want not in self.pipes:
                 from diffusers import WanImageToVideoPipeline
                 self.pipes[want] = WanImageToVideoPipeline.from_pipe(self.pipes["t2v"])
-            self.pipes[want].enable_model_cpu_offload()
+            if RESIDENT:
+                self.pipes[want].to("cuda")
+            else:
+                self.pipes[want].enable_model_cpu_offload()
             self.active = want
         return self.pipes[want]
 
@@ -42,8 +47,9 @@ class Engine:
         if quality == self.quality:
             return
         from diffusers import WanTransformer3DModel
-        for p in self.pipes.values():
-            p.remove_all_hooks()
+        if not RESIDENT:
+            for p in self.pipes.values():
+                p.remove_all_hooks()
         t2v = self.pipes["t2v"]
         t2v.transformer = None
         self.pipes, self.active = {"t2v": t2v}, None

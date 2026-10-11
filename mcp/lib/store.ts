@@ -33,7 +33,11 @@ export async function getJson<T>(key: string): Promise<T | null> {
 }
 
 export async function putObj(key: string, body: BodyInit, type = typeOf(key)) {
-  const r = await aws().fetch(url(key), { method: "PUT", body, headers: { "Content-Type": type } });
+  // Sign headers only (UNSIGNED-PAYLOAD), then send plain bytes: a body inside a signed Request goes out chunked on
+  // Vercel, and R2 rejects that with 411 MissingContentLength.
+  const bytes = new Uint8Array(await new Response(body).arrayBuffer());
+  const signed = await aws().sign(url(key), { method: "PUT", headers: { "Content-Type": type, "X-Amz-Content-Sha256": "UNSIGNED-PAYLOAD" } });
+  const r = await fetch(signed.url, { method: "PUT", headers: signed.headers, body: bytes });
   if (!r.ok) throw new Error(`storage PUT ${key}: ${r.status} ${(await r.text()).slice(0, 200)}`);
 }
 

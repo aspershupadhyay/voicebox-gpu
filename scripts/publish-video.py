@@ -9,7 +9,7 @@
   <start seconds in the video> <TAB> <path to a <line>.subs.json from the library>
 The words are re-cut into cues with the worker's own cue builder, so they match dashboard subtitles.
 
-The video goes straight to Blob with a presigned PUT (no size limit from the Vercel function);
+The video goes straight to R2 with a presigned PUT (no size limit from the Vercel function);
 needs MCP_URL + MCP_TOKEN (read from .secrets.local when not in the environment).
 """
 import argparse, json, os, ssl, subprocess, sys, tempfile, time, urllib.request, uuid
@@ -97,7 +97,7 @@ def main():
     for name in names:
         data = open(files[name], "rb").read() if name in files else extra[name]
         t0 = time.time()
-        req("PUT", pre["targets"][name], data, {**pre["headers"], "x-content-type": types[name.rsplit(".", 1)[1]]})
+        req("PUT", pre["targets"][name], data, {**pre["headers"], "Content-Type": types[name.rsplit(".", 1)[1]]})
         print(f"  {name:16s} {len(data) / 1e6:6.2f} MB  {time.time() - t0:.1f}s")
 
     meta = {"id": job, "kind": "video", "engine": a.engine, "voice": a.voice, "label": a.label, "created": int(time.time() * 1000),

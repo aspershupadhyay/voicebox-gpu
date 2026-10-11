@@ -2,6 +2,15 @@
 import json, os, subprocess, tempfile, time
 
 import numpy as np
+import torch
+
+# TF32 matmuls/convs: several times faster for the fp32 VAE decode on Ampere/Ada, no visible quality change.
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
+GPU_GB = torch.cuda.get_device_properties(0).total_memory / 1e9 if torch.cuda.is_available() else 0
+# A100 / H100 class: keep the whole pipeline on the GPU (no per-call CPU<->GPU offload round-trips).
+RESIDENT = GPU_GB >= 38
 
 
 class Cancelled(Exception):
@@ -9,7 +18,7 @@ class Cancelled(Exception):
 
 
 class Progress:
-    """Writes {phase, step, total} to a JSON file the gateway reads; a sibling `.cancel` file aborts the run."""
+    """Writes {phase, step, total} (phase: encoding prompt, denoising, decoding, encoding video) to a JSON file the gateway reads; a sibling `.cancel` file aborts the run."""
 
     def __init__(self, path, total):
         self.path, self.total, self.t0 = path, total, time.time()
@@ -26,7 +35,7 @@ class Progress:
 
     def callback(self):
         def cb(pipe, i, t, kwargs):
-            self.write("denoising", i + 1)
+            self.write("decoding" if i + 1 >= self.total else "denoising", i + 1)
             return kwargs
         return cb
 

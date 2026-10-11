@@ -5,7 +5,7 @@ import { fmtS, type Job } from "./api";
 
 const TTS_STEPS = [["queued", "Queued"], ["prepare", "Warm up"], ["generating", "Voicing"], ["subtitles", "Subtitles"], ["saving", "Saving"], ["done", "Done"]] as const;
 const ASR_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["downloading", "Fetch"], ["prepare", "Warm up"], ["transcribing", "Transcribe"], ["saving", "Saving"], ["done", "Done"]] as const;
-const VIDEO_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["prepare", "Warm up"], ["rendering", "Render"], ["encoding", "Encode"], ["saving", "Saving"], ["done", "Done"]] as const;
+const VIDEO_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["prepare", "Warm up"], ["rendering", "Render"], ["decoding", "Decode"], ["encoding", "Encode"], ["saving", "Saving"], ["done", "Done"]] as const;
 const REF_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["cleaning", "Clean"], ["prepare", "Warm up"], ["transcribing", "Transcribe"], ["saving", "Saving"], ["done", "Done"]] as const;
 const saved = (job: Job | null) => !!(job?.library || job?.myvoice);
 

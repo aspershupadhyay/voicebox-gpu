@@ -8,7 +8,13 @@ Every voice reads the same line (translated for Kokoro's non-English voices) in 
   scripts/make-samples.py --force         # redo everything
   scripts/make-samples.py --engine orpheus
 """
-import argparse, json, os, sys, time, urllib.request
+import argparse, json, os, ssl, sys, time, urllib.request
+
+try:
+    import certifi
+    CTX = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    CTX = ssl.create_default_context(cafile="/etc/ssl/cert.pem")
 
 LINES = {
     "en": "Here's how your phone finds you: four satellites, a few billionths of a second, and some seriously clever math.",
@@ -35,7 +41,7 @@ def env():
 def http(url, h, body=None):
     r = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None,
                                headers={**h, "Content-Type": "application/json"})
-    with urllib.request.urlopen(r, timeout=120) as res:
+    with urllib.request.urlopen(r, timeout=120, context=CTX) as res:
         return json.loads(res.read())
 
 

@@ -1086,6 +1086,8 @@ def _progress(job):
             eta = per * (steps - step) + 30
             frac = 0.05 + 0.85 * step / steps
             return min(0.97, frac), round(eta), "rendering", f"step {step} of {steps}"
+        if pf["phase"] == "decoding":
+            return 0.92, round(max(10, 120 - (el - pf.get("t", el)))), "decoding", f"decoding {job['gen']['frames']} frames"
         if pf["phase"] == "encoding video":
             return 0.93, 15, "encoding", "decoding frames and writing the MP4"
         left = max(10, job["cur"]["est"] - el) if job.get("cur") else job["est_total"]

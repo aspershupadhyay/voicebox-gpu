@@ -2,12 +2,13 @@
 
 Fitted to a 24 GB L4: the transformer is quantised to 4-bit NF4 while loading, and the Gemma 3 12B text
 encoder comes from a pre-quantised 4-bit copy (8 GB) instead of the repo's 48 GB fp32 one, so the first
-download is ~48 GB instead of ~100 GB. Model CPU offload keeps one component on the GPU at a time.
+download is ~48 GB instead of ~100 GB. Model CPU offload keeps one component on the GPU at a time
+(on 40 GB+ cards the whole pipeline stays on the GPU instead).
 """
 import gc, os
 import torch
 
-from engines._video import Progress, encode_mp4, load_image
+from engines._video import RESIDENT, Progress, encode_mp4, load_image
 
 REPO = os.environ.get("LTX_MODEL", "diffusers/LTX-2.3-Distilled-Diffusers")
 TEXT_ENCODER = os.environ.get("LTX_TEXT_ENCODER", "unsloth/gemma-3-12b-it-bnb-4bit")  # "repo" = use the repo's own
@@ -36,12 +37,16 @@ class Engine:
     def _pipe(self, i2v):
         want = "i2v" if i2v else "t2v"
         if self.active != want:
-            for p in self.pipes.values():
-                p.remove_all_hooks()
+            if not RESIDENT:
+                for p in self.pipes.values():
+                    p.remove_all_hooks()
             if want not in self.pipes:
                 from diffusers import LTX2ImageToVideoPipeline
                 self.pipes[want] = LTX2ImageToVideoPipeline.from_pipe(self.pipes["t2v"])
-            self.pipes[want].enable_model_cpu_offload()
+            if RESIDENT:
+                self.pipes[want].to("cuda")
+            else:
+                self.pipes[want].enable_model_cpu_offload()
             self.active = want
         return self.pipes[want]
 
