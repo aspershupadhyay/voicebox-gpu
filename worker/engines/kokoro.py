@@ -22,7 +22,7 @@ def _ja_g2p():
     try:
         from misaki import ja
     except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "misaki", "pyopenjtalk", "jaconv", "mojimoji"])
+        subprocess.check_call(["uv", "pip", "install", "--python", sys.executable, "-q", "misaki", "pyopenjtalk", "jaconv", "mojimoji"])  # venvs are uv-made: no pip
         from misaki import ja
     return ja.JAG2P(version="pyopenjtalk")
 
