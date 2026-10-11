@@ -340,23 +340,42 @@ def match_score(script, heard):
 
 # --------------------------------------------------------------------------------------- subtitles
 def cues_from_words(words, offset=0.0, style=C.SUBTITLE_STYLE):
-    cues, cur = [], []
+    """Caption cues the way subtitlers cut them: one sentence per cue when it fits (with ~20% grace so a
+    single word is never orphaned), otherwise the sentence is split into balanced parts, preferring
+    breaks after commas. Times come from the word timestamps."""
+    max_c, max_s = style["max_chars"], style["max_seconds"]
+    sentences, cur = [], []
     for w in words:
-        if cur:
-            text = " ".join(x["w"] for x in cur + [w])
-            if len(text) > style["max_chars"] or w["e"] - cur[0]["s"] > style["max_seconds"]:
-                cues.append(cur); cur = []
         cur.append(w)
-        if re.search(r"[.!?।。]$", w["w"]) or (re.search(r"[,;:]$", w["w"]) and len(" ".join(x["w"] for x in cur)) > 22):
-            cues.append(cur); cur = []
+        if re.search(r"[.!?।。！？…]$", w["w"]):
+            sentences.append(cur); cur = []
     if cur:
-        cues.append(cur)
+        sentences.append(cur)
+
+    def text(ws):
+        return " ".join(x["w"] for x in ws)
+
+    def split(ws):
+        t, dur = text(ws), ws[-1]["e"] - ws[0]["s"]
+        if len(ws) <= 1 or (len(t) <= max_c * 1.2 and dur <= max_s * 1.3):
+            return [ws]
+        parts = max(2, -(-len(t) // max_c), int(-(-dur // max_s)))
+        target = len(t) / parts
+        best, best_cost, pos = 1, 1e9, 0
+        for i in range(1, len(ws)):  # choose the cut closest to the target, bonus after punctuation
+            pos += len(ws[i - 1]["w"]) + 1
+            cost = abs(pos - target) - (12 if re.search(r"[,;:—–-]$", ws[i - 1]["w"]) else 0)
+            if cost < best_cost:
+                best, best_cost = i, cost
+        return split(ws[:best]) + split(ws[best:])
+
     out = []
-    for c in cues:
-        s, e = c[0]["s"] + offset, c[-1]["e"] + offset
-        if out and s < out[-1]["e"] + style["min_gap"]:
-            out[-1]["e"] = max(out[-1]["s"] + 0.2, s - style["min_gap"])
-        out.append({"s": round(s, 3), "e": round(max(e, s + 0.3), 3), "text": " ".join(x["w"] for x in c)})
+    for sent in sentences:
+        for c in split(sent):
+            st, en = c[0]["s"] + offset, c[-1]["e"] + offset
+            if out and st < out[-1]["e"] + style["min_gap"]:
+                out[-1]["e"] = max(out[-1]["s"] + 0.2, st - style["min_gap"])
+            out.append({"s": round(st, 3), "e": round(max(en, st + 0.3), 3), "text": text(c)})
     return out
 
 

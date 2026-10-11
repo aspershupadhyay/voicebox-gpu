@@ -168,7 +168,7 @@ export const GUIDES: Record<string, Guide> = {
       {
         h: "How cues are built",
         body: [
-          "Captions are cut from word timestamps: at most 42 characters and 3.5 seconds per cue, breaking after sentence punctuation (or a comma once a cue is long enough), with a small gap between cues.",
+          "Captions are cut from word timestamps the way subtitlers do it: one sentence per cue when it fits (about 42 characters / 3.5 s, with a little grace so a single word is never orphaned). Longer sentences are split into balanced parts, preferably after a comma.",
           "When voice lines have timeline starts (from the TSV), the combined subtitles.srt places every cue at its real position in the video. Otherwise lines are laid back to back.",
         ],
       },
