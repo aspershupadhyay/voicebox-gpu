@@ -353,7 +353,8 @@ def cues_from_words(words, offset=0.0, style=C.SUBTITLE_STYLE):
         sentences.append(cur)
 
     def text(ws):
-        return " ".join(x["w"] for x in ws)
+        t = re.sub(r"\s+(?=[.,!?;:%\u2019]|-\S)", "", " ".join(x["w"] for x in ws))  # "non -stop" -> "non-stop"
+        return t[:1].upper() + t[1:]
 
     def split(ws):
         t, dur = text(ws), ws[-1]["e"] - ws[0]["s"]
