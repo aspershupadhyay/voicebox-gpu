@@ -56,7 +56,7 @@ ENGINES = {
     "orpheus": {
         "kind": "tts",
         "port": 8103,
-        "gpu_gb": 10.0,  # vLLM reserves this much (ORPHEUS_VRAM_GB)
+        "gpu_gb": 11.5,  # vLLM pool (ORPHEUS_VRAM_GB, default 9) + SNAC decoder + CUDA context
         "chunk_chars": 260,  # sentences are grouped up to this size, then batched together on vLLM
         "packages": "vllm snac soundfile",
         "about": "Orpheus 3B on vLLM. Most human-sounding; inline tags <laugh> <chuckle> <sigh> <cough> <sniffle> <groan> <yawn> <gasp>.",

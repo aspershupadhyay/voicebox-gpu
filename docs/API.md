@@ -46,7 +46,7 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 |---|---|---|---|
 | `kokoro` | 0 GB | `af_heart` / `am_michael` | Kokoro-82M. Fast, clean, flat delivery. Best for drafts and timing. |
 | `chatterbox` | 4 GB | `female` / `male` | Chatterbox 0.5B (Resemble AI, MIT). Emotion dial + zero-shot cloning; 23 languages incl. Hindi. |
-| `orpheus` | 10 GB | `tara` / `dan` | Orpheus 3B on vLLM. Most human-sounding; inline tags <laugh> <chuckle> <sigh> <cough> <sniffle> <groan> <yawn> <gasp>. |
+| `orpheus` | 11.5 GB | `tara` / `dan` | Orpheus 3B on vLLM. Most human-sounding; inline tags <laugh> <chuckle> <sigh> <cough> <sniffle> <groan> <yawn> <gasp>. |
 | `whisper` | 4 GB | n/a (subtitles) | Whisper large-v3 (OpenAI). Best open subtitle model: word-level timestamps, 99 languages. |
 
 #### `kokoro` params

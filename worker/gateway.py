@@ -123,7 +123,8 @@ class Engines:
                 env = {**os.environ, "VOICEBOX_HOME": HOME, "PATH": venv_bin + os.pathsep + os.environ.get("PATH", ""),
                        "VLLM_USE_FLASHINFER_SAMPLER": "0", "TOKENIZERS_PARALLELISM": "false"}
                 p = subprocess.Popen([py, os.path.join(HERE, "engine_host.py"), "--engine", name,
-                                      "--port", str(C.ENGINES[name]["port"])], stdout=logf, stderr=logf, env=env, cwd=HERE)
+                                      "--port", str(C.ENGINES[name]["port"])], stdout=logf, stderr=logf, env=env, cwd=HERE,
+                                     start_new_session=True)  # own process group: stop() also kills vLLM's children
                 self.procs[name] = p
                 deadline = time.time() + 30 * 60
                 while time.time() < deadline:
@@ -148,12 +149,19 @@ class Engines:
     def stop(self, name, keep_state=False):
         with self.lock:
             p = self.procs.pop(name, None)
-            if p and p.poll() is None:
-                p.terminate()
-                try:
-                    p.wait(30)
-                except subprocess.TimeoutExpired:
-                    p.kill()
+            if p:
+                import signal
+                for sig, wait in ((signal.SIGTERM, 30), (signal.SIGKILL, 10)):
+                    try:
+                        os.killpg(p.pid, sig)
+                    except (ProcessLookupError, PermissionError):
+                        break
+                    try:
+                        p.wait(wait)
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+                time.sleep(1)
             if not keep_state:
                 self._set(name, "idle")
 

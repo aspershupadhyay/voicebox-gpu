@@ -114,7 +114,15 @@ def main():
     # a previous run in this runtime may have left processes behind (e.g. after "interrupt" + re-run)
     for pat in ("gateway.py", "engine_host.py", "cloudflared tunnel"):
         subprocess.call(["pkill", "-f", pat])
-    time.sleep(2)
+    # engines spawn children (vLLM's EngineCore) that don't match those names: free the GPU completely
+    try:
+        pids = subprocess.check_output(["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"], text=True).split()
+        for pid in pids:
+            if pid.isdigit() and int(pid) != os.getpid():
+                subprocess.call(["kill", "-9", pid])
+    except Exception:
+        pass
+    time.sleep(3)
     gw = start_gateway(secret)
     h = health(secret)
     log(f"gateway up · GPU {h['gpu']['name']} {h['gpu']['total_gb']} GB · VRAM budget {h['vram_budget_gb']} GB")

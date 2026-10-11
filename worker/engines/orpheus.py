@@ -31,7 +31,7 @@ class Engine:
             try:
                 from vllm import LLM
                 total = torch.cuda.get_device_properties(0).total_memory / 2**30
-                util = min(0.9, float(os.environ.get("ORPHEUS_VRAM_GB", "10")) / total)
+                util = min(0.9, float(os.environ.get("ORPHEUS_VRAM_GB", "9")) / total)
                 self.llm = LLM(model=MODEL, dtype="bfloat16", gpu_memory_utilization=util, max_model_len=8192,
                                enable_prefix_caching=True)
                 self.tok = self.llm.get_tokenizer()
