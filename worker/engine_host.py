@@ -77,6 +77,8 @@ def main():
                                 res.append({"error": f"{type(e).__name__}: {e}"})
                         return self._send(200, {"results": res})
                     if self.path == "/transcribe":
+                        if hasattr(engine, "transcribe_batch"):
+                            return self._send(200, {"results": engine.transcribe_batch(req["paths"], req.get("language"))})
                         return self._send(200, {"results": [engine.transcribe(p, req.get("language"), req.get("prompt"))
                                                             for p in req["paths"]]})
                 return self._send(404, {"error": "not found"})

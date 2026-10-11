@@ -36,14 +36,23 @@ class Engine:
         self.pipe = pipeline("automatic-speech-recognition", model=model, tokenizer=proc.tokenizer,
                              feature_extractor=proc.feature_extractor, torch_dtype=dtype, device=self.dev)
 
-    def transcribe(self, path, language=None, prompt=None):
-        a = load_16k(path)
-        dur = len(a) / 16000
+    def _gen(self, language):
         gen = {} if MODEL.endswith(".en") else {"task": "transcribe"}
         if language and not MODEL.endswith(".en"):
             gen["language"] = language
-        out = self.pipe({"raw": a, "sampling_rate": 16000}, return_timestamps="word",
-                        chunk_length_s=30, batch_size=8, generate_kwargs=gen)
+        return gen
+
+    def transcribe_batch(self, paths, language=None):
+        """Several files through the GPU together (each long file is still chunked at 30 s)."""
+        audios = [load_16k(p) for p in paths]
+        outs = self.pipe([{"raw": a, "sampling_rate": 16000} for a in audios], return_timestamps="word",
+                         chunk_length_s=30, batch_size=16, generate_kwargs=self._gen(language))
+        return [self._words(o, len(a) / 16000, language) for o, a in zip(outs, audios)]
+
+    def transcribe(self, path, language=None, prompt=None):
+        return self.transcribe_batch([path], language)[0]
+
+    def _words(self, out, dur, language):
         words = []
         for c in out.get("chunks", []):
             s, e = c["timestamp"]
