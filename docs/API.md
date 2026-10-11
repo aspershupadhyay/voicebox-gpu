@@ -8,7 +8,7 @@ Two layers. You normally only touch the first.
 |---|---|
 | `worker_status` | Online? GPU, VRAM, loaded engines, queue. Says "re-run the notebook" if the heartbeat is older than 4 min. |
 | `list_voices` | Engines, voices, presets, every parameter with default/min/max, uploaded references. |
-| `voice_lines` | `{engine, voice?, lines:[{id?, text, window?, start?, params?}], params?, post?, subtitles?, language?, label?, wait_seconds?}` → job. Blocks up to 45 s, then returns progress + a hint to call `get_job`. |
+| `voice_lines` | `{engine, voice?, style?, lines:[{id?, text, window?, start?, params?}], params?, post?, subtitles?, language?, label?, wait_seconds?}` → job. Blocks up to 45 s, then returns progress + a hint to call `get_job`. |
 | `get_job` | `{job_id, wait_seconds?}` long-poll. When done, each result has `duration`, `fits` (vs `window`) and a signed `url`; the job has `zip_url`. Links expire after 6 h. |
 | `list_jobs` | Last 30 jobs. |
 | `cancel_job` | Cancel a queued job, or stop a running one after the current line. |
@@ -88,4 +88,16 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 | `trim_db` | `-45.0` |
 | `normalize_dbfs` | `-3.0` |
 | `sample_rate` | `48000` |
+| `tempo` | `1.0` |
+
+#### Delivery styles (`style`, default `tech`)
+
+A style sets engine params and `post` defaults; explicit values in the request win. Measured with `scripts/style-bench.py`.
+
+| Style | About | orpheus | chatterbox | kokoro | post |
+|---|---|---|---|---|---|
+| `tech` | Bright, quick, confident. YouTube-tech pace (~180 wpm). | temperature=0.85, top_p=0.95, repetition_penalty=1.1 | exaggeration=0.9, cfg_weight=0.3, temperature=0.8 | speed=1.1 | — |
+| `hype` | Maximum energy for promos and hooks (~200 wpm). Check takes: more variation. | temperature=0.9, top_p=0.95, repetition_penalty=1.1 | exaggeration=1.05, cfg_weight=0.3, temperature=0.85 | speed=1.2 | tempo=1.05 |
+| `narrator` | Measured documentary read with room to breathe (~135 wpm). | temperature=0.6, top_p=0.95, repetition_penalty=1.1 | exaggeration=0.4, cfg_weight=0.5, temperature=0.8 | speed=0.95 | — |
+| `neutral` | Engine defaults, no styling. | defaults | defaults | defaults | — |
 <!-- engines:end -->

@@ -244,6 +244,15 @@ def postprocess(src, dst, post):
         if len(idx):
             pad = int(0.06 * sr)
             audio = audio[max(0, idx[0] - pad): min(len(audio), idx[-1] + pad)]
+    tempo = float(post.get("tempo") or 1.0)
+    if abs(tempo - 1.0) > 0.005 and len(audio):
+        # pitch-preserving speed-up/slow-down (WSOLA): the only pace control for engines without a speed knob
+        tmp_in, tmp_out = dst + ".tin.wav", dst + ".tout.wav"
+        sf.write(tmp_in, audio, sr, subtype="FLOAT")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", tmp_in, "-filter:a", f"atempo={max(0.5, min(2.0, tempo)):.4f}", tmp_out], check=True)
+        audio, sr = sf.read(tmp_out, dtype="float32", always_2d=False)
+        for f in (tmp_in, tmp_out):
+            os.remove(f)
     target = post.get("sample_rate")
     if target and int(target) != sr:
         try:
@@ -453,9 +462,12 @@ def make_job(body):
             raise ValueError(f"line {lid}: text over {MAX_TEXT} characters; split it into several lines")
         seen.add(lid)
         clean.append({"id": lid, "text": text, "window": ln.get("window"), "start": ln.get("start"), "params": ln.get("params") or {}})
+    style = body.get("style") or C.DEFAULT_STYLE
+    style_params, style_post = C.style_settings(style, engine)
     job = _base_job("tts", body)
-    job.update({"engine": engine, "voice": resolve_voice(engine, body.get("voice")), "params": body.get("params") or {},
-                "post": {**C.POST_DEFAULTS, **(body.get("post") or {})}, "lines": clean,
+    job.update({"engine": engine, "voice": resolve_voice(engine, body.get("voice")), "style": style,
+                "params": {**style_params, **(body.get("params") or {})},
+                "post": {**C.POST_DEFAULTS, **style_post, **(body.get("post") or {})}, "lines": clean,
                 "subtitles": bool(body.get("subtitles"))})
     chars = sum(len(l["text"]) for l in clean)
     job["est_total"] = RATES[engine] * chars + (RATES["whisper"] * chars / 14 if job["subtitles"] else 0)
@@ -788,7 +800,7 @@ def _progress(job):
 
 
 def job_view(job, urls=True):
-    v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to")}
+    v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to")}
     if job["kind"] == "tts":
         v["params"] = C.resolve_params(job["engine"], job["params"])
         v["post"] = job["post"]
@@ -830,7 +842,8 @@ def catalogue():
         out[name]["seconds_per_char" if spec["kind"] == "tts" else "seconds_per_audio_second"] = RATES.get(name)
     refs = sorted(f[:-4] for f in os.listdir(REFS_DIR) if f.endswith(".wav"))
     return {"engines": out, "references": refs, "preset_references": list(C.PRESET_REFS),
-            "post_defaults": C.POST_DEFAULTS, "subtitle_style": C.SUBTITLE_STYLE}
+            "post_defaults": C.POST_DEFAULTS, "subtitle_style": C.SUBTITLE_STYLE,
+            "styles": C.STYLES, "default_style": C.DEFAULT_STYLE}
 
 
 def health():

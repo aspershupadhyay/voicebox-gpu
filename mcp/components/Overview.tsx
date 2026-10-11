@@ -58,7 +58,7 @@ export default function Overview() {
     <>
       <div className="head">
         <div>
-          <h1>Overview</h1>
+          <h1>Mission control</h1>
           <p className="sub">Your Colab GPU, its engines, and everything you've made.</p>
         </div>
         <div className="row">
@@ -67,10 +67,10 @@ export default function Overview() {
         </div>
       </div>
 
-      <div className="grid g4" style={{ marginBottom: 16 }}>
-        <div className="card">
+      <div className="grid g4 stat-row" style={{ marginBottom: 16 }}>
+        <div className="card stat-card">
           <h2>Worker</h2>
-          <div className="row" style={{ gap: 10 }}><span className={`dot ${st?.online ? "ok" : "bad"}`} /><span className="num" style={{ fontSize: 24 }}>{st ? (st.online ? "Online" : "Offline") : "…"}</span></div>
+          <div className="row" style={{ gap: 10 }}><span className={`dot ${st?.online ? "live" : "bad"}`} /><span className="num" style={{ fontSize: 24 }}>{st ? (st.online ? "Online" : "Offline") : "…"}</span></div>
           <div className="dim small" style={{ marginTop: 8 }}>
             {st?.online ? `up ${fmtS(st.uptime_s ?? 0)} · v${st.version}` : st?.reason === "heartbeat stale" ? "Colab runtime stopped. Run the notebook." : st?.reason ?? "connecting"}
           </div>
@@ -79,12 +79,12 @@ export default function Overview() {
           <div className="ring" style={{ ["--p" as string]: vramP }}><span>{vramP}%</span></div>
           <div><h2 style={{ marginBottom: 4 }}>GPU memory</h2><div className="mono">{st?.gpu ? `${st.gpu.used_gb} / ${st.gpu.total_gb} GB` : "—"}</div><div className="dim tiny">{st?.gpu?.name ?? ""}</div></div>
         </div>
-        <div className="card">
+        <div className="card stat-card">
           <h2>Queue</h2>
           <div className="num">{st?.online ? active.length : "—"}</div>
           <div className="dim small" style={{ marginTop: 4 }}>{active.length ? `${active.filter((j) => j.status === "running").length} running` : "idle, ready for work"}</div>
         </div>
-        <div className="card">
+        <div className="card stat-card">
           <h2>Library</h2>
           <div className="num">{lib?.length ?? "…"}</div>
           <div className="dim small" style={{ marginTop: 4 }}>jobs · {fmtS(audio)} of audio</div>

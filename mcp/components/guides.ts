@@ -74,7 +74,9 @@ export const GUIDES: Record<string, Guide> = {
       {
         h: "Parameters",
         body: [
-          "temperature: 0.4–0.5 for steady, consistent narration; 0.6 (default) balanced; 0.7–0.9 for animated reads (more expressive, but more risk of mumbles or invented sounds).",
+          "temperature is the energy dial. Measured on tara: 0.6 = calm, 131 words/min with long pauses; 0.75 = 153 wpm; 0.85–0.9 = 180–190 wpm, bright tech-video pace, still word-perfect. The Delivery styles set it for you (Tech 0.85, Hype 0.9, Calm narrator 0.6).",
+          "Liveliest voices: mia and leo have the most pitch movement; tara is warm and clear; zoe and zac are flatter. For hooks and launches try mia or leo with the Hype style.",
+          "Energy comes from the script too: short punchy sentences, exclamation marks on the hook, and a question before a reveal (\"But how?\") all lift the read.",
           "repetition_penalty: keep it at 1.1 or higher. If a word repeats or the audio loops at the end, raise it to 1.2–1.3.",
           "top_p: 0.9–0.95. Lower makes it more conservative.",
           "seed: the same seed gives the same take. Change only the seed to get an alternative read of a line you almost like.",
@@ -116,7 +118,7 @@ export const GUIDES: Record<string, Guide> = {
         body: [
           "exaggeration (emotion intensity): 0.25–0.4 calm, 0.5 natural (default), 0.7–0.9 dramatic. Higher values also speed up delivery.",
           "cfg_weight (pacing and adherence): 0.5 default. Lower it (around 0.3) for slower, more deliberate pacing, and whenever you raise exaggeration.",
-          "Recipe for an expressive read: exaggeration 0.7 + cfg_weight 0.3. For a fast-talking reference voice, drop cfg_weight to about 0.3.",
+          "Recipe for an expressive read: exaggeration 0.9 + cfg_weight 0.3 (the Tech style). Measured: the female voice's pitch movement nearly doubles from 0.5 to 1.2; on the male voice words start to slur above ~1.0, so Hype caps at 1.05.",
           "Per-line emotion: in the timeline TSV, a 5th column sets that line's exaggeration (e.g. 0.75 for \"But how?\").",
         ],
       },
@@ -148,7 +150,8 @@ export const GUIDES: Record<string, Guide> = {
           "Commas and periods control pauses. Kokoro doesn't act, so emotional punctuation has little effect.",
           "English numbers are expanded automatically, but spelling them out is still safer for years and units.",
           "Hindi voices (hf_alpha, hf_beta, hm_omega, hm_psi): write in Devanagari.",
-          "speed: 0.9 for clearer explainer narration, 1.1 to tighten a line that runs over its window.",
+          "speed: 1.1 for tech explainers (Tech style), 1.2 for hype, 0.95 for calm narration. Speed changes pace, not expressiveness.",
+          "Pick the voice for energy: am_fenrir is by far the liveliest (wide pitch range), then af_bella (opens up at speed 1.2) and am_puck. af_heart stays fairly even at any speed; af_nicole is soft and whispery (good for calm narration only).",
         ],
         example: "Four clocks in space, agreeing on one tiny dot. That's how G.P.S. finds you.",
       },

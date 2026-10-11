@@ -88,10 +88,56 @@ POST_DEFAULTS = {
     "trim_db": -45.0,
     "normalize_dbfs": -3.0,  # peak-normalise; null to keep the engine's level
     "sample_rate": 48000,    # resample for video timelines; null keeps native
+    "tempo": 1.0,            # pitch-preserving pace multiplier (0.5-2.0) applied after synthesis
 }
 
 
 TTS_ENGINES = [n for n, e in ENGINES.items() if e["kind"] == "tts"]
+
+# Delivery styles: per-engine settings measured with scripts/style-bench.py (pitch movement, words per minute,
+# Whisper accuracy). A style sets defaults; explicit params / post values in a request still win.
+# Findings: Orpheus temperature drives pace and energy (tara 0.6 = 131 wpm with long pauses, 0.9 = 191 wpm, still
+# word-perfect); Chatterbox exaggeration widens pitch (female 6 -> 11 semitones) but slurs past ~1.0 on male refs;
+# Kokoro's liveliness is mostly the voice (am_fenrir, af_bella, am_puck), speed adds pace.
+STYLES = {
+    "tech": {
+        "label": "Tech explainer", "about": "Bright, quick, confident. YouTube-tech pace (~180 wpm).",
+        "params": {"orpheus": {"temperature": 0.85, "top_p": 0.95, "repetition_penalty": 1.1},
+                   "chatterbox": {"exaggeration": 0.9, "cfg_weight": 0.3, "temperature": 0.8},
+                   "kokoro": {"speed": 1.1}},
+        "post": {},
+        "voices": {"orpheus": ["tara", "mia", "leo"], "chatterbox": ["female", "male"], "kokoro": ["am_fenrir", "af_bella", "am_puck"]},
+    },
+    "hype": {
+        "label": "Launch / hype", "about": "Maximum energy for promos and hooks (~200 wpm). Check takes: more variation.",
+        "params": {"orpheus": {"temperature": 0.9, "top_p": 0.95, "repetition_penalty": 1.1},
+                   "chatterbox": {"exaggeration": 1.05, "cfg_weight": 0.3, "temperature": 0.85},
+                   "kokoro": {"speed": 1.2}},
+        "post": {"tempo": 1.05},
+        "voices": {"orpheus": ["mia", "leo", "tara"], "chatterbox": ["female", "male"], "kokoro": ["am_fenrir", "af_bella"]},
+    },
+    "narrator": {
+        "label": "Calm narrator", "about": "Measured documentary read with room to breathe (~135 wpm).",
+        "params": {"orpheus": {"temperature": 0.6, "top_p": 0.95, "repetition_penalty": 1.1},
+                   "chatterbox": {"exaggeration": 0.4, "cfg_weight": 0.5, "temperature": 0.8},
+                   "kokoro": {"speed": 0.95}},
+        "post": {},
+        "voices": {"orpheus": ["tara", "dan", "leah"], "chatterbox": ["female", "male"], "kokoro": ["af_heart", "bm_george", "af_nicole"]},
+    },
+    "neutral": {
+        "label": "Neutral", "about": "Engine defaults, no styling.",
+        "params": {}, "post": {}, "voices": {},
+    },
+}
+DEFAULT_STYLE = "tech"
+
+
+def style_settings(style, engine):
+    """(params, post) defaults for a style on an engine; raises on unknown style names."""
+    if style not in STYLES:
+        raise ValueError(f"style must be one of {list(STYLES)}")
+    st = STYLES[style]
+    return dict(st["params"].get(engine, {})), dict(st["post"])
 
 # Speed priors (seconds of compute per character / per second of audio), refined live by the gateway.
 RATE_PRIORS = {"kokoro": 0.004, "chatterbox": 0.06, "orpheus": 0.03, "whisper": 0.06}

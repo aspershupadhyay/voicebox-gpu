@@ -11,7 +11,7 @@ export type LibLine = {
 };
 export type LibJob = {
   id: string; kind?: "tts" | "transcribe" | "video"; engine: string; voice: string; label?: string; language?: string | null;
-  params?: Record<string, unknown>; created: number; archived: number; source?: string;
+  params?: Record<string, unknown>; style?: string; created: number; archived: number; source?: string;
   subs?: { cues: number; timeline: string } | null; match?: number | null; results: LibLine[];
   video?: { width: number; height: number; duration: number; size: number; poster?: boolean; voice_job?: string };
 };
@@ -52,7 +52,7 @@ export const readAudio = (jobId: string, lineId: string) => readFile(jobId, `${l
 type WorkerResult = LibLine & { url?: string; srt_url?: string; vtt_url?: string; json_url?: string };
 type WorkerJob = {
   id: string; kind?: "tts" | "transcribe" | "video"; engine: string; voice: string; label?: string; language?: string | null;
-  params?: Record<string, unknown>; created?: number; status: string; results: WorkerResult[];
+  params?: Record<string, unknown>; style?: string; created?: number; status: string; results: WorkerResult[];
   subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; attach_to?: string; zip_url?: string;
 };
 
@@ -87,7 +87,7 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   }
   const lib: LibJob = {
     id: job.id, kind: job.kind ?? "tts", engine: job.engine, voice: job.voice, label: job.label, language: job.language,
-    params: job.params, created: Math.round((job.created ?? Date.now() / 1000) * 1000), archived: Date.now(), source: "worker",
+    params: job.params, style: job.style, created: Math.round((job.created ?? Date.now() / 1000) * 1000), archived: Date.now(), source: "worker",
     subs: job.subs ?? null, match: job.match ?? null,
     results: job.results.map(({ url, srt_url, vtt_url, json_url, ...r }) => r),
   };

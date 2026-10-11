@@ -10,7 +10,9 @@ import { useStatus } from "./Shell";
 
 type Param = { type: "number" | "integer" | "string"; default: number | string; min?: number; max?: number; about?: string };
 type Engine = { kind: string; about: string; voices: string[]; presets: Record<string, string>; params: Record<string, Param>; state: string; seconds_per_char?: number };
-type Catalogue = { engines: Record<string, Engine>; references: string[] };
+type Style = { label: string; about: string; params: Record<string, Record<string, number>>; post: { tempo?: number }; voices: Record<string, string[]> };
+type Catalogue = { engines: Record<string, Engine>; references: string[]; styles?: Record<string, Style>; default_style?: string };
+const STYLE_ICON: Record<string, string> = { tech: "⚡", hype: "🚀", narrator: "🎙", neutral: "◌" };
 type ParsedLine = { id: string; text: string; window?: number; start?: number; params?: Record<string, number> };
 
 const TTS = ["orpheus", "chatterbox", "kokoro"] as const;
@@ -46,6 +48,8 @@ export default function Generate() {
   const [lang, setLang] = useState("en");
   const [voice, setVoice] = useState("female");
   const [params, setParams] = useState<Record<string, number | string>>({});
+  const [style, setStyle] = useState("tech");
+  const [tempo, setTempo] = useState<number | null>(null);
   const [subtitles, setSubtitles] = useState(true);
   const [post, setPost] = useState({ trim: true, normalize: true, sample_rate: 48000 });
   const [advanced, setAdvanced] = useState(false);
@@ -62,14 +66,17 @@ export default function Generate() {
   useEffect(() => {
     const s = JSON.parse(localStorage.getItem("vb-gen2") || "{}");
     if (s.engine) setEngine(s.engine); if (s.voice) setVoice(s.voice); if (s.script) setScript(s.script);
-    if (s.params) setParams(s.params); if (s.lang) setLang(s.lang); if (s.subtitles !== undefined) setSubtitles(s.subtitles);
+    if (s.params) setParams(s.params); if (s.style) setStyle(s.style); if (s.lang) setLang(s.lang); if (s.subtitles !== undefined) setSubtitles(s.subtitles);
     loaded.current = true;
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, []);
-  useEffect(() => { if (loaded.current) localStorage.setItem("vb-gen2", JSON.stringify({ engine, voice, script, params, lang, subtitles })); }, [engine, voice, script, params, lang, subtitles]);
+  useEffect(() => { if (loaded.current) localStorage.setItem("vb-gen2", JSON.stringify({ engine, voice, script, params, style, lang, subtitles })); }, [engine, voice, script, params, style, lang, subtitles]);
   useEffect(() => { if (status?.online && !cat) api<Catalogue>("voices").then(setCat).catch((e) => setCatErr(e.message)); }, [status?.online, cat]);
 
   const eng = cat?.engines[engine];
+  const styles: Record<string, Style> = cat?.styles ?? {};
+  const styleParams: Record<string, number> = styles[style]?.params?.[engine] ?? {};
+  const effTempo = tempo ?? styles[style]?.post?.tempo ?? 1;
   const lines = useMemo(() => parse(script), [script]);
   const chars = lines.reduce((s, l) => s + l.text.length, 0);
   const langs = LANGUAGES.filter((l) => l.engines.includes(engine));
@@ -120,8 +127,8 @@ export default function Generate() {
     try {
       const j = await api<Job>("jobs", {
         body: {
-          engine, voice, lines: only ?? lines, params: p, label: label || undefined, subtitles, language: lang,
-          post: { trim: post.trim, normalize_dbfs: post.normalize ? -3 : null, sample_rate: post.sample_rate || null },
+          engine, voice, style, lines: only ?? lines, params: p, label: label || undefined, subtitles, language: lang,
+          post: { trim: post.trim, normalize_dbfs: post.normalize ? -3 : null, sample_rate: post.sample_rate || null, ...(tempo != null ? { tempo } : {}) },
         },
       });
       setJob(j);
@@ -189,6 +196,26 @@ export default function Generate() {
 
         <div className="stack" style={{ gap: 16 }}>
           <div className="card">
+            <h2>Delivery</h2>
+            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              {Object.entries(styles).map(([k, st]) => (
+                <button key={k} className={`engine ${style === k ? "on" : ""}`} style={{ padding: "10px 12px" }} title={st.about}
+                  onClick={() => { setStyle(k); setParams({}); setTempo(null); }}>
+                  <b style={{ fontSize: 13 }}>{STYLE_ICON[k] ?? "•"} {st.label}</b>
+                </button>
+              ))}
+            </div>
+            <p className="dim tiny" style={{ margin: "10px 0 0" }}>{styles[style]?.about}
+              {(styles[style]?.voices?.[engine] ?? []).length > 0 && <> Liveliest {engine} voices here: <span className="mono" style={{ color: "var(--acc)" }}>{styles[style].voices[engine].join(", ")}</span>.</>}
+            </p>
+            <div className="field" style={{ margin: "14px 0 0" }}>
+              <div className="row between" style={{ marginBottom: 6 }}><label className="f" style={{ margin: 0 }}>pace (tempo)</label><span className="mono small">{effTempo.toFixed(2)}×</span></div>
+              <input type="range" min={0.85} max={1.2} step={0.01} value={effTempo} onChange={(e) => setTempo(+e.target.value)} />
+              <div className="dim tiny" style={{ marginTop: 5 }}>Pitch-preserving speed-up after synthesis. Works on every engine; keep within ±8% to stay natural.</div>
+            </div>
+          </div>
+
+          <div className="card">
             <h2>Engine</h2>
             <div className="stack" style={{ gap: 8 }}>
               {TTS.map((n) => (
@@ -223,7 +250,7 @@ export default function Generate() {
               </div>
             </div>
             {eng && Object.entries(eng.params).filter(([k]) => !(engine === "chatterbox" && k === "language") && !(engine === "kokoro" && k === "lang")).map(([k, p]) => {
-              const v = params[k] ?? p.default;
+              const v = params[k] ?? styleParams[k] ?? p.default;
               if (p.min === undefined) return (
                 <div className="field" key={k}><label className="f">{k}</label>
                   <input type={p.type === "string" ? "text" : "number"} value={String(v)} onChange={(e) => setParams({ ...params, [k]: p.type === "string" ? e.target.value : +e.target.value })} />
@@ -239,7 +266,7 @@ export default function Generate() {
             })}
             <div className="row between">
               <button className="ghost xs" onClick={() => setAdvanced(!advanced)}>{advanced ? "Hide" : "Output"} options</button>
-              {Object.keys(params).length > 0 && <button className="ghost xs" onClick={() => setParams({})}>Reset to defaults</button>}
+              {(Object.keys(params).length > 0 || tempo != null) && <button className="ghost xs" onClick={() => { setParams({}); setTempo(null); }}>Reset to {styles[style]?.label ?? "style"}</button>}
             </div>
             {advanced && (
               <div style={{ marginTop: 12 }}>

@@ -101,6 +101,7 @@ const handler = createMcpHandler(
           "No length limit: long text is split at sentences, voiced in one batch and re-joined.",
           "subtitles: true adds Whisper large-v3 word-timed SRT/VTT per line and for the whole timeline (uses each line's start when given), plus a match score vs the script.",
           "voice: 'female' / 'male' presets, an engine voice (e.g. tara, dan, af_heart), or an uploaded reference name.",
+          "style sets the delivery (default 'tech'): tech = bright YouTube-tech pace (~180 wpm), hype = max energy for promos, narrator = calm documentary (~135 wpm), neutral = engine defaults. Explicit params override the style. Liveliest voices for tech/hype: orpheus mia/leo/tara, kokoro am_fenrir/af_bella.",
           "First use of an engine installs + loads it (several minutes); the job keeps running, so poll with get_job.",
         ].join(" "),
         inputSchema: z.object({
@@ -109,9 +110,11 @@ const handler = createMcpHandler(
           lines: z.array(line).min(1).max(1000),
           subtitles: z.boolean().optional().describe("also make word-timed subtitles with Whisper large-v3"),
           language: z.string().max(8).optional().describe("ISO code for Whisper/Chatterbox, e.g. en, hi; omit to auto-detect"),
-          params: z.record(z.string(), z.any()).optional().describe("engine params for all lines; see list_voices"),
+          style: z.enum(["tech", "hype", "narrator", "neutral"]).optional().describe("delivery style; default tech"),
+          params: z.record(z.string(), z.any()).optional().describe("engine params for all lines (override the style); see list_voices"),
           post: z
             .object({
+              tempo: z.number().min(0.5).max(2).optional().describe("pitch-preserving pace multiplier, e.g. 1.05"),
               trim: z.boolean().optional(),
               trim_db: z.number().optional(),
               normalize_dbfs: z.number().nullable().optional(),
