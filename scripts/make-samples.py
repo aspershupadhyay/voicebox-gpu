@@ -7,6 +7,7 @@ Every voice reads the same line (translated for Kokoro's non-English voices) in 
   scripts/make-samples.py                 # only voices without a sample yet
   scripts/make-samples.py --force         # redo everything
   scripts/make-samples.py --engine orpheus
+  scripts/make-samples.py --engine kokoro --voices jf_alpha,jm_kumo
 """
 import argparse, json, os, ssl, sys, time, urllib.request
 
@@ -49,6 +50,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--engine", choices=ORDER)
+    ap.add_argument("--voices", help="comma-separated: only these voices (implies --force for them)")
     a = ap.parse_args()
     base, h = env()
     cat = http(f"{base}/voices", h)["engines"]
@@ -59,7 +61,9 @@ def main():
         if eng in ("chatterbox", "qwen"):
             voices = ["female", "male"]
         for v in voices:
-            if a.force or v not in have.get(eng, {}):
+            if a.voices and v not in a.voices.split(","):
+                continue
+            if a.force or a.voices or v not in have.get(eng, {}):
                 todo.append((eng, v))
     print(f"{len(todo)} samples to record", flush=True)
     queued = []

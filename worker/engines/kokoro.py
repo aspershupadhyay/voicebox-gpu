@@ -1,5 +1,5 @@
 """Kokoro-82M via kokoro-onnx (CPU)."""
-import os, urllib.request
+import os, subprocess, sys, urllib.request
 
 BASE = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
 
@@ -16,6 +16,17 @@ def _fetch(name, folder):
 LANG_BY_PREFIX = {"a": "en-us", "b": "en-gb", "e": "es", "f": "fr-fr", "h": "hi", "i": "it", "j": "ja", "p": "pt-br", "z": "cmn"}
 
 
+def _ja_g2p():
+    """espeak-ng (kokoro-onnx's phonemizer) can't read kanji and spells them out one by one; misaki's
+    pyopenjtalk front end is what Kokoro was trained with. Installed on first Japanese use only."""
+    try:
+        from misaki import ja
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "misaki", "pyopenjtalk", "jaconv", "mojimoji"])
+        from misaki import ja
+    return ja.JAG2P(version="pyopenjtalk")
+
+
 class Engine:
     def __init__(self):
         from kokoro_onnx import Kokoro
@@ -23,11 +34,18 @@ class Engine:
         model = os.environ.get("KOKORO_MODEL") or _fetch("kokoro-v1.0.onnx", folder)
         voices = os.environ.get("KOKORO_VOICES") or _fetch("voices-v1.0.bin", folder)
         self.k = Kokoro(model, voices)
+        self.ja = None
 
     def synth(self, text, voice, params, ref_path=None, ref_text=None):
         voice = voice or "af_heart"
         # the voice's first letter is its language: a=US English, b=UK English, e=Spanish, f=French, h=Hindi,
         # i=Italian, j=Japanese, p=Brazilian Portuguese, z=Mandarin
         lang = params.get("lang") or LANG_BY_PREFIX.get(voice[0], "en-us")
-        audio, sr = self.k.create(text, voice=voice, speed=float(params.get("speed", 1.0)), lang=lang)
+        speed = float(params.get("speed", 1.0))
+        if lang == "ja":
+            self.ja = self.ja or _ja_g2p()
+            phonemes, _ = self.ja(text)
+            audio, sr = self.k.create(phonemes, voice=voice, speed=speed, is_phonemes=True)
+        else:
+            audio, sr = self.k.create(text, voice=voice, speed=speed, lang=lang)
         return audio, sr
