@@ -820,6 +820,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, catalogue())
         if u.path == "/jobs":
             return self._json(200, {"jobs": [job_view(j, urls=False) for j in reversed(JOBS.values())][:30]})
+        m = re.match(r"^/logs/([a-z]+)$", u.path)
+        if m and (m.group(1) in C.ENGINES or m.group(1) in ("gateway", "tunnel")):
+            names = [f"{m.group(1)}.log", f"{m.group(1)}-install.log"]
+            n = min(400, int(parse_qs(u.query).get("n", ["120"])[0]))
+            text = ""
+            for name in names:
+                path = os.path.join(LOGS_DIR, name)
+                if os.path.exists(path):
+                    with open(path, "rb") as f:
+                        f.seek(max(0, os.path.getsize(path) - 200_000))
+                        lines = f.read().decode("utf-8", "replace").splitlines()[-n:]
+                    text += f"==> {name} <==\n" + "\n".join(lines) + "\n\n"
+            return self._json(200, {"name": m.group(1), "text": text or "(no log yet)"})
         m = re.match(r"^/jobs/([a-f0-9]{12})$", u.path)
         if m and m.group(1) in JOBS:
             return self._json(200, job_view(JOBS[m.group(1)]))

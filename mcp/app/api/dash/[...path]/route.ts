@@ -34,6 +34,7 @@ export async function GET(req: Request, ctx: Ctx) {
       }
     }
     if (a === "voices") return Response.json(await call("/voices"));
+    if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
     if (a === "jobs" && !b) return Response.json(await call("/jobs"));
     if (a === "jobs" && b) {
       const job = await call<Parameters<typeof archiveWorkerJob>[0]>(`/jobs/${b}`);

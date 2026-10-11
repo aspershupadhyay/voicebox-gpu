@@ -43,12 +43,20 @@ class Engine:
         return gen
 
     def transcribe_batch(self, paths, language=None):
-        """Several files through the GPU together (each long file is still chunked at 30 s)."""
-        audios = [load_16k(p) for p in paths]
-        outs = self.pipe([{"raw": a, "sampling_rate": 16000} for a in audios], return_timestamps="word",
-                         chunk_length_s=30, batch_size=4, generate_kwargs=self._gen(language))
-        torch.cuda.empty_cache() if self.dev == "cuda" else None
-        return [self._words(o, len(a) / 16000, language) for o, a in zip(outs, audios)]
+        """One file at a time: word timestamps need the attention maps, which are large, so batching
+        windows would blow past the GPU memory left next to Orpheus. Long files are chunked at 30 s."""
+        out = []
+        for p in paths:
+            a = load_16k(p)
+            try:
+                with torch.inference_mode():
+                    o = self.pipe({"raw": a, "sampling_rate": 16000}, return_timestamps="word",
+                                  chunk_length_s=30, batch_size=1, generate_kwargs=self._gen(language))
+                out.append(self._words(o, len(a) / 16000, language))
+            finally:
+                if self.dev == "cuda":
+                    torch.cuda.empty_cache()
+        return out
 
     def transcribe(self, path, language=None, prompt=None):
         return self.transcribe_batch([path], language)[0]

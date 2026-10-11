@@ -25,6 +25,12 @@ export default function Overview() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [lib, setLib] = useState<Lib[] | null>(null);
   const [busy, setBusy] = useState("");
+  const [logs, setLogs] = useState<{ name: string; text: string } | null>(null);
+  async function showLogs(name: string) {
+    setLogs({ name, text: "Loading…" });
+    const r = await api<{ text: string }>(`logs/${name}`).catch((e) => ({ text: String(e.message) }));
+    setLogs({ name, text: r.text });
+  }
 
   useEffect(() => { api<{ jobs: Lib[] }>("library").then((l) => setLib(l.jobs)).catch(() => setLib([])); }, []);
   useEffect(() => {
@@ -108,9 +114,12 @@ export default function Overview() {
                     <div className="dim small">{ENGINES[name].what} · {ENGINES[name].vram}{st?.rates?.[name] ? ` · ${speed(name, st.rates[name])}` : ""}</div>
                     {st?.engine_errors?.[name] && <div className="err tiny">{st.engine_errors[name].slice(0, 140)}</div>}
                   </div>
+                  <div className="row" style={{ gap: 6 }}>
+                  <button className="ghost xs" disabled={!st?.online} onClick={() => showLogs(name)}>Logs</button>
                   {s === "ready"
                     ? <button className="ghost sm" disabled={busy === name} onClick={() => engine(name, "unload")}>Unload</button>
                     : <button className="ghost sm" disabled={!st?.online || busy === name || s === "loading" || s === "installing"} onClick={() => engine(name, "load")}>{s === "loading" || s === "installing" ? "Loading…" : "Warm up"}</button>}
+                  </div>
                 </div>
               );
             })}
@@ -134,6 +143,16 @@ export default function Overview() {
           </tbody></table>
         </div>
       </div>
+      {logs && (
+        <>
+          <div className="scrim" onClick={() => setLogs(null)} />
+          <aside className="drawer" style={{ width: "min(860px, 100vw)" }}>
+            <div className="row between"><h2 style={{ margin: 0 }}>{logs.name} logs</h2>
+              <div className="row"><button className="ghost xs" onClick={() => showLogs(logs.name)}>Refresh</button><button className="ghost xs" onClick={() => setLogs(null)}>Close</button></div></div>
+            <pre className="mono" style={{ fontSize: 11.5, whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--ink2)", marginTop: 14 }}>{logs.text}</pre>
+          </aside>
+        </>
+      )}
     </>
   );
 }
