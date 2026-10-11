@@ -1,58 +1,81 @@
 "use client";
+import {
+  CaretRight, ClosedCaptioning, DownloadSimple, FileZip, FilmStrip, MagnifyingGlass, Microphone, Play, Plus, Stop, TrashSimple, X,
+} from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api, fileUrl, fmtS, matchClass, pct } from "./api";
+import { CassetteArt, VoiceGlyph } from "./art";
 import LineRow, { type Line } from "./LineRow";
 import { useStatus } from "./Shell";
 import { useDialog } from "./Dialog";
 
 type LibJob = {
   id: string; kind?: "tts" | "transcribe" | "video"; engine: string; voice: string; label?: string; created: number; source?: string; language?: string | null;
-  params?: Record<string, unknown>; subs?: { cues: number; timeline: string } | null; match?: number | null; results: (Line & { audio?: string | null })[];
+  params?: Record<string, unknown>; style?: string; subs?: { cues: number; timeline: string } | null; match?: number | null; results: (Line & { audio?: string | null })[];
   video?: { width: number; height: number; duration: number; size: number; voice_job?: string }; video_url?: string; poster_url?: string | null;
 };
+type CardProps = { j: LibJob; open: boolean; selected: boolean; onSelect: (shift: boolean) => void; onDelete: () => void };
 
-function VideoCard({ j, selected, onSelect, onDelete }: { j: LibJob; selected: boolean; onSelect: (shift: boolean) => void; onDelete: () => void }) {
+const Check = ({ selected, onSelect }: { selected: boolean; onSelect: (shift: boolean) => void }) => (
+  <input type="checkbox" className="selbox" checked={selected} aria-label="Select" onClick={(e) => { e.stopPropagation(); onSelect(e.shiftKey); }} onChange={() => {}} />
+);
+
+function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) {
   const [isOpen, setOpen] = useState(true);
+  useEffect(() => { if (open) setOpen(true); }, [open]);
   const slug = (j.label || j.id).replace(/[^A-Za-z0-9._-]/g, "_");
   const v = j.video;
   return (
-    <div className={`card ${selected ? "selected" : ""}`} id={j.id} style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
-      <div className="row between" style={{ padding: "16px 20px", cursor: "pointer" }} onClick={() => setOpen(!isOpen)}>
-        <div className="row" style={{ gap: 12, minWidth: 0 }}>
-          <input type="checkbox" className="selbox" checked={selected} aria-label="Select" onClick={(e) => { e.stopPropagation(); onSelect(e.shiftKey); }} onChange={() => {}} />
-          <div style={{ minWidth: 0 }}>
-            <b style={{ fontSize: 15 }}>{j.label || j.id}</b>
-            <div className="row tiny" style={{ gap: 6, marginTop: 6 }}>
-              <span className="pill bad">video</span>
-              {j.voice && <span className="pill">{j.engine} · {j.voice}</span>}
-              {j.subs && <span className="pill blue">CC · {j.subs.cues} cues</span>}
-              {v && <span className="dim mono">{v.width}×{v.height} · {fmtS(v.duration)} · {(v.size / 1e6).toFixed(1)} MB · {ago(j.created)}</span>}
-            </div>
+    <div className={`card lib-card ${selected ? "selected" : ""}`} id={j.id}>
+      <div className="lc-head" onClick={() => setOpen(!isOpen)}>
+        <Check selected={selected} onSelect={onSelect} />
+        <CaretRight size={14} weight="bold" className={`chev ${isOpen ? "open" : ""}`} />
+        <span className="thumb">{j.poster_url ? <img src={j.poster_url} alt="" /> : <FilmStrip size={20} weight="duotone" />}</span>
+        <div style={{ minWidth: 0 }}>
+          <div className="lc-title">{j.label || j.id}</div>
+          <div className="lc-meta">
+            <span className="pill sig"><FilmStrip size={11} weight="bold" />video</span>
+            {j.subs && <span className="pill blue">CC · {j.subs.cues}</span>}
+            {v && <span className="dim tiny mono">{fmtS(v.duration)} · {ago(j.created)}</span>}
           </div>
         </div>
-        <div className="row" onClick={(e) => e.stopPropagation()}>
-          <a className="btn sm" href={fileUrl(j.id, "video.mp4", `${slug}.mp4`)}>Download MP4</a>
-          {j.subs && <a className="btn ghost sm" href={fileUrl(j.id, "subtitles.srt", `${slug}.srt`)}>.srt</a>}
-          {v?.voice_job && <a className="btn ghost sm" href={`#${v.voice_job}`}>Voice lines</a>}
-          <button className="ghost sm" onClick={onDelete} title="Delete">✕</button>
+        <div className="lc-actions" onClick={(e) => e.stopPropagation()}>
+          <a className="btn sm" href={fileUrl(j.id, "video.mp4", `${slug}.mp4`)}><DownloadSimple size={14} weight="bold" />MP4</a>
+          <button className="icon-btn danger-h" onClick={onDelete} title="Delete" aria-label="Delete"><TrashSimple size={16} /></button>
         </div>
       </div>
       {isOpen && j.video_url && (
-        <div style={{ padding: "0 20px 20px", display: "flex", justifyContent: "center" }}>
+        <div className="video-wrap">
           <video className="vplayer" src={j.video_url} poster={j.poster_url ?? undefined} controls playsInline preload="metadata"
-            style={{ aspectRatio: v ? `${v.width}/${v.height}` : undefined, width: v && v.height > v.width ? "auto" : "100%", height: v && v.height > v.width ? "70vh" : undefined }} />
+            style={{ aspectRatio: v ? `${v.width}/${v.height}` : undefined }} />
+          <div className="stack" style={{ gap: 18 }}>
+            <dl className="facts">
+              <dt>Voice</dt><dd><span style={{ textTransform: "capitalize" }}>{j.engine}</span> · {j.voice}</dd>
+              {v && <><dt>Format</dt><dd className="mono">{v.width}×{v.height} · {fmtS(v.duration)} · {(v.size / 1e6).toFixed(1)} MB</dd></>}
+              {j.subs && <><dt>Subtitles</dt><dd>{j.subs.cues} cues, timed to the video</dd></>}
+              <dt>Made</dt><dd>{new Date(j.created).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd>
+            </dl>
+            <div className="row">
+              <a className="btn sig sm" href={fileUrl(j.id, "video.mp4", `${slug}.mp4`)}><DownloadSimple size={14} weight="bold" />Download MP4</a>
+              {j.subs && <a className="btn ghost sm" href={fileUrl(j.id, "subtitles.srt", `${slug}.srt`)}><ClosedCaptioning size={14} />.srt</a>}
+              {j.subs && <a className="btn ghost sm" href={fileUrl(j.id, "subtitles.vtt", `${slug}.vtt`)}>.vtt</a>}
+              {v?.voice_job && <a className="btn quiet sm" href={`#${v.voice_job}`}><Microphone size={14} />Voice lines</a>}
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function JobCard({ j, open, selected, onSelect, onDelete, onSubtitle }: { j: LibJob; open: boolean; selected: boolean; onSelect: (shift: boolean) => void; onDelete: () => void; onSubtitle: () => void }) {
+function JobCard({ j, open, selected, onSelect, onDelete, onSubtitle }: CardProps & { onSubtitle: () => void }) {
   const players = useRef<(() => void)[]>([]);
   const [playing, setPlaying] = useState(-1);
   const [isOpen, setOpen] = useState(open);
+  useEffect(() => { if (open) setOpen(true); }, [open]);
   const total = j.results.reduce((s, r) => s + r.duration, 0);
+  const longest = Math.max(0.1, ...j.results.map((r) => r.duration));
   const over = j.results.filter((r) => r.fits === false).length;
   const slug = (j.label || `${j.engine}-${j.voice}`).replace(/[^A-Za-z0-9._-]/g, "_");
   const asr = j.kind === "transcribe";
@@ -64,40 +87,38 @@ function JobCard({ j, open, selected, onSelect, onDelete, onSubtitle }: { j: Lib
   }
 
   return (
-    <div className={`card ${selected ? "selected" : ""}`} id={j.id} style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
-      <div className="row between" style={{ padding: "16px 20px", cursor: "pointer" }} onClick={() => setOpen(!isOpen)}>
-        <div className="row" style={{ gap: 12, minWidth: 0, alignItems: "flex-start" }}>
-        <input type="checkbox" className="selbox" style={{ marginTop: 2 }} checked={selected} aria-label="Select" onClick={(e) => { e.stopPropagation(); onSelect(e.shiftKey); }} onChange={() => {}} />
+    <div className={`card lib-card ${selected ? "selected" : ""}`} id={j.id}>
+      <div className="lc-head" onClick={() => setOpen(!isOpen)}>
+        <Check selected={selected} onSelect={onSelect} />
+        <CaretRight size={14} weight="bold" className={`chev ${isOpen ? "open" : ""}`} />
+        {asr ? <span className="thumb" style={{ color: "var(--glacier)" }}><ClosedCaptioning size={20} weight="duotone" /></span> : <VoiceGlyph name={j.voice || j.engine} size={40} active={playing >= 0} />}
         <div style={{ minWidth: 0 }}>
-          <div className="row" style={{ gap: 8 }}>
-            <span style={{ color: "var(--dim)", transition: "transform .2s", transform: isOpen ? "rotate(90deg)" : "none", display: "inline-block" }}>›</span>
-            <b style={{ fontSize: 15 }}>{j.label || j.id}</b>
-          </div>
-          <div className="row tiny" style={{ gap: 6, marginTop: 6, marginLeft: 16 }}>
-            {asr ? <span className="pill blue">subtitles</span> : <><span className="pill">{j.engine}</span><span className="pill">{j.voice}</span></>}
-            {j.subs && !asr && <span className="pill blue">CC · {j.subs.cues} cues</span>}
-            {j.match != null && <span className={`pill ${matchClass(j.match)}`}>match {pct(j.match)}</span>}
+          <div className="lc-title">{j.label || <span className="quote-title">“{(j.results[0]?.text ?? j.id).replace(/<[^>]+>/g, "").slice(0, 70)}{(j.results[0]?.text?.length ?? 0) > 70 ? "…" : ""}”</span>}</div>
+          <div className="lc-meta">
+            {asr ? <span className="pill blue">subtitles</span> : <span className="pill">{j.engine} · {j.voice}</span>}
+            {j.style && !asr && <span className="pill">{j.style}</span>}
+            {j.subs && !asr && <span className="pill blue">CC · {j.subs.cues}</span>}
+            {j.match != null && <span className={`pill ${matchClass(j.match)}`}>{pct(j.match)} match</span>}
             {over > 0 && <span className="pill bad">{over} over window</span>}
-            <span className="dim mono">{j.results.length} {asr ? "files" : "lines"} · {fmtS(total)} · {ago(j.created)}</span>
+            <span className="dim tiny mono">{j.results.length} {asr ? "file" : "line"}{j.results.length === 1 ? "" : "s"} · {fmtS(total)} · {ago(j.created)}</span>
           </div>
         </div>
-        </div>
-        <div className="row" onClick={(e) => e.stopPropagation()}>
-          {!asr && <button className="sm" onClick={() => (playing >= 0 ? setPlaying(-1) : playFrom(0))}>{playing >= 0 ? "■ Stop" : "▶ Play all"}</button>}
-          {!asr && !j.subs && <button className="ghost sm" onClick={onSubtitle}>+ Subtitles</button>}
-          {j.subs && <a className="btn ghost sm" href={fileUrl(j.id, "subtitles.srt", `${slug}.srt`)}>.srt</a>}
-          {j.subs && <a className="btn ghost sm" href={fileUrl(j.id, "subtitles.vtt", `${slug}.vtt`)}>.vtt</a>}
-          <a className="btn ghost sm" href={`/api/zip/${j.id}`}>Zip</a>
-          <button className="ghost sm" onClick={onDelete} title="Delete">✕</button>
+        <div className="lc-actions" onClick={(e) => e.stopPropagation()}>
+          {!asr && <button className={playing >= 0 ? "sig sm" : "ghost sm"} onClick={() => (playing >= 0 ? setPlaying(-1) : playFrom(0))}>
+            {playing >= 0 ? <><Stop size={13} weight="fill" />Stop</> : <><Play size={13} weight="fill" />Play all</>}</button>}
+          {!asr && !j.subs && <button className="ghost sm" onClick={onSubtitle}><Plus size={13} weight="bold" />Subtitles</button>}
+          {j.subs && <a className="btn quiet sm" href={fileUrl(j.id, "subtitles.srt", `${slug}.srt`)} title="Timeline subtitles">.srt</a>}
+          <a className="icon-btn btn" href={`/api/zip/${j.id}`} title="Download everything (zip)" aria-label="Download zip"><FileZip size={17} /></a>
+          <button className="icon-btn danger-h" onClick={onDelete} title="Delete" aria-label="Delete"><TrashSimple size={16} /></button>
         </div>
       </div>
       {isOpen && (
-        <div style={{ padding: "0 20px 10px", borderTop: "1px solid var(--line)" }}>
+        <div className="lc-body">
           {j.results.map((r, i) => (
-            <LineRow key={r.id} jobId={j.id} line={r} audio={r.audio} slug={slug}
+            <LineRow key={r.id} jobId={j.id} line={r} audio={r.audio} slug={slug} scale={r.duration / longest}
               playRef={(fn) => { players.current[i] = fn; }} onEnded={playing === i ? () => playFrom(i + 1) : undefined} />
           ))}
-          {j.params && Object.keys(j.params).length > 0 && <p className="dim tiny mono">{Object.entries(j.params).map(([k, v]) => `${k}=${v}`).join(" · ")}</p>}
+          {j.params && Object.keys(j.params).length > 0 && <p className="faint tiny mono" style={{ margin: "10px 0 0" }}>{Object.entries(j.params).map(([k, v]) => `${k} ${v}`).join("  ·  ")}</p>}
         </div>
       )}
     </div>
@@ -118,8 +139,17 @@ export default function Library() {
   const anchor = useRef<string | null>(null);
 
   const load = () => api<{ jobs: LibJob[] }>("library").then((r) => setJobs(r.jobs)).catch((e) => setErr(e.message));
-  useEffect(() => { setHash(location.hash.slice(1)); load(); }, []);
-  useEffect(() => { if (hash && jobs) document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" }); }, [hash, jobs]);
+  useEffect(() => {
+    const onHash = () => setHash(location.hash.slice(1));
+    onHash(); load();
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  useEffect(() => {
+    if (!hash || !jobs) return;
+    const t = setTimeout(() => document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" }), 350); // let cards above expand first
+    return () => clearTimeout(t);
+  }, [hash, jobs]);
 
   const engines = useMemo(() => Array.from(new Set((jobs ?? []).filter((j) => !j.kind || j.kind === "tts").map((j) => j.engine))), [jobs]);
   const hasVideo = (jobs ?? []).some((j) => j.kind === "video");
@@ -212,16 +242,17 @@ export default function Library() {
     <>
       <div className="head">
         <div>
-          <h1>Library</h1>
-          <p className="sub">Everything you've made, stored privately on Vercel Blob. Still here after Colab stops.</p>
+          <div className="eyebrow">Archive</div>
+          <h1>The <em>library.</em></h1>
+          <p className="sub">Every take, subtitle and render, stored privately on Vercel Blob. It stays here after Colab shuts down.</p>
         </div>
-        <Link href="/generate" className="btn sig">New voiceover</Link>
+        <Link href="/generate" className="btn sig"><Microphone size={16} weight="bold" />New voiceover</Link>
       </div>
-      <div className="row" style={{ marginBottom: 16 }}>
-        <div className="chips">
-          {["all", ...(hasVideo ? ["videos"] : []), ...engines, "subtitles"].map((e) => <button key={e} className={`chip ${filter === e ? "on" : ""}`} onClick={() => setFilter(e)}>{e}</button>)}
+      <div className="filters">
+        <div className="seg">
+          {["all", ...(hasVideo ? ["videos"] : []), ...engines, "subtitles"].map((e) => <button key={e} className={filter === e ? "on" : ""} style={{ textTransform: "capitalize" }} onClick={() => setFilter(e)}>{e}</button>)}
         </div>
-        <input placeholder="Search names, voices, script text…" value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: 1, minWidth: 220 }} />
+        <div className="searchbox"><MagnifyingGlass size={16} className="ic" /><input placeholder="Search titles, voices, script text…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <button className="ghost sm" onClick={load}>Refresh</button>
       </div>
 
@@ -230,29 +261,32 @@ export default function Library() {
           <div className="selbar">
             <input type="checkbox" className="selbox" checked={allShown} ref={(el) => { if (el) el.indeterminate = someShown; }} onChange={toggleAll} aria-label="Select all shown" />
             <b>{sel.size} selected</b>
-            {!allShown && <button className="ghost xs" onClick={toggleAll}>Select all {shownIds.length}</button>}
-            <button className="ghost xs" onClick={() => setSel(new Set())}>Clear</button>
-            <span className="dim tiny" style={{ flex: 1 }}>Shift-click to select a range · Esc to clear</span>
+            {!allShown && <button className="quiet xs" onClick={toggleAll}>Select all {shownIds.length}</button>}
+            <button className="quiet xs" onClick={() => setSel(new Set())}><X size={12} />Clear</button>
+            <span className="faint tiny" style={{ flex: 1 }}>Shift-click selects a range · Esc clears</span>
             <button className="danger sm" disabled={removing.size > 0} onClick={() => removeMany([...sel])}>
-              {removing.size ? "Deleting…" : `Delete ${sel.size}`}
+              <TrashSimple size={14} weight="bold" />{removing.size ? "Deleting…" : `Delete ${sel.size}`}
             </button>
           </div>
         ) : (
-          <div className="row tiny dim" style={{ gap: 10, margin: "0 0 10px 20px" }}>
+          <label className="row tiny dim" style={{ gap: 10, margin: "0 0 12px 18px", cursor: "pointer", width: "fit-content" }}>
             <input type="checkbox" className="selbox" checked={false} onChange={toggleAll} aria-label="Select all shown" />
-            <span>Select all · {shown.length} shown</span>
-          </div>
+            Select all · {shown.length} shown
+          </label>
         )
       )}
 
-      {note && <div className="card flat small" style={{ marginBottom: 12 }}>{note}</div>}
+      {note && <div className="banner" style={{ borderColor: "rgba(124,196,212,.35)", background: "var(--glacier-soft)" }}><ClosedCaptioning size={20} weight="duotone" color="var(--glacier)" /><span>{note}</span></div>}
       {err && <p className="err">{err}</p>}
-      {jobs === null && !err && <div className="stack">{[0, 1, 2].map((i) => <div key={i} className="card" style={{ height: 74, opacity: 0.5 }} />)}</div>}
-      {jobs && !shown.length && <div className="empty">Nothing here yet.</div>}
+      {jobs === null && !err && <div className="stack">{[0, 1, 2].map((i) => <div key={i} className="card" style={{ height: 72, opacity: 0.45 }} />)}</div>}
+      {jobs && !shown.length && (
+        <div className="empty"><CassetteArt /><b>{jobs.length ? "Nothing matches" : "The shelf is empty"}</b><span>{jobs.length ? "Try another filter or search." : "Record your first take and it lands here."}</span>
+          {!jobs.length && <Link href="/generate" className="btn sig sm"><Microphone size={14} weight="bold" />Record a voiceover</Link>}</div>
+      )}
       {shown.map((j) => (
         <div key={j.id} className={removing.has(j.id) ? "removing" : ""}>
           {j.kind === "video"
-            ? <VideoCard j={j} selected={sel.has(j.id)} onSelect={(sh) => toggle(j.id, sh)} onDelete={() => removeMany([j.id])} />
+            ? <VideoCard j={j} open={hash === j.id} selected={sel.has(j.id)} onSelect={(sh) => toggle(j.id, sh)} onDelete={() => removeMany([j.id])} />
             : <JobCard j={j} open={hash === j.id} selected={sel.has(j.id)} onSelect={(sh) => toggle(j.id, sh)} onDelete={() => removeMany([j.id])} onSubtitle={() => subtitle(j)} />}
         </div>
       ))}

@@ -45,3 +45,6 @@ export type Job = {
   queue_position?: number; results: JobResult[]; warnings?: string[]; subs?: { cues: number; timeline: string } | null;
   match?: number | null; library?: { id: string } | null; subtitles?: boolean;
 };
+
+/** Fill the slider track up to the thumb (globals.css reads --v). */
+export const rangeFill = (v: number, min = 0, max = 1) => ({ ["--v" as string]: `${((v - min) / (max - min || 1)) * 100}%` }) as React.CSSProperties;

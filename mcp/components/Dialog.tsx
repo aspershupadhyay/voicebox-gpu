@@ -1,5 +1,6 @@
 "use client";
 // In-app replacements for window.confirm / window.alert: a promise-based confirm dialog and toasts.
+import { CheckCircle, Info, TrashSimple, WarningCircle } from "@phosphor-icons/react";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 type Ask = { title: string; body?: React.ReactNode; confirm?: string; cancel?: string; danger?: boolean };
@@ -39,7 +40,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
         <>
           <div className="scrim-modal" onClick={() => close(false)} />
           <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="dlg-title">
-            {ask.danger && <div className="modal-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg></div>}
+            {ask.danger && <div className="modal-icon"><TrashSimple size={22} weight="duotone" /></div>}
             <h3 id="dlg-title">{ask.title}</h3>
             {ask.body && <div className="modal-body">{ask.body}</div>}
             <div className="row" style={{ justifyContent: "flex-end", marginTop: 22 }}>
@@ -50,7 +51,10 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
         </>
       )}
       <div className="toasts" aria-live="polite">
-        {toasts.map((t) => <div key={t.id} className={`toast ${t.tone}`}>{t.text}</div>)}
+        {toasts.map((t) => {
+          const Ic = t.tone === "ok" ? CheckCircle : t.tone === "bad" ? WarningCircle : Info;
+          return <div key={t.id} className={`toast ${t.tone}`}><Ic size={18} weight="duotone" className="ic" />{t.text}</div>;
+        })}
       </div>
     </DialogCtx.Provider>
   );

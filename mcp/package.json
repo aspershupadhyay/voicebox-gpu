@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.3.1",
+    "@phosphor-icons/react": "^2.1.10",
     "@vercel/blob": "^2.8.1",
     "mcp-handler": "^2.3.0",
     "next": "^16.4.0",

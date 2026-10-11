@@ -1,4 +1,5 @@
 "use client";
+import { BookOpenText, Info, X } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { GUIDES, LANGUAGES } from "./guides";
 
@@ -7,7 +8,7 @@ export function GuideButton({ engine, label = "Writing guide" }: { engine: strin
   return (
     <>
       <button className="ghost sm" onClick={() => setOpen(true)} title="How to write for this engine">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9.5" /><path d="M12 11v6M12 7.5v.01" strokeLinecap="round" /></svg>
+        {label === "Writing guide" ? <BookOpenText size={15} weight="duotone" /> : <Info size={15} weight="duotone" />}
         {label}
       </button>
       {open && <GuideDrawer initial={engine} onClose={() => setOpen(false)} />}
@@ -27,10 +28,10 @@ export default function GuideDrawer({ initial, onClose }: { initial: string; onC
     <>
       <div className="scrim" onClick={onClose} />
       <aside className="drawer guide" role="dialog" aria-label="Writing guide">
-        <div className="row between"><h2 style={{ margin: 0 }}>Writing guide</h2><button className="ghost xs" onClick={onClose}>Esc</button></div>
-        <div className="chips" style={{ margin: "14px 0 18px" }}>
+        <div className="row between"><div className="eyebrow" style={{ margin: 0 }}>Writing guide</div><button className="icon-btn" onClick={onClose} aria-label="Close"><X size={16} /></button></div>
+        <div className="seg" style={{ margin: "16px 0 22px", flexWrap: "wrap" }}>
           {[...Object.keys(GUIDES), "languages"].map((k) => (
-            <button key={k} className={`chip ${tab === k ? "on" : ""}`} onClick={() => setTab(k)}>{k === "languages" ? "Languages" : GUIDES[k].title.split(" ·")[0]}</button>
+            <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{k === "languages" ? "Languages" : GUIDES[k].title.split(" ·")[0]}</button>
           ))}
         </div>
         {tab === "languages" ? (
@@ -52,7 +53,7 @@ export default function GuideDrawer({ initial, onClose }: { initial: string; onC
           </>
         ) : (
           <>
-            <h3 style={{ fontSize: 19 }}>{g.title}</h3>
+            <h3>{g.title}</h3>
             <p style={{ marginTop: 6 }}>{g.tagline}</p>
             {g.sections.map((s) => (
               <section key={s.h}>

@@ -1,19 +1,66 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { Pause, Play } from "@phosphor-icons/react";
+import { useEffect, useId, useRef, useState } from "react";
 import { clock, type Word } from "./api";
 
 let current: HTMLAudioElement | null = null;
+let ctx: AudioContext | null = null;
+const PEAKS = new Map<string, Promise<number[] | null>>();
+const BARS = 96;
 
-/** Custom audio player. With `words`, renders a karaoke transcript that follows playback (click a word to seek). */
-export default function Player({ src, words, duration, onEnded, autoPlay, playRef }: {
+/** Decode once per URL (cached), reduce to BARS peak heights 0..1. Null when the audio can't be fetched/decoded. */
+function peaksFor(src: string): Promise<number[] | null> {
+  const key = src.split("?")[0];
+  if (!PEAKS.has(key)) {
+    PEAKS.set(key, (async () => {
+      try {
+        const buf = await (await fetch(src)).arrayBuffer();
+        ctx ??= new AudioContext();
+        const audio = await ctx.decodeAudioData(buf);
+        const d = audio.getChannelData(0), step = Math.max(1, Math.floor(d.length / BARS));
+        const out = Array.from({ length: BARS }, (_, i) => {
+          let m = 0;
+          for (let k = i * step, e = Math.min(d.length, k + step); k < e; k += 4) m = Math.max(m, Math.abs(d[k]));
+          return m;
+        });
+        const top = Math.max(...out, 1e-4);
+        return out.map((v) => Math.max(0.04, Math.sqrt(v / top)));
+      } catch {
+        return null;
+      }
+    })());
+  }
+  return PEAKS.get(key)!;
+}
+
+/** Audio player drawn as the real waveform (click/drag to scrub). With `words`, a karaoke transcript follows playback. */
+const secs = (s: number, short: boolean) => (short ? `${s.toFixed(1)}s` : clock(s));
+
+/** `scale` (0..1) draws the waveform proportionally to the longest clip in its group, so lengths compare at a glance. */
+export default function Player({ src, words, duration, onEnded, autoPlay, playRef, compact, scale = 1 }: {
   src: string; words?: Word[] | null; duration?: number; onEnded?: () => void; autoPlay?: boolean;
-  playRef?: (fn: () => void) => void;
+  playRef?: (fn: () => void) => void; compact?: boolean; scale?: number;
 }) {
   const a = useRef<HTMLAudioElement>(null);
+  const box = useRef<HTMLDivElement>(null);
   const [t, setT] = useState(0);
   const [dur, setDur] = useState(duration ?? 0);
   const [on, setOn] = useState(false);
+  const [peaks, setPeaks] = useState<number[] | null | undefined>(undefined);
+  const [hover, setHover] = useState<number | null>(null);
   const raf = useRef(0);
+  const clip = `wclip-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
+
+  // decode lazily, when the player scrolls into view
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([e]) => {
+      if (e.isIntersecting) { io.disconnect(); peaksFor(src).then(setPeaks); }
+    }, { rootMargin: "200px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [src]);
 
   useEffect(() => {
     const el = a.current!;
@@ -29,24 +76,35 @@ export default function Player({ src, words, duration, onEnded, autoPlay, playRe
   useEffect(() => { playRef?.(() => { if (a.current) { a.current.currentTime = 0; a.current.play().catch(() => {}); } }); }, [playRef]);
 
   const toggle = () => (a.current!.paused ? a.current!.play().catch(() => {}) : a.current!.pause());
-  const seek = (e: React.MouseEvent<HTMLDivElement>) => {
+  const frac = (e: React.PointerEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    if (dur) { a.current!.currentTime = ((e.clientX - r.left) / r.width) * dur; if (a.current!.paused) setT(a.current!.currentTime); }
+    return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
   };
-  const p = dur ? Math.min(100, (t / dur) * 100) : 0;
+  const seekTo = (f: number) => { if (dur) { a.current!.currentTime = f * dur; if (a.current!.paused) setT(a.current!.currentTime); } };
+  const p = dur ? Math.min(1, t / dur) : 0;
+  const bars = peaks ?? Array.from({ length: BARS }, (_, i) => 0.12 + 0.06 * Math.sin(i * 0.7));
 
   return (
-    <div className="stack" style={{ gap: 6 }}>
-      <div className="player">
+    <div className="stack" style={{ gap: 8 }}>
+      <div className={`player ${compact ? "compact" : ""}`}>
         <audio ref={a} src={src} preload="none" />
         <button className={`pp ${on ? "on" : ""}`} onClick={toggle} aria-label={on ? "Pause" : "Play"}>
-          {on ? <svg width="12" height="12" viewBox="0 0 12 12"><rect x="2" y="1" width="3" height="10" fill="currentColor" /><rect x="7" y="1" width="3" height="10" fill="currentColor" /></svg>
-            : <svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.5v9l7.5-4.5z" fill="currentColor" /></svg>}
+          {on ? <Pause size={14} weight="fill" /> : <Play size={14} weight="fill" />}
         </button>
-        <div className="track" onClick={seek}>
-          <div className="rail" /><div className="fill" style={{ width: `${p}%` }} />{(on || t > 0) && <div className="knob" style={{ left: `${p}%` }} />}
-        </div>
-        <span className="t">{clock(t)} / {clock(dur)}</span>
+        <div className="wave-lane"><div ref={box} className={`wave ${peaks === undefined ? "loading" : ""}`} style={{ width: `${Math.max(18, Math.min(1, scale) * 100)}%` }} role="slider" aria-label="Seek" aria-valuemin={0} aria-valuemax={Math.round(dur)} aria-valuenow={Math.round(t)} tabIndex={0}
+          onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); seekTo(frac(e)); }}
+          onPointerMove={(e) => { setHover(frac(e)); if (e.buttons) seekTo(frac(e)); }}
+          onPointerLeave={() => setHover(null)}
+          onKeyDown={(e) => { if (e.key === "ArrowRight") seekTo(Math.min(1, p + 0.05)); if (e.key === "ArrowLeft") seekTo(Math.max(0, p - 0.05)); if (e.key === " ") { e.preventDefault(); toggle(); } }}>
+          <svg viewBox={`0 0 ${BARS * 3} 40`} preserveAspectRatio="none">
+            <defs><clipPath id={clip}><rect width={p * BARS * 3} height="40" /></clipPath></defs>
+            <g className="w-dim">{bars.map((v, i) => <rect key={i} x={i * 3} y={20 - v * 19} width="1.9" height={Math.max(1, v * 38)} />)}</g>
+            <g className="w-on" clipPath={`url(#${clip})`}>{bars.map((v, i) => <rect key={i} x={i * 3} y={20 - v * 19} width="1.9" height={Math.max(1, v * 38)} />)}</g>
+          </svg>
+          {(on || t > 0) && <i className="head" style={{ left: `${p * 100}%` }} />}
+          {hover != null && dur > 0 && <span className="tip" style={{ left: `${hover * 100}%` }}>{secs(hover * dur, dur < 60)}</span>}
+        </div></div>
+        <span className="t">{secs(t, dur < 60)}<b>/</b>{secs(dur, dur < 60)}</span>
       </div>
       {words && words.length > 0 && (
         <div className="words">

@@ -1,4 +1,5 @@
 "use client";
+import { X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { fmtS, type Job } from "./api";
 
@@ -61,28 +62,41 @@ export default function JobProgress({ job, uploading, uploadFrac, onCancel }: {
     : prep ? (p!.stage === "installing" ? "Installing engine (first run only)" : "Loading model onto the GPU")
     : key === "generating" ? `Voicing ${p!.detail}` : key === "subtitles" ? "Writing subtitles" : key === "transcribing" ? `Transcribing ${p!.detail}` : key === "downloading" ? "Fetching your files" : "Working";
 
+  const done = job?.status === "done" && !!job.library;
+  const failed = job?.status === "error" || job?.status === "cancelled";
+  const N = 48, lit = Math.round(shown * N);
+
   return (
-    <div className="card reveal">
-      <div className="row between">
-        <div>
+    <div className="card rec reveal">
+      <div className="top">
+        <div style={{ minWidth: 0 }}>
+          <span className={`recdot ${done ? "done" : ""}`} style={failed ? { color: "var(--dim)" } : undefined}><i style={failed ? { background: "var(--faint)", boxShadow: "none", animation: "none" } : undefined} />{done ? "SAVED" : failed ? "STOPPED" : running ? "REC" : "READY"}</span>
           <h3>{headline}</h3>
-          <div className="dim small" style={{ marginTop: 2 }}>
-            {prep ? p?.detail : job?.status === "running" ? `${p?.done ?? 0} of ${p?.total ?? 0} ${kind === "transcribe" ? "files" : "lines"} finished` : job?.error ?? " "}
+          <div className="dim small" style={{ marginTop: 4 }}>
+            {prep ? p?.detail : job?.status === "running" ? `${p?.done ?? 0} of ${p?.total ?? 0} ${kind === "transcribe" ? "files" : "lines"} finished` : job?.error ?? " "}
           </div>
         </div>
-        <div className="row" style={{ gap: 18 }}>
-          {job && <div style={{ textAlign: "right" }}><div className="mono" style={{ fontSize: 18, fontWeight: 600 }}>{Math.round(shown * 100)}%</div><div className="dim tiny">progress</div></div>}
-          {job && <div style={{ textAlign: "right" }}><div className="mono" style={{ fontSize: 18, fontWeight: 600 }}>{fmtS(elapsed)}</div><div className="dim tiny">elapsed</div></div>}
-          {running && !uploading && eta > 0 && <div style={{ textAlign: "right" }}><div className="mono" style={{ fontSize: 18, fontWeight: 600, color: "var(--signal)" }}>~{fmtS(eta)}</div><div className="dim tiny">left</div></div>}
-          {running && onCancel && job && job.status !== "done" && <button className="ghost sm" onClick={onCancel}>Cancel</button>}
+        <div className="row" style={{ gap: 22, alignItems: "flex-start" }}>
+          <div className="stats">
+            {job && <div><div className="label">Progress</div><div className="v">{Math.round(shown * 100)}%</div></div>}
+            {job && <div><div className="label">Elapsed</div><div className="v">{fmtS(elapsed)}</div></div>}
+            {running && !uploading && eta > 0 && <div><div className="label">Left</div><div className="v" style={{ color: "var(--signal2)" }}>~{fmtS(eta)}</div></div>}
+          </div>
+          {running && onCancel && job && job.status !== "done" && <button className="ghost sm" onClick={onCancel}><X size={14} />Cancel</button>}
         </div>
       </div>
-      <div className={`bar ${running ? "live" : ""} ${job?.status === "done" && job.library ? "done" : ""} ${prep && shown < 0.02 ? "indet" : ""}`} style={{ marginTop: 14 }}>
+      <div className={`spectrum ${running ? "live" : ""}`} aria-hidden>
+        {Array.from({ length: N }, (_, i) => {
+          const h = 30 + 70 * Math.abs(Math.sin(i * 0.53) * Math.cos(i * 0.21 + 0.4));
+          return <i key={i} className={i < lit ? "on" : ""} style={{ height: `${h}%`, animationDelay: `${(i % 9) * 0.07}s`, ...(done && i < lit ? { background: "var(--ok)", opacity: 0.8 } : {}) }} />;
+        })}
+      </div>
+      <div className={`bar thin ${running ? "live" : ""} ${done ? "done" : ""} ${prep && shown < 0.02 ? "indet" : ""}`}>
         <i style={{ width: `${Math.max(2, shown * 100)}%` }} />
       </div>
       <div className="steps">
         {steps.map(([k, label], i) => (
-          <div key={k} className={`step ${i < idx || (job?.status === "done" && job.library) ? "done" : i === idx && running ? "now" : ""}`}>
+          <div key={k} className={`step ${i < idx || done ? "done" : i === idx && running ? "now" : ""}`}>
             <div className="ln" />{label}
           </div>
         ))}
