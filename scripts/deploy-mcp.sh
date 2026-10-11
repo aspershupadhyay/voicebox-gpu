@@ -6,6 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ -f .secrets.local ]] || scripts/gen-secrets.sh
 set -a; source .secrets.local; set +a
+python3 notebook/build_notebook.py >/dev/null  # the worker bundle Colab pulls from /api/bundle: always ship the current worker/
 cd mcp
 npx -y vercel@latest link --yes ${VERCEL_SCOPE:+--scope "$VERCEL_SCOPE"} >/dev/null
 for name in R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET; do
