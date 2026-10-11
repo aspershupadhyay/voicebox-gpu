@@ -109,6 +109,15 @@ export async function DELETE(req: Request, ctx: Ctx) {
   const g = await guard(req, ctx);
   if (g.deny) return g.deny;
   const [a, b] = g.path;
+  if (a === "library" && !b) {
+    // bulk delete: { ids: [...] }
+    const body = await req.json().catch(() => ({}));
+    const ids: string[] = Array.isArray(body.ids) ? body.ids.map(String) : [];
+    if (!ids.length || ids.length > 500 || !ids.every((i) => ID.test(i))) return Response.json({ error: "ids must be 1-500 library job ids" }, { status: 400 });
+    const out = await Promise.allSettled(ids.map((i) => deleteLibJob(i)));
+    const failed = ids.filter((_, k) => out[k].status === "rejected");
+    return Response.json({ deleted: ids.filter((i) => !failed.includes(i)), failed });
+  }
   if (a !== "library" || !ID.test(b ?? "")) return Response.json({ error: "bad path" }, { status: 400 });
   await deleteLibJob(b);
   return Response.json({ ok: true });

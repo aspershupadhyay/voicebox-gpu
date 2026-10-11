@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ago, api, fmtS, pct, type Job } from "./api";
 import { useStatus } from "./Shell";
+import { useDialog } from "./Dialog";
 
 type Lib = { id: string; kind?: string; engine: string; voice: string; label?: string; created: number; match?: number | null; subs?: unknown; results: { duration: number }[] };
 
@@ -22,6 +23,7 @@ function speed(name: string, rate?: number) {
 
 export default function Overview() {
   const { status: st, refresh } = useStatus();
+  const { toast } = useDialog();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [lib, setLib] = useState<Lib[] | null>(null);
   const [busy, setBusy] = useState("");
@@ -43,7 +45,7 @@ export default function Overview() {
 
   async function engine(name: string, action: "load" | "unload") {
     setBusy(name);
-    await api(`engines/${name}/${action}`, { body: {} }).catch((e) => alert(e.message));
+    await api(`engines/${name}/${action}`, { body: {} }).catch((e) => toast(e.message, "bad"));
     await refresh();
     setBusy("");
   }

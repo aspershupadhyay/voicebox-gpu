@@ -4,13 +4,51 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api, fileUrl, fmtS, matchClass, pct } from "./api";
 import LineRow, { type Line } from "./LineRow";
 import { useStatus } from "./Shell";
+import { useDialog } from "./Dialog";
 
 type LibJob = {
-  id: string; kind?: "tts" | "transcribe"; engine: string; voice: string; label?: string; created: number; source?: string; language?: string | null;
+  id: string; kind?: "tts" | "transcribe" | "video"; engine: string; voice: string; label?: string; created: number; source?: string; language?: string | null;
   params?: Record<string, unknown>; subs?: { cues: number; timeline: string } | null; match?: number | null; results: (Line & { audio?: string | null })[];
+  video?: { width: number; height: number; duration: number; size: number; voice_job?: string }; video_url?: string; poster_url?: string | null;
 };
 
-function JobCard({ j, open, onDelete, onSubtitle }: { j: LibJob; open: boolean; onDelete: () => void; onSubtitle: () => void }) {
+function VideoCard({ j, selected, onSelect, onDelete }: { j: LibJob; selected: boolean; onSelect: (shift: boolean) => void; onDelete: () => void }) {
+  const [isOpen, setOpen] = useState(true);
+  const slug = (j.label || j.id).replace(/[^A-Za-z0-9._-]/g, "_");
+  const v = j.video;
+  return (
+    <div className={`card ${selected ? "selected" : ""}`} id={j.id} style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
+      <div className="row between" style={{ padding: "16px 20px", cursor: "pointer" }} onClick={() => setOpen(!isOpen)}>
+        <div className="row" style={{ gap: 12, minWidth: 0 }}>
+          <input type="checkbox" className="selbox" checked={selected} aria-label="Select" onClick={(e) => { e.stopPropagation(); onSelect(e.shiftKey); }} onChange={() => {}} />
+          <div style={{ minWidth: 0 }}>
+            <b style={{ fontSize: 15 }}>{j.label || j.id}</b>
+            <div className="row tiny" style={{ gap: 6, marginTop: 6 }}>
+              <span className="pill bad">video</span>
+              {j.voice && <span className="pill">{j.engine} · {j.voice}</span>}
+              {j.subs && <span className="pill blue">CC · {j.subs.cues} cues</span>}
+              {v && <span className="dim mono">{v.width}×{v.height} · {fmtS(v.duration)} · {(v.size / 1e6).toFixed(1)} MB · {ago(j.created)}</span>}
+            </div>
+          </div>
+        </div>
+        <div className="row" onClick={(e) => e.stopPropagation()}>
+          <a className="btn sm" href={fileUrl(j.id, "video.mp4", `${slug}.mp4`)}>Download MP4</a>
+          {j.subs && <a className="btn ghost sm" href={fileUrl(j.id, "subtitles.srt", `${slug}.srt`)}>.srt</a>}
+          {v?.voice_job && <a className="btn ghost sm" href={`#${v.voice_job}`}>Voice lines</a>}
+          <button className="ghost sm" onClick={onDelete} title="Delete">✕</button>
+        </div>
+      </div>
+      {isOpen && j.video_url && (
+        <div style={{ padding: "0 20px 20px", display: "flex", justifyContent: "center" }}>
+          <video className="vplayer" src={j.video_url} poster={j.poster_url ?? undefined} controls playsInline preload="metadata"
+            style={{ aspectRatio: v ? `${v.width}/${v.height}` : undefined, width: v && v.height > v.width ? "auto" : "100%", height: v && v.height > v.width ? "70vh" : undefined }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JobCard({ j, open, selected, onSelect, onDelete, onSubtitle }: { j: LibJob; open: boolean; selected: boolean; onSelect: (shift: boolean) => void; onDelete: () => void; onSubtitle: () => void }) {
   const players = useRef<(() => void)[]>([]);
   const [playing, setPlaying] = useState(-1);
   const [isOpen, setOpen] = useState(open);
@@ -26,8 +64,10 @@ function JobCard({ j, open, onDelete, onSubtitle }: { j: LibJob; open: boolean; 
   }
 
   return (
-    <div className="card" id={j.id} style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
+    <div className={`card ${selected ? "selected" : ""}`} id={j.id} style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
       <div className="row between" style={{ padding: "16px 20px", cursor: "pointer" }} onClick={() => setOpen(!isOpen)}>
+        <div className="row" style={{ gap: 12, minWidth: 0, alignItems: "flex-start" }}>
+        <input type="checkbox" className="selbox" style={{ marginTop: 2 }} checked={selected} aria-label="Select" onClick={(e) => { e.stopPropagation(); onSelect(e.shiftKey); }} onChange={() => {}} />
         <div style={{ minWidth: 0 }}>
           <div className="row" style={{ gap: 8 }}>
             <span style={{ color: "var(--dim)", transition: "transform .2s", transform: isOpen ? "rotate(90deg)" : "none", display: "inline-block" }}>›</span>
@@ -40,6 +80,7 @@ function JobCard({ j, open, onDelete, onSubtitle }: { j: LibJob; open: boolean; 
             {over > 0 && <span className="pill bad">{over} over window</span>}
             <span className="dim mono">{j.results.length} {asr ? "files" : "lines"} · {fmtS(total)} · {ago(j.created)}</span>
           </div>
+        </div>
         </div>
         <div className="row" onClick={(e) => e.stopPropagation()}>
           {!asr && <button className="sm" onClick={() => (playing >= 0 ? setPlaying(-1) : playFrom(0))}>{playing >= 0 ? "■ Stop" : "▶ Play all"}</button>}
@@ -65,31 +106,106 @@ function JobCard({ j, open, onDelete, onSubtitle }: { j: LibJob; open: boolean; 
 
 export default function Library() {
   const { status } = useStatus();
+  const { confirm, toast } = useDialog();
   const [jobs, setJobs] = useState<LibJob[] | null>(null);
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState("all");
   const [q, setQ] = useState("");
   const [hash, setHash] = useState("");
   const [note, setNote] = useState("");
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [removing, setRemoving] = useState<Set<string>>(new Set());
+  const anchor = useRef<string | null>(null);
 
   const load = () => api<{ jobs: LibJob[] }>("library").then((r) => setJobs(r.jobs)).catch((e) => setErr(e.message));
   useEffect(() => { setHash(location.hash.slice(1)); load(); }, []);
   useEffect(() => { if (hash && jobs) document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" }); }, [hash, jobs]);
 
-  const engines = useMemo(() => Array.from(new Set((jobs ?? []).filter((j) => j.kind !== "transcribe").map((j) => j.engine))), [jobs]);
+  const engines = useMemo(() => Array.from(new Set((jobs ?? []).filter((j) => !j.kind || j.kind === "tts").map((j) => j.engine))), [jobs]);
+  const hasVideo = (jobs ?? []).some((j) => j.kind === "video");
   const shown = (jobs ?? []).filter((j) =>
-    (filter === "all" || (filter === "subtitles" ? j.kind === "transcribe" || !!j.subs : j.kind !== "transcribe" && j.engine === filter)) &&
+    (filter === "all" || (filter === "videos" ? j.kind === "video" : filter === "subtitles" ? j.kind === "transcribe" || (!!j.subs && j.kind !== "video") : (!j.kind || j.kind === "tts") && j.engine === filter)) &&
     (!q || `${j.label} ${j.voice} ${j.engine} ${j.results.map((r) => r.text).join(" ")}`.toLowerCase().includes(q.toLowerCase())));
+  const shownIds = shown.map((j) => j.id);
+  const selShown = shownIds.filter((id) => sel.has(id));
+  const allShown = shownIds.length > 0 && selShown.length === shownIds.length;
+  const someShown = selShown.length > 0 && !allShown;
 
-  async function remove(j: LibJob) {
-    if (!confirm(`Delete "${j.label || j.id}" and all its files? This can't be undone.`)) return;
-    await api(`library/${j.id}`, { method: "DELETE" }).catch((e) => alert(e.message));
-    load();
+  // drop selections that vanished (deleted elsewhere / reloaded)
+  useEffect(() => { if (jobs) setSel((s) => new Set([...s].filter((id) => jobs.some((j) => j.id === id)))); }, [jobs]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const typing = (e.target as HTMLElement)?.closest?.("input:not([type=checkbox]), textarea");
+      if (e.key === "Escape" && sel.size && !document.querySelector(".modal")) setSel(new Set());
+      if (!typing && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && shownIds.length) { e.preventDefault(); setSel(new Set(shownIds)); }
+      if (!typing && (e.key === "Delete" || e.key === "Backspace") && sel.size && !document.querySelector(".modal")) { e.preventDefault(); removeMany([...sel]); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  function toggle(id: string, shift: boolean) {
+    setSel((prev) => {
+      const next = new Set(prev);
+      if (shift && anchor.current && shownIds.includes(anchor.current)) {
+        // shift-click selects the whole range from the last clicked card
+        const [a, b] = [shownIds.indexOf(anchor.current), shownIds.indexOf(id)].sort((x, y) => x - y);
+        shownIds.slice(a, b + 1).forEach((x) => next.add(x));
+      } else if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    anchor.current = id;
+  }
+  function toggleAll() {
+    setSel((prev) => {
+      const next = new Set(prev);
+      if (allShown) shownIds.forEach((id) => next.delete(id));
+      else shownIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+
+  async function removeMany(ids: string[]) {
+    const items = (jobs ?? []).filter((j) => ids.includes(j.id));
+    if (!items.length) return;
+    const files = items.reduce((n, j) => n + (j.kind === "video" ? 1 : j.results.length), 0);
+    const one = items.length === 1;
+    const ok = await confirm({
+      danger: true,
+      title: one ? `Delete "${items[0].label || items[0].id}"?` : `Delete ${items.length} items?`,
+      body: (
+        <>
+          {one ? "This removes it and all of its files" : `This removes ${items.length} items (${files} files, plus their subtitles)`} from your private storage. It can&apos;t be undone.
+          {!one && <ul>{items.slice(0, 50).map((j) => <li key={j.id}>{j.label || j.id}</li>)}{items.length > 50 && <li className="dim">…and {items.length - 50} more</li>}</ul>}
+        </>
+      ),
+      confirm: one ? "Delete" : `Delete ${items.length}`,
+    });
+    if (!ok) return;
+    setRemoving(new Set(ids));
+    try {
+      const r = one
+        ? await api(`library/${ids[0]}`, { method: "DELETE" }).then(() => ({ deleted: ids, failed: [] as string[] }))
+        : await api<{ deleted: string[]; failed: string[] }>("library", { method: "DELETE", body: { ids } });
+      setJobs((js) => (js ?? []).filter((j) => !r.deleted.includes(j.id)));
+      setSel((s) => new Set([...s].filter((id) => !r.deleted.includes(id))));
+      if (r.failed.length) toast(`Deleted ${r.deleted.length}; ${r.failed.length} failed. Try again.`, "bad");
+      else toast(one ? "Deleted." : `Deleted ${r.deleted.length} items.`, "ok");
+    } catch (e) {
+      toast((e as Error).message, "bad");
+    } finally {
+      setRemoving(new Set());
+    }
   }
   async function subtitle(j: LibJob) {
-    if (!status?.online) return alert("The GPU worker is offline. Start the Colab notebook first.");
-    await api("jobs", { body: { kind: "transcribe", library: j.id, language: j.language || undefined } }).catch((e) => alert(e.message));
-    setNote(`Subtitling "${j.label || j.id}"… it'll show a CC badge here when done (follow it on Overview).`);
+    if (!status?.online) return toast("The GPU worker is offline. Start the Colab notebook first.", "bad");
+    try {
+      await api("jobs", { body: { kind: "transcribe", library: j.id, language: j.language || undefined } });
+      setNote(`Subtitling "${j.label || j.id}"… it'll show a CC badge here when done (follow it on Overview).`);
+    } catch (e) {
+      toast((e as Error).message, "bad");
+    }
   }
 
   return (
@@ -103,16 +219,43 @@ export default function Library() {
       </div>
       <div className="row" style={{ marginBottom: 16 }}>
         <div className="chips">
-          {["all", ...engines, "subtitles"].map((e) => <button key={e} className={`chip ${filter === e ? "on" : ""}`} onClick={() => setFilter(e)}>{e}</button>)}
+          {["all", ...(hasVideo ? ["videos"] : []), ...engines, "subtitles"].map((e) => <button key={e} className={`chip ${filter === e ? "on" : ""}`} onClick={() => setFilter(e)}>{e}</button>)}
         </div>
         <input placeholder="Search names, voices, script text…" value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: 1, minWidth: 220 }} />
         <button className="ghost sm" onClick={load}>Refresh</button>
       </div>
+
+      {jobs && shown.length > 0 && (
+        sel.size > 0 ? (
+          <div className="selbar">
+            <input type="checkbox" className="selbox" checked={allShown} ref={(el) => { if (el) el.indeterminate = someShown; }} onChange={toggleAll} aria-label="Select all shown" />
+            <b>{sel.size} selected</b>
+            {!allShown && <button className="ghost xs" onClick={toggleAll}>Select all {shownIds.length}</button>}
+            <button className="ghost xs" onClick={() => setSel(new Set())}>Clear</button>
+            <span className="dim tiny" style={{ flex: 1 }}>Shift-click to select a range · Esc to clear</span>
+            <button className="danger sm" disabled={removing.size > 0} onClick={() => removeMany([...sel])}>
+              {removing.size ? "Deleting…" : `Delete ${sel.size}`}
+            </button>
+          </div>
+        ) : (
+          <div className="row tiny dim" style={{ gap: 10, margin: "0 0 10px 20px" }}>
+            <input type="checkbox" className="selbox" checked={false} onChange={toggleAll} aria-label="Select all shown" />
+            <span>Select all · {shown.length} shown</span>
+          </div>
+        )
+      )}
+
       {note && <div className="card flat small" style={{ marginBottom: 12 }}>{note}</div>}
       {err && <p className="err">{err}</p>}
       {jobs === null && !err && <div className="stack">{[0, 1, 2].map((i) => <div key={i} className="card" style={{ height: 74, opacity: 0.5 }} />)}</div>}
       {jobs && !shown.length && <div className="empty">Nothing here yet.</div>}
-      {shown.map((j) => <JobCard key={j.id} j={j} open={hash === j.id} onDelete={() => remove(j)} onSubtitle={() => subtitle(j)} />)}
+      {shown.map((j) => (
+        <div key={j.id} className={removing.has(j.id) ? "removing" : ""}>
+          {j.kind === "video"
+            ? <VideoCard j={j} selected={sel.has(j.id)} onSelect={(sh) => toggle(j.id, sh)} onDelete={() => removeMany([j.id])} />
+            : <JobCard j={j} open={hash === j.id} selected={sel.has(j.id)} onSelect={(sh) => toggle(j.id, sh)} onDelete={() => removeMany([j.id])} onSubtitle={() => subtitle(j)} />}
+        </div>
+      ))}
     </>
   );
 }

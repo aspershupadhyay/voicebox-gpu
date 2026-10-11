@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { api, type Status } from "./api";
+import { DialogProvider } from "./Dialog";
 
 const StatusCtx = createContext<{ status: Status | null; refresh: () => Promise<void> }>({ status: null, refresh: async () => {} });
 export const useStatus = () => useContext(StatusCtx);
@@ -30,6 +31,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <StatusCtx.Provider value={{ status, refresh }}>
+      <DialogProvider>
       <div className="app">
         <aside className="side">
           <div className="brand"><span className="wave"><i /><i /><i /><i /></span>voice<b>box</b></div>
@@ -53,6 +55,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </aside>
         <main className="main">{children}</main>
       </div>
+      </DialogProvider>
     </StatusCtx.Provider>
   );
 }

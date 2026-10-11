@@ -10,15 +10,16 @@ export type LibLine = {
   heard?: string; match?: number | null; subs?: boolean; name?: string; chunks?: number; cues?: number;
 };
 export type LibJob = {
-  id: string; kind?: "tts" | "transcribe"; engine: string; voice: string; label?: string; language?: string | null;
+  id: string; kind?: "tts" | "transcribe" | "video"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; created: number; archived: number; source?: string;
   subs?: { cues: number; timeline: string } | null; match?: number | null; results: LibLine[];
+  video?: { width: number; height: number; duration: number; size: number; poster?: boolean; voice_job?: string };
 };
 
 const ROOT = "library/";
 const opts = { access: "private" as const, addRandomSuffix: false, allowOverwrite: true };
-export const FILE_RE = /^(?:[A-Za-z0-9_-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json)|subtitles\.(?:srt|vtt|json))$/;
-const TYPES: Record<string, string> = { wav: "audio/wav", srt: "application/x-subrip", vtt: "text/vtt", json: "application/json" };
+export const FILE_RE = /^(?:[A-Za-z0-9_-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json)|subtitles\.(?:srt|vtt|json)|video\.mp4|poster\.jpg)$/;
+const TYPES: Record<string, string> = { wav: "audio/wav", srt: "application/x-subrip", vtt: "text/vtt", json: "application/json", mp4: "video/mp4", jpg: "image/jpeg" };
 export const typeOf = (name: string) => TYPES[name.split(".").pop() ?? ""] ?? "application/octet-stream";
 
 async function readJson<T>(path: string): Promise<T | null> {
@@ -50,7 +51,7 @@ export const readAudio = (jobId: string, lineId: string) => readFile(jobId, `${l
 
 type WorkerResult = LibLine & { url?: string; srt_url?: string; vtt_url?: string; json_url?: string };
 type WorkerJob = {
-  id: string; kind?: "tts" | "transcribe"; engine: string; voice: string; label?: string; language?: string | null;
+  id: string; kind?: "tts" | "transcribe" | "video"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; created?: number; status: string; results: WorkerResult[];
   subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; attach_to?: string; zip_url?: string;
 };
@@ -176,8 +177,12 @@ export async function listLibrary(): Promise<LibJob[]> {
 }
 
 export async function deleteLibJob(id: string) {
-  const page = await list({ prefix: `${ROOT}${id}/` });
-  if (page.blobs.length) await del(page.blobs.map((b) => b.url));
+  let cursor: string | undefined;
+  do {
+    const page = await list({ prefix: `${ROOT}${id}/`, cursor, limit: 1000 });
+    if (page.blobs.length) await del(page.blobs.map((b) => b.url));
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
 }
 
 /** Presigned CDN GET URLs for many library files with one token; proxy URLs if presigning is unavailable. */
@@ -199,7 +204,11 @@ export async function presignPath(pathname: string, ttlMs = 6 * 3600 * 1000) {
 
 export async function withUrls(job: LibJob, sign: (j: string, n: string) => Promise<string>) {
   const results = await Promise.all(job.results.map(async (r) => ({
-    ...r, audio: job.kind === "transcribe" ? null : await sign(job.id, `${r.id}.wav`),
+    ...r, audio: job.kind === "tts" || !job.kind ? await sign(job.id, `${r.id}.wav`) : null,
   })));
+  if (job.kind === "video") {
+    const [video_url, poster_url] = await Promise.all([sign(job.id, "video.mp4"), job.video?.poster ? sign(job.id, "poster.jpg") : null]);
+    return { ...job, results, video_url, poster_url };
+  }
   return { ...job, results };
 }
