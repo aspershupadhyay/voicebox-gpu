@@ -14,7 +14,11 @@ for name in MCP_TOKEN WORKER_SECRET; do
     printf '%s' "${!name}" | npx -y vercel@latest env add "$name" "$env" >/dev/null
   done
 done
-url=$(npx -y vercel@latest deploy --prod --yes 2>/dev/null | tail -1)
+npx -y vercel@latest deploy --prod --yes >/dev/null 2>&1
+# stable production alias (deployment URLs sit behind Vercel deployment protection)
+project=$(python3 -c 'import json;print(json.load(open(".vercel/project.json"))["projectName"])')
+url=$(npx -y vercel@latest project inspect "$project" 2>/dev/null | grep -o "https://[a-z0-9.-]*vercel.app" | head -1)
+url=${PUBLIC_URL:-$url}
 echo "deployed: $url"
 echo "MCP endpoint:  $url/api/mcp"
 echo "REGISTER_URL:  $url/api/register   (put this in Colab Secrets)"
