@@ -35,9 +35,11 @@ class Progress:
         if os.path.exists(self.path + ".cancel"):
             raise Cancelled("cancelled")
 
-    def callback(self):
+    def callback(self, offset=0):
+        """offset: steps already done by an earlier stage (two-stage renders count both stages in one bar)."""
         def cb(pipe, i, t, kwargs):
-            self.write("decoding" if i + 1 >= self.total else "denoising", i + 1)
+            n = offset + i + 1
+            self.write("decoding" if n >= self.total else "denoising", n)
             return kwargs
         return cb
 

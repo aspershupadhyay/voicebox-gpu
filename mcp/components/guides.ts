@@ -291,8 +291,8 @@ export const VIDEO_GUIDES: Record<string, Guide> = {
     ],
   },
   ltx: {
-    title: "LTX-2.3",
-    tagline: "Video and matching sound in one pass. Up to 10 s, 8 steps. Softer detail than Wan (it runs in 4-bit on the L4).",
+    title: "LTX-2.5",
+    tagline: "Video and matching sound in one pass. Up to 10 s, 8 steps. Full = the two-stage recipe at double resolution.",
     sections: [
       {
         h: "Write it like a scene",

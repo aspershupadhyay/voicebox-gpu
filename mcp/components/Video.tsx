@@ -20,10 +20,10 @@ const SPECS: Record<string, Spec> = {
     qualities: { fast: { steps: 4, guidance: 1, about: "Turbo · 4 steps" }, full: { steps: 30, guidance: 5, about: "Original · 30 steps, ~10× slower" } }, max_seconds: 5, fps: 24, disk_gb: 23 },
   wan14: { about: "Full-size Wan (2 × 14B experts, Lightning 4-step). Steadiest faces, hands and motion. Animates a start frame; A100 only.", sizes: { "16:9": [832, 480], "9:16": [480, 832], "1:1": [640, 640] },
     qualities: { fast: { steps: 4, guidance: 1, about: "Lightning · 4 steps" } }, max_seconds: 5, fps: 16, disk_gb: 69, image_only: true, adult: true, min_gpu_gb: 38 },
-  ltx: { about: "Picture and matching sound in one pass. Up to 10 s, softer detail.", sizes: { "16:9": [1024, 576], "9:16": [576, 1024], "1:1": [768, 768] },
-    qualities: { fast: { steps: 8, guidance: 1, about: "Distilled · 8 steps" } }, max_seconds: 10, fps: 24, disk_gb: 48 },
+  ltx: { about: "Picture and matching sound in one pass. Up to 10 s. Full renders twice the resolution in two stages.", sizes: { "16:9": [960, 544], "9:16": [544, 960], "1:1": [768, 768] },
+    qualities: { fast: { steps: 8, guidance: 1, about: "Distilled · 8 steps" }, full: { steps: 11, guidance: 1, about: "Two-stage · 2× resolution (text-to-video)" } }, max_seconds: 10, fps: 24, disk_gb: 62 },
 };
-const NAMES: Record<string, string> = { wan: "Wan 2.2", wan14: "Wan 14B", ltx: "LTX-2.3" };
+const NAMES: Record<string, string> = { wan: "Wan 2.2", wan14: "Wan 14B", ltx: "LTX-2.5" };
 const PRIOR: Record<string, number> = { wan: 0.3, wan14: 1.2, ltx: 0.35 };
 const LOAD_S: Record<string, number> = { wan: 150, wan14: 240, ltx: 300 };
 const MODELS = ["wan", "wan14", "ltx"] as const;
@@ -108,7 +108,7 @@ export default function Video() {
   const units = q.steps * frames * (w * h) / 1e6 * (q.guidance > 1 ? 2 : 1);
   const state = status?.engines?.[model];
   const downloaded = spec.downloaded ?? !!status?.disk?.weights_gb?.[model];
-  const fetchS = downloaded ? 0 : ((spec.disk_gb + (quality === "full" ? 20 : 0)) * 1000) / MB_PER_S;
+  const fetchS = downloaded ? 0 : ((spec.disk_gb + (quality === "full" && model === "wan" ? 20 : 0)) * 1000) / MB_PER_S;
   const estS = (status?.rates?.[model] ?? PRIOR[model]) * units + 25 + (state === "ready" ? 0 : LOAD_S[model] + fetchS);
   const voiceLoaded = Object.entries(status?.engines ?? {}).filter(([n, s]) => s === "ready" && !(MODELS as readonly string[]).includes(n)).map(([n]) => n);
   const running = !!job && (["queued", "running"].includes(job.status) || (job.status === "done" && !job.library)) || upFrac !== null;
@@ -245,7 +245,7 @@ export default function Video() {
               })}
             </div>
             <p className="dim small" style={{ margin: "14px 0 0" }}>{spec.about}</p>
-            {!downloaded && <p className="tiny" style={{ margin: "8px 0 0", color: "var(--sand)" }}><DownloadSimple size={12} weight="bold" /> First use downloads ~{spec.disk_gb + (quality === "full" ? 20 : 0)} GB of weights onto the Colab disk (once per runtime).</p>}
+            {!downloaded && <p className="tiny" style={{ margin: "8px 0 0", color: "var(--sand)" }}><DownloadSimple size={12} weight="bold" /> First use downloads ~{spec.disk_gb + (quality === "full" && model === "wan" ? 20 : 0)} GB of weights onto the Colab disk (once per runtime).</p>}
           </div>
 
           <div className="card">

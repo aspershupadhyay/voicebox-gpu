@@ -25,7 +25,16 @@ def main():
 
     mod = importlib.import_module(f"engines.{args.engine}")
     t0 = time.time()
-    engine = mod.Engine()
+    for attempt in range(6):
+        try:
+            engine = mod.Engine()
+            break
+        except Exception as e:  # Hugging Face rate limit mid-download: wait it out; finished files stay cached
+            if attempt == 5 or not any(k in str(e) for k in ("429", "Too Many Requests", "rate limit")):
+                raise
+            wait = 60 * (attempt + 1)
+            print(f"[{args.engine}] Hugging Face rate limit, retrying the download in {wait}s ({e.__class__.__name__})", flush=True)
+            time.sleep(wait)
     print(f"[{args.engine}] loaded in {time.time() - t0:.1f}s", flush=True)
     lock = threading.Lock()  # one GPU call at a time per engine
     import soundfile as sf

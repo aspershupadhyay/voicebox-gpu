@@ -149,15 +149,17 @@ ENGINES = {
     },
     "ltx": {
         "group": "visual",
-        "disk_gb": 48.0,   # distilled transformer (bf16) + 4-bit Gemma 3 text encoder
+        "disk_gb": 62.0,   # LTX-2.5 distilled transformer + Gemma 4 text encoder (bf16), VAEs, vocoder, upsamplers; no prompt enhancer
         "kind": "video",
         "port": 8111,
         "gpu_gb": 20.0,
-        "packages": "torch diffusers>=0.41 transformers accelerate bitsandbytes sentencepiece imageio imageio-ffmpeg pillow soundfile",
-        "about": "LTX-2.3 22B distilled (Lightricks). Video *with matching sound* in 8 steps; up to 10 s. 4-bit on the L4.",
-        "sizes": {"16:9": [1024, 576], "9:16": [576, 1024], "1:1": [768, 768]},
+        # LTX-2.5 isn't in a diffusers release yet: install from main
+        "packages": "torch git+https://github.com/huggingface/diffusers transformers accelerate bitsandbytes sentencepiece imageio imageio-ffmpeg pillow soundfile",
+        "about": "LTX-2.5 22B distilled (Lightricks). Video *with matching sound* in 8 steps; up to 10 s. Full = two-stage, 2x resolution.",
+        "sizes": {"16:9": [960, 544], "9:16": [544, 960], "1:1": [768, 768]},
         "fps": 24, "max_seconds": 10.0, "frame_step": 8,
-        "qualities": {"fast": {"steps": 8, "guidance": 1.0, "about": "Distilled, ~3-5 min per 5 s clip with audio"}},
+        "qualities": {"fast": {"steps": 8, "guidance": 1.0, "about": "Distilled, one pass"},
+                      "full": {"steps": 11, "guidance": 1.0, "about": "Two-stage: x2 latent upsample + refine, double resolution (text only)"}},
         "voices": [], "presets": {}, "params": {},
     },
 }
@@ -229,7 +231,7 @@ def style_settings(style, engine):
 RATE_PRIORS = {"kokoro": 0.004, "chatterbox": 0.06, "orpheus": 0.03, "whisper": 0.06, "qwen": 0.05,
                # video: seconds per (step x frame x megapixel), x2 when CFG doubles the passes
                "wan": 0.3, "ltx": 0.35, "wan14": 1.2}
-INSTALL_PRIORS = {"kokoro": 40, "chatterbox": 150, "orpheus": 240, "whisper": 120, "qwen": 150, "wan": 300, "ltx": 420, "wan14": 300}  # first install, seconds
+INSTALL_PRIORS = {"kokoro": 40, "chatterbox": 150, "orpheus": 240, "whisper": 120, "qwen": 150, "wan": 300, "ltx": 600, "wan14": 300}  # first install, seconds
 LOAD_PRIORS = {"kokoro": 5, "chatterbox": 45, "orpheus": 120, "whisper": 40, "qwen": 60, "wan": 240, "ltx": 480, "wan14": 600}  # first load includes the weight download
 
 SUBTITLE_STYLE = {"max_chars": 42, "max_seconds": 3.5, "min_gap": 0.08}

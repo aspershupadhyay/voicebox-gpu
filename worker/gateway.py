@@ -1221,7 +1221,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, catalogue())
         if u.path == "/jobs":
             return self._json(200, {"jobs": [job_view(j, urls=False) for j in reversed(JOBS.values())][:30]})
-        m = re.match(r"^/logs/([a-z]+)$", u.path)
+        m = re.match(r"^/logs/([a-z0-9]+)$", u.path)
         if m and (m.group(1) in C.ENGINES or m.group(1) in ("gateway", "tunnel")):
             names = [f"{m.group(1)}.log", f"{m.group(1)}-install.log"]
             n = min(400, int(parse_qs(u.query).get("n", ["120"])[0]))
@@ -1270,7 +1270,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     raise ValueError("send audio_b64 or url")
                 return self._json(201, add_ref(body.get("name", ""), data, body.get("transcript")))
-            m = re.match(r"^/engines/([a-z]+)/(load|unload|forget)$", u.path)
+            m = re.match(r"^/engines/([a-z0-9]+)/(load|unload|forget)$", u.path)
             if m and m.group(1) in C.ENGINES:
                 if m.group(2) == "forget":  # delete downloaded weights (frees disk; re-downloads on next use)
                     ENG.stop(m.group(1))

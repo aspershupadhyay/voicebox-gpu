@@ -110,6 +110,19 @@ def main():
         sys.exit("Set WORKER_SECRET (>= 24 chars) in Colab Secrets (key icon in the left sidebar).")
     if os.environ.get("VOICEBOX_VRAM_GB") is None and setting("VOICEBOX_VRAM_GB"):
         os.environ["VOICEBOX_VRAM_GB"] = setting("VOICEBOX_VRAM_GB")
+    # optional Hugging Face read token: anonymous downloads of 50-70 GB video models get rate-limited (HTTP 429)
+    if not os.environ.get("HF_TOKEN") and setting("HF_TOKEN"):
+        os.environ["HF_TOKEN"] = setting("HF_TOKEN")
+    if not os.environ.get("HF_TOKEN") and register_url:
+        try:  # or from the dashboard, which keeps it in its own env (deploy-mcp.sh pushes it from .secrets.local)
+            req = urllib.request.Request(register_url.rsplit("/api/", 1)[0] + "/api/worker-env", headers={"Authorization": f"Bearer {secret}"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                tok = json.loads(r.read()).get("HF_TOKEN")
+            if tok:
+                os.environ["HF_TOKEN"] = tok
+        except Exception as e:
+            log(f"could not fetch worker settings: {e}")
+    log("Hugging Face token: " + ("set" if os.environ.get("HF_TOKEN") else "none (big downloads may be rate-limited; add HF_TOKEN in Colab Secrets)"))
     cf = ensure_tools()
     # a previous run in this runtime may have left processes behind (e.g. after "interrupt" + re-run)
     for pat in ("gateway.py", "engine_host.py", "cloudflared tunnel"):

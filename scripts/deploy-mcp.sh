@@ -12,7 +12,7 @@ npx -y vercel@latest link --yes ${VERCEL_SCOPE:+--scope "$VERCEL_SCOPE"} >/dev/n
 for name in R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET; do
   [[ -n "${!name:-}" ]] || { echo "missing $name in .secrets.local" >&2; exit 1; }
 done
-for name in MCP_TOKEN WORKER_SECRET R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET; do
+for name in MCP_TOKEN WORKER_SECRET R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET ${HF_TOKEN:+HF_TOKEN}; do
   for env in production preview; do
     npx -y vercel@latest env rm "$name" "$env" --yes >/dev/null 2>&1 || true
     printf '%s' "${!name}" | npx -y vercel@latest env add "$name" "$env" >/dev/null
