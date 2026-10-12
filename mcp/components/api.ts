@@ -52,21 +52,27 @@ export type Status = {
   engines?: Record<string, string>; engine_errors?: Record<string, string>; rates?: Record<string, number>;
   ram?: { total_gb: number; used_gb: number }; disk?: { total_gb: number; free_gb: number; weights_gb: Record<string, number> };
   mode?: "voice" | "visual" | "idle" | "mixed"; idle_unload_s?: Record<string, number>; idle_min?: number;
+  fetch?: Record<string, Fetch>;
 };
+/** Live download / load progress of an engine that's warming up (worker measures its weights landing on disk). */
+export type Fetch = { phase: "installing" | "downloading" | "loading"; gb: number; total_gb: number; mbps: number; eta_s: number | null; elapsed_s: number };
 export type Gen = {
-  model: string; mode: "t2v" | "i2v"; prompt: string; negative?: string; seed: number; steps: number; guidance?: number; quality?: string;
-  aspect?: string; fps: number; frames: number; seconds: number; width?: number; height?: number; audio?: boolean; source?: boolean;
+  model: string; mode: string; prompt: string; negative?: string; seed: number; steps: number; guidance?: number; quality?: string;
+  aspect?: string; fps?: number; frames?: number; seconds?: number; width?: number; height?: number; audio?: boolean; source?: boolean;
+  count?: number; refs?: number; transparent?: boolean; adult?: boolean; retarget?: boolean;
 };
+export type GenImage = { file: string; thumb: string; width: number; height: number; transparent?: boolean; url?: string; thumb_url?: string };
 export type VideoInfo = { frames: number; width: number; height: number; fps: number; duration: number; has_audio?: boolean; size?: number; poster?: boolean };
 export type Word = { w: string; s: number; e: number };
 export type JobResult = {
   id: string; text: string; duration: number; window?: number | null; fits?: boolean | null; start?: number | null;
   url?: string; heard?: string; match?: number | null; subs?: boolean; name?: string; chunks?: number; cues?: number;
   srt_url?: string; vtt_url?: string; poster_url?: string; cut?: boolean; level_db?: number;
+  file?: string; thumb?: string; width?: number; height?: number; transparent?: boolean; thumb_url?: string;
 };
 export type Job = {
-  id: string; kind: "tts" | "transcribe" | "video" | "reference"; engine: string; voice: string; status: string; error?: string; label?: string;
-  progress: { done: number; total: number; fraction: number; eta_s: number; stage: string; detail: string; elapsed_s: number };
+  id: string; kind: "tts" | "transcribe" | "video" | "reference" | "image"; engine: string; voice: string; status: string; error?: string; label?: string;
+  progress: { done: number; total: number; fraction: number; eta_s: number; stage: string; detail: string; elapsed_s: number; fetch?: Fetch | null };
   queue_position?: number; results: JobResult[]; warnings?: string[]; subs?: { cues: number; timeline: string } | null;
   match?: number | null; library?: { id: string } | null; subtitles?: boolean; gen?: Gen; video?: VideoInfo | null;
   myvoice?: MyVoice | null;

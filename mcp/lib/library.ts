@@ -9,16 +9,19 @@ export type LibLine = {
   id: string; text: string; duration: number; window?: number | null; fits?: boolean | null; start?: number | null;
   heard?: string; match?: number | null; subs?: boolean; name?: string; chunks?: number; cues?: number;
 };
+export type LibImage = { file: string; thumb: string; width: number; height: number; transparent?: boolean };
 export type LibJob = {
-  id: string; kind?: "tts" | "transcribe" | "video"; engine: string; voice: string; label?: string; language?: string | null;
+  id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; created: number; archived: number; source?: string;
   subs?: { cues: number; timeline: string } | null; match?: number | null; results: LibLine[];
   video?: { width: number; height: number; duration: number; size: number; poster?: boolean; voice_job?: string; has_audio?: boolean };
-  gen?: { model: string; mode: "t2v" | "i2v"; prompt: string; negative?: string; seed: number; steps: number; fps: number; frames: number; seconds: number; source?: boolean };
+  gen?: { model: string; mode: string; prompt: string; negative?: string; seed: number; steps: number; fps?: number; frames?: number; seconds?: number;
+    source?: boolean; quality?: string; aspect?: string; count?: number; refs?: number; transparent?: boolean; width?: number; height?: number };
+  images?: LibImage[];
 };
 
 const ROOT = "library/";
-export const FILE_RE = /^(?:[A-Za-z0-9_-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json)|subtitles\.(?:srt|vtt|json)|video\.mp4|poster\.jpg|source\.(?:jpg|png|webp))$/;
+export const FILE_RE = /^(?:[A-Za-z0-9_-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json)|subtitles\.(?:srt|vtt|json)|video\.mp4|poster\.jpg|source\.(?:jpg|png|webp)|image-\d{1,2}\.png|thumb-\d{1,2}\.jpg)$/;
 export { typeOf };
 
 export const getLibJob = (id: string) => getJson<LibJob>(`${ROOT}${id}/job.json`).catch(() => null);
@@ -34,11 +37,11 @@ export const readAudio = (jobId: string, lineId: string) => readFile(jobId, `${l
 
 type WorkerResult = LibLine & { url?: string; srt_url?: string; vtt_url?: string; json_url?: string };
 type WorkerJob = {
-  id: string; kind?: "tts" | "transcribe" | "video"; engine: string; voice: string; label?: string; language?: string | null;
+  id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; created?: number; status: string;
   subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; attach_to?: string; zip_url?: string;
   gen?: LibJob["gen"] & Record<string, unknown>; video?: { width: number; height: number; duration: number; size: number; has_audio?: boolean; fps?: number; frames?: number } | null;
-  results: (WorkerResult & { poster_url?: string })[];
+  results: (WorkerResult & { poster_url?: string; file?: string; thumb?: string; width?: number; height?: number; transparent?: boolean; thumb_url?: string })[];
 };
 
 /** Copy a finished worker job (audio + subtitles via signed worker URLs) into the library. Idempotent. */
@@ -48,6 +51,7 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   const existing = await getLibJob(job.id);
   if (existing) return existing;
   if (job.kind === "video") return archiveVideo(job);
+  if (job.kind === "image") return archiveImages(job);
   const names: string[] = [];
   for (const r of job.results) {
     if (r.url) names.push(`${r.id}.wav`);
@@ -102,6 +106,33 @@ async function archiveVideo(job: WorkerJob): Promise<LibJob> {
     video: { width: v.width, height: v.height, duration: v.duration, size: v.size, poster: true, has_audio: !!v.has_audio },
     gen: { model: g.model, mode: g.mode, prompt: g.prompt, negative: g.negative || undefined, seed: g.seed, steps: g.steps, fps: g.fps,
       frames: g.frames, seconds: g.seconds, source: !!g.source },
+  };
+  await putLibJob(lib);
+  return lib;
+}
+
+/** Generated images: each full-size PNG and its JPEG thumbnail go straight from the worker to R2. */
+async function archiveImages(job: WorkerJob): Promise<LibJob> {
+  const g = job.gen!;
+  const imgs = job.results.filter((r) => r.file && r.thumb);
+  const names = imgs.flatMap((r) => [r.file!, r.thumb!]);
+  const pushed = await pushFromWorker(job.id, job.id, names).catch(() => false);
+  if (!pushed) {
+    for (const r of imgs) {
+      for (const [name, url] of [[r.file!, r.url], [r.thumb!, r.thumb_url]] as const) {
+        if (!url) continue;
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) throw new Error(`fetch ${name}: ${res.status}`);
+        await putFile(job.id, name, await res.arrayBuffer());
+      }
+    }
+  }
+  const lib: LibJob = {
+    id: job.id, kind: "image", engine: job.engine, voice: "", label: job.label || g.prompt.slice(0, 80),
+    created: Math.round((job.created ?? Date.now() / 1000) * 1000), archived: Date.now(), source: "generated", results: [],
+    images: imgs.map((r) => ({ file: r.file!, thumb: r.thumb!, width: r.width ?? 0, height: r.height ?? 0, transparent: !!r.transparent })),
+    gen: { model: g.model, mode: g.mode, prompt: g.prompt, negative: g.negative || undefined, seed: g.seed, steps: g.steps,
+      quality: g.quality, aspect: g.aspect, count: g.count, refs: g.refs, transparent: !!g.transparent, width: g.width, height: g.height },
   };
   await putLibJob(lib);
   return lib;
@@ -202,6 +233,10 @@ export async function withUrls(job: LibJob, sign: (j: string, n: string) => Prom
     const [video_url, poster_url, source_url] = await Promise.all([sign(job.id, "video.mp4"), job.video?.poster ? sign(job.id, "poster.jpg") : null,
       job.gen?.source ? sign(job.id, "source.jpg") : null]);
     return { ...job, results, video_url, poster_url, source_url };
+  }
+  if (job.kind === "image") {
+    const images = await Promise.all((job.images ?? []).map(async (im) => ({ ...im, url: await sign(job.id, im.file), thumb_url: await sign(job.id, im.thumb) })));
+    return { ...job, results, images, poster_url: images[0]?.thumb_url ?? null };
   }
   return { ...job, results };
 }

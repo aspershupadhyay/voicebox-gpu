@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { ago, api, fmtS, pct, type Job } from "./api";
 import { CassetteArt, EngineArt, LedMeter, VoiceGlyph } from "./art";
 import { useDialog } from "./Dialog";
+import FetchBar, { MODEL_NAMES } from "./FetchBar";
 import { fmtUptime, useStatus } from "./Shell";
 
 type Lib = {
@@ -22,6 +23,9 @@ const ENGINES: Record<string, { role: string; lang: string; mem: string; group: 
   wan: { role: "Sharp 720p clips from text or a start frame.", lang: "720p · silent", mem: "≈20 GB", group: "visual" },
   wan14: { role: "Top-quality Wan: animates a start frame. A100 only.", lang: "480p · from image", mem: "≈32 GB", group: "visual" },
   ltx: { role: "Video with its own soundtrack, up to 10 s.", lang: "video + sound", mem: "≈20 GB", group: "visual" },
+  animate: { role: "Your character performs the motion of any clip: exercises, dances.", lang: "image + motion → video", mem: "≈40 GB", group: "visual" },
+  zimage: { role: "Photoreal images in about 2 s. Commercial use OK.", lang: "1K images", mem: "≈22 GB", group: "visual" },
+  qwenimage: { role: "2K images, sharp text, edits and transparent PNGs. Non-commercial.", lang: "2K images · edit", mem: "≈33 GB", group: "visual" },
 };
 const CLIP_UNITS: Record<string, number> = { wan: 4 * 121 * 0.9, ltx: 8 * 121 * 0.59, wan14: 4 * 81 * 0.4 }; // steps x frames x megapixels for a 5 s clip
 
@@ -132,7 +136,7 @@ export default function Overview() {
       {(["voice", "visual"] as const).map((group) => (
         <section key={group}>
           <div className="row between" style={{ margin: "30px 0 14px" }}>
-            <h2 style={{ margin: 0 }} className="row">{group === "voice" ? "Voice engines" : "Video engines"}
+            <h2 style={{ margin: 0 }} className="row">{group === "voice" ? "Voice engines" : "Video & image engines"}
               {st?.mode === group && <span className="pill ok" style={{ marginLeft: 10 }}>on the GPU</span>}</h2>
             <span className="dim small">{group === "voice"
               ? "Load on first use, swap out when memory runs short, unload after " + (st?.idle_min ?? 10) + " idle minutes."
@@ -148,7 +152,7 @@ export default function Overview() {
                   <div className="art"><EngineArt engine={name} live={s === "ready" || loading} /></div>
                   <div className="body">
                     <div className="row between">
-                      <span className="name" style={{ textTransform: name === "ltx" ? "uppercase" : "capitalize" }}>{name === "wan14" ? "Wan 14B" : name}</span>
+                      <span className="name">{MODEL_NAMES[name] ?? name}</span>
                       <span className={`pill ${s === "ready" ? "ok" : loading ? "warn" : s === "error" ? "bad" : ""}`}>{s === "ready" ? "warm" : s ?? "—"}</span>
                     </div>
                     <div className="dim small">{ENGINES[name].role}</div>
@@ -158,6 +162,7 @@ export default function Overview() {
                       <div><span>on disk</span><b>{disk ? `${disk} GB` : "not yet"}</b></div>
                       <div><span>speed here</span><b>{speed(name, st?.rates?.[name])}</b></div>
                     </div>
+                    {st?.fetch?.[name] && <FetchBar f={st.fetch[name]} name={name} compact />}
                     {st?.engine_errors?.[name] && <div className="err tiny">{st.engine_errors[name].slice(0, 140)}</div>}
                     <div className="foot">
                       {s === "ready"

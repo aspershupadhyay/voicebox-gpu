@@ -89,6 +89,10 @@ def main():
                         return self._send(200, {"results": res})
                     if self.path == "/video":
                         return self._send(200, engine.video(req))
+                    if self.path == "/image":
+                        return self._send(200, engine.image(req))
+                    if self.path == "/animate":
+                        return self._send(200, engine.animate(req))
                     if self.path == "/transcribe":
                         if hasattr(engine, "transcribe_batch"):
                             return self._send(200, {"results": engine.transcribe_batch(req["paths"], req.get("language"))})

@@ -2,10 +2,12 @@
 import { X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { fmtS, type Job } from "./api";
+import FetchBar, { MODEL_NAMES } from "./FetchBar";
 
 const TTS_STEPS = [["queued", "Queued"], ["prepare", "Warm up"], ["generating", "Voicing"], ["subtitles", "Subtitles"], ["saving", "Saving"], ["done", "Done"]] as const;
 const ASR_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["downloading", "Fetch"], ["prepare", "Warm up"], ["transcribing", "Transcribe"], ["saving", "Saving"], ["done", "Done"]] as const;
 const VIDEO_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["prepare", "Warm up"], ["rendering", "Render"], ["decoding", "Decode"], ["encoding", "Encode"], ["saving", "Saving"], ["done", "Done"]] as const;
+const IMAGE_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["prepare", "Warm up"], ["rendering", "Render"], ["saving", "Saving"], ["done", "Done"]] as const;
 const REF_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["cleaning", "Clean"], ["prepare", "Warm up"], ["transcribing", "Transcribe"], ["saving", "Saving"], ["done", "Done"]] as const;
 const saved = (job: Job | null) => !!(job?.library || job?.myvoice);
 
@@ -17,6 +19,7 @@ function stepKey(job: Job | null, uploading: boolean) {
   if (job.kind === "reference" && s === "downloading") return "cleaning";
   if (["installing", "loading", "reference"].includes(s)) return "prepare";
   if (s === "packaging") return "saving";
+  if (job.kind === "image" && ["decoding", "encoding"].includes(s)) return "saving";
   return s;
 }
 
@@ -28,8 +31,8 @@ export default function JobProgress({ job, uploading, uploadFrac, onCancel, kind
   const [, tick] = useState(0);
   const anchor = useRef({ f: 0, eta: 0, at: 0 });
   const kind = job?.kind ?? kindHint ?? (uploading ? "transcribe" : "tts");
-  const all: readonly (readonly [string, string])[] = kind === "transcribe" ? ASR_STEPS : kind === "video" ? VIDEO_STEPS : kind === "reference" ? REF_STEPS : TTS_STEPS;
-  const steps = all.filter(([k]) => (k !== "subtitles" || job?.subtitles) && (k !== "upload" || kind === "transcribe" || kind === "reference" || uploading || job?.gen?.source));
+  const all: readonly (readonly [string, string])[] = kind === "transcribe" ? ASR_STEPS : kind === "video" ? VIDEO_STEPS : kind === "image" ? IMAGE_STEPS : kind === "reference" ? REF_STEPS : TTS_STEPS;
+  const steps = all.filter(([k]) => (k !== "subtitles" || job?.subtitles) && (k !== "upload" || kind === "transcribe" || kind === "reference" || uploading || job?.gen?.source || !!job?.gen?.refs));
   const key = stepKey(job, !!uploading);
   const idx = Math.max(0, steps.findIndex(([k]) => k === key));
   const running = uploading || (job && ["queued", "running"].includes(job.status)) || (job?.status === "done" && !saved(job));
@@ -64,9 +67,9 @@ export default function JobProgress({ job, uploading, uploadFrac, onCancel, kind
     : job.status === "queued" ? `Queued${job.queue_position ? ` · #${job.queue_position} in line` : ""}`
     : job.status === "done" ? (saved(job) ? (kind === "reference" ? "Done · your voice is ready" : "Done · saved to library") : kind === "reference" ? "Saving your voice…" : "Saving to library…")
     : job.status === "error" ? "Failed" : job.status === "cancelled" ? "Cancelled"
-    : prep ? (p!.stage === "installing" ? "Installing engine (first run only)" : "Loading model onto the GPU")
+    : prep ? (p!.fetch?.phase === "downloading" ? `Downloading ${MODEL_NAMES[job.engine] ?? job.engine} (first time only)` : p!.stage === "installing" ? "Installing engine (first run only)" : "Loading model onto the GPU")
     : key === "generating" ? `Voicing ${p!.detail}` : key === "subtitles" ? "Writing subtitles" : key === "transcribing" ? (kind === "reference" ? "Writing down what you said" : `Transcribing ${p!.detail}`)
-    : key === "downloading" ? (kind === "video" ? "Fetching the start frame" : "Fetching your files") : key === "rendering" ? `Rendering · ${p!.detail}` : key === "encoding" ? "Encoding the MP4"
+    : key === "downloading" ? (job.engine === "animate" ? "Fetching your character and motion clip" : kind === "video" ? "Fetching the start frame" : kind === "image" ? "Fetching reference images" : "Fetching your files") : key === "rendering" ? `Rendering · ${p!.detail}` : key === "encoding" ? "Encoding the MP4"
     : key === "cleaning" ? "Cleaning up your recording" : "Working";
 
   const done = job?.status === "done" && saved(job);
@@ -80,7 +83,7 @@ export default function JobProgress({ job, uploading, uploadFrac, onCancel, kind
           <span className={`recdot ${done ? "done" : ""}`} style={failed ? { color: "var(--dim)" } : undefined}><i style={failed ? { background: "var(--faint)", boxShadow: "none", animation: "none" } : undefined} />{done ? "SAVED" : failed ? "STOPPED" : running ? "REC" : "READY"}</span>
           <h3>{headline}</h3>
           <div className="dim small" style={{ marginTop: 4 }}>
-            {prep ? p?.detail : job?.status === "running" ? (kind === "video" || kind === "reference" ? p?.detail || " " : `${p?.done ?? 0} of ${p?.total ?? 0} ${kind === "transcribe" ? "files" : "lines"} finished`) : job?.error ?? " "}
+            {prep ? p?.detail : job?.status === "running" ? (kind === "video" || kind === "reference" || kind === "image" ? p?.detail || " " : `${p?.done ?? 0} of ${p?.total ?? 0} ${kind === "transcribe" ? "files" : "lines"} finished`) : job?.error ?? " "}
           </div>
         </div>
         <div className="row" style={{ gap: 22, alignItems: "flex-start" }}>
@@ -92,6 +95,7 @@ export default function JobProgress({ job, uploading, uploadFrac, onCancel, kind
           {running && onCancel && job && job.status !== "done" && <button className="ghost sm" onClick={onCancel}><X size={14} />Cancel</button>}
         </div>
       </div>
+      {prep && p?.fetch && <FetchBar f={p.fetch} name={job?.engine} />}
       <div className={`spectrum ${running ? "live" : ""}`} aria-hidden>
         {Array.from({ length: N }, (_, i) => {
           const h = 30 + 70 * Math.abs(Math.sin(i * 0.53) * Math.cos(i * 0.21 + 0.4));

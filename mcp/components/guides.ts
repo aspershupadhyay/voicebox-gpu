@@ -312,4 +312,76 @@ export const VIDEO_GUIDES: Record<string, Guide> = {
       },
     ],
   },
+  zimage: {
+    title: "Z-Image Turbo",
+    tagline: "6B photoreal image model, 8 steps, about 2 s an image on the A100. Apache-2.0: fine for commercial work.",
+    sections: [
+      {
+        h: "Write it like a photo brief",
+        body: [
+          "Subject first, then setting, light, lens and finish. Concrete nouns beat adjectives: \"85mm, f/1.8, rim light, wet asphalt\" beats \"beautiful, stunning\".",
+          "It follows long prompts well (50-150 words) and handles English and Chinese text in short signs or labels.",
+          "There's no negative prompt to lean on (no CFG): say what you want instead of what you don't.",
+        ],
+        example: "Editorial photo of a woman in a red rain jacket crossing a neon-lit Tokyo side street at night, wet asphalt reflecting pink and teal signs, shot on 35mm, f/1.4, shallow depth of field, light film grain, candid moment.",
+      },
+      {
+        h: "Takes",
+        body: [
+          "Generate 2-4 at once: each uses the next seed. Same prompt + same seed = the same image.",
+          "Use the result as a start frame (Video) or an Animate character straight from the image card.",
+        ],
+      },
+    ],
+  },
+  qwenimage: {
+    title: "Qwen-Image 2.1",
+    tagline: "Native 2K, the best text-in-image of any open model, edits with up to 10 references, true transparent PNGs. Qwen Research license: non-commercial only.",
+    sections: [
+      {
+        h: "Text and layout",
+        body: [
+          "Put the exact words in quotes: a poster titled \"MORNING RUN\" in bold condensed type. Long paragraphs and mixed scripts come out clean.",
+          "Describe the layout like a designer: where the title sits, the grid, the colours, the margins.",
+        ],
+        example: "Minimal fitness poster, off-white background, huge black condensed headline \"MORNING RUN\" across the top, a small orange sun in the corner, a runner silhouette at the bottom right, Swiss grid, lots of white space.",
+      },
+      {
+        h: "Edit and combine",
+        body: [
+          "Add reference images and say what to change: \"put the jacket from image 2 on the person in image 1\", \"make it golden hour\", \"replace the text with SALE\".",
+          "Refer to references by their order (image 1, image 2…). Up to 10.",
+        ],
+      },
+      {
+        h: "Transparent",
+        body: [
+          "Turn on Transparent for stickers, logos and cut-outs: you get an RGBA PNG with a real alpha channel, ready to drop over video.",
+          "Max quality swaps in the base model (40 steps, ~5x slower, first use downloads 14 GB more). Turbo is right for most work.",
+        ],
+      },
+    ],
+  },
+  animate: {
+    title: "Wan 2.2 Animate",
+    tagline: "One image of a character + a video of someone moving = that character doing the move. 14B, 16 fps, up to 10 s, A100 only.",
+    sections: [
+      {
+        h: "The character image",
+        body: [
+          "Full body, head to toe, facing the camera, arms away from the body, plain background. The face, outfit and body shape all come from here.",
+          "Illustrated, 3D and mascot characters work too, as long as they have a human-like body.",
+        ],
+      },
+      {
+        h: "The motion video",
+        body: [
+          "One person, whole body in frame the entire time, steady camera, good light. Gym demos filmed on a tripod are ideal.",
+          "Trim it to the move: only the first seconds (your Length setting) are used. Fast spins and bodies leaving the frame break tracking.",
+          "Match body (on) rescales the motion to the character's proportions; turn it off when the two already have similar builds.",
+        ],
+        example: "Prompt (optional): a fitness coach in a bright minimalist studio gym, soft daylight.",
+      },
+    ],
+  },
 };

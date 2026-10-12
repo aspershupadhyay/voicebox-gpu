@@ -134,6 +134,7 @@ class Engines:
         self.inflight = {n: 0 for n in C.ENGINES}
         self.batch = {}
         self.errors = {}
+        self.fetch = {}   # name -> live download / load progress while installing or loading
         self.lock = threading.RLock()
         self.budget = float(os.environ.get("VOICEBOX_VRAM_GB") or gpu_info()["total_gb"] or 0) - 1.5
         threading.Thread(target=self._reaper, daemon=True).start()
@@ -163,6 +164,34 @@ class Engines:
                 if left <= 0 and not busy:
                     log(f"unloading {n}: idle for {C.IDLE_MIN:g} min")
                     self.stop(n)
+
+    def _watch(self, name):
+        """While an engine installs or loads, measure how much of its weights have landed on disk (every 2 s) so the
+        dashboard can show a real progress bar: GB done / expected, download speed, time left."""
+        total = float(C.ENGINES[name].get("disk_gb") or 0)
+        t0, prev, rate, last_growth = time.time(), None, 0.0, time.time()
+        while self.state[name] in ("installing", "loading"):
+            gb = dir_gb(cache_dir(name), max_age=0) if os.path.isdir(cache_dir(name)) else 0.0
+            now = time.time()
+            if prev is not None:
+                inst = max(0.0, (gb - prev[1]) / max(now - prev[0], 1e-3))  # GB/s
+                rate = inst if rate == 0 else 0.7 * rate + 0.3 * inst
+                if gb - prev[1] > 0.01:
+                    last_growth = now
+            prev = (now, gb)
+            if self.state[name] == "installing":
+                phase = "installing"
+            elif total and gb < total * 0.97 and now - last_growth < 20:
+                phase = "downloading"
+            elif total and gb < total * 0.97 and now - t0 < 15:
+                phase = "downloading"
+            else:
+                phase = "loading"
+            left = (total - gb) / rate if phase == "downloading" and rate > 0.005 else None
+            self.fetch[name] = {"phase": phase, "gb": round(gb, 2), "total_gb": total, "mbps": round(rate * 1000),
+                                "eta_s": round(left) if left else None, "elapsed_s": round(now - t0)}
+            time.sleep(2)
+        self.fetch.pop(name, None)
 
     def _install(self, name):
         py = C.python_for(name)
@@ -233,6 +262,9 @@ class Engines:
             try:
                 self._switch_group(name)
                 self._ensure_disk(name)
+                self.state[name] = "installing" if not os.path.exists(C.python_for(name)) else "loading"
+                self.since[name] = time.time()
+                threading.Thread(target=self._watch, args=(name,), daemon=True).start()
                 py = self._install(name)
                 self._evict_for(name)
                 self._set(name, "loading")
@@ -313,6 +345,12 @@ class Engines:
 
     def video(self, name, payload):
         return self._post(name, "/video", payload, timeout=3 * 60 * 60)
+
+    def image(self, name, payload):
+        return self._post(name, "/image", payload, timeout=60 * 60)
+
+    def animate(self, name, payload):
+        return self._post(name, "/animate", payload, timeout=3 * 60 * 60)
 
 
 ENG = Engines()
@@ -585,8 +623,12 @@ def _base_job(kind, body):
 def make_job(body):
     if body.get("kind") == "transcribe":
         return make_transcribe_job(body)
+    if body.get("kind") == "animate" or (body.get("kind") == "video" and body.get("model") == "animate"):
+        return make_animate_job(body)
     if body.get("kind") == "video":
         return make_video_job(body)
+    if body.get("kind") == "image":
+        return make_image_job(body)
     if body.get("kind") == "reference":
         return make_reference_job(body)
     engine = body.get("engine")
@@ -652,7 +694,7 @@ def make_video_job(body):
     if quality not in spec["qualities"]:
         raise ValueError(f"quality must be one of {list(spec['qualities'])} for {model}")
     q = spec["qualities"][quality]
-    w, h = spec["sizes"][aspect]
+    w, h = (q.get("sizes") or spec["sizes"])[aspect]
     fps, step = spec["fps"], spec["frame_step"]
     seconds = max(1.0, min(spec["max_seconds"], float(body.get("seconds") or 5)))
     frames = max(1, round(seconds * fps / step)) * step + 1
@@ -680,6 +722,77 @@ def make_video_job(body):
 def video_estimate(g):
     """Seconds to render: learned seconds per (step x frame x megapixel), doubled when CFG runs two passes."""
     return RATES[g["model"]] * g["steps"] * g["frames"] * g["width"] * g["height"] / 1e6 * (2 if g["guidance"] > 1 else 1)
+
+
+def _http_url(u, what):
+    u = str(u or "")
+    if u and not u.startswith(("https://", "http://")):
+        raise ValueError(f"{what} must be an http(s) URL")
+    return u
+
+
+def make_image_job(body):
+    model = body.get("model") or "zimage"
+    if model not in C.IMAGE_ENGINES:
+        raise ValueError(f"model must be one of {C.IMAGE_ENGINES}")
+    spec = C.ENGINES[model]
+    prompt = str(body.get("prompt") or "").strip()
+    if not 3 <= len(prompt) <= 4000:
+        raise ValueError("prompt must be 3-4000 characters")
+    aspect = body.get("aspect") or "1:1"
+    if aspect not in spec["sizes"]:
+        raise ValueError(f"aspect must be one of {list(spec['sizes'])}")
+    quality = body.get("quality") or next(iter(spec["qualities"]))
+    if quality not in spec["qualities"]:
+        raise ValueError(f"quality must be one of {list(spec['qualities'])} for {model}")
+    w, h = spec["sizes"][aspect]
+    refs = [_http_url(u, "image_urls") for u in (body.get("image_urls") or []) if u]
+    if refs and not spec.get("edit"):
+        raise ValueError(f"{model} doesn't take reference images (use qwenimage)")
+    refs = refs[: spec.get("max_refs", 0)]
+    count = max(1, min(int(spec.get("max_count", 1)), int(body.get("count") or 1)))
+    seed = body.get("seed")
+    job = _base_job("image", body)
+    job.update({"engine": model, "voice": "", "lines": [], "params": {}, "post": {}, "image_urls": refs,
+                "gen": {"model": model, "mode": "edit" if refs else "t2i", "prompt": prompt,
+                        "negative": str(body.get("negative") or "")[:2000], "seed": int(seed) if seed not in (None, "") else 7,
+                        "steps": spec["qualities"][quality]["steps"], "guidance": spec["qualities"][quality]["guidance"],
+                        "quality": quality, "aspect": aspect, "width": w, "height": h, "count": count, "refs": len(refs),
+                        "transparent": bool(body.get("transparent")) and bool(spec.get("transparent"))}})
+    job["est_total"] = image_estimate(job["gen"]) + 5
+    return _enqueue(job)
+
+
+def image_estimate(g):
+    return RATES[g["model"]] * g["steps"] * g["width"] * g["height"] / 1e6 * g["count"]
+
+
+def make_animate_job(body):
+    """Character image + driving video -> the character performs that motion. Runs as a video job (engine "animate"),
+    so the library, progress and archiving treat it like any other clip."""
+    spec = C.ENGINES["animate"]
+    image, video = _http_url(body.get("image_url"), "image_url"), _http_url(body.get("video_url"), "video_url")
+    if not image or not video:
+        raise ValueError("animate needs image_url (the character) and video_url (the motion to copy)")
+    if spec.get("min_gpu_gb") and gpu_info()["total_gb"] < spec["min_gpu_gb"]:
+        raise ValueError(f"animate needs a {spec['min_gpu_gb']:g} GB+ GPU (A100 class); this runtime has {gpu_info()['total_gb']:g} GB")
+    aspect = body.get("aspect") or "9:16"
+    if aspect not in spec["sizes"]:
+        raise ValueError(f"aspect must be one of {list(spec['sizes'])}")
+    w, h = spec["sizes"][aspect]
+    seconds = max(1.0, min(spec["max_seconds"], float(body.get("seconds") or spec["max_seconds"])))
+    fps = spec["fps"]
+    frames = max(1, round(seconds * fps / 4)) * 4 + 1
+    seed = body.get("seed")
+    job = _base_job("video", body)
+    job.update({"engine": "animate", "voice": "", "lines": [], "params": {}, "post": {}, "image_url": image, "video_url": video,
+                "gen": {"model": "animate", "mode": "animate", "prompt": str(body.get("prompt") or "").strip()[:2000],
+                        "negative": str(body.get("negative") or "")[:2000], "seed": int(seed) if seed not in (None, "") else 7,
+                        "steps": spec["qualities"]["fast"]["steps"], "guidance": 1.0, "quality": "fast", "aspect": aspect,
+                        "fps": fps, "frames": frames, "seconds": round((frames - 1) / fps, 2), "width": w, "height": h,
+                        "audio": False, "retarget": bool(body.get("retarget", False))}})
+    job["est_total"] = video_estimate(job["gen"]) + 60
+    return _enqueue(job)
 
 
 def make_reference_job(body):
@@ -905,7 +1018,75 @@ def _download(url, path, limit=600 * 1024 * 1024):
             f.write(chunk)
 
 
+def run_image(job):
+    g, model = job["gen"], job["engine"]
+    jdir = os.path.join(JOBS_DIR, job["id"])
+    os.makedirs(jdir, exist_ok=True)
+    payload = {k: g.get(k) for k in ("prompt", "negative", "seed", "steps", "guidance", "quality", "count", "transparent")}
+    payload.update({"width": g["width"], "height": g["height"], "out_dir": jdir,
+                    "progress_path": os.path.join(jdir, "progress.json")})
+    if job.get("image_urls"):
+        job["stage"] = "downloading"
+        paths = []
+        for i, url in enumerate(job["image_urls"], 1):
+            raw = os.path.join(jdir, f"ref-{i}.in")
+            _download(url, raw, 40 * 1024 * 1024)
+            paths.append(raw)
+        payload["image_paths"] = paths
+    _prepare(job, model)
+    job["stage"] = "rendering"
+    job["progress_file"] = payload["progress_path"]
+    units = g["steps"] * g["width"] * g["height"] / 1e6 * g["count"]
+    t0 = time.time()
+    try:
+        out = _run_unit(job, image_estimate(g), lambda: ENG.image(model, payload), f"{g['count']} image(s) at {g['width']}x{g['height']}")
+    except RuntimeError:
+        if job["cancel"]:
+            raise Cancelled()
+        raise
+    learn_rate(model, time.time() - t0, units)
+    job["results"] = [{"id": im["file"].rsplit(".", 1)[0], "text": g["prompt"], "duration": 0, **im} for im in out["images"]]
+
+
+def run_animate(job):
+    g = job["gen"]
+    jdir = os.path.join(JOBS_DIR, job["id"])
+    os.makedirs(jdir, exist_ok=True)
+    job["stage"] = "downloading"
+    img_raw, vid_raw = os.path.join(jdir, "source.in"), os.path.join(jdir, "driving.in")
+    _download(job["image_url"], img_raw, 40 * 1024 * 1024)
+    _download(job["video_url"], vid_raw, 300 * 1024 * 1024)
+    src = os.path.join(jdir, "source.jpg")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", img_raw, "-frames:v", "1", "-q:v", "2", src], check=True)
+    os.remove(img_raw)
+    g["source"] = True
+    payload = {k: g.get(k) for k in ("prompt", "negative", "seed", "steps", "guidance", "fps", "retarget")}
+    payload.update({"width": g["width"], "height": g["height"], "num_frames": g["frames"], "image_path": src,
+                    "video_path": vid_raw, "work_dir": os.path.join(jdir, "prep"),
+                    "out_path": os.path.join(jdir, "video.mp4"), "progress_path": os.path.join(jdir, "progress.json")})
+    _prepare(job, "animate")
+    job["stage"] = "rendering"
+    job["progress_file"] = payload["progress_path"]
+    units = g["steps"] * g["frames"] * g["width"] * g["height"] / 1e6
+    t0 = time.time()
+    try:
+        info = _run_unit(job, video_estimate(g), lambda: ENG.animate("animate", payload), f"{g['seconds']:g} s at {g['width']}x{g['height']}")
+    except RuntimeError:
+        if job["cancel"]:
+            raise Cancelled()
+        raise
+    learn_rate("animate", time.time() - t0, units)
+    job["stage"] = "packaging"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", payload["out_path"], "-frames:v", "1", "-q:v", "3",
+                    os.path.join(jdir, "poster.jpg")], check=True)
+    info["size"] = os.path.getsize(payload["out_path"])
+    job["video"] = {**info, "poster": True}
+    job["results"] = [{"id": "video", "text": g["prompt"] or "animate", "duration": info["duration"]}]
+
+
 def run_video(job):
+    if job["engine"] == "animate":
+        return run_animate(job)
     g, model = job["gen"], job["engine"]
     jdir = os.path.join(JOBS_DIR, job["id"])
     payload = {k: g.get(k) for k in ("prompt", "negative", "seed", "steps", "guidance", "quality", "fps", "audio", "adult")}
@@ -989,7 +1170,7 @@ def run_reference(job):
 
 def package(job):
     job["stage"] = "packaging"
-    if job["kind"] in ("video", "reference"):
+    if job["kind"] in ("video", "reference", "image"):
         return  # single files, served directly; no zip copy of a large video
     jdir = os.path.join(JOBS_DIR, job["id"])
     with zipfile.ZipFile(os.path.join(JOBS_DIR, f"{job['id']}.zip"), "w") as z:
@@ -1000,7 +1181,7 @@ def package(job):
 
 
 PUSH_TYPES = {".wav": "audio/wav", ".srt": "application/x-subrip", ".vtt": "text/vtt", ".json": "application/json",
-              ".mp4": "video/mp4", ".jpg": "image/jpeg"}
+              ".mp4": "video/mp4", ".jpg": "image/jpeg", ".png": "image/png"}
 
 
 def push_files(job_id, targets, headers):
@@ -1045,7 +1226,8 @@ def worker_loop():
             continue
         job["status"], job["started"] = "running", time.time()
         try:
-            {"transcribe": run_transcribe, "video": run_video, "reference": run_reference}.get(job["kind"], run_tts)(job)
+            {"transcribe": run_transcribe, "video": run_video, "reference": run_reference,
+             "image": run_image}.get(job["kind"], run_tts)(job)
             package(job)
             job["status"], job["stage"] = "done", "done"
         except Cancelled:
@@ -1077,9 +1259,15 @@ def _progress(job):
         prior = C.INSTALL_PRIORS[name] if st == "installing" else C.LOAD_PRIORS[name]
         left = max(5, prior - (now - ENG.since[name]))
         stage = "installing" if st == "installing" else "loading"
-        detail = f"{name}: first run downloads the model" if st == "installing" else f"loading {name} into memory"
+        detail = f"{name}: installing packages" if st == "installing" else f"loading {name} into memory"
+        f = ENG.fetch.get(name)
+        if f and f["phase"] == "downloading":
+            detail = f"downloading {name}: {f['gb']:.1f} of {f['total_gb']:.0f} GB" + (f" · {f['mbps']} MB/s" if f["mbps"] else "")
+            left = (f["eta_s"] or left) + 30
+        elif f and f["phase"] == "loading" and st == "loading":
+            left = max(5, min(left, 120))
         extra = left
-    if job["kind"] == "video" and stage == "rendering" and job.get("progress_file"):
+    if job["kind"] in ("video", "image") and stage == "rendering" and job.get("progress_file"):
         try:
             pf = json.load(open(job["progress_file"]))
         except Exception:
@@ -1088,12 +1276,15 @@ def _progress(job):
         step, steps = pf.get("step", 0), max(1, pf.get("total", 1))
         if pf["phase"] == "denoising" and step:
             per = el / (step + 0.5)  # elapsed includes the prompt encode (~half a step)
-            eta = per * (steps - step) + 30
+            eta = per * (steps - step) + (30 if job["kind"] == "video" else 3)
             frac = 0.05 + 0.85 * step / steps
             return min(0.97, frac), round(eta), "rendering", f"step {step} of {steps}"
         if pf["phase"] == "decoding":
-            return 0.92, round(max(10, 120 - (el - pf.get("t", el)))), "decoding", f"decoding {job['gen']['frames']} frames"
+            what = f"decoding {job['gen']['frames']} frames" if job["gen"].get("frames") else "decoding"
+            return 0.92, round(max(10 if job["kind"] == "video" else 2, (120 if job["kind"] == "video" else 10) - (el - pf.get("t", el)))), "decoding", what
         if pf["phase"] == "encoding video":
+            if job["kind"] == "image":
+                return 0.97, 2, "encoding", "saving images"
             return 0.93, 15, "encoding", "decoding frames and writing the MP4"
         left = max(10, job["cur"]["est"] - el) if job.get("cur") else job["est_total"]
         return 0.03, round(left), "rendering", "encoding the prompt"
@@ -1123,7 +1314,7 @@ def _progress(job):
 
 def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version")}
-    if job["kind"] == "video":
+    if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
     if job["kind"] == "tts":
         v["params"] = C.resolve_params(job["engine"], job["params"])
@@ -1132,6 +1323,7 @@ def job_view(job, urls=True):
     frac, eta, stage, detail = _progress(job)
     v["progress"] = {"done": len(job["results"]), "total": len(job["lines"]), "fraction": round(frac, 4),
                      "eta_s": eta, "stage": stage, "detail": detail,
+                     "fetch": ENG.fetch.get(job["stage"].split(":", 1)[1]) if job["stage"].startswith("preparing:") else None,
                      "elapsed_s": round((job.get("finished") or time.time()) - job.get("started", time.time()), 1)
                      if job.get("started") else 0}
     if job["status"] == "queued":
@@ -1145,6 +1337,9 @@ def job_view(job, urls=True):
             if job["kind"] == "video" and job["status"] == "done":
                 r["url"] = sign(f"/files/{job['id']}/video.mp4")
                 r["poster_url"] = sign(f"/files/{job['id']}/poster.jpg")
+            if job["kind"] == "image" and r.get("file"):
+                r["url"] = sign(f"/files/{job['id']}/{r['file']}")
+                r["thumb_url"] = sign(f"/files/{job['id']}/{r['thumb']}")
             if r.get("subs"):
                 r["srt_url"] = sign(f"/files/{job['id']}/{r['id']}.subs.srt")
                 r["vtt_url"] = sign(f"/files/{job['id']}/{r['id']}.subs.vtt")
@@ -1166,10 +1361,12 @@ def catalogue():
     for name, spec in C.ENGINES.items():
         out[name] = {k: spec[k] for k in ("kind", "about", "voices", "presets", "params", "gpu_gb", "chunk_chars", "group",
                                           "disk_gb", "sizes", "qualities", "max_seconds", "fps", "languages", "clone",
-                                          "image_only", "adult", "min_gpu_gb") if k in spec}
+                                          "image_only", "adult", "min_gpu_gb", "license", "commercial", "max_count", "edit",
+                                          "max_refs", "transparent") if k in spec}
         out[name]["state"] = ENG.state[name]
         out[name]["downloaded"] = os.path.isdir(cache_dir(name)) and dir_gb(cache_dir(name)) > 0.05
-        unit = {"tts": "seconds_per_char", "asr": "seconds_per_audio_second", "video": "seconds_per_step_frame_megapixel"}[spec["kind"]]
+        unit = {"tts": "seconds_per_char", "asr": "seconds_per_audio_second", "video": "seconds_per_step_frame_megapixel",
+                "image": "seconds_per_step_megapixel_image", "animate": "seconds_per_step_frame_megapixel"}[spec["kind"]]
         out[name][unit] = RATES.get(name)
     refs = sorted(f[:-4] for f in os.listdir(REFS_DIR) if f.endswith(".wav"))
     return {"engines": out, "references": refs, "preset_references": list(C.PRESET_REFS),
@@ -1179,7 +1376,7 @@ def catalogue():
 
 def health():
     return {"ok": True, "version": C.VERSION, "uptime_s": int(time.time() - STARTED), "gpu": gpu_info(),
-            "ram": mem_info(), "disk": disk_info(), "mode": ENG.mode, "idle_unload_s": ENG.idle_left(), "idle_min": C.IDLE_MIN,
+            "ram": mem_info(), "disk": disk_info(), "mode": ENG.mode, "idle_unload_s": ENG.idle_left(), "idle_min": C.IDLE_MIN, "fetch": ENG.fetch,
             "vram_budget_gb": round(ENG.budget, 1), "engines": ENG.state, "engine_errors": ENG.errors,
             "loaded": list(ENG.procs), "queue": len(QUEUE), "rates": RATES,
             "running": [j["id"] for j in JOBS.values() if j["status"] == "running"], "public_url": public_url()}
@@ -1291,7 +1488,7 @@ class Handler(BaseHTTPRequestHandler):
     def _file(self, u):
         if not check_sig(u.path, parse_qs(u.query)):
             return self._json(403, {"error": "bad or expired signature"})
-        m = re.match(r"^/files/([a-f0-9]{12})(?:/([A-Za-z0-9_\-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json)|video\.mp4|poster\.jpg|source\.jpg)|\.zip)$", u.path)
+        m = re.match(r"^/files/([a-f0-9]{12})(?:/([A-Za-z0-9_\-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json)|video\.mp4|poster\.jpg|source\.jpg|image-\d{1,2}\.png|thumb-\d{1,2}\.jpg)|\.zip)$", u.path)
         if not m:
             return self._json(404, {"error": "not found"})
         path = os.path.join(JOBS_DIR, m.group(1), m.group(2)) if m.group(2) else os.path.join(JOBS_DIR, f"{m.group(1)}.zip")

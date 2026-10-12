@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen"] as const;
-const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "whisper", "wan", "wan14", "ltx"] as const;
+const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "whisper", "wan", "wan14", "ltx", "animate", "zimage", "qwenimage"] as const;
 const MAX_WAIT = 45; // seconds a tool call may block; Vercel caps the request at maxDuration
 
 type Job = { id: string; status: string; progress: { done: number; total: number }; [k: string]: unknown };
@@ -162,21 +162,25 @@ const handler = createMcpHandler(
           "model wan: Wan 2.2 TI2V 5B, sharp 720p, best prompt following, silent, up to 5 s; quality fast = 4-step Turbo (a few minutes), full = 30 steps (~10x slower).",
           "model wan14: Wan 2.2 I2V A14B + Lightning, best Wan quality, image-to-video ONLY (needs image_url or from_library), 480p 16 fps, up to 5 s, A100 only; adult: true adds an opt-in community NSFW LoRA (adults only, never real people).",
           "model ltx: LTX-2.5 distilled, picture + matching soundtrack from the same prompt, up to 10 s; quality full = two-stage at 2x resolution (text-to-video only). Describe sounds too (\"Audio: ...\").",
+          "quality draft (all three): quickest preview (tiny decoder / half size). Use it to find the prompt and seed, then re-run fast or full.",
+          "model animate: Wan 2.2 Animate 14B, the character in image_url performs the motion in video_url (an exercise, a dance), up to 10 s, 16 fps, A100 only; prompt optional; retarget (default true) fits the motion to the character's body.",
           "Prompts: subject, action, place, camera move, light, style; 40-100 words for wan. With a start frame (image_url or from_library) describe the motion, not the look.",
-          "Video and voice engines never share the GPU: this unloads voice engines first. First use downloads the weights (wan ~23 GB, wan14 ~69 GB, ltx ~71 GB).",
+          "Video and voice engines never share the GPU: this unloads voice engines first. First use downloads the weights (wan ~23 GB, wan14 ~69 GB, ltx ~71 GB, animate ~85 GB).",
           "Rendering takes minutes: this returns a job id; poll get_job until done (the finished clip is archived to the library).",
         ].join(" "),
         inputSchema: z.object({
-          prompt: z.string().min(3).max(4000),
-          model: z.enum(["wan", "wan14", "ltx"]).optional().describe("default wan"),
+          prompt: z.string().max(4000).describe("the shot (animate: optional scene/style hint)"),
+          model: z.enum(["wan", "wan14", "ltx", "animate"]).optional().describe("default wan"),
           aspect: z.enum(["9:16", "16:9", "1:1"]).optional().describe("default 9:16"),
           seconds: z.number().min(1).max(10).optional().describe("default 5 (wan max 5, ltx max 10)"),
-          quality: z.enum(["fast", "full"]).optional().describe("wan and ltx; default fast"),
+          quality: z.enum(["draft", "fast", "full"]).optional().describe("draft = quickest preview; full = wan and ltx only; default fast"),
           seed: z.number().int().optional(),
           negative: z.string().max(2000).optional().describe("things to avoid"),
           audio: z.boolean().optional().describe("ltx only: generate the soundtrack (default true)"),
           adult: z.boolean().optional().describe("wan14 only: enable the adult LoRA (default false)"),
-          image_url: z.string().url().optional().describe("start frame (public or signed https URL)"),
+          image_url: z.string().url().optional().describe("start frame (animate: the character), public or signed https URL"),
+          video_url: z.string().url().optional().describe("animate only: the driving video whose motion is copied"),
+          retarget: z.boolean().optional().describe("animate only: fit the motion to the character's proportions (default true)"),
           from_library: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional().describe("start from a library video's poster frame"),
           label: z.string().max(80).optional(),
           wait_seconds: z.number().min(0).max(MAX_WAIT).optional().describe("block up to this long (default 10; renders take minutes)"),
@@ -185,8 +189,58 @@ const handler = createMcpHandler(
       async ({ wait_seconds, from_library, ...body }) => {
         try {
           const image_url = from_library ? await presignPath(`library/${from_library}/poster.jpg`, 3600) : body.image_url;
-          const job = await call<Job>("/jobs", { body: { ...body, image_url, kind: "video" } });
+          if (body.model === "animate" && (!image_url || !body.video_url)) throw new Error("model animate needs image_url (the character) and video_url (the motion)");
+          if (body.model !== "animate" && body.prompt.trim().length < 3) throw new Error("prompt is required");
+          const job = await call<Job>("/jobs", { body: { ...body, image_url, kind: body.model === "animate" ? "animate" : "video" } });
           return text(withHint(await waitFor(job.id, wait_seconds ?? 10)));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "imagine",
+      {
+        title: "Generate images",
+        description: [
+          "Generate 1-4 images on the GPU worker and save them to the library (full PNGs + thumbnails).",
+          "model zimage (default): Z-Image-Turbo 6B, photoreal, 8 steps, ~2 s per image, up to 1344 px; Apache-2.0, commercial use OK. No negative prompt (no CFG).",
+          "model qwenimage: Qwen-Image-2.1, native 2K, best text rendering (put exact words in quotes), edits/combines up to 10 reference images (image_urls or from_library; refer to them as image 1, image 2...), transparent: true gives an RGBA PNG; quality 'quality' = base model, 40 steps. Qwen Research license: NON-commercial only.",
+          "Prompts: subject, setting, light, lens, style; concrete nouns over adjectives. Each image uses seed+i.",
+          "First use downloads the weights (zimage ~33 GB, qwenimage ~33 GB, +14 GB for quality). Returns a job id; poll get_job until done.",
+        ].join(" "),
+        inputSchema: z.object({
+          prompt: z.string().min(3).max(4000),
+          model: z.enum(["zimage", "qwenimage"]).optional().describe("default zimage"),
+          aspect: z.enum(["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"]).optional().describe("default 1:1"),
+          count: z.number().int().min(1).max(4).optional().describe("default 1"),
+          quality: z.enum(["turbo", "quality"]).optional().describe("qwenimage only; default turbo"),
+          transparent: z.boolean().optional().describe("qwenimage only: transparent background"),
+          seed: z.number().int().optional(),
+          negative: z.string().max(2000).optional(),
+          image_urls: z.array(z.string().url()).max(10).optional().describe("qwenimage only: reference images to edit/combine"),
+          from_library: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,64}(:\d{1,2})?$/)).max(10).optional().describe("qwenimage only: library ids (image sets as <id>:<index>) to use as references"),
+          label: z.string().max(80).optional(),
+          wait_seconds: z.number().min(0).max(MAX_WAIT).optional().describe("block up to this long (default 30)"),
+        }),
+      },
+      async ({ wait_seconds, from_library, image_urls, ...body }) => {
+        try {
+          const refs = [...(image_urls ?? [])];
+          if (from_library?.length) {
+            const { getLibJob } = await import("@/lib/library");
+            for (const ref of from_library) {
+              const [id, n] = ref.split(":");
+              const lib = await getLibJob(id);
+              if (!lib) throw new Error(`library item ${id} not found`);
+              const path = lib.kind === "image" && lib.images?.length ? lib.images[Math.min(lib.images.length - 1, Number(n) || 0)].file : lib.video?.poster ? "poster.jpg" : null;
+              if (!path) throw new Error(`library item ${id} has no image`);
+              refs.push(await presignPath(`library/${lib.id}/${path}`, 3600));
+            }
+          }
+          const job = await call<Job>("/jobs", { body: { ...body, model: body.model ?? "zimage", kind: "image", image_urls: refs.length ? refs.slice(0, 10) : undefined } });
+          return text(withHint(await waitFor(job.id, wait_seconds ?? 30)));
         } catch (e) {
           return fail(e);
         }

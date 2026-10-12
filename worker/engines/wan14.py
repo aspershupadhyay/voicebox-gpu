@@ -1,8 +1,11 @@
 """Wan 2.2 I2V A14B (Alibaba, Apache-2.0) with the Lightx2v 4-step Lightning distill merged in, bf16:
 magespace/Wan2.2-I2V-A14B-Lightning-Diffusers (~69 GB). Image-to-video only, 480p at 16 fps.
 
-Two 14B experts take turns (`transformer` for the high-noise steps, `transformer_2` for the low-noise ones), so model
-CPU offload keeps just the active one on the GPU (~30 GB peak): needs a 40 GB+ card.
+Two 14B experts take turns (`transformer` for the high-noise steps, `transformer_2` for the low-noise ones). On 70 GB+
+cards both stay on the GPU (57 GB) and only the text encoder is offloaded, so nothing swaps mid-render; on 40 GB cards
+model CPU offload keeps just the active one on the GPU (~30 GB peak).
+quality "draft" decodes with the TAEHV tiny decoder (taew2_1: Wan 2.2 14B still uses the Wan 2.1 VAE).
+Speed layer (engines._video.accelerate) on both experts, with automatic fallback.
 
 Adult mode: an optional community LoRA (lopi999/Wan2.2-I2V_General-NSFW-LoRA, one file per expert, ~1.2 GB),
 downloaded the first time it's asked for and then switched on or off per job without reloading anything.
@@ -10,7 +13,7 @@ downloaded the first time it's asked for and then switched on or off per job wit
 import gc, os
 import torch
 
-from engines._video import TILE_VAE, Progress, encode_mp4, load_image
+from engines._video import GPU_GB, TILE_VAE, Progress, accelerate, encode_mp4, load_image, run_fast, tiny_decode, tiny_decoder
 
 REPO = os.environ.get("WAN14_MODEL", "magespace/Wan2.2-I2V-A14B-Lightning-Diffusers")
 ADULT_REPO = os.environ.get("WAN14_ADULT_LORA", "lopi999/Wan2.2-I2V_General-NSFW-LoRA")
@@ -25,8 +28,12 @@ class Engine:
         self.pipe = WanImageToVideoPipeline.from_pretrained(REPO, vae=vae, torch_dtype=torch.bfloat16)
         if TILE_VAE:
             self.pipe.vae.enable_tiling()
+        if GPU_GB >= 70:
+            self.pipe._exclude_from_cpu_offload = ["transformer", "transformer_2"]  # both experts stay on the GPU
         self.pipe.enable_model_cpu_offload()
+        self.fast = accelerate(self.pipe.transformer, self.pipe.transformer_2)
         self.adult = None  # None: LoRA not loaded; then True/False for its current state
+        self.tae = None
 
     def _set_adult(self, on):
         if self.adult is None:
@@ -57,12 +64,19 @@ class Engine:
         if adult and ADULT_TRIGGER not in prompt:
             prompt = f"{ADULT_TRIGGER}, {prompt}"
         g = float(req["guidance"])
+        draft = req.get("quality") == "draft"
         kw = dict(image=load_image(req["image_path"], w, h), prompt=prompt, negative_prompt=req.get("negative") or None,
                   width=w, height=h, num_frames=n, num_inference_steps=steps, guidance_scale=g, guidance_scale_2=g,
                   generator=torch.Generator("cpu").manual_seed(int(req.get("seed", 7))),
-                  output_type="np", callback_on_step_end=prog.callback())
+                  output_type="latent" if draft else "np", callback_on_step_end=prog.callback())
         with torch.inference_mode():
-            frames = self.pipe(**kw).frames[0]
+            out = run_fast(lambda: self.pipe(**{**kw, "generator": torch.Generator("cpu").manual_seed(int(req.get("seed", 7)))}).frames, [self.pipe.transformer, self.pipe.transformer_2], self.fast)
+        if draft:
+            self.tae = self.tae or tiny_decoder("taew2_1")
+            frames = tiny_decode(self.tae, out)
+        else:
+            frames = out[0]
+        del out
         prog.write("encoding video", steps)
         info = encode_mp4(frames, int(req["fps"]), req["out_path"])
         del frames

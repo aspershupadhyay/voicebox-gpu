@@ -109,10 +109,42 @@ export async function POST(req: Request, ctx: Ctx) {
           body.image_url = await presignPath(String(body.image_key), 3600);
         } else if (body.image_from) {
           const lib = await getLibJob(String(body.image_from));
-          if (!lib?.video?.poster) throw new Error("that library item has no frame to start from");
-          body.image_url = await presignPath(`library/${lib.id}/${body.image_frame === "source" && lib.gen?.source ? "source.jpg" : "poster.jpg"}`, 3600);
+          if (lib?.kind === "image" && lib.images?.length) body.image_url = await presignPath(`library/${lib.id}/${lib.images[Math.max(0, Math.min(lib.images.length - 1, Number(body.image_index) || 0))].file}`, 3600);
+          else if (!lib?.video?.poster) throw new Error("that library item has no frame to start from");
+          else body.image_url = await presignPath(`library/${lib.id}/${body.image_frame === "source" && lib.gen?.source ? "source.jpg" : "poster.jpg"}`, 3600);
         }
-        delete body.image_key; delete body.image_from;
+        delete body.image_key; delete body.image_from; delete body.image_index;
+      }
+      if (body.kind === "image" || body.kind === "animate") {
+        // uploads (uploads/...) or library items -> short-lived presigned links the worker can fetch
+        const upload = async (k: unknown) => {
+          if (!/^uploads\/[A-Za-z0-9._-]+$/.test(String(k))) throw new Error("bad upload key");
+          return presignPath(String(k), 3600);
+        };
+        const fromLib = async (id: unknown) => {
+          const [lid, n] = String(id).split(":"); // "<library id>:<image index>" picks one image of a set
+          const lib = await getLibJob(lid);
+          if (!lib) throw new Error("library item not found");
+          if (lib.kind === "image" && lib.images?.length) return presignPath(`library/${lib.id}/${lib.images[Math.max(0, Math.min(lib.images.length - 1, Number(n) || 0))].file}`, 3600);
+          if (lib.video?.poster) return presignPath(`library/${lib.id}/poster.jpg`, 3600);
+          throw new Error("that library item has no image");
+        };
+        if (body.kind === "image") {
+          const keys: unknown[] = Array.isArray(body.image_keys) ? body.image_keys.slice(0, 10) : [];
+          const libs: unknown[] = Array.isArray(body.image_from) ? body.image_from.slice(0, 10) : [];
+          body.image_urls = [...await Promise.all(keys.map(upload)), ...await Promise.all(libs.map(fromLib))].slice(0, 10);
+          delete body.image_keys; delete body.image_from;
+        } else {
+          if (body.image_key) body.image_url = await upload(body.image_key);
+          else if (body.image_from) body.image_url = await fromLib(body.image_from);
+          if (body.video_key) body.video_url = await upload(body.video_key);
+          else if (body.video_from) {
+            const lib = await getLibJob(String(body.video_from));
+            if (!lib || lib.kind !== "video") throw new Error("pick a video from the library");
+            body.video_url = await presignPath(`library/${lib.id}/video.mp4`, 3600);
+          }
+          delete body.image_key; delete body.image_from; delete body.video_key; delete body.video_from;
+        }
       }
       if (!body.kind && typeof body.voice === "string" && isCustomVoice(body.voice)) {
         // a recorded voice: hand the worker a link to it (its disk is wiped whenever Colab recycles the runtime)

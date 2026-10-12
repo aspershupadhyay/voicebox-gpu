@@ -17,7 +17,7 @@ PRESET_REFS = {"female": ("orpheus", "tara"), "male": ("orpheus", "dan")}
 # Resource groups: the GPU only ever holds one group. Starting a "visual" engine stops every voice engine
 # (VRAM *and* RAM are freed because each engine is its own process), and vice versa.
 GROUPS = {"voice": "Voice models", "visual": "Video models"}
-IDLE_MIN = float(os.environ.get("VOICEBOX_IDLE_MIN", "10"))   # unload an engine after this many idle minutes
+IDLE_MIN = float(os.environ.get("VOICEBOX_IDLE_MIN", "30"))   # unload an engine after this many idle minutes
 DISK_RESERVE_GB = 12.0                                         # keep this much disk free; evict old weights first
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
 
@@ -123,11 +123,12 @@ ENGINES = {
         "kind": "video",
         "port": 8110,
         "gpu_gb": 20.0,
-        "packages": "torch diffusers>=0.41 transformers accelerate sentencepiece ftfy imageio imageio-ffmpeg pillow soundfile",
+        "packages": "torch diffusers>=0.41 transformers accelerate kernels sentencepiece ftfy imageio imageio-ffmpeg pillow soundfile",
         "about": "Wan 2.2 TI2V 5B (Alibaba, Apache-2.0). Sharp 720p, strong motion and prompt following. Turbo: 4 steps.",
         "sizes": {"16:9": [1280, 704], "9:16": [704, 1280], "1:1": [960, 960]},
         "fps": 24, "max_seconds": 5.0, "frame_step": 4,
-        "qualities": {"fast": {"steps": 4, "guidance": 1.0, "about": "Turbo distill, ~2-4 min per 5 s clip"},
+        "qualities": {"draft": {"steps": 4, "guidance": 1.0, "about": "Turbo + tiny decoder: quickest preview, slightly softer"},
+                      "fast": {"steps": 4, "guidance": 1.0, "about": "Turbo distill with the full decoder"},
                       "full": {"steps": 30, "guidance": 5.0, "about": "Original model, best detail, ~20-30 min on an L4"}},
         "voices": [], "presets": {}, "params": {},
     },
@@ -136,15 +137,16 @@ ENGINES = {
         "disk_gb": 69.0,   # both 14B experts in bf16 (Lightning merged) + UMT5 text encoder; adult LoRA adds ~1.2 GB
         "kind": "video",
         "port": 8112,
-        "gpu_gb": 32.0,
+        "gpu_gb": 62.0,   # both experts resident on 70 GB+ cards (57 GB) + VAE decode
         "min_gpu_gb": 38.0,  # one 14B expert on the GPU at a time: A100 / H100 class only
         "image_only": True,
         "adult": True,       # accepts adult: true (community LoRA, opt-in per job)
-        "packages": "torch diffusers>=0.41 transformers accelerate peft sentencepiece ftfy imageio imageio-ffmpeg pillow soundfile",
+        "packages": "torch diffusers>=0.41 transformers accelerate peft kernels sentencepiece ftfy imageio imageio-ffmpeg pillow soundfile",
         "about": "Wan 2.2 I2V A14B + Lightning (Alibaba, Apache-2.0). Best motion and detail of the Wan family; animates a start frame. 480p, 4 steps, A100 only.",
         "sizes": {"16:9": [832, 480], "9:16": [480, 832], "1:1": [640, 640]},
         "fps": 16, "max_seconds": 5.0, "frame_step": 4,
-        "qualities": {"fast": {"steps": 4, "guidance": 1.0, "about": "Lightning distill, 4 steps"}},
+        "qualities": {"draft": {"steps": 4, "guidance": 1.0, "about": "Lightning + tiny decoder: quickest preview"},
+                      "fast": {"steps": 4, "guidance": 1.0, "about": "Lightning distill, 4 steps, full decoder"}},
         "voices": [], "presets": {}, "params": {},
     },
     "ltx": {
@@ -152,16 +154,67 @@ ENGINES = {
         "disk_gb": 71.0,   # LTX-2.5: distilled transformer 38 + Gemma 4 text encoder 24 + connectors 6.3 + VAEs, vocoder, upsampler
         "kind": "video",
         "port": 8111,
-        "gpu_gb": 20.0,
+        "gpu_gb": 52.0,   # transformer + connectors resident (44 GB); the 24 GB text encoder swaps in for the prompt
         # LTX-2.5 isn't in a diffusers release yet: install from main
-        "packages": "torch git+https://github.com/huggingface/diffusers transformers accelerate bitsandbytes sentencepiece imageio imageio-ffmpeg pillow soundfile",
+        "packages": "torch git+https://github.com/huggingface/diffusers transformers accelerate bitsandbytes kernels sentencepiece imageio imageio-ffmpeg pillow soundfile",
         "about": "LTX-2.5 22B distilled (Lightricks). Video *with matching sound* in 8 steps; up to 10 s. Full = two-stage, 2x resolution.",
         "sizes": {"16:9": [960, 544], "9:16": [544, 960], "1:1": [768, 768]},
         "fps": 24, "max_seconds": 10.0, "frame_step": 8,
-        "qualities": {"fast": {"steps": 8, "guidance": 1.0, "about": "Distilled, one pass"},
+        "qualities": {"draft": {"steps": 8, "guidance": 1.0, "about": "One pass at about half size: quickest preview",
+                                "sizes": {"16:9": [640, 352], "9:16": [352, 640], "1:1": [512, 512]}},
+                      "fast": {"steps": 8, "guidance": 1.0, "about": "Distilled, one pass"},
                       "full": {"steps": 11, "guidance": 1.0, "about": "Two-stage: x2 latent upsample + refine, double resolution (text only)"}},
         "voices": [], "presets": {}, "params": {},
     },
+    # ── image models ──────────────────────────────────────────────────────────────────────────────────────────────
+    "zimage": {
+        "group": "visual",
+        "disk_gb": 33.0,
+        "kind": "image",
+        "port": 8120,
+        "gpu_gb": 22.0,
+        "packages": "torch diffusers>=0.41 transformers accelerate kernels sentencepiece pillow",
+        "about": "Z-Image-Turbo (Tongyi-MAI, Apache-2.0: commercial use OK). 6B, 8 steps, photoreal, ~2 s per image.",
+        "license": "Apache-2.0 · commercial use OK", "commercial": True,
+        "sizes": {"1:1": [1024, 1024], "4:3": [1152, 864], "3:4": [864, 1152], "3:2": [1248, 832], "2:3": [832, 1248],
+                  "16:9": [1344, 768], "9:16": [768, 1344]},
+        "qualities": {"turbo": {"steps": 8, "guidance": 0.0, "about": "8 steps, no CFG"}},
+        "max_count": 4,
+        "voices": [], "presets": {}, "params": {},
+    },
+    "qwenimage": {
+        "group": "visual",
+        "disk_gb": 47.0,   # Turbo pipeline 33 GB + the base transformer (14 GB) the first time "quality" is used
+        "kind": "image",
+        "port": 8121,
+        "gpu_gb": 40.0,
+        "packages": "torch diffusers>=0.41 transformers accelerate kernels sentencepiece pillow",
+        "about": "Qwen-Image-2.1 (Alibaba Qwen). Native 2K, sharp text in images, edits with up to 10 references, transparent PNGs.",
+        "license": "Qwen Research License · NON-commercial only", "commercial": False,
+        "sizes": {"1:1": [2048, 2048], "4:3": [2400, 1792], "3:4": [1792, 2400], "3:2": [2528, 1696], "2:3": [1696, 2528],
+                  "16:9": [2752, 1536], "9:16": [1536, 2752]},
+        "qualities": {"turbo": {"steps": 8, "guidance": 1.0, "about": "Turbo: 8 steps"},
+                      "quality": {"steps": 40, "guidance": 1.0, "about": "Base model: 40 steps, finest detail"}},
+        "max_count": 4, "edit": True, "max_refs": 10, "transparent": True,
+        "voices": [], "presets": {}, "params": {},
+    },
+    # ── animate: a character image performs the motion of a driving video ─────────────────────────────────────────
+    "animate": {
+        "group": "visual",
+        "disk_gb": 85.0,   # Wan2.2-Animate-14B diffusers (transformer stored fp32: 69 GB) + text/image encoders + pose ONNX (3 GB)
+        "kind": "animate",
+        "port": 8113,
+        "gpu_gb": 48.0,
+        "min_gpu_gb": 38.0,
+        "packages": "torch diffusers>=0.41 transformers accelerate peft kernels sentencepiece ftfy imageio imageio-ffmpeg pillow soundfile "
+                    "onnxruntime-gpu opencv-python-headless decord loguru matplotlib moviepy tqdm",
+        "about": "Wan 2.2 Animate 14B (Alibaba, Apache-2.0). Your character (one image) performs the motion of a driving video: exercises, dances, gestures.",
+        "sizes": {"9:16": [480, 832], "16:9": [832, 480], "1:1": [640, 640]},
+        "fps": 16, "max_seconds": 10.0, "frame_step": 4,
+        "qualities": {"fast": {"steps": 20, "guidance": 1.0, "about": "20 steps"}},
+        "voices": [], "presets": {}, "params": {},
+    },
+
 }
 
 POST_DEFAULTS = {
@@ -175,6 +228,7 @@ POST_DEFAULTS = {
 
 TTS_ENGINES = [n for n, e in ENGINES.items() if e["kind"] == "tts"]
 VIDEO_ENGINES = [n for n, e in ENGINES.items() if e["kind"] == "video"]
+IMAGE_ENGINES = [n for n, e in ENGINES.items() if e["kind"] == "image"]
 
 # Delivery styles: per-engine settings measured with scripts/style-bench.py (pitch movement, words per minute,
 # Whisper accuracy). A style sets defaults; explicit params / post values in a request still win.
@@ -230,9 +284,11 @@ def style_settings(style, engine):
 # Speed priors (seconds of compute per character / per second of audio), refined live by the gateway.
 RATE_PRIORS = {"kokoro": 0.004, "chatterbox": 0.06, "orpheus": 0.03, "whisper": 0.06, "qwen": 0.05,
                # video: seconds per (step x frame x megapixel), x2 when CFG doubles the passes
-               "wan": 0.3, "ltx": 0.35, "wan14": 1.2}
-INSTALL_PRIORS = {"kokoro": 40, "chatterbox": 150, "orpheus": 240, "whisper": 120, "qwen": 150, "wan": 300, "ltx": 600, "wan14": 300}  # first install, seconds
-LOAD_PRIORS = {"kokoro": 5, "chatterbox": 45, "orpheus": 120, "whisper": 40, "qwen": 60, "wan": 240, "ltx": 480, "wan14": 600}  # first load includes the weight download
+               "wan": 0.3, "ltx": 0.35, "wan14": 1.2,
+               # image: seconds per (step x megapixel x image); animate: per (step x frame x megapixel)
+               "zimage": 0.08, "qwenimage": 0.1, "animate": 1.5}
+INSTALL_PRIORS = {"kokoro": 40, "chatterbox": 150, "orpheus": 240, "whisper": 120, "qwen": 150, "wan": 300, "ltx": 600, "wan14": 300, "zimage": 120, "qwenimage": 120, "animate": 300}  # first install, seconds
+LOAD_PRIORS = {"kokoro": 5, "chatterbox": 45, "orpheus": 120, "whisper": 40, "qwen": 60, "wan": 240, "ltx": 480, "wan14": 600, "zimage": 150, "qwenimage": 240, "animate": 600}  # first load includes the weight download
 
 SUBTITLE_STYLE = {"max_chars": 42, "max_seconds": 3.5, "min_gap": 0.08}
 

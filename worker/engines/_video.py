@@ -14,6 +14,95 @@ RESIDENT = GPU_GB >= 38
 # 80 GB cards decode the whole clip in one pass; tiling (overlapping tiles) only pays off when memory is tight.
 TILE_VAE = GPU_GB < 70
 
+FAST = os.environ.get("VOICEBOX_FAST", "1") != "0"
+
+
+def accelerate(*models, compile=True):
+    """Speed layer for the diffusion transformer(s), all with automatic fallback:
+    - attention: SageAttention 2 (prebuilt kernel from the Hub via `kernels`, ~1.3-2x faster attention on Ampere),
+      else Flash-Attention 2 (also prebuilt), else PyTorch's own SDPA;
+    - regional torch.compile of the repeated transformer blocks (compiles in ~1 min on the first render, then
+      10-30% faster; a new resolution recompiles once).
+    Returns what got switched on."""
+    on = []
+    if not FAST:
+        return on
+    for m in models:
+        if m is None:
+            continue
+        for backend in ("sage_hub", "flash_hub"):
+            try:
+                m.set_attention_backend(backend)
+                on.append(backend)
+                break
+            except Exception as e:
+                print(f"[fast] {backend} unavailable: {str(e)[:160]}", flush=True)
+        if compile:
+            try:
+                m.compile_repeated_blocks(fullgraph=False)
+                on.append("compile")
+            except Exception as e:
+                print(f"[fast] regional compile unavailable: {str(e)[:160]}", flush=True)
+    if on:
+        print(f"[fast] on: {sorted(set(on))}", flush=True)
+    return on
+
+
+def plain(*models):
+    """Undo accelerate(): default attention, no compiled blocks."""
+    for m in models:
+        if m is None:
+            continue
+        try:
+            m.reset_attention_backend()
+        except Exception:
+            pass
+        for sub in m.modules():
+            if getattr(sub, "_compiled_call_impl", None) is not None:
+                sub._compiled_call_impl = None
+
+
+def run_fast(fn, models, fast):
+    """Run a render; if it fails with the speed layer on (an attention kernel that can't handle this model's
+    masks, a compile error...), switch it off for good and run once more the plain way."""
+    try:
+        return fn()
+    except Cancelled:
+        raise
+    except Exception as e:
+        if not fast or e.__class__.__name__ == "Cancelled":
+            raise
+        print(f"[fast] render failed with the speed layer on ({e.__class__.__name__}: {str(e)[:200]}); retrying plain",
+              flush=True)
+        plain(*models)
+        fast.clear()
+        import gc
+        gc.collect(); torch.cuda.empty_cache()
+        return fn()
+
+
+TAEHV_SHA = "011dfc2112197741c540e0bdd5b7b67bcc930771"
+
+
+def tiny_decoder(name):
+    """TAEHV tiny video decoder (madebyollin/taehv, MIT; ~50x faster than the full VAE, slightly softer):
+    "taew2_2_super" for Wan 2.2 5B latents, "taew2_1" for Wan 2.1-VAE models (Wan 2.2 14B). Pinned to a commit."""
+    import urllib.request
+    from engines._taehv import TAEHV
+    folder = os.path.join(os.environ.get("HF_HOME", "/tmp"), "taehv")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"{name}.safetensors")
+    if not os.path.exists(path):
+        urllib.request.urlretrieve(f"https://raw.githubusercontent.com/madebyollin/taehv/{TAEHV_SHA}/safetensors/{name}.safetensors", path + ".part")
+        os.replace(path + ".part", path)
+    return TAEHV(path, arch_name=name).to("cuda", torch.float16).eval()
+
+
+def tiny_decode(tae, latents):
+    """Diffusers' normalised video latents (N C T H W) -> list of HxWx3 float frames in [0, 1] (what encode_mp4 takes)."""
+    with torch.inference_mode():
+        x = tae.decode_video(latents.to("cuda", torch.float16).permute(0, 2, 1, 3, 4), parallel=True, show_progress_bar=False)
+    return x[0].permute(0, 2, 3, 1).float().cpu().numpy()
 
 class Cancelled(Exception):
     pass
@@ -88,3 +177,18 @@ def load_image(path, width, height):
     im = im.resize((max(tw, round(im.width * scale)), max(th, round(im.height * scale))), Image.LANCZOS)
     left, top = (im.width - tw) // 2, (im.height - th) // 2
     return im.crop((left, top, left + tw, top + th))
+
+
+def save_images(images, out_dir):
+    """PIL images -> out_dir/image-<n>.png (keeps transparency) + a small JPEG thumbnail; returns their metadata."""
+    os.makedirs(out_dir, exist_ok=True)
+    out = []
+    for i, im in enumerate(images, 1):
+        name = f"image-{i}.png"
+        im.save(os.path.join(out_dir, name), optimize=False)
+        th = im.convert("RGB")
+        th.thumbnail((512, 512))
+        th.save(os.path.join(out_dir, f"thumb-{i}.jpg"), quality=85)
+        out.append({"file": name, "thumb": f"thumb-{i}.jpg", "width": im.width, "height": im.height,
+                    "transparent": im.mode in ("RGBA", "LA")})
+    return out

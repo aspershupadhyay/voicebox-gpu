@@ -105,6 +105,23 @@ export function EngineArt({ engine, live = false }: { engine: string; live?: boo
       <path d="M66 66v12" className="accent-stroke playhead" />
     </svg>
   );
+  if (engine === "zimage" || engine === "qwenimage") return (
+    // a picture developing: frame, sun, hills, and a light sweeping across it
+    <svg viewBox="0 0 120 84" className={cls} aria-hidden>
+      <rect x="22" y="8" width="76" height="68" rx="6" className="ink" />
+      <circle cx="74" cy="28" r="7" className="accent-fill" />
+      <path d="M22 64l20-20 14 12 16-18 26 26" className="ink dim-ink" />
+      {[0, 1, 2].map((i) => <rect key={i} x={30 + i * 22} y="70" width="14" height="3" rx="1.5" className="cap" style={{ animationDelay: `${i * 0.2}s` }} />)}
+    </svg>
+  );
+  if (engine === "animate") return (
+    // a stick figure copying a ghosted pose
+    <svg viewBox="0 0 120 84" className={cls} aria-hidden>
+      <g className="ink dim-ink"><circle cx="38" cy="18" r="6" /><path d="M38 24v22M38 30l-12 8M38 30l12-6M38 46l-10 18M38 46l10 18" /></g>
+      <g className="ink"><circle cx="82" cy="18" r="6" /><path d="M82 24v22M82 30l-12 8M82 30l12-6M82 46l-10 18M82 46l10 18" /></g>
+      {[0, 1, 2].map((i) => <circle key={i} cx={52 + i * 8} cy={40} r={2.2} className="trail" style={{ opacity: 0.3 + i * 0.3, animationDelay: `${i * 0.12}s` }} />)}
+    </svg>
+  );
   if (engine === "ltx") return (
     // picture and sound born together: a film strip above its own soundtrack
     <svg viewBox="0 0 120 84" className={cls} aria-hidden>

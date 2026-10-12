@@ -5,16 +5,18 @@ needs diffusers from main. Only the files the distilled pipeline loads are fetch
 bf16 with model CPU offload (one component on the GPU at a time); on smaller cards the transformer and the
 Gemma 4 text encoder are quantised to 4-bit NF4 while loading.
 
-quality "fast": one distilled pass at the chosen size. "full": the official two-stage recipe — the same pass,
+quality "draft": one distilled pass at half the size; "fast": one distilled pass at the chosen size. "full": the official two-stage recipe — the same pass,
 a x2 latent upsample, then a 3-sigma refine at double resolution (text-to-video only; with a start frame it
 falls back to one pass so the frame isn't redrawn).
 """
 import gc, os
 import torch
 
-from engines._video import RESIDENT, TILE_VAE, Progress, encode_mp4, load_image
+from engines._video import GPU_GB, RESIDENT, TILE_VAE, Progress, accelerate, encode_mp4, load_image, run_fast
 
 REPO = os.environ.get("LTX_MODEL", "Lightricks/LTX-2.5-Diffusers")
+# 70 GB+ cards keep the video transformer and connectors on the GPU (~44 GB); only the 24 GB text encoder moves.
+KEEP_ON_GPU = ["transformer", "connectors"] if GPU_GB >= 70 else []
 # The repo is 174 GB: it holds the transformer twice (4- and 8-shard copies), a non-distilled transformer_full,
 # a prompt enhancer, a LoRA and a diffusion decoder we don't use. Fetch only what the distilled pipeline loads (~71 GB).
 NEEDED = ["model_index.json", "scheduler/*", "tokenizer/*", "text_encoder/*", "vae/*", "audio_vae/*", "vocoder/*",
@@ -73,6 +75,7 @@ class Engine:
             t2v.vae.enable_tiling()
         self.sigmas, self.sigmas2, self.negative = DISTILLED_SIGMA_VALUES, STAGE_2_DISTILLED_SIGMA_VALUES, DEFAULT_NEGATIVE_PROMPT
         self.pipes, self.active, self.upsample = {"t2v": t2v}, None, None
+        self.fast = accelerate(t2v.transformer)
         self._pipe(False)
 
     def _pipe(self, i2v):
@@ -84,6 +87,7 @@ class Engine:
             if want not in self.pipes:
                 from diffusers import LTX2ImageToVideoPipeline
                 self.pipes[want] = LTX2ImageToVideoPipeline.from_pipe(self.pipes["t2v"])
+            self.pipes[want]._exclude_from_cpu_offload = KEEP_ON_GPU
             self.pipes[want].enable_model_cpu_offload()
             self.active = want
         return self.pipes[want]
@@ -109,16 +113,19 @@ class Engine:
                       generator=gen, return_dict=False, **UNGUIDED)
         if i2v:
             shared["image"] = load_image(req["image_path"], w, h)
-        with torch.inference_mode():
+        def render():
+            gen.manual_seed(int(req.get("seed", 7)))  # a fallback retry must reproduce the same seed
             if not two_stage:
-                video, audio = pipe(width=w, height=h, num_frames=n, sigmas=self.sigmas, output_type="np",
-                                    callback_on_step_end=prog.callback(), **shared)
-            else:
-                lat, audio_lat = pipe(width=w, height=h, num_frames=n, sigmas=self.sigmas, output_type="latent",
-                                      callback_on_step_end=prog.callback(), **shared)
-                lat = self._upsampler()(latents=lat, output_type="latent", return_dict=False)[0]
-                video, audio = pipe(num_frames=n, sigmas=self.sigmas2, latents=lat, audio_latents=audio_lat,
-                                    noise_scale=self.sigmas2[0], output_type="np", callback_on_step_end=prog.callback(s1), **shared)
+                return pipe(width=w, height=h, num_frames=n, sigmas=self.sigmas, output_type="np",
+                            callback_on_step_end=prog.callback(), **shared)
+            lat, audio_lat = pipe(width=w, height=h, num_frames=n, sigmas=self.sigmas, output_type="latent",
+                                  callback_on_step_end=prog.callback(), **shared)
+            lat = self._upsampler()(latents=lat, output_type="latent", return_dict=False)[0]
+            return pipe(num_frames=n, sigmas=self.sigmas2, latents=lat, audio_latents=audio_lat,
+                        noise_scale=self.sigmas2[0], output_type="np", callback_on_step_end=prog.callback(s1), **shared)
+
+        with torch.inference_mode():
+            video, audio = run_fast(render, [pipe.transformer], self.fast)
         prog.write("encoding video", prog.total)
         au = None
         if audio is not None and req.get("audio", True):
