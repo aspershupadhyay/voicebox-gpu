@@ -163,7 +163,7 @@ const handler = createMcpHandler(
           "model wan14: Wan 2.2 I2V A14B + Lightning, best Wan quality, image-to-video ONLY (needs image_url or from_library), 480p 16 fps, up to 5 s, A100 only; adult: true adds an opt-in community NSFW LoRA (adults only, never real people).",
           "model ltx: LTX-2.5 distilled, picture + matching soundtrack from the same prompt, up to 10 s; quality full = two-stage at 2x resolution (text-to-video only). Describe sounds too (\"Audio: ...\").",
           "Prompts: subject, action, place, camera move, light, style; 40-100 words for wan. With a start frame (image_url or from_library) describe the motion, not the look.",
-          "Video and voice engines never share the GPU: this unloads voice engines first. First use downloads the weights (wan ~23 GB, wan14 ~69 GB, ltx ~62 GB).",
+          "Video and voice engines never share the GPU: this unloads voice engines first. First use downloads the weights (wan ~23 GB, wan14 ~69 GB, ltx ~71 GB).",
           "Rendering takes minutes: this returns a job id; poll get_job until done (the finished clip is archived to the library).",
         ].join(" "),
         inputSchema: z.object({

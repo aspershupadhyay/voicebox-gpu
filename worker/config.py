@@ -149,7 +149,7 @@ ENGINES = {
     },
     "ltx": {
         "group": "visual",
-        "disk_gb": 62.0,   # LTX-2.5 distilled transformer + Gemma 4 text encoder (bf16), VAEs, vocoder, upsamplers; no prompt enhancer
+        "disk_gb": 71.0,   # LTX-2.5: distilled transformer 38 + Gemma 4 text encoder 24 + connectors 6.3 + VAEs, vocoder, upsampler
         "kind": "video",
         "port": 8111,
         "gpu_gb": 20.0,

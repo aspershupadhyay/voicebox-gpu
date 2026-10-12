@@ -21,7 +21,7 @@ const SPECS: Record<string, Spec> = {
   wan14: { about: "Full-size Wan (2 × 14B experts, Lightning 4-step). Steadiest faces, hands and motion. Animates a start frame; A100 only.", sizes: { "16:9": [832, 480], "9:16": [480, 832], "1:1": [640, 640] },
     qualities: { fast: { steps: 4, guidance: 1, about: "Lightning · 4 steps" } }, max_seconds: 5, fps: 16, disk_gb: 69, image_only: true, adult: true, min_gpu_gb: 38 },
   ltx: { about: "Picture and matching sound in one pass. Up to 10 s. Full renders twice the resolution in two stages.", sizes: { "16:9": [960, 544], "9:16": [544, 960], "1:1": [768, 768] },
-    qualities: { fast: { steps: 8, guidance: 1, about: "Distilled · 8 steps" }, full: { steps: 11, guidance: 1, about: "Two-stage · 2× resolution (text-to-video)" } }, max_seconds: 10, fps: 24, disk_gb: 62 },
+    qualities: { fast: { steps: 8, guidance: 1, about: "Distilled · 8 steps" }, full: { steps: 11, guidance: 1, about: "Two-stage · 2× resolution (text-to-video)" } }, max_seconds: 10, fps: 24, disk_gb: 71 },
 };
 const NAMES: Record<string, string> = { wan: "Wan 2.2", wan14: "Wan 14B", ltx: "LTX-2.5" };
 const PRIOR: Record<string, number> = { wan: 0.3, wan14: 1.2, ltx: 0.35 };

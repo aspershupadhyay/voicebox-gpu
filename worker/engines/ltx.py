@@ -1,7 +1,7 @@
 """LTX-2.5 22B distilled (Lightricks): video with synchronised audio, 8 steps, unguided.
 
 Lightricks/LTX-2.5-Diffusers is gated (accept the license on Hugging Face once; the worker needs HF_TOKEN) and
-needs diffusers from main. The optional prompt enhancer (~10 GB) is skipped. On 40 GB+ cards everything runs in
+needs diffusers from main. Only the files the distilled pipeline loads are fetched (~71 GB of the 174 GB repo). On 40 GB+ cards everything runs in
 bf16 with model CPU offload (one component on the GPU at a time); on smaller cards the transformer and the
 Gemma 4 text encoder are quantised to 4-bit NF4 while loading.
 
@@ -15,8 +15,41 @@ import torch
 from engines._video import RESIDENT, TILE_VAE, Progress, encode_mp4, load_image
 
 REPO = os.environ.get("LTX_MODEL", "Lightricks/LTX-2.5-Diffusers")
-UNGUIDED = dict(guidance_scale=1.0, audio_guidance_scale=1.0, stg_scale=0.0, audio_stg_scale=0.0,
-                modality_scale=1.0, audio_modality_scale=1.0)
+# The repo is 174 GB: it holds the transformer twice (4- and 8-shard copies), a non-distilled transformer_full,
+# a prompt enhancer, a LoRA and a diffusion decoder we don't use. Fetch only what the distilled pipeline loads (~71 GB).
+NEEDED = ["model_index.json", "scheduler/*", "tokenizer/*", "text_encoder/*", "vae/*", "audio_vae/*", "vocoder/*",
+          "latent_upsampler/*", "transformer/config.json", "transformer/diffusion_pytorch_model.safetensors.index.json",
+          "transformer/diffusion_pytorch_model-*-of-00004.safetensors", "connectors/config.json",
+          "connectors/diffusion_pytorch_model.safetensors.index.json", "connectors/diffusion_pytorch_model-*-of-00002.safetensors"]
+
+
+def _prune(local):
+    """Delete files of this repo already on disk that the pipeline doesn't load (an earlier full download), plus
+    interrupted partial downloads, BEFORE fetching: otherwise they hold the space the missing files need."""
+    import fnmatch
+    freed = 0
+    for root, _, files in os.walk(local):
+        for f in files:
+            link = os.path.join(root, f)
+            if not any(fnmatch.fnmatch(os.path.relpath(link, local), pat) for pat in NEEDED):
+                blob = os.path.realpath(link)
+                if os.path.exists(blob):
+                    freed += os.path.getsize(blob)
+                    os.remove(blob)
+                os.remove(link)
+    blobs = os.path.join(os.path.dirname(os.path.dirname(local)), "blobs")
+    for f in os.listdir(blobs) if os.path.isdir(blobs) else []:
+        if f.endswith(".incomplete"):
+            freed += os.path.getsize(os.path.join(blobs, f))
+            os.remove(os.path.join(blobs, f))
+    if freed:
+        print(f"[ltx] removed {freed / 1e9:.1f} GB of unused or partial files from an earlier download", flush=True)
+
+
+def _fetch():
+    from huggingface_hub import snapshot_download
+    _prune(snapshot_download(REPO, allow_patterns=["model_index.json"]))  # tiny call: just locates the snapshot folder
+    return snapshot_download(REPO, allow_patterns=NEEDED)
 
 
 class Engine:
@@ -29,7 +62,8 @@ class Engine:
             kw["quantization_config"] = PipelineQuantizationConfig(
                 quant_backend="bitsandbytes_4bit", components_to_quantize=["transformer", "text_encoder"],
                 quant_kwargs={"load_in_4bit": True, "bnb_4bit_quant_type": "nf4", "bnb_4bit_compute_dtype": torch.bfloat16})
-        t2v = LTX2Pipeline.from_pretrained(REPO, dtype=torch.bfloat16, prompt_enhancer=None, processor=None, duration_head=None, **kw)
+        self.local = _fetch()
+        t2v = LTX2Pipeline.from_pretrained(self.local, dtype=torch.bfloat16, prompt_enhancer=None, processor=None, duration_head=None, **kw)
         if TILE_VAE:
             t2v.vae.enable_tiling()
         self.sigmas, self.sigmas2, self.negative = DISTILLED_SIGMA_VALUES, STAGE_2_DISTILLED_SIGMA_VALUES, DEFAULT_NEGATIVE_PROMPT
@@ -53,7 +87,7 @@ class Engine:
         if self.upsample is None:
             from diffusers import LTX2LatentUpsamplePipeline
             from diffusers.pipelines.ltx2.latent_upsampler import LTX2LatentUpsamplerModel
-            up = LTX2LatentUpsamplerModel.from_pretrained(REPO, subfolder="latent_upsampler", dtype=torch.bfloat16).to("cuda")
+            up = LTX2LatentUpsamplerModel.from_pretrained(self.local, subfolder="latent_upsampler", dtype=torch.bfloat16).to("cuda")
             self.upsample = LTX2LatentUpsamplePipeline(vae=self.pipes["t2v"].vae, latent_upsampler=up)
         return self.upsample
 
