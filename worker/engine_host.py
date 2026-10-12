@@ -37,7 +37,10 @@ def main():
             time.sleep(wait)
     print(f"[{args.engine}] loaded in {time.time() - t0:.1f}s", flush=True)
     lock = threading.Lock()  # one GPU call at a time per engine
-    import soundfile as sf
+    try:  # audio engines only; image / video venvs don't ship soundfile
+        import soundfile as sf
+    except ImportError:
+        sf = None
 
     def synth_one(req):
         audio, sr = engine.synth(req["text"], req.get("voice"), req.get("params") or {}, req.get("ref_path"), req.get("ref_text"))
