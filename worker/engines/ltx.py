@@ -51,6 +51,11 @@ def _fetch():
     _prune(snapshot_download(REPO, allow_patterns=["model_index.json"]))  # tiny call: just locates the snapshot folder
     return snapshot_download(REPO, allow_patterns=NEEDED)
 
+# distilled LTX runs unguided: CFG, STG and modality guidance all off (the pipeline defaults are the SFT values)
+UNGUIDED = dict(guidance_scale=1.0, audio_guidance_scale=1.0, stg_scale=0.0, audio_stg_scale=0.0,
+                modality_scale=1.0, audio_modality_scale=1.0)
+
+
 
 class Engine:
     def __init__(self):
