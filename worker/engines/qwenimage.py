@@ -8,7 +8,7 @@ share the text encoder and VAE, so "quality" only adds the 14 GB transformer). S
 import gc, os
 import torch
 
-from engines._video import Progress, accelerate, run_fast, save_images
+from engines._video import Progress, accelerate, free_gpu, lean_vae, run_fast, save_images
 
 TURBO = os.environ.get("QWENIMAGE_TURBO_MODEL", "Qwen/Qwen-Image-2.1-Turbo")
 BASE = os.environ.get("QWENIMAGE_MODEL", "Qwen/Qwen-Image-2.1")
@@ -20,6 +20,7 @@ class Engine:
     def __init__(self):
         from diffusers import QwenImage21Pipeline
         self.pipe = QwenImage21Pipeline.from_pretrained(TURBO, torch_dtype=torch.bfloat16).to("cuda")
+        lean_vae(self.pipe.vae)
         self.turbo = (self.pipe.transformer, self.pipe.scheduler)
         self.base = None
         self.weights = "turbo"
@@ -53,23 +54,28 @@ class Engine:
         if req.get("image_paths"):
             from PIL import Image
             refs = [Image.open(p).convert("RGBA") for p in req["image_paths"]]
-        prog = Progress(req.get("progress_path"), steps)
+        prog = Progress(req.get("progress_path"), steps * n)
         prog.write("encoding prompt")
 
-        def render():
+        def render(i):
+            # one image per pass: 2K latents + KV cache for several images at once don't fit next to the 33 GB model
             kw = dict(prompt=prompt, negative_prompt=req.get("negative") or None, width=w, height=h,
-                      num_images_per_prompt=n, generator=[torch.Generator("cpu").manual_seed(seed + i) for i in range(n)],
-                      callback_on_step_end=prog.callback(), use_kv_cache=True)
+                      generator=torch.Generator("cpu").manual_seed(seed + i),
+                      callback_on_step_end=prog.callback(offset=i * steps), use_kv_cache=True)
             if self.weights == "quality":
                 kw["num_inference_steps"] = steps  # turbo uses its saved 8-step schedule instead
             if refs:
                 kw["image"] = refs if len(refs) > 1 else refs[0]
-            return self.pipe(**kw).images
+            return self.pipe(**kw).images[0]
 
-        with torch.inference_mode():
-            images = run_fast(render, [self.pipe.transformer], self.fast)
-        prog.write("encoding video", steps)
-        out = save_images(images, req["out_dir"])
-        del images
-        gc.collect(); torch.cuda.empty_cache()
-        return {"images": out}
+        images = []
+        try:
+            with torch.inference_mode():
+                for i in range(n):
+                    images.append(run_fast(lambda: render(i), [self.pipe.transformer], self.fast))
+                    free_gpu()
+            prog.write("encoding video", steps * n)
+            return {"images": save_images(images, req["out_dir"])}
+        finally:
+            del images
+            free_gpu()

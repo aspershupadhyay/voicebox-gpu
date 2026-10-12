@@ -69,6 +69,9 @@ def run_fast(fn, models, fast):
         return fn()
     except Cancelled:
         raise
+    except torch.cuda.OutOfMemoryError:
+        free_gpu()  # a memory problem, not the speed layer's fault: keep it on
+        raise
     except Exception as e:
         if not fast or e.__class__.__name__ == "Cancelled":
             raise
@@ -106,6 +109,21 @@ def tiny_decode(tae, latents):
 
 class Cancelled(Exception):
     pass
+
+
+def lean_vae(vae):
+    """Decode big images / many frames in tiles and one sample at a time: a 2K decode otherwise spikes tens of GB."""
+    for name in ("enable_tiling", "enable_slicing"):
+        try:
+            getattr(vae, name)()
+        except Exception:
+            pass
+
+
+def free_gpu():
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
 
 
 class Progress:
