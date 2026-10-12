@@ -173,7 +173,7 @@ ENGINES = {
         "kind": "image",
         "port": 8120,
         "gpu_gb": 22.0,
-        "packages": "torch diffusers>=0.41 transformers accelerate kernels sentencepiece pillow",
+        "packages": "torch torchvision diffusers>=0.41 transformers accelerate kernels sentencepiece pillow",
         "about": "Z-Image-Turbo (Tongyi-MAI, Apache-2.0: commercial use OK). 6B, 8 steps, photoreal, ~2 s per image.",
         "license": "Apache-2.0 · commercial use OK", "commercial": True,
         "sizes": {"1:1": [1024, 1024], "4:3": [1152, 864], "3:4": [864, 1152], "3:2": [1248, 832], "2:3": [832, 1248],
@@ -188,7 +188,7 @@ ENGINES = {
         "kind": "image",
         "port": 8121,
         "gpu_gb": 40.0,
-        "packages": "torch diffusers>=0.41 transformers accelerate kernels sentencepiece pillow",
+        "packages": "torch torchvision diffusers>=0.41 transformers accelerate kernels sentencepiece pillow",
         "about": "Qwen-Image-2.1 (Alibaba Qwen). Native 2K, sharp text in images, edits with up to 10 references, transparent PNGs.",
         "license": "Qwen Research License · NON-commercial only", "commercial": False,
         "sizes": {"1:1": [2048, 2048], "4:3": [2400, 1792], "3:4": [1792, 2400], "3:2": [2528, 1696], "2:3": [1696, 2528],
@@ -206,7 +206,7 @@ ENGINES = {
         "port": 8113,
         "gpu_gb": 48.0,
         "min_gpu_gb": 38.0,
-        "packages": "torch diffusers>=0.41 transformers accelerate peft kernels sentencepiece ftfy imageio imageio-ffmpeg pillow soundfile "
+        "packages": "torch torchvision diffusers>=0.41 transformers accelerate peft kernels sentencepiece ftfy imageio imageio-ffmpeg pillow soundfile "
                     "onnxruntime-gpu opencv-python-headless decord loguru matplotlib moviepy tqdm",
         "about": "Wan 2.2 Animate 14B (Alibaba, Apache-2.0). Your character (one image) performs the motion of a driving video: exercises, dances, gestures.",
         "sizes": {"9:16": [480, 832], "16:9": [832, 480], "1:1": [640, 640]},
