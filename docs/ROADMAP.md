@@ -30,9 +30,19 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [x] Sidebar: nav scrolls on its own, GPU card is one compact row (details on Engines), name / settings / sign out
       always visible
 
+## Planner redesign (round 4)
+- [x] GPU card: compact row in the sidebar that opens the full view (memory, mode, engines, RAM, disk) in place
+- [x] Board: Activity is a button top-right that opens a side panel (no longer a list at the bottom)
+- [x] Content planner: platform rail with real logos and brand colours; format tabs per platform; the next 7 days as a
+      strip (empty days invite a plan, drag a drop to another day to reschedule); momentum (shipped this week vs the
+      weekly goal per format, streak, next drop); gallery shaped by format (tall Reels/Shorts/TikTok, wide videos,
+      square posts, text cards for X with a 280 counter, audio for podcasts) grouped Up next / In the works / Ideas /
+      Shipped; Pipeline and List views; a "New" menu by platform and format
+- [x] Weekly goals per format and when each target went live (posted_at) are stored with the targets in R2
+
 ## Notes for whoever picks this up
 - Spaces are defined once in `mcp/lib/spaces.ts` (add a space there and it shows everywhere: sidebar, drawer, MCP enum).
-- The Content page is `mcp/components/Content.tsx`; the drawer's "Publish to" editor is `TargetsEditor` in `Workspace.tsx`.
+- Platform logos, colours and format glyphs: `mcp/components/platform.tsx`. The Content page is `mcp/components/Content.tsx`; the drawer's "Publish to" editor is `TargetsEditor` in `Workspace.tsx`.
 - Targets refresh every 15 s (not Appwrite Realtime): `mcp/components/useTargets.ts`.
 - Job tracking: `mcp/components/jobs.ts` (localStorage, `useResumeJob`), the tray `JobTray.tsx`; `api()` tracks every
   POST to `jobs` / `myvoices`. Saved recordings: `takes.ts` (IndexedDB); `startRecording(scope)` in `Recorder.tsx`.

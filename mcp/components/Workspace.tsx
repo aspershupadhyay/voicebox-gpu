@@ -1,7 +1,7 @@
 "use client";
 // The shared desk: every post the two of you are making, by stage. Drag a card to move it; click it for the full post.
 // Everything here is live: when your partner moves a card, edits a script or comments, it changes on your screen too.
-import { ArrowUpRight, CalendarBlank, ChatCircle, Microphone, Paperclip, Plus, TrashSimple, UploadSimple, X } from "@phosphor-icons/react";
+import { ArrowUpRight, CalendarBlank, ChatCircle, Pulse, Microphone, Paperclip, Plus, TrashSimple, UploadSimple, X } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -13,6 +13,7 @@ import Player from "./Player";
 import { Avatar, deleteMedia, Gate, MediaTile, MediaViewer, UploadList, useUploader } from "./wsparts";
 import { NETWORKS, spaceName, spaceOf, targetsOf, type Target } from "@/lib/spaces";
 import { forgetTargets, saveTargets, useTargets } from "./useTargets";
+import { PlatformBadge } from "./platform";
 
 const T = { databaseId: AW.db, tableId: "posts" };
 const LABEL = Object.fromEntries(PLATFORMS.map((p) => [p.id, p.label])) as Record<Platform, string>;
@@ -48,15 +49,15 @@ export async function savePost(p: Post, data: Partial<Post>) {
 
 export function PostCard({ p, onOpen, dragging }: { p: Post; onOpen: () => void; dragging: (id: string | null) => void }) {
   const { map } = useTargets();
-  const tags = targetsOf(p, map).map((t) => { const s = spaceOf(t.space); return s ? `${s.networkLabel === "Instagram" ? "IG" : s.networkLabel === "YouTube" ? "YT" : s.networkLabel} ${s.label}` : t.space; });
+  const targets = targetsOf(p, map);
   return (
     <div className={`post-card ${overdue(p) ? "late" : ""}`} draggable onDragStart={(e) => { e.dataTransfer.setData("text/post", p.$id); e.dataTransfer.effectAllowed = "move"; dragging(p.$id); }}
       onDragEnd={() => dragging(null)} onClick={onOpen} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }}>
       <div className="pc-title">{p.title}</div>
-      {tags.length > 0 && (
+      {targets.length > 0 && (
         <div className="pc-meta">
-          {tags.slice(0, 3).map((x) => <span key={x} className="pc-tag">{x}</span>)}
-          {tags.length > 3 && <span className="pc-tag">+{tags.length - 3}</span>}
+          {targets.map((t) => <PlatformBadge key={t.space} space={t.space} size={20} solid={t.status === "posted"} />)}
+          {targets.length === 1 && <span className="tiny dim">{spaceOf(targets[0].space)?.label}</span>}
         </div>
       )}
       <div className="pc-foot">
@@ -86,10 +87,10 @@ function QuickAdd({ status, onAdd }: { status: Status; onAdd: (title: string, st
 
 function Feed() {
   const { rows } = useLive<Activity>("activity", [Query.orderDesc("$createdAt"), Query.limit(30)]);
-  if (!rows.length) return null;
+  if (!rows.length) return <p className="dim small">Nothing yet. Moves, edits, voiceovers and comments from both of you show up here.</p>;
   return (
     <div className="feed-list">
-      {rows.slice(0, 12).map((a) => (
+      {rows.slice(0, 30).map((a) => (
         <div key={a.$id} className="feed-row">
           <Avatar id={a.actor_id} name={a.actor_name} sm />
           <span className="small"><b>{a.actor_name?.split(" ")[0] ?? "Someone"}</b> <span className="dim">{a.verb}</span> {a.text}</span>
@@ -112,6 +113,7 @@ function BoardInner() {
   const [who, setWho] = useState<"all" | "mine">("all");
   const [plat, setPlat] = useState<Platform | "">("");
   const [q, setQ] = useState("");
+  const [feed, setFeed] = useState(false);
   const open = params.get("post");
 
   const shown = useMemo(() => posts.filter((p) =>
@@ -157,7 +159,10 @@ function BoardInner() {
           <h1>The board. <em>Everything you two are making.</em></h1>
           <p className="sub">{loading ? "Loading…" : `${posts.length} post${posts.length === 1 ? "" : "s"} · ${week} due this week${late ? ` · ${late} overdue` : ""}. Drag cards between stages; press N for a new one.`}</p>
         </div>
-        <button onClick={() => createPost({ title: "Untitled" }).then((p) => go(p.$id)).catch((x) => toast(x.message, "bad"))}><Plus size={15} weight="bold" /> New post</button>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="ghost" onClick={() => setFeed(true)}><Pulse size={15} weight="bold" /> Activity</button>
+          <button onClick={() => createPost({ title: "Untitled" }).then((p) => go(p.$id)).catch((x) => toast(x.message, "bad"))}><Plus size={15} weight="bold" /> New post</button>
+        </div>
       </div>
       {error && <p className="err">{error}</p>}
       <div className="filters">
@@ -187,8 +192,18 @@ function BoardInner() {
           );
         })}
       </div>
-      <h2 style={{ marginTop: 34 }}>Activity</h2>
-      <Feed />
+      {feed && (
+        <>
+          <div className="scrim" onClick={() => setFeed(false)} />
+          <aside className="drawer feed-drawer" aria-label="Activity">
+            <div className="row between" style={{ marginBottom: 14 }}>
+              <h2 style={{ margin: 0 }}><Pulse size={17} weight="bold" /> Activity</h2>
+              <button className="icon-btn" title="Close" onClick={() => setFeed(false)}><X size={17} /></button>
+            </div>
+            <Feed />
+          </aside>
+        </>
+      )}
       {open && (openPost ? <PostDrawer key={open} post={openPost} onClose={() => go(null)} /> : !loading && <PostMissing onClose={() => go(null)} />)}
     </>
   );
@@ -291,7 +306,7 @@ export function TargetsEditor({ post }: { post: Post }) {
     <div className="stack" style={{ gap: 8 }}>
       {targets.map((t, i) => (
         <div key={t.space} className="target-row">
-          <b className="small" title={spaceOf(t.space)?.about}>{spaceName(t.space)}</b>
+          <b className="small row" style={{ gap: 7 }} title={spaceOf(t.space)?.about}><PlatformBadge space={t.space} size={20} solid={t.status === "posted"} />{spaceName(t.space)}</b>
           <select value={t.status} onChange={(e) => patch(i, { status: e.target.value as Status })}>
             {STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>

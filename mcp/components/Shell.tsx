@@ -1,13 +1,13 @@
 "use client";
 import {
   ArrowsClockwise, Books, CalendarBlank, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, ImageSquare, Kanban, MagicWand, MagnifyingGlass,
-  Microphone, Moon, Power, Brain, SignOut, SquaresFour, Stack, Sun, UserSound, Images,
+  Microphone, Moon, Power, Brain, SignOut, SquaresFour, Stack, Sun, UserSound, Images, HardDrives, Waveform, CaretUp, ArrowSquareOut,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, type Status } from "./api";
-import { Logo } from "./art";
+import { LedMeter, Logo } from "./art";
 import { signOut, useMe } from "./aw";
 import { DialogProvider, useDialog } from "./Dialog";
 import JobTray from "./JobTray";
@@ -51,6 +51,48 @@ function useTheme() {
 async function leave() { await signOut(); location.href = "/login"; }
 const ALL_ENGINES = ["orpheus", "myvoice", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "zimage", "qwenimage"];
 const MODE: Record<string, string> = { voice: "Voice mode", visual: "Image mode", idle: "Idle · GPU free", mixed: "Switching" };
+const ENGINE_ORDER = ["orpheus", "myvoice", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "zimage", "qwenimage"];
+const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+const stateClass = (s?: string) => (s === "ready" ? "ready" : s === "loading" || s === "installing" || s === "busy" ? "busy" : s === "error" ? "err" : "");
+
+/** The full GPU view: memory, mode, every engine (with its idle countdown), RAM and disk. Opens from the compact card. */
+function GpuDetails({ status, busy, vram }: { status: Status | null; busy: boolean; vram: number }) {
+  return (
+    <div className="rack">
+      <div className="title">
+        <span className={`dot ${status?.online ? (busy ? "warn" : "ok") : status ? "bad" : "off"}`} />
+        {status ? (status.online ? (busy ? "Rendering" : "GPU online") : "GPU offline") : "Connecting"}
+        <Cpu size={15} className="dim" style={{ marginLeft: "auto" }} />
+      </div>
+      {status?.online ? (
+        <>
+          <div className="meta">{status.gpu?.name?.replace("NVIDIA ", "")} · up {fmtUptime(status.uptime_s)}</div>
+          <div style={{ margin: "12px 0 4px" }}><LedMeter value={vram} segments={18} label="GPU memory" /></div>
+          <div className="eng" style={{ marginBottom: 6 }}><span>VRAM</span><b style={{ color: "var(--ink2)" }}>{status.gpu?.used_gb} / {status.gpu?.total_gb} GB</b></div>
+          {status.mode && <div className={`mode-chip ${status.mode}`}>{status.mode === "visual" ? <ImageSquare size={13} weight="fill" /> : <Waveform size={13} weight="bold" />}{MODE[status.mode] ?? status.mode}</div>}
+          {ENGINE_ORDER.filter((n) => status.engines?.[n] && (status.engines[n] !== "idle" || n === "kokoro" || n === "orpheus")).map((n) => {
+            const left = status.idle_unload_s?.[n];
+            return (
+              <div key={n} className="eng" title={left != null ? `unloads after ${status.idle_min ?? 10} idle minutes` : undefined}>
+                <span className={`dot ${status.engines![n] === "ready" ? "ok" : stateClass(status.engines![n]) === "busy" ? "warn" : "off"}`} style={{ width: 6, height: 6, boxShadow: "none", animation: "none" }} />{n}
+                <b className={stateClass(status.engines![n])}>{left != null && left < 600 ? `idle ${mmss(left)}` : status.engines![n]}</b>
+              </div>
+            );
+          })}
+          {(status.ram?.total_gb || status.disk?.total_gb) ? (
+            <div className="res">
+              {status.ram?.total_gb ? <div className="eng"><span>RAM</span><b style={{ color: "var(--ink2)" }}>{status.ram.used_gb} / {status.ram.total_gb} GB</b></div> : null}
+              {status.disk?.total_gb ? <div className="eng" title={Object.entries(status.disk.weights_gb).map(([k, v]) => `${k} ${v} GB`).join(" · ") || "no weights downloaded"}><span><HardDrives size={11} /> Disk free</span><b style={{ color: status.disk.free_gb < 25 ? "var(--warn)" : "var(--ink2)" }}>{Math.round(status.disk.free_gb)} GB</b></div> : null}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div className="meta" style={{ lineHeight: 1.6 }}>{status?.reason === "heartbeat stale" ? "The Colab runtime stopped. Run the notebook to bring it back." : "Waiting for the Colab worker to check in."}</div>
+      )}
+      <Link href="/" className="gpu-open tiny">Open Engines <ArrowSquareOut size={11} /></Link>
+    </div>
+  );
+}
 
 export function fmtUptime(s?: number) {
   if (!s) return "—";
@@ -112,6 +154,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
   const { toast } = useDialog();
   const { refresh } = useStatus();
   const [palette, setPalette] = useState(false);
+  const [gpuOpen, setGpuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const busy = !!(status?.running?.length || status?.queue);
   const here = NAV.find((n) => (n.href === "/" ? path === "/" : path.startsWith(n.href))) ?? NAV[0];
@@ -164,8 +207,10 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
             </div>
           ))}
         </nav>
-        {/* the GPU at a glance; every engine, RAM and disk are on the Engines page */}
-        <Link href="/" className="gpu-mini" title={status?.online ? `${status.gpu?.used_gb} / ${status.gpu?.total_gb} GB VRAM · up ${fmtUptime(status.uptime_s)}` : "Open Engines"}>
+        {/* the GPU at a glance; click for every engine, RAM and disk */}
+        <div className="gpu-wrap">
+        {gpuOpen && <><div className="gpu-scrim" onClick={() => setGpuOpen(false)} /><div className="gpu-pop"><GpuDetails status={status} busy={busy} vram={vram} /></div></>}
+        <button className={`gpu-mini ${gpuOpen ? "on" : ""}`} aria-expanded={gpuOpen} onClick={() => setGpuOpen(!gpuOpen)} title="GPU details">
           <span className={`dot ${status?.online ? (busy ? "warn" : "ok") : status ? "bad" : "off"}`} />
           <span className="gm-text">
             <b>{status ? (status.online ? (busy ? "Rendering" : "GPU online") : "GPU offline") : "Connecting"}</b>
@@ -174,7 +219,9 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
               : status?.reason === "heartbeat stale" ? "Run the Colab notebook" : "Waiting for the worker"}</span>
           </span>
           {status?.online ? <span className="gm-bar" aria-label="GPU memory"><i style={{ width: `${Math.round(vram * 100)}%` }} /></span> : <Cpu size={15} className="dim" />}
-        </Link>
+          <CaretUp size={12} className="dim gm-caret" />
+        </button>
+        </div>
         <div className="me-row">
           <span className="avatar">{initials(me?.user?.name)}</span>
           <div style={{ minWidth: 0, flex: 1 }}>

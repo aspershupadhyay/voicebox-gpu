@@ -7,7 +7,7 @@ import { getSettings, settingsFor, updateSettings, withDefaults } from "@/lib/se
 import { describeProfile, profileFor, withProfile } from "@/lib/profiles";
 import { archiveDataset, datasetManifest, deleteDatasetPart, listDataset, listDatasets } from "@/lib/datasets";
 import { archiveModel, currentModel, listModelsWithSamples } from "@/lib/voicemodel";
-import { dropTargets, getTargets, setTargets } from "@/lib/spacestore";
+import { dropTargets, getSpaces, setGoals, setTargets } from "@/lib/spacestore";
 import { deleteMyVoice, getMyVoice, getSamples, isCustomVoice, listMyVoices, putMyVoice, recordSample, refSync, samplePutUrl, VOICE_RE, voicePutUrl } from "@/lib/voices";
 
 type RefJob = { id: string; kind: string; status: string; voice: string; label?: string; version?: string; warnings?: string[];
@@ -67,7 +67,7 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "datasets" && b && VOICE_RE.test(b)) return Response.json(c === "manifest" ? await datasetManifest(b) : await listDataset(b));
     if (a === "model" && !b) return Response.json({ model: await currentModel(new URL(req.url).searchParams.get("name") ?? undefined) });
     if (a === "models" && !b) return Response.json({ models: await listModelsWithSamples() });
-    if (a === "spaces" && !b) return Response.json({ posts: await getTargets() });
+    if (a === "spaces" && !b) return Response.json(await getSpaces());
     if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
     if (a === "jobs" && !b) return Response.json(await call("/jobs"));
     if (a === "jobs" && b) {
@@ -113,6 +113,7 @@ export async function POST(req: Request, ctx: Ctx) {
       return Response.json(settingsFor(await updateSettings(body, who), who));
     }
     if (a === "speakable") return Response.json(await call("/speakable", { body }));
+    if (a === "spaces" && b === "goals") return Response.json({ goals: await setGoals(body.goals) });
     if (a === "spaces" && b && ID.test(b)) {
       // a post's targets (where it goes, cross-posting); the post's platforms / stage / publish time follow
       const who = await currentUser();
