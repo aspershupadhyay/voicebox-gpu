@@ -8,9 +8,10 @@ Two layers. You normally only touch the first.
 |---|---|
 | `worker_status` | Online? GPU, VRAM, loaded engines, queue. Says "re-run the notebook" if the heartbeat is older than 4 min. |
 | `list_voices` | Engines, voices, presets, every parameter with default/min/max, uploaded references. |
-| `voice_lines` | `{engine, voice?, style?, platform?, takes?, lines?:[{id?, text, window?, start?, params?}], post_id?, params?, post?, subtitles?, captions?, pronounce?, lexicon?, language?, label?, wait_seconds?}` → job. With `post_id` (and no `lines`) it voices that workspace post's script and attaches the result to the post. Blocks up to 45 s, then returns progress + a hint to call `get_job`. Engines: `orpheus`, `qwen`, `chatterbox`, `kokoro`. `platform` masters the audio (see *Platforms*); `takes: 2-4` = best-of-N per sentence; `[pause 0.8]` / `[beat]` / `[breath]` in the text insert silence. |
+| `voice_lines` | `{engine, voice?, style?, platform?, takes?, lines?:[{id?, text, window?, start?, params?}], post_id?, params?, post?, subtitles?, captions?, pronounce?, lexicon?, language?, label?, wait_seconds?}` → job. With `post_id` (and no `lines`) it voices that workspace post's script and attaches the result to the post. `review` (default on) listens back and re-voices only the sentences that missed; each result has `review {retried, fixed, issues}`. Blocks up to 45 s, then returns progress + a hint to call `get_job`. Engines: `orpheus`, `qwen`, `chatterbox`, `kokoro`. `platform` masters the audio (see *Platforms*); `takes: 2-4` = best-of-N per sentence; `[pause 0.8]` / `[beat]` / `[breath]` in the text insert silence. |
 | `revoice` | `{url, voice, platform?, subtitles?, language?, label?}` → speech-to-speech job: a performance (audio or video URL) re-spoken in a recorded voice (Chatterbox VC), timing kept, mastered for the platform. |
-| `clean_audio` | `{url, params?: {mode: enhance\|denoise, strength, steps}, platform?, subtitles?}` → studio clean-up (Resemble Enhance) of any recording, mastered, same length. |
+| `clean_audio` | `{url, cleanup?: auto\|denoise\|enhance, params?: {strength, steps}, platform?, subtitles?}` → adaptive clean-up: measures the recording, runs DeepFilterNet and/or Resemble Enhance as needed, checks speaker identity, masters, same length. Result has `cleanup {steps, why, identity, before, after}`. |
+| `voice_profile` | `{engine, voice, style?}` → what a voice has learned from reviewed voiceovers: usual voice match, best temperature, every setting tried. |
 | `preview_pronunciation` | `{lines, pronounce?, lexicon?}` → what the voice will actually read (no GPU). |
 | `get_settings` / `update_settings` | The shared studio defaults (R2 `settings.json`); every tool fills unset arguments from them, and the pronunciation dictionary merges into every request. |
 | `my_voices` | Voices the user recorded on the dashboard's Voices page. Use the `name` as `voice` with `qwen` (best) or `chatterbox` (Hindi, emotion dial). |
@@ -224,3 +225,26 @@ Mastering runs the broadcast voice chain (`highpass=f=75,equalizer=f=280:t=q:w=1
 | `subtitles` | 42 | 3.5 |
 | `punchy` | 16 | 1.2 |
 <!-- engines:end -->
+
+## Voice quality engine
+
+**Scoring** (`worker/quality.py`). The script, its spoken form and what Whisper heard are normalised the same way
+(lexicon, contractions, numbers and decimals spelled out, spelled-out letters joined, compounds reconciled), then compared as
+60% sound-alike words (order-aware) + 40% letters. Spelling variants score about 1.0; a skipped, swapped or invented word
+costs points and is listed in `diff {missed, added}`.
+
+**Review** (`review`, default on except Kokoro). After the first pass, every sentence is transcribed and compared with the
+reference voice (WavLM) and rated for naturalness (UTMOS, when it loads). A sentence below the text gate (0.93) or more
+than 0.05 under the voice's usual similarity is re-voiced with a new seed and a temperature nudge, up to 2 rounds; the best
+take per sentence wins. Every attempt is reported in `trials`.
+
+**Learning** (`mcp/lib/profiles.ts`). Trials are tallied per engine + voice + style in R2 (`profiles/…`). With at least 10
+trials across two or more temperatures (3+ each), the best-scoring temperature is sent as `profile.params` and applied
+unless the request sets one; the median voice match becomes `profile.sim_base`.
+
+**Clean-up** (`worker/cleanup.py`). `analyze` measures level, noise floor/SNR, bandwidth (highest frequency where the
+voice stands 6 dB above the noise and within 50 dB of its peak), room echo (T60 from post-word decay rates) and clipping.
+`cleanup_plan` picks: SNR under 32 dB → DeepFilterNet (attenuation limit 30/60/100 dB by severity); bandwidth under
+7 kHz, echo over 0.45 s or SNR under 18 dB → Resemble Enhance (strength by severity). Afterwards the speaker similarity
+to the input must stay at least 0.80, or the last step is dropped. DeepFilterNet is the official static CLI, fetched once
+into `$VOICEBOX_HOME/bin`.

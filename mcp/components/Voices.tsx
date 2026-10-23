@@ -317,6 +317,22 @@ function Revoice({ mine }: { mine: MyVoice[] }) {
   );
 }
 
+type Learnt = { jobs: number; usual_similarity?: number | null; best_temperature?: number | null };
+
+/** What the review has learned about this voice on Qwen (tech delivery): its usual voice match and best temperature. */
+function Learned({ voice }: { voice: string }) {
+  const [p, setP] = useState<Learnt | null>(null);
+  useEffect(() => { api<Learnt>(`profile/qwen/${voice}`).then(setP).catch(() => {}); }, [voice]);
+  if (!p || !p.jobs) return <div className="tiny faint" style={{ marginTop: 8 }}>Learning: every reviewed voiceover teaches this voice its best settings.</div>;
+  return (
+    <div className="tiny dim" style={{ marginTop: 8 }}>
+      Learned from {p.jobs} voiceover{p.jobs > 1 ? "s" : ""}
+      {p.usual_similarity != null && <> · usually {Math.round(p.usual_similarity * 100)}% like you</>}
+      {p.best_temperature != null && <> · best temperature {p.best_temperature}</>}
+    </div>
+  );
+}
+
 export default function Voices() {
   const samples = useSamples();
   const { confirm, toast } = useDialog();
@@ -356,10 +372,11 @@ export default function Voices() {
             <div key={v.name} className="card myvoice reveal">
               <VoiceGlyph name={v.name} size={52} />
               <div style={{ minWidth: 0 }}>
-                <div className="row" style={{ gap: 10 }}><b style={{ font: "400 22px var(--display)" }}>{v.label}</b><span className="mono dim tiny">{v.name}</span><span className="dim tiny">{v.duration.toFixed(1)} s · {ago(v.created)}</span>
+                <div className="row" style={{ gap: 10 }}><b style={{ font: "600 19px var(--display)", letterSpacing: "-.02em" }}>{v.label}</b><span className="mono dim tiny">{v.name}</span><span className="dim tiny">{v.duration.toFixed(1)} s · {ago(v.created)}</span>
                   {v.enhanced && <span className="pill ok" title="Cleaned by the studio enhancer: noise and echo removed, detail restored">studio-enhanced</span>}</div>
                 <p className="dim small clamp2" style={{ margin: "4px 0 10px" }}>“{v.transcript}”</p>
                 {v.url && <Player src={v.url} compact />}
+                <Learned voice={v.name} />
                 {v.warnings?.map((w) => <div key={w} className="tiny" style={{ color: "var(--warn)", marginTop: 6 }}><WarningCircle size={12} /> {w}</div>)}
               </div>
               <div className="stack" style={{ gap: 6 }}>

@@ -1,5 +1,6 @@
 // Permanent storage for finished jobs: the private R2 bucket under library/<jobId>/.
 // Files are served to the browser (and handed to the worker) through short-lived presigned URLs.
+import { learnFromJob, type Trial } from "./profiles";
 import { delPrefix, getJson, getObj, listObjs, presign, putJson, putObj, typeOf } from "./store";
 import { call } from "./worker";
 import { unzip } from "./zip";
@@ -44,6 +45,7 @@ type WorkerJob = {
   id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; created?: number; status: string;
   subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; platform?: string; scenes?: LibScene[]; similarity?: number | null; mode?: string; attach_to?: string; zip_url?: string;
+  trials?: Trial[] | null;
   gen?: LibJob["gen"] & Record<string, unknown>; video?: { width: number; height: number; duration: number; size: number; has_audio?: boolean; fps?: number; frames?: number } | null;
   results: (WorkerResult & { poster_url?: string; file?: string; thumb?: string; width?: number; height?: number; transparent?: boolean; thumb_url?: string })[];
 };
@@ -86,6 +88,7 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
     results: job.results.map(({ url, srt_url, vtt_url, json_url, ...r }) => r),
   };
   await putLibJob(lib);
+  await learnFromJob(job).catch(() => null); // this voice's scores feed its learned defaults
   return lib;
 }
 

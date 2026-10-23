@@ -7,7 +7,7 @@ import { useDialog } from "./Dialog";
 type S = {
   engine: string; voice: string; style: string; platform: string; takes: number; subtitles: boolean; lexicon: boolean;
   pronounce: Record<string, string>; enhance_recordings: boolean; enhance_input: boolean; enhance_output: boolean;
-  backup_media: boolean;
+  backup_media: boolean; review: boolean;
 };
 
 const opt = (pairs: readonly (readonly [string, string])[]) => pairs.map(([v, l]) => <option key={v} value={v}>{l}</option>);
@@ -87,6 +87,8 @@ export default function Settings() {
                 <div className="seg">{[1, 2, 3, 4].map((n) => <button key={n} className={s.takes === n ? "on" : ""} onClick={() => set("takes", n)}>{n}×</button>)}</div></div>
             </div>
             <Toggle on={s.subtitles} set={(v) => set("subtitles", v)} title="Subtitles" about="Word-timed SRT/VTT, script match and voice match scores." />
+            <Toggle on={s.review} set={(v) => set("review", v)} title="Review every sentence"
+              about="Whisper listens back; a sentence that skips, swaps or invents a word, or drifts off your voice, is re-voiced (up to 2 more tries). The scores teach each voice its best settings." />
             <Toggle on={s.lexicon} set={(v) => set("lexicon", v)} title="Tech pronunciation" about="SQL → sequel, GPU → G-P-U, 16GB → 16 gigabytes, markdown and links cleaned." />
             <label className="f" style={{ marginTop: 8 }}>Your pronunciation dictionary</label>
             <textarea value={lex} onChange={(e) => setLex(e.target.value)} spellCheck={false} style={{ minHeight: 120 }}

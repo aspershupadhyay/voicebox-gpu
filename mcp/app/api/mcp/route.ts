@@ -7,6 +7,7 @@ import { loadWorker, STALE_MS } from "@/lib/registry";
 import { call, safeEqual, WorkerOffline } from "@/lib/worker";
 import { archiveWorkerJob, listLibrary, presignPath } from "@/lib/library";
 import { getSettings, updateSettings, withDefaults } from "@/lib/settings";
+import { describeProfile, withProfile } from "@/lib/profiles";
 import {
   addComment, addMediaFromUrl, createPost, deletePost, getPost, hasKey, linkJob, listActivity, listComments, listMedia, listMembers, listPosts, postsBetween, updatePost,
 } from "@/lib/appwrite";
@@ -121,12 +122,14 @@ const handler = createMcpHandler(
           "style sets the delivery (default 'tech'): tech = bright YouTube-tech pace (~185 wpm), hype = max energy for promos, narrator = calm documentary (~165 wpm), neutral = engine defaults. Explicit params override the style. For energy the voice matters most (Orpheus temperature does not add energy): orpheus mia/leo, kokoro am_fenrir/af_bella; chatterbox via exaggeration.",
           "First use of an engine installs + loads it (several minutes); the job keeps running, so poll with get_job.",
           "post_id: voice a workspace post. Without lines, its script is used (one line per non-empty line); the voiceover is attached to the post either way.",
+          "review (default on, from settings): Whisper listens back to every sentence; any sentence that skipped, swapped or invented words, or drifted off the voice, is re-voiced (up to 2 more tries, trying the voice's settings a little either side). Each result reports review {retried, fixed, issues:[{missed, added}]}. The scores teach the voice its best settings over time (voice_profile).",
         ].join(" "),
         inputSchema: z.object({
           engine: z.enum(ENGINES).optional().describe("default from settings (qwen unless changed)"),
           voice: z.string().optional().describe("default from settings"),
           lines: z.array(line).min(1).max(1000).optional().describe("required unless post_id is given"),
           post_id: POST_ID.optional().describe("workspace post: voice its script and attach the result to it"),
+          review: z.boolean().optional().describe("listen back and re-voice sentences that missed (default on)"),
           subtitles: z.boolean().optional().describe("also make word-timed subtitles with Whisper large-v3"),
           language: z.string().max(8).optional().describe("ISO code for Whisper/Chatterbox, e.g. en, hi; omit to auto-detect"),
           style: z.enum(["tech", "hype", "narrator", "neutral"]).optional().describe("delivery style; default tech"),
@@ -165,7 +168,7 @@ const handler = createMcpHandler(
             if (!body.platform && plat) body.platform = (plat === "instagram" ? "reels" : plat) as (typeof PLATFORMS)[number];
           }
           if (!body.lines?.length) throw new Error("send lines, or a post_id whose script to voice");
-          const full = withDefaults(body, await getSettings());
+          const full = await withProfile(withDefaults(body, await getSettings()));
           const ref = typeof full.voice === "string" && isCustomVoice(full.voice) ? await refSync(full.voice) : null;
           const job = await call<Job>("/jobs", { body: ref ? { ...full, ref } : full });
           if (post) await linkJob(post.$id, job.id, CLAUDE);
@@ -215,11 +218,13 @@ const handler = createMcpHandler(
         title: "Studio clean-up of a recording",
         description: [
           "Make a recording from a bad mic sound studio-grade: Resemble Enhance removes noise and room echo and restores the detail a cheap mic or phone loses (to 44.1 kHz), then it is mastered for the platform. Same length as the input, so it stays in sync with video.",
-          "url: any audio or video link. params.mode: enhance (default; denoise + restore) or denoise (noise only, exact original tone); params.strength 0-1 (default 0.6; higher for noisy, echoey rooms).",
+          "It measures the recording first (noise floor, bandwidth, room echo, clipping) and runs only what it needs: DeepFilterNet for noise, Resemble Enhance to restore a thin or echoey recording, both when needed, then checks it still sounds like the same person. The result reports cleanup {steps, why, before, after}.",
+          "url: any audio or video link. cleanup: auto (default), denoise (noise only, keeps the exact tone) or enhance (always restore).",
         ].join(" "),
         inputSchema: z.object({
           url: z.string().url(),
-          params: z.object({ mode: z.enum(["enhance", "denoise"]).optional(), strength: z.number().min(0).max(1).optional(), steps: z.number().int().min(16).max(128).optional() }).optional(),
+          cleanup: z.enum(["auto", "denoise", "enhance"]).optional().describe("default auto: measured per recording"),
+          params: z.object({ strength: z.number().min(0).max(1).optional(), steps: z.number().int().min(16).max(128).optional() }).optional().describe("Resemble Enhance fine-tuning"),
           platform: z.enum(PLATFORMS).optional(),
           subtitles: z.boolean().optional(),
           label: z.string().max(80).optional(),
@@ -284,6 +289,7 @@ const handler = createMcpHandler(
           lexicon: z.boolean().optional(), pronounce: z.record(z.string(), z.string()).optional(),
           enhance_recordings: z.boolean().optional(), enhance_input: z.boolean().optional(), enhance_output: z.boolean().optional(),
           backup_media: z.boolean().optional().describe("copy workspace uploads to R2 as a backup"),
+          review: z.boolean().optional().describe("listen back to every voiceover and re-voice sentences that missed"),
         }),
       },
       async (patch) => {
@@ -305,6 +311,22 @@ const handler = createMcpHandler(
       async () => {
         try {
           return text((await listMyVoices(false)).map((v) => ({ name: v.name, label: v.label, seconds: v.duration, transcript: v.transcript })));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "voice_profile",
+      {
+        title: "What a voice has learned",
+        description: "Per engine + voice + delivery style: how many reviewed voiceovers it has, its usual voice-match score, the temperature that has scored best (used automatically when a request doesn't set one), and every setting tried with its average score.",
+        inputSchema: z.object({ engine: z.enum(ENGINES), voice: z.string().max(64), style: z.enum(["tech", "hype", "narrator", "neutral"]).optional() }),
+      },
+      async ({ engine, voice, style }) => {
+        try {
+          return text((await describeProfile(engine, voice, style)) ?? { engine, voice, style: style ?? "tech", jobs: 0, note: "no reviewed voiceovers yet" });
         } catch (e) {
           return fail(e);
         }

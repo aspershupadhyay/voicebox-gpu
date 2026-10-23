@@ -24,13 +24,21 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
 - **Made for YouTube, Shorts, Reels and TikTok:** pick a `platform` and every line gets a broadcast voice chain (rumble cut,
   presence, de-ess, gentle compression) and two-pass loudness to the platform's target (−14 LUFS; podcast −16), with
   pop-up 1–3 word captions for vertical video.
-- **Best-of-N takes:** voice each sentence 2–4 times; Whisper and a speaker-match model keep the cleanest take that sounds most like you.
+- **Reviewed, not hoped for:** Whisper listens back to every sentence. One that skips, swaps or invents a word, or drifts
+  off your voice, is re-voiced (only that sentence, up to two more tries), so you get the fix without paying for best-of-N
+  on everything. Scores compare the script and what was heard in the same spoken form (sound-alike words and letters,
+  not spelling), so "SQL" vs "sequel" or "Kubernetes" vs "Cubernetes" no longer swings the number. Best-of-N (2–4 takes)
+  is still there for final renders.
+- **Learns each voice:** every reviewed voiceover records how each setting scored for that voice and style; once there's
+  enough evidence, the best temperature becomes that voice's default and its usual voice-match becomes the bar.
 - **Says tech right:** SQL, GPU, JSON, 16GB, v2.1, URLs and markdown are read the way a presenter would; add your own
   pronunciations. `[pause 0.8]`, `[beat]` and `[breath]` put real silence in the script.
 - **Re-voice:** upload any take of yourself (voice memo, screen recording) and get it back in your clean recorded voice,
   timing and emotion intact. Hindi lines in a Qwen script are voiced by Chatterbox in the same voice.
-- **Bad mic, studio sound:** Resemble Enhance removes noise and room echo and restores the detail a cheap mic loses. It
-  runs on your voice recordings before cloning, and the Clean-up page cleans up any recording or video soundtrack.
+- **Bad mic, studio sound, measured:** each recording is measured first (noise floor, bandwidth, room echo, clipping) and
+  gets only what it needs: DeepFilterNet (CPU) for noise, Resemble Enhance to restore a thin or echoey voice, or both. A
+  speaker check makes sure it still sounds like you, and the report shows before and after. Runs on voice recordings
+  before cloning, on re-voice input, and on the Clean-up page.
 - **Settings:** studio-wide defaults (voice, platform, pronunciation dictionary, enhance switches, R2 backup) shared by both
   of you and every MCP client.
 - **Subtitles:** Whisper large-v3 with word timestamps → SRT / VTT / JSON, per line and for the whole timeline, plus a script-match score

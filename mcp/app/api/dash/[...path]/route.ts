@@ -4,6 +4,7 @@ import { call, WorkerOffline } from "@/lib/worker";
 import { loadWorker, STALE_MS } from "@/lib/registry";
 import { archiveWorkerJob, deleteLibJob, FILE_RE, getLibJob, listLibrary, presignPath, presignPuts, putFile, putLibJob, signer, withUrls, type LibJob } from "@/lib/library";
 import { getSettings, updateSettings, withDefaults } from "@/lib/settings";
+import { describeProfile, withProfile } from "@/lib/profiles";
 import { deleteMyVoice, getMyVoice, getSamples, isCustomVoice, listMyVoices, putMyVoice, recordSample, refSync, samplePutUrl, VOICE_RE, voicePutUrl } from "@/lib/voices";
 
 type RefJob = { id: string; kind: string; status: string; voice: string; label?: string; version?: string; warnings?: string[];
@@ -38,7 +39,7 @@ async function guard(req: Request, ctx: Ctx) {
 export async function GET(req: Request, ctx: Ctx) {
   const g = await guard(req, ctx);
   if (g.deny) return g.deny;
-  const [a, b] = g.path;
+  const [a, b, c] = g.path;
   try {
     if (a === "status") {
       const rec = await loadWorker();
@@ -55,6 +56,10 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "samples") return Response.json(await getSamples());
     if (a === "myvoices") return Response.json({ voices: await listMyVoices() });
     if (a === "settings") return Response.json(await getSettings());
+    if (a === "profile" && b && c) {
+      const style = new URL(req.url).searchParams.get("style") ?? "tech";
+      return Response.json(await describeProfile(b, c, style) ?? { engine: b, voice: c, style, jobs: 0 });
+    }
     if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
     if (a === "jobs" && !b) return Response.json(await call("/jobs"));
     if (a === "jobs" && b) {
@@ -90,7 +95,7 @@ export async function POST(req: Request, ctx: Ctx) {
     if (a === "settings") return Response.json(await updateSettings(body));
     if (a === "speakable") return Response.json(await call("/speakable", { body }));
     if (a === "jobs" && !b) {
-      if (!body.kind || ["story", "revoice", "clean"].includes(body.kind)) body = withDefaults(body, await getSettings());
+      if (!body.kind || ["story", "revoice", "clean"].includes(body.kind)) body = await withProfile(withDefaults(body, await getSettings()));
       if (body.kind === "story" || body.kind === "clean") {
         // uploads: scene images (scenes[i].image_key), the music bed (music_key), the recording to clean (source_key)
         const up = async (k: unknown) => {

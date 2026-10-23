@@ -728,3 +728,5 @@ textarea.doc.short { min-height: 110px; }
 @media (max-width: 700px) { .cal-day { min-height: 74px; } .cal-chip .mono { display: none; } .cal-chip { font-size: 10.5px; padding: 2px 4px; } .board { grid-template-columns: repeat(5, 82vw); } .props { grid-template-columns: 1fr; } }
 
 .note-strip { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin-bottom: 18px; font-size: 13.5px; }
+.report { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--bg2); margin-bottom: 10px; }
+.report .table td, .report .table th { padding: 6px 4px; }

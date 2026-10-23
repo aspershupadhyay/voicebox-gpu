@@ -1,8 +1,8 @@
 "use client";
-import { DownloadSimple, FilmSlate, ImageSquare, MagicWand, MusicNotes, Sparkle, UploadSimple, Waveform, WarningCircle } from "@phosphor-icons/react";
+import { MagicWand, UploadSimple, Waveform, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { api, fileUrl, fmtS, pct, rangeFill, simClass, uploadFile, type Job, type MyVoice } from "./api";
+import { useEffect, useRef, useState } from "react";
+import { api, rangeFill, uploadFile, type Cleanup, type Job } from "./api";
 import JobProgress from "./JobProgress";
 import LineRow from "./LineRow";
 import { useStatus } from "./Shell";
@@ -33,10 +33,35 @@ function usePoll() {
   return { job, lib, err, setErr, start, busy };
 }
 
+const STEP_NAME: Record<string, string> = { denoise: "Noise removal (DeepFilterNet)", restore: "Restoration (Resemble Enhance)" };
+const fmt = {
+  snr_db: (v: number | null) => (v == null ? "—" : `${Math.round(v)} dB`),
+  bandwidth_hz: (v: number | null) => (v == null ? "—" : `${(v / 1000).toFixed(1)} kHz`),
+  reverb_s: (v: number | null) => (v == null ? "—" : `${v.toFixed(2)} s`),
+};
+
+/** What the clean-up measured, what it ran and why: before and after, side by side. */
+function CleanupReport({ c }: { c: Cleanup }) {
+  return (
+    <div className="report">
+      <div className="small"><b>{c.steps.length ? c.steps.map((x) => STEP_NAME[x] ?? x).join(" → ") : "Already clean: mastering only"}</b>
+        <span className="dim"> · {c.why}{c.identity != null ? ` · still sounds like you (${Math.round(c.identity * 100)}%)` : ""}</span></div>
+      <table className="table" style={{ marginTop: 8 }}>
+        <thead><tr><th /><th>Before</th><th>After</th></tr></thead>
+        <tbody>
+          <tr><td className="dim small">Voice above noise</td><td className="mono small">{fmt.snr_db(c.before.snr_db)}</td><td className="mono small">{fmt.snr_db(c.after.snr_db)}</td></tr>
+          <tr><td className="dim small">Bandwidth</td><td className="mono small">{fmt.bandwidth_hz(c.before.bandwidth_hz)}</td><td className="mono small">{fmt.bandwidth_hz(c.after.bandwidth_hz)}</td></tr>
+          <tr><td className="dim small">Room echo</td><td className="mono small">{fmt.reverb_s(c.before.reverb_s)}</td><td className="mono small">{fmt.reverb_s(c.after.reverb_s)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function CleanUp({ settings }: { settings: Settings | null }) {
   const { status } = useStatus();
   const [file, setFile] = useState<File | null>(null);
-  const [mode, setMode] = useState("enhance");
+  const [mode, setMode] = useState("auto");
   const [strength, setStrength] = useState(0.6);
   const [platform, setPlatform] = useState("youtube");
   const [subtitles, setSubtitles] = useState(false);
@@ -51,7 +76,7 @@ function CleanUp({ settings }: { settings: Settings | null }) {
       setUpFrac(0);
       const key = await uploadFile(file, file.name.replace(/[^A-Za-z0-9._-]/g, "_") || "recording.wav", setUpFrac);
       setUpFrac(null);
-      start(await api<Job>("jobs", { body: { kind: "clean", source_key: key, platform, subtitles, params: { mode, strength }, label: `Clean-up · ${file.name.slice(0, 50)}` } }));
+      start(await api<Job>("jobs", { body: { kind: "clean", source_key: key, platform, subtitles, cleanup: mode, params: { strength }, label: `Clean-up · ${file.name.slice(0, 50)}` } }));
     } catch (e) {
       setUpFrac(null);
       setErr((e as Error).message);
@@ -62,8 +87,9 @@ function CleanUp({ settings }: { settings: Settings | null }) {
     <div className="card" style={{ marginTop: 16 }}>
       <div className="card-head"><h2><Waveform size={18} weight="duotone" /> Studio clean-up</h2><span className="dim tiny">bad mic in, studio sound out</span></div>
       <p className="dim small" style={{ marginTop: 0 }}>
-        Upload any recording of yourself (laptop mic, phone, a noisy room, or a video). AI removes the noise and room echo, rebuilds the
-        crisp detail a cheap mic loses, then masters it for your platform. The length stays the same, so it drops back onto your edit.
+        Upload any recording of yourself (laptop mic, phone, a noisy room, or a video). It measures the noise, the room echo and how much
+        of the voice the mic captured, runs only what that recording needs, and checks it still sounds like you. Same length as the
+        original, so it drops back onto your edit.
       </p>
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, alignItems: "end" }}>
         <div className="field" style={{ margin: 0 }}><label className="f">Recording (audio or video)</label>
@@ -73,7 +99,7 @@ function CleanUp({ settings }: { settings: Settings | null }) {
           </label></div>
         <div className="field" style={{ margin: 0 }}><label className="f">Mode</label>
           <select value={mode} onChange={(e) => setMode(e.target.value)}>
-            <option value="enhance">Studio: remove noise + restore detail</option><option value="denoise">Denoise only: keep my exact tone</option>
+            <option value="auto">Auto: measured per recording</option><option value="denoise">Denoise only: keep my exact tone</option><option value="enhance">Restore: rebuild a thin or echoey voice</option>
           </select></div>
         <div className="field" style={{ margin: 0 }}><label className="f">Publish for</label>
           <select value={platform} onChange={(e) => setPlatform(e.target.value)}>
@@ -96,6 +122,7 @@ function CleanUp({ settings }: { settings: Settings | null }) {
       {job?.library && r && (
         <div style={{ marginTop: 12 }}>
           {r.enhanced === false && <div className="tiny" style={{ color: "var(--warn)", marginBottom: 6 }}><WarningCircle size={12} /> The studio model couldn&apos;t run, so the standard clean-up was used (see the warnings above).</div>}
+          {r.cleanup && <CleanupReport c={r.cleanup} />}
           <LineRow jobId={job.id} line={r} audio={lib?.results[0]?.audio ?? r.url} slug="clean" />
         </div>
       )}

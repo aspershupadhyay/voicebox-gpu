@@ -18,6 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as C  # noqa: E402
 from lexicon import is_devanagari, segments, speakable  # noqa: E402
 import story  # noqa: E402
+import cleanup  # noqa: E402
+import quality  # noqa: E402
 
 SECRET = os.environ.get("WORKER_SECRET", "")
 HOME = C.HOME
@@ -352,6 +354,10 @@ class Engines:
         """Speaker-embedding cosine of each file vs the reference (WavLM SV, ~0.86+ = same speaker)."""
         return self._post("whisper", "/similarity", {"ref": ref_path, "paths": paths})["scores"]
 
+    def mos(self, paths):
+        """Predicted naturalness (UTMOS, 1-5) per file."""
+        return self._post("whisper", "/mos", {"paths": paths})["scores"]
+
     def revoice(self, payload):
         return self._post("chatterbox", "/revoice", payload)
 
@@ -567,35 +573,9 @@ def learn_rate(name, seconds, units):
         pass
 
 
-ONES = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
-TENS = "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()
-
-
-def num_words(n):
-    if n < 20:
-        return ONES[n]
-    if n < 100:
-        return TENS[n // 10] + ("" if n % 10 == 0 else " " + ONES[n % 10])
-    if n < 1000:
-        return ONES[n // 100] + " hundred" + ("" if n % 100 == 0 else " " + num_words(n % 100))
-    if n < 1_000_000:
-        return num_words(n // 1000) + " thousand" + ("" if n % 1000 == 0 else " " + num_words(n % 1000))
-    return str(n)
-
-
-def norm_words(s):
-    s = re.sub(r"<[^>]{1,20}>|\([a-z ]{2,20}\)", " ", s.lower())
-    s = re.sub(r"\b((?:[a-z]\.){2,})", lambda m: m.group(1).replace(".", ""), s)  # g.p.s. -> gps
-    s = re.sub(r"(?<=\w)-(?=\w)", "", s)  # non-stop -> nonstop
-    s = re.sub(r"\d[\d,]*", lambda m: num_words(int(m.group(0).replace(",", ""))) if m.group(0).replace(",", "").isdigit() and len(m.group(0)) < 8 else m.group(0), s)
-    s = s.replace("percent", "per cent").replace("%", " per cent")
-    return re.findall(r"[\w']+", s.replace("per cent", "percent"))
-
-
 def match_score(script, heard):
-    import difflib
-    a, b = norm_words(script), norm_words(heard)
-    return round(difflib.SequenceMatcher(None, a, b).ratio(), 3) if a and b else None
+    """How closely what was heard follows the script (quality.score_text: same spoken form, sound-alike words, letters)."""
+    return quality.score_text(script, heard)["score"]
 
 
 # --------------------------------------------------------------------------------------- subtitles
@@ -737,17 +717,27 @@ def _voice_setup(job, body, lines):
         clean.append({"id": lid, "text": text, "window": ln.get("window"), "start": ln.get("start"), "params": ln.get("params") or {}})
     style = body.get("style") or C.DEFAULT_STYLE
     style_params, style_post = C.style_settings(style, engine)
+    # what this voice has learned works best (sent by the dashboard from past reviews); explicit params still win
+    profile = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+    specs = C.ENGINES[engine]["params"]
+    learned = {k: v for k, v in (profile.get("params") or {}).items() if k in specs and isinstance(v, (int, float))
+               and specs[k].get("min", -1e9) <= v <= specs[k].get("max", 1e9)}
     job.update({"engine": engine, "voice": resolve_voice(engine, body.get("voice")), "style": style,
-                "params": {**style_params, **(body.get("params") or {})}, "lines": clean,
+                "params": {**style_params, **learned, **(body.get("params") or {})}, "lines": clean,
+                "profile": {"sim_base": profile.get("sim_base") if isinstance(profile.get("sim_base"), (int, float)) else None,
+                            "learned": learned},
+                "review": body.get("review", engine != "kokoro") is not False,
                 "subtitles": bool(body.get("subtitles")), "ref": body.get("ref") if isinstance(body.get("ref"), dict) else None,
                 "lexicon": body.get("lexicon", True) is not False, "pronounce": _pronounce(body.get("pronounce")),
                 "takes": 1 if engine == "kokoro" else max(1, min(C.MAX_TAKES, int(body.get("takes") or 1)))})
     _platform(job, body, style_post)
     if engine == "kokoro" and int(body.get("takes") or 1) > 1:
         job["warnings"].append("kokoro is deterministic, so every take would be identical: made one")
+    if learned:
+        job["warnings"].append("learned settings for this voice: " + ", ".join(f"{k} {v}" for k, v in learned.items()))
     chars = sum(len(l["text"]) for l in clean)
     job["est_total"] = (RATES[engine] * chars * job["takes"] + (RATES["whisper"] * chars / 14 if job["subtitles"] else 0)
-                        + (RATES["whisper"] * chars / 14 * job["takes"] if job["takes"] > 1 else 0))
+                        + (RATES["whisper"] * chars / 14 * job["takes"] if job["takes"] > 1 or job["review"] else 0))
 
 
 def _pronounce(given):
@@ -802,8 +792,12 @@ def make_clean_job(body):
     if not url:
         raise ValueError("url must point at the recording to clean up (audio or video)")
     job = _base_job("tts", body)
-    job.update({"engine": "enhance", "voice": "", "style": "neutral", "mode": "clean",
-                "params": C.resolve_params("enhance", body.get("params") or {}),
+    given = body.get("params") or {}
+    choice = body.get("cleanup") or given.get("mode") or "auto"  # an explicit params.mode (older clients) still decides
+    if choice not in ("auto", "denoise", "enhance"):
+        raise ValueError("cleanup must be auto, denoise or enhance")
+    job.update({"engine": "enhance", "voice": "", "style": "neutral", "mode": "clean", "cleanup": choice,
+                "params": C.resolve_params("enhance", given),
                 "lines": [{"id": "clean", "text": "", "url": url, "window": None, "start": None, "params": {}}],
                 "subtitles": bool(body.get("subtitles")), "ref": None, "takes": 1, "lexicon": False, "pronounce": {}})
     _platform(job, {**body, "post": {"trim": False, **(body.get("post") or {})}})
@@ -1042,6 +1036,44 @@ def _studio_output(job, path):
     return path
 
 
+def smart_clean(job, src, dst, prefer=None):
+    """Adaptive clean-up (cleanup.run): measure, run only what the recording needs (DeepFilterNet noise removal on the
+    CPU, Resemble Enhance restoration on the GPU), then check it still sounds like the same person. Returns the
+    report; never raises for a missing tool (the report lists what was skipped)."""
+    import soundfile as sf
+    stage = job["stage"]
+    dur = sf.info(src).duration
+
+    def enhance(a, b, params):
+        return studio_clean(job, a, b, params)
+
+    def similarity(ref, paths):
+        _prepare(job, "whisper")
+        job["stage"] = "checking"
+        return _run_unit(job, 0.3 * len(paths) + 5, lambda: ENG.similarity(ref, paths), "checking it still sounds like you")
+
+    def note(msg):
+        job["stage"] = "denoising"
+        job["cur"] = {"t0": time.time(), "est": max(1.0, 0.08 * dur), "label": msg}
+
+    try:
+        rep = cleanup.run(src, dst, os.path.dirname(dst), HOME, enhance=enhance, similarity=similarity, prefer=prefer, note=note)
+    finally:
+        job["cur"] = None
+        job["stage"] = stage
+    for sk in rep.get("skipped", []):
+        job["warnings"].append(f"clean-up step {sk['step']} skipped ({sk['error']})")
+    log(f"job {job['id']} clean-up: {rep['why']} -> {[x['step'] for x in rep['steps']]}")
+    return rep
+
+
+def _cleanup_summary(rep):
+    b, a = rep["before"], rep["after"]
+    return {"steps": [x["step"] for x in rep["steps"]], "why": rep["why"], "identity": rep.get("identity"),
+            "before": {k: b.get(k) for k in ("snr_db", "bandwidth_hz", "reverb_s", "clipped")},
+            "after": {k: a.get(k) for k in ("snr_db", "bandwidth_hz", "reverb_s", "clipped")}}
+
+
 def run_clean(job):
     jdir = os.path.join(JOBS_DIR, job["id"])
     job["stage"] = "downloading"
@@ -1056,16 +1088,15 @@ def run_clean(job):
     if dur > 60 * 60:
         raise ValueError("clean-up takes up to an hour of audio at a time")
     job["est_total"] = RATES["enhance"] * dur + (RATES["whisper"] * dur if job["subtitles"] else 0) + 20
-    enhanced = studio_clean(job, prep, clean, job["params"])
-    if not enhanced:
-        job["stage"] = "cleaning"
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", prep, "-af", "lowpass=f=14000,afftdn=nf=-28", clean], check=True)
+    rep = smart_clean(job, prep, clean, {"auto": None}.get(job.get("cleanup", "auto"), job.get("cleanup")))
+    enhanced = any(x["step"] == "restore" for x in rep["steps"])
     os.remove(prep)
     info = {}
     final = postprocess(clean, os.path.join(jdir, "clean.wav"), job["post"], info)
     os.remove(clean)
     job["results"].append({"id": "clean", "text": "", "duration": round(final, 3), "window": None, "start": None, "chunks": 1,
-                           "fits": None, "lufs": info.get("lufs"), "enhanced": enhanced, "source_s": round(dur, 2)})
+                           "fits": None, "lufs": info.get("lufs"), "enhanced": enhanced, "source_s": round(dur, 2),
+                           "cleanup": _cleanup_summary(rep)})
     if job["subtitles"]:
         try:
             subtitle_tts(job, jdir)
@@ -1329,54 +1360,20 @@ def run_tts(job):
     def out(p, i, k):
         return os.path.join(jdir, f"{p['ln']['id']}.c{i}.t{k}.wav")
 
-    # batches: per engine, whole lines, up to 8 items on batch engines (vLLM / Qwen), one at a time elsewhere
-    for eng in dict.fromkeys(p["engine"] for p in plans):
-        mine = [p for p in plans if p["engine"] == eng]
-        _prepare(job, eng)
-        job["stage"] = "generating"
-        batch_size = 8 if ENG.batch.get(eng) else 1
-        groups, cur, n = [], [], 0
-        for p in mine:
-            cur.append(p); n += len(p["chunks"]) * takes
-            if n >= batch_size:
-                groups.append(cur); cur, n = [], 0
-        if cur:
-            groups.append(cur)
-        for group in groups:
-            items = []
-            for p in group:
-                for i, (_, said, _) in enumerate(p["chunks"]):
-                    for k in range(takes):
-                        params = {**p["params"], "seed": int(p["params"].get("seed", 7)) + 1000 * k} if k else p["params"]
-                        items.append({"text": said, "voice": p["voice_arg"], "params": params, "ref_path": ref_path,
-                                      "ref_text": ref_text, "out_path": out(p, i, k)})
-            chars = sum(len(it["text"]) for it in items)
-            t0 = time.time()
-            first, last = order[group[0]["ln"]["id"]] + 1, order[group[-1]["ln"]["id"]] + 1
-            label = f"line {first} of {len(plans)}" if first == last else f"lines {first}–{last} of {len(plans)} together"
-            if takes > 1:
-                label += f" · {takes} takes each"
-            res = _run_unit(job, RATES[eng] * chars, lambda: ENG.synth_batch(eng, items), label)
-            if not ENG.batch.get(eng) or len(items) > 1:
-                learn_rate(eng, time.time() - t0, chars)
-            errs = [r["error"] for r in res if "error" in r]
-            if errs:
-                raise RuntimeError(errs[0])
-            if takes == 1:
-                for p in group:
-                    _assemble(job, jdir, p, [out(p, i, 0) for i in range(len(p["chunks"]))])
-            log(f"job {job['id']} {eng}/{voice} {sum(len(g) for g in groups[:groups.index(group) + 1])}/{len(mine)} lines")
+    first = [(p, i, k, _take_params(p, k)) for p in plans for i in range(len(p["chunks"])) for k in range(takes)]
+    _generate(job, first, out, ref_path, ref_text, order, len(plans))
 
-    if takes > 1:
-        picks = _pick_takes(job, plans, out, ref_path)
+    if takes == 1 and not job.get("review"):  # fast path: no listening pass
+        for p in plans:
+            _assemble(job, jdir, p, [out(p, i, 0) for i in range(len(p["chunks"]))])
+    else:
+        picks = _review(job, plans, out, ref_path, ref_text, order)
         for p in plans:
             _assemble(job, jdir, p, [out(p, i, picks[p["ln"]["id"]]["take"][i]) for i in range(len(p["chunks"]))],
                       picks[p["ln"]["id"]])
-        for p in plans:  # the takes that lost
-            for i in range(len(p["chunks"])):
-                for k in range(takes):
-                    if os.path.exists(out(p, i, k)):
-                        os.remove(out(p, i, k))
+        for x in os.listdir(jdir):  # the takes that lost
+            if re.search(r"\.c\d+\.t\d+\.wav$", x):
+                os.remove(os.path.join(jdir, x))
     job["results"].sort(key=lambda r: order[r["id"]])
 
     if job["subtitles"]:
@@ -1389,6 +1386,51 @@ def run_tts(job):
             job["warnings"].append(f"subtitles failed ({type(e).__name__}); audio is saved, run subtitles again from the Library")
             for r in job["results"]:
                 r.pop("words", None); r.pop("subs", None)
+
+
+# Retakes try the voice's settings a little either side as well as a new seed: that is how a voice's best settings are
+# found (the dashboard keeps the scores per voice and feeds the winners back as its learned defaults).
+JITTER = [0.0, -0.05, 0.05, -0.1, 0.1, -0.15]
+
+
+def _take_params(p, k):
+    """Engine params for take k of a chunk: take 0 = the line's params; later takes = new seed + a temperature nudge."""
+    if not k:
+        return p["params"]
+    params = {**p["params"], "seed": int(p["params"].get("seed", 7)) + 1000 * k}
+    spec = C.ENGINES[p["engine"]]["params"].get("temperature")
+    if spec and "temperature" in params:
+        t = float(params["temperature"]) + JITTER[k % len(JITTER)]
+        params["temperature"] = round(min(spec.get("max", 2.0), max(spec.get("min", 0.05), t)), 3)
+    return params
+
+
+def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
+    """Synthesise (plan, chunk, take, params) items: per engine, batched up to 8 on batch engines (vLLM / Qwen)."""
+    for eng in dict.fromkeys(w[0]["engine"] for w in wanted):
+        mine = [w for w in wanted if w[0]["engine"] == eng]
+        _prepare(job, eng)
+        job["stage"] = "generating" if job["stage"] != "fixing" else "fixing"
+        size = 8 if ENG.batch.get(eng) else 1
+        for b in range(0, len(mine), size):
+            group = mine[b:b + size]
+            items = [{"text": p["chunks"][i][1], "voice": p["voice_arg"], "params": params, "ref_path": ref_path,
+                      "ref_text": ref_text, "out_path": out(p, i, k)} for p, i, k, params in group]
+            chars = sum(len(it["text"]) for it in items)
+            lo, hi = order[group[0][0]["ln"]["id"]] + 1, order[group[-1][0]["ln"]["id"]] + 1
+            label = (f"line {lo} of {n_lines}" if lo == hi else f"lines {lo}–{hi} of {n_lines} together")
+            if job["stage"] == "fixing":
+                label = f"re-voicing {len(mine)} sentence{'s' if len(mine) > 1 else ''} that missed"
+            elif job.get("takes", 1) > 1:
+                label += f" · {job['takes']} takes each"
+            t0 = time.time()
+            res = _run_unit(job, RATES[eng] * chars, lambda: ENG.synth_batch(eng, items), label)
+            if not ENG.batch.get(eng) or len(items) > 1:
+                learn_rate(eng, time.time() - t0, chars)
+            errs = [r["error"] for r in res if "error" in r]
+            if errs:
+                raise RuntimeError(errs[0])
+        log(f"job {job['id']} {eng}/{job['voice']} {len(mine)} chunk takes")
 
 
 def _assemble(job, jdir, p, paths, pick=None):
@@ -1412,20 +1454,16 @@ def _assemble(job, jdir, p, paths, pick=None):
         r["spoken"] = " ".join(c[1] for c in p["chunks"])
     if pick:
         r["takes"] = {"n": job["takes"], "picked": [k + 1 for k in pick["take"]], "match": pick["match"], "similarity": pick["similarity"]}
+        r["review"] = pick.get("review")
     job["results"].append(r)
 
 
-def _pick_takes(job, plans, out, ref_path):
-    """Best-of-N: Whisper transcribes every take of every chunk; the winner reads the script most faithfully
-    (match vs the script or its spoken form), sounds most like the reference voice (when cloning), and hasn't run on
-    (a take far longer than its siblings is usually a hallucinated tail). Picked per chunk, so one fluffed sentence
-    doesn't cost a whole line."""
-    takes = job["takes"]
-    _prepare(job, "whisper")
-    job["stage"] = "choosing"
-    entries = [(p, i, k) for p in plans for i in range(len(p["chunks"])) for k in range(takes)]
-    paths = [out(p, i, k) for p, i, k in entries]
+def _listen(job, paths, ref_path):
+    """Whisper + voice match (+ naturalness when available) for a set of takes."""
     import soundfile as sf
+    stage = job["stage"]
+    _prepare(job, "whisper")
+    job["stage"] = stage
     durs = [sf.info(x).duration for x in paths]
     heard = []
     for b in range(0, len(paths), 4):
@@ -1433,33 +1471,108 @@ def _pick_takes(job, plans, out, ref_path):
         audio_s = sum(durs[b:b + 4])
         t0 = time.time()
         heard += _run_unit(job, RATES["whisper"] * audio_s, lambda: ENG.transcribe(batch, job.get("language")),
-                           f"listening to takes {b + 1}–{b + len(batch)} of {len(paths)}")
+                           f"listening back: {b + 1}–{b + len(batch)} of {len(paths)}")
         learn_rate("whisper", time.time() - t0, audio_s)
     sims = [None] * len(paths)
     if ref_path:
         try:
-            sims = _run_unit(job, 0.3 * len(paths) + 5, lambda: ENG.similarity(ref_path, paths), "comparing each take with your voice")
+            sims = _run_unit(job, 0.3 * len(paths) + 5, lambda: ENG.similarity(ref_path, paths), "comparing with your voice")
         except Cancelled:
             raise
         except Exception as e:  # noqa: BLE001  a missing voice-match model only costs the similarity half of the score
             job["warnings"].append(f"voice match unavailable ({type(e).__name__}); takes chosen on script accuracy")
-    picks = {}
-    for p in plans:
-        chosen, matches, simil = [], [], []
-        for i, (text, said, _) in enumerate(p["chunks"]):
-            idx = [n for n, (q, j, _) in enumerate(entries) if q is p and j == i]
-            med = sorted(durs[n] for n in idx)[len(idx) // 2]
+    mos = [None] * len(paths)
+    if not job.get("_no_mos"):
+        try:
+            mos = _run_unit(job, 0.15 * len(paths) + 3, lambda: ENG.mos(paths), "rating naturalness")
+        except Cancelled:
+            raise
+        except Exception:  # noqa: BLE001  UTMOS is a tie-breaker; carry on without it (and don't retry every round)
+            job["_no_mos"] = True
+    clip = []
+    for x in paths:
+        a, _ = sf.read(x, dtype="float32", always_2d=False)
+        clip.append(float((abs(a) > 0.995).mean()) if len(a) else 0.0)
+    return [{"heard": h["text"], "sim": s, "mos": m, "dur": d, "clip": c} for h, s, m, d, c in zip(heard, sims, mos, durs, clip)]
 
-            def score(n):
-                m = max(match_score(text, heard[n]["text"]) or 0, match_score(said, heard[n]["text"]) or 0)
-                return m + 0.5 * (sims[n] or 0) - (0.3 if durs[n] > 1.5 * med + 0.5 else 0)
-            best = max(idx, key=score)
-            chosen.append(entries[best][2])
-            matches.append(max(match_score(text, heard[best]["text"]) or 0, match_score(said, heard[best]["text"]) or 0))
-            if sims[best] is not None:
-                simil.append(sims[best])
-        picks[p["ln"]["id"]] = {"take": chosen, "match": round(sum(matches) / len(matches), 3),
-                                "similarity": round(sum(simil) / len(simil), 3) if simil else None}
+
+def _review(job, plans, out, ref_path, ref_text, order):
+    """Listen to every sentence, keep the best take, and re-voice only the sentences that missed (a skipped, swapped
+    or invented word, or a voice that drifted from the reference), up to REVIEW rounds, trying the voice's settings a
+    little either side each time. Every attempt is reported as a trial so the dashboard can learn this voice's best
+    settings. Returns per-line picks."""
+    gate = {**quality.REVIEW, **(job.get("review_gate") or {})}
+    base = (job.get("profile") or {}).get("sim_base")
+    cands = {}  # (line id, chunk) -> {take k: stats}
+    by_key = {(p["ln"]["id"], i): p for p in plans for i in range(len(p["chunks"]))}
+
+    def score_all(entries):
+        job["stage"] = "choosing"
+        stats = _listen(job, [out(p, i, k) for p, i, k, _ in entries], ref_path)
+        for (p, i, k, params), st in zip(entries, stats):
+            text, said, _ = p["chunks"][i]
+            t = quality.score_text(text, st["heard"], said)
+            cands.setdefault((p["ln"]["id"], i), {})[k] = {**st, "text": t["score"], "missed": t["missed"], "added": t["added"],
+                                                          "temperature": params.get("temperature"), "seed": params.get("seed")}
+
+    def best(key):
+        c = cands[key]
+        med = sorted(v["dur"] for v in c.values())[len(c) // 2]
+        rank = {k: quality.take_score(v["text"], v["sim"], base, v["mos"], v["dur"], med, v["clip"]) for k, v in c.items()}
+        k = max(rank, key=rank.get)
+        return k, rank[k]
+
+    takes = job.get("takes", 1)
+    score_all([(p, i, k, _take_params(p, k)) for p in plans for i in range(len(p["chunks"])) for k in range(takes)])
+    retried, rounds = set(), 0 if C.ENGINES[job["engine"]].get("deterministic") or job["engine"] == "kokoro" else gate["rounds"]
+    for r in range(rounds):
+        failing = []
+        for key in cands:
+            k, _ = best(key)
+            v = cands[key][k]
+            why = quality.failed(v["text"], v["sim"], base, gate)
+            if why:
+                failing.append((key, why))
+        if not failing:
+            break
+        job["stage"] = "fixing"
+        job["est_total"] += sum(RATES[by_key[k]["engine"]] * len(by_key[k]["chunks"][k[1]][1]) + RATES["whisper"] * 4 for k, _ in failing)
+        new = []
+        for key, why in failing:
+            p, i = by_key[key], key[1]
+            k = max(cands[key]) + 1
+            new.append((p, i, k, _take_params(p, k)))
+            retried.add(key)
+        log(f"job {job['id']} review round {r + 1}: re-voicing {len(new)} chunk(s) ({', '.join(sorted(set(w for _, w in failing)))})")
+        _generate(job, new, out, ref_path, ref_text, order, len(plans))
+        score_all(new)
+
+    picks, trials = {}, []
+    for p in plans:
+        chosen, texts, sims, issues = [], [], [], []
+        for i in range(len(p["chunks"])):
+            key = (p["ln"]["id"], i)
+            k, _ = best(key)
+            v = cands[key][k]
+            chosen.append(k)
+            texts.append(v["text"] or 0)
+            if v["sim"] is not None:
+                sims.append(v["sim"])
+            if quality.failed(v["text"], v["sim"], base, gate):
+                issues.append({"chunk": i + 1, "missed": v["missed"], "added": v["added"], "match": v["text"], "similarity": v["sim"]})
+            for kk, vv in cands[key].items():
+                trials.append({"engine": p["engine"], "temperature": vv["temperature"], "text": vv["text"], "sim": vv["sim"],
+                               "mos": vv["mos"], "picked": kk == k})
+        n_retried = sum(1 for i in range(len(p["chunks"])) if (p["ln"]["id"], i) in retried)
+        picks[p["ln"]["id"]] = {"take": chosen, "match": round(sum(texts) / len(texts), 3), "similarity": round(sum(sims) / len(sims), 3) if sims else None,
+                                "review": {"retried": n_retried, "fixed": n_retried - len(issues) if n_retried else 0, "issues": issues}}
+    job["trials"] = trials[:2000]
+    fixed = sum(x["review"]["fixed"] for x in picks.values())
+    still = sum(len(x["review"]["issues"]) for x in picks.values())
+    if fixed:
+        job["warnings"].append(f"review: re-voiced and fixed {fixed} sentence{'s' if fixed > 1 else ''} that missed the script or the voice")
+    if still:
+        job["warnings"].append(f"review: {still} sentence{'s' if still > 1 else ''} still below the bar after {rounds} retries (see each line's issues)")
     return picks
 
 
@@ -1479,7 +1592,16 @@ def run_revoice(job):
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", raw, "-vn", "-ac", "1", "-ar", "44100", "-af", "highpass=f=60", prep], check=True)
     os.remove(raw)
     # noise in the performance turns into mumbles in the new voice: denoise it first (timbre doesn't matter here)
-    if not (job.get("enhance", True) and studio_clean(job, prep, clean, {"mode": "denoise"}, "removing background noise")):
+    done = False
+    if job.get("enhance", True):
+        try:
+            job["stage"] = "denoising"
+            cleanup.denoise(HOME, prep, clean, 100)  # DeepFilterNet on the CPU: fast, keeps the performance's timing
+            done = True
+        except Exception as e:  # noqa: BLE001
+            job["warnings"].append(f"DeepFilterNet unavailable ({type(e).__name__}); used the enhancer's denoiser")
+            done = studio_clean(job, prep, clean, {"mode": "denoise"}, "removing background noise")
+    if not done:
         job["stage"] = "cleaning"
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", prep, "-af", "lowpass=f=11000,afftdn=nf=-28", clean], check=True)
     os.remove(prep)
@@ -1563,8 +1685,10 @@ def subtitle_tts(job, jdir):
         for x, o in zip(batch, outs):
             r = res_by_id[x]
             r["heard"] = o["text"]
-            scores = [match_score(r["text"], o["text"]), match_score(r.get("spoken") or "", o["text"])]
-            r["match"] = max((m for m in scores if m is not None), default=None)  # Whisper may write "SQL" or "sequel"
+            t = quality.score_text(r["text"], o["text"], r.get("spoken"))  # same spoken form both sides: "SQL" == "sequel"
+            r["match"] = t["score"]
+            if t["missed"] or t["added"]:
+                r["diff"] = {"missed": t["missed"], "added": t["added"]}
             r["words"] = o["words"]
             cues = cues_from_words(o["words"], style=style)
             write_subs(jdir, f"{x}.subs", cues, o["words"])
@@ -1628,7 +1752,7 @@ def run_transcribe(job):
         write_subs(jdir, f"{s['id']}.subs", cues, o["words"])
         job["results"].append({"id": s["id"], "name": s["name"], "text": s.get("text") or "", "heard": o["text"],
                                "duration": o["duration"], "cues": len(cues), "words": o["words"], "subs": True,
-                               "match": match_score(s["text"], o["text"]) if s.get("text") else None})
+                               "match": quality.score_text(s["text"], o["text"])["score"] if s.get("text") else None})
         off = float(s["start"]) if s.get("start") not in (None, "") else t_all
         cues_all += cues_from_words(o["words"], off)
         if s.get("text"):
@@ -1780,10 +1904,13 @@ def run_reference(job):
     if rms_db < -38:
         job["warnings"].append("the recording is very quiet: move closer to the mic")
     # studio clean-up first (a better reference = a better clone); the plain ffmpeg chain if the enhancer can't run
-    job["enhanced"] = bool(job.get("enhance")) and studio_clean(job, prep, clean, {"mode": "enhance", "strength": 0.7})
-    if not job["enhanced"]:
-        job["stage"] = "cleaning"
+    rep = None
+    if job.get("enhance"):
+        rep = smart_clean(job, prep, clean)
+        job["cleanup"] = _cleanup_summary(rep)
+    else:
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", prep, "-af", "lowpass=f=14000,afftdn=nf=-30", clean], check=True)
+    job["enhanced"] = bool(rep and rep["steps"])
     out = os.path.join(jdir, "reference.wav")
     dur = postprocess(clean, out, {"trim": True, "trim_db": -45, "normalize_dbfs": -3, "sample_rate": None})
     os.remove(raw); os.remove(clean); os.remove(prep)
@@ -1809,7 +1936,7 @@ def run_reference(job):
     json.dump({"transcript": heard, "version": job.get("version"), "source": "recording", "enhanced": job["enhanced"]},
               open(ref_paths(name)[1], "w"))
     job["results"] = [{"id": "reference", "text": heard, "duration": round(dur, 2), "cut": cut,
-                       "level_db": round(rms_db, 1), "peak": round(peak, 3), "enhanced": job["enhanced"]}]
+                       "level_db": round(rms_db, 1), "peak": round(peak, 3), "enhanced": job["enhanced"], "cleanup": job.get("cleanup")}]
 
 
 def package(job):
@@ -1958,13 +2085,19 @@ def _progress(job):
     elif stage == "enhancing":
         detail = (cur or {}).get("label") or "studio clean-up"
     elif stage == "choosing":
-        detail = (cur or {}).get("label") or "Whisper is picking the best take"
+        detail = (cur or {}).get("label") or "listening back to every sentence"
+    elif stage == "fixing":
+        detail = (cur or {}).get("label") or "re-voicing the sentences that missed"
+    elif stage == "denoising":
+        detail = (cur or {}).get("label") or "removing background noise"
+    elif stage == "checking":
+        detail = (cur or {}).get("label") or "checking it still sounds like you"
     return frac, round(eta), stage, detail
 
 
 def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
-                                 "platform", "captions", "takes", "mode", "similarity", "scenes")}
+                                 "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup")}
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
     if job["kind"] == "tts":

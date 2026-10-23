@@ -6,6 +6,7 @@ POST /synth        {"text", "voice", "params", "ref_path"?, "ref_text"?, "out_pa
 POST /synth_batch  {"items": [<synth payload>, ...]} -> {"results": [{"duration", "sample_rate"} | {"error"}]}
 POST /transcribe   {"paths": [...], "language"?, "prompt"?} -> {"results": [{"text", "words", "duration"}]}
 POST /similarity   {"ref", "paths": [...]} -> {"scores": [cosine, ...]}            (whisper host: speaker match)
+POST /mos          {"paths": [...]} -> {"scores": [1-5, ...]}                     (whisper host: predicted naturalness)
 POST /enhance      {"src_path", "out_path", "params"} -> {"duration", "sample_rate"}     (enhance host: studio clean-up)
 POST /revoice      {"src_path", "ref_path", "out_path"} -> {"duration", "sample_rate"}  (chatterbox host: voice conversion)
 POST /video        {"prompt", "width", "height", "num_frames", "fps", "steps", "seed", "out_path", "progress_path", ...}
@@ -101,6 +102,8 @@ def main():
                         return self._send(200, engine.animate(req))
                     if self.path == "/similarity":
                         return self._send(200, {"scores": engine.similarity(req["ref"], req["paths"])})
+                    if self.path == "/mos":
+                        return self._send(200, {"scores": engine.mos(req["paths"])})
                     if self.path == "/enhance":
                         audio, sr = engine.enhance(req["src_path"], req.get("params") or {})
                         sf.write(req["out_path"], audio, sr)
