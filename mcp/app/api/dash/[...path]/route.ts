@@ -6,6 +6,7 @@ import { archiveWorkerJob, deleteLibJob, FILE_RE, getLibJob, listLibrary, presig
 import { getSettings, updateSettings, withDefaults } from "@/lib/settings";
 import { describeProfile, profileFor, withProfile } from "@/lib/profiles";
 import { archiveDataset, datasetManifest, deleteDatasetPart, listDataset } from "@/lib/datasets";
+import { archiveModel, currentModel } from "@/lib/voicemodel";
 import { deleteMyVoice, getMyVoice, getSamples, isCustomVoice, listMyVoices, putMyVoice, recordSample, refSync, samplePutUrl, VOICE_RE, voicePutUrl } from "@/lib/voices";
 
 type RefJob = { id: string; kind: string; status: string; voice: string; label?: string; version?: string; warnings?: string[];
@@ -62,6 +63,7 @@ export async function GET(req: Request, ctx: Ctx) {
       return Response.json(await describeProfile(b, c, style) ?? { engine: b, voice: c, style, jobs: 0 });
     }
     if (a === "datasets" && b && VOICE_RE.test(b)) return Response.json(c === "manifest" ? await datasetManifest(b) : await listDataset(b));
+    if (a === "model" && !b) return Response.json({ model: await currentModel() });
     if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
     if (a === "jobs" && !b) return Response.json(await call("/jobs"));
     if (a === "jobs" && b) {
@@ -70,6 +72,10 @@ export async function GET(req: Request, ctx: Ctx) {
       if (job.kind === ("dataset" as string)) {
         const part = job.status === "done" ? await archiveDataset(job as unknown as Parameters<typeof archiveDataset>[0]) : null;
         return Response.json({ ...job, part });
+      }
+      if (job.kind === ("train" as string)) {
+        const model = job.status === "done" ? await archiveModel(job as unknown as Parameters<typeof archiveModel>[0]) : null;
+        return Response.json({ ...job, model });
       }
       if (job.kind === ("reference" as string)) {
         const myvoice = job.status === "done" ? await archiveReference(job as unknown as RefJob) : null;
@@ -194,6 +200,16 @@ export async function POST(req: Request, ctx: Ctx) {
           if (!/^uploads\/[A-Za-z0-9._-]+$/.test(String(s.key))) throw new Error("bad upload key");
           return { name: s.name, url: await presignPath(String(s.key), 6 * 3600) };
         }));
+      }
+      if (body.kind === "train") {
+        // train your own voice on the worker: every collected session travels as a signed link
+        const name = String(body.name ?? "");
+        if (!VOICE_RE.test(name)) throw new Error("name: lowercase letters, digits, - or _");
+        const d = await datasetManifest(name);
+        if (d.minutes < 5) throw new Error(`collect at least 15 minutes first (you have ${d.minutes})`);
+        body.parts = d.parts.map((p) => ({ url: p.url }));
+        body.minutes = d.minutes;
+        body.label = body.label ?? `Train your voice · ${name}`;
       }
       if (body.kind === "benchmark") {
         // every recorded voice in the line-up (and the target you're measured against) travels as a signed link

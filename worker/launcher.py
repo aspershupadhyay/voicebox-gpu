@@ -112,7 +112,7 @@ def main():
         os.environ["VOICEBOX_VRAM_GB"] = setting("VOICEBOX_VRAM_GB")
     # optional Hugging Face read token: anonymous downloads of 50-70 GB video models get rate-limited (HTTP 429)
     # and your own voice model (MY_VOICE_MODEL / MY_VOICE_SPEAKER, from the training notebook)
-    wanted = ("HF_TOKEN", "MY_VOICE_MODEL", "MY_VOICE_SPEAKER")
+    wanted = ("HF_TOKEN", "MY_VOICE_MODEL", "MY_VOICE_SPEAKER", "MY_VOICE_ADAPTER_URL")
     for k in wanted:
         if not os.environ.get(k) and setting(k):
             os.environ[k] = setting(k)
@@ -126,6 +126,10 @@ def main():
                     os.environ[k] = env[k]
         except Exception as e:
             log(f"could not fetch worker settings: {e}")
+    if os.environ.get("HF_TOKEN") and not os.environ["HF_TOKEN"].startswith("hf_"):
+        # e.g. the "[SENSITIVE]" placeholder `vercel env pull` writes: Hugging Face refuses a bad token even for public models
+        log("ignoring HF_TOKEN: it isn't a Hugging Face token (they start with hf_)")
+        del os.environ["HF_TOKEN"]
     if os.environ.get("MY_VOICE_MODEL"):
         log(f"your voice model: {os.environ['MY_VOICE_MODEL']}")
     log("Hugging Face token: " + ("set" if os.environ.get("HF_TOKEN") else "none (big downloads may be rate-limited; add HF_TOKEN in Colab Secrets)"))

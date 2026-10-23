@@ -91,8 +91,8 @@ ENGINES = {
         "port": 8108,
         "gpu_gb": 11.5,
         "chunk_chars": 260,
-        "packages": "vllm snac soundfile",  # same as orpheus: shares its venv
-        "about": "Your own voice model: Orpheus 3B fine-tuned on 30-60 min of your recordings (Your model page). Needs MY_VOICE_MODEL.",
+        "packages": "vllm snac soundfile peft",  # orpheus + peft (the transformers fallback merges your LoRA adapter)
+        "about": "Your own voice model: Orpheus 3B fine-tuned on 30-60 min of your recordings (Your model page: collect, then Train).",
         "voices": ["me"],
         "presets": {"female": "me", "male": "me"},
         "params": {
@@ -371,6 +371,12 @@ def resolve_params(engine, given):
             v = max(spec.get("min", v), min(spec.get("max", v), v))
         out[k] = v
     return out
+
+
+# Your own voice model, trained on the worker (gateway train job -> train.py). Its own venv: unsloth pins its own torch.
+TRAIN_PACKAGES = "unsloth snac soundfile librosa"
+TRAIN_INSTALL_S = 420  # first run: installing unsloth + torch into the train venv
+MYVOICE_DIR = os.path.join(HOME, "myvoice")  # the trained LoRA adapter the myvoice engine loads (adapter/)
 
 
 def python_for(engine):

@@ -1,6 +1,6 @@
 "use client";
-// Your own voice model, end to end: collect 30-60 minutes of you (read along or upload), train it free on Colab, then
-// benchmark it against your cloned voices on sentences it has never heard.
+// Your own voice model, end to end: collect 30-60 minutes of you (read along or upload), train it on the GPU worker
+// with one click (the notebook stays as a manual route), then benchmark it against your cloned voices.
 import { ArrowRight, ArrowSquareOut, CaretLeft, CaretRight, Microphone, Stop, TrashSimple, UploadSimple } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { READ_ALONG } from "@/lib/readalong";
@@ -8,11 +8,14 @@ import { api, fmtS, pct, simClass, matchClass, uploadFile, type Job, type MyVoic
 import { useDialog } from "./Dialog";
 import JobProgress from "./JobProgress";
 import LineRow from "./LineRow";
+import Player from "./Player";
 import { useStatus } from "./Shell";
 
 type Part = { job: string; clips: number; minutes: number; input_minutes: number; dropped: Record<string, number>; created: number;
   sources: { name: string; duration: number; clips: number }[] };
 type Dataset = { name: string; parts: Part[]; clips: number; minutes: number };
+type Model = { name: string; job: string; created: number; clips: number; minutes: number; epochs: number; loss: number;
+  sample: { text: string; duration: number } | null; sample_url?: string | null };
 type Bench = { target: string | null; candidates: { label: string; engine: string; voice: string; match?: number | null; similarity?: number | null; mos?: number | null; rtf?: number; score?: number | null; lines?: string[]; error?: string }[] };
 
 const MILESTONES = [[15, "works"], [30, "good"], [60, "best"]] as const;
@@ -24,17 +27,21 @@ Version three point two cut cold starts from nine hundred milliseconds to about 
 So, should you rewrite everything in Rust? Probably not. Should you profile first? Always.
 Thanks for watching, and I'll see you in the next one.`;
 
-function usePoll(onDone?: (j: Job & { part?: Part }) => void) {
-  const [job, setJob] = useState<(Job & { part?: Part; benchmark?: Bench }) | null>(null);
+type Polled = Job & { part?: Part; benchmark?: Bench; model?: Model | null };
+
+function usePoll(onDone?: (j: Polled) => void) {
+  const [job, setJob] = useState<Polled | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const done = useRef(onDone);
   done.current = onDone;
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
   const poll = useCallback(async (id: string) => {
     try {
-      const j = await api<Job & { part?: Part; benchmark?: Bench }>(`jobs/${id}`);
+      const j = await api<Polled>(`jobs/${id}`);
       setJob(j);
-      const finished = j.status === "done" && (j.kind !== ("dataset" as string) || j.part) && (j.kind === ("dataset" as string) || j.library);
+      // done on the worker isn't done until the result is stored: the dataset part, the trained model, or the library entry
+      const kind = j.kind as string;
+      const finished = j.status === "done" && (kind === "dataset" ? !!j.part : kind === "train" ? !!j.model : !!j.library);
       if (["queued", "running"].includes(j.status) || (j.status === "done" && !finished)) timer.current = setTimeout(() => poll(id), 2000);
       else if (j.status === "done") done.current?.(j);
     } catch {
@@ -149,23 +156,66 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
   );
 }
 
+const TRAIN_STAGES: Record<string, string> = { queued: "Waiting for the GPU", installing: "Installing the training tools", preparing: "Starting",
+  downloading: "Fetching your recordings", encoding: "Turning your clips into tokens", loading: "Loading Orpheus 3B",
+  training: "Learning your voice", saving: "Saving your model", testing: "Voicing a test line", done: "Done" };
+
 function Train({ name, minutes }: { name: string; minutes: number }) {
+  const { status } = useStatus();
+  const { confirm, toast } = useDialog();
+  const [model, setModel] = useState<Model | null>(null);
+  const [err, setErr] = useState("");
+  const loadModel = useCallback(() => { api<{ model: Model | null }>("model").then((r) => setModel(r.model)).catch(() => {}); }, []);
+  useEffect(loadModel, [loadModel]);
+  const { job, start } = usePoll((j) => { toast("Your voice is trained. It's the myvoice engine now.", "ok"); if (j.model) loadModel(); });
+  const busy = !!job && ["queued", "running"].includes(job.status);
+  const p = job?.progress;
+
+  async function train() {
+    setErr("");
+    if (model && !(await confirm({ title: "Train a new model?", body: "It replaces the model the myvoice engine uses now. Voice and video jobs wait while the GPU trains (about 1-2 hours).", confirm: "Train" }))) return;
+    try {
+      start(await api<Job>("jobs", { body: { kind: "train", name } }));
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
   return (
     <div className="card">
-      <div className="card-head"><h2>2 · Train</h2><span className="dim tiny">free Colab T4 · about 1-2 h</span></div>
-      <ol className="steps-list">
-        <li>Open the training notebook in Colab (or download it and use File → Upload notebook) and pick a <b>T4 GPU</b> runtime.</li>
-        <li>In its Secrets, add <code>DASHBOARD_URL</code> (<code>{typeof location !== "undefined" ? location.origin : ""}</code>), <code>MCP_TOKEN</code> and a Hugging Face <code>HF_TOKEN</code> with write access.</li>
-        <li>Set <code>DATASET = &quot;{name}&quot;</code> and your <code>HF_REPO</code>, then Run all. It fine-tunes Orpheus 3B on your clips and plays two test lines.</li>
-        <li>Set <code>MY_VOICE_MODEL</code> (the repo) and <code>MY_VOICE_SPEAKER</code> on Vercel, restart the worker, and benchmark below. The model appears as the <b>myvoice</b> engine everywhere.</li>
-      </ol>
+      <div className="card-head"><h2>2 · Train</h2><span className="dim tiny">on your GPU worker · about 1-2 h on a free T4</span></div>
+      <p className="dim small" style={{ marginTop: 0 }}>
+        Fine-tunes Orpheus 3B on every clip in <b>{name}</b>. The worker pauses other jobs while it trains, then your model is
+        saved to your storage and becomes the <b>myvoice</b> engine. Keep the Colab tab open until it finishes.
+      </p>
+      {model && !busy && (
+        <div className="stack" style={{ gap: 8, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
+          <div className="row between small"><b>Current model · {model.name}</b>
+            <span className="dim">{model.minutes.toFixed(1)} min · {model.clips} clips · {model.epochs} epochs · loss {model.loss.toFixed(3)} · {new Date(model.created).toLocaleDateString()}</span></div>
+          {model.sample_url && <><span className="dim tiny">“{model.sample?.text}”</span><Player src={model.sample_url} compact /></>}
+        </div>
+      )}
+      {job && (busy || job.status === "error" || job.status === "cancelled") && (
+        <div className="stack" style={{ gap: 6, padding: "10px 0" }}>
+          <div className="row between small">
+            <b>{job.status === "error" ? "Training stopped" : job.status === "cancelled" ? "Cancelled" : TRAIN_STAGES[p?.stage ?? "queued"] ?? p?.stage}</b>
+            {busy && p && <span className="dim">{p.detail}{p.eta_s ? ` · about ${fmtS(p.eta_s)} left` : ""}</span>}
+          </div>
+          {busy && <div className="bar live"><i style={{ width: `${Math.round((p?.fraction ?? 0) * 100)}%` }} /></div>}
+          {job.error && <p className="err" style={{ margin: 0 }}>{job.error}</p>}
+          {busy && <button className="ghost sm" style={{ alignSelf: "flex-start" }} onClick={() => api(`jobs/${job.id}/cancel`, { method: "POST" }).catch(() => {})}>Cancel training</button>}
+        </div>
+      )}
       <div className="row between" style={{ marginTop: 12 }}>
         <span className="tiny dim">{minutes < 15 ? `Collect at least 15 minutes first (you have ${minutes.toFixed(1)}).` : `${minutes.toFixed(1)} minutes ready to train.`}</span>
         <span className="row" style={{ gap: 6 }}>
-          <a className="btn ghost sm" href="/train_my_voice.ipynb" download>Download notebook</a>
-          <a className="btn sm" href={NOTEBOOK} target="_blank" rel="noreferrer">Open in Colab <ArrowSquareOut size={13} /></a>
+          <a className="btn ghost sm" href={NOTEBOOK} target="_blank" rel="noreferrer" title="Train in your own Colab notebook instead (pushes to Hugging Face)">Notebook <ArrowSquareOut size={13} /></a>
+          <button className="sm" onClick={train} disabled={busy || minutes < 15 || !status?.online} title={!status?.online ? "Start the GPU worker first" : undefined}>
+            {busy ? "Training…" : model ? "Train again" : "Train my voice"} <ArrowRight size={13} />
+          </button>
         </span>
       </div>
+      {err && <p className="err" style={{ margin: "8px 0 0" }}>{err}</p>}
     </div>
   );
 }

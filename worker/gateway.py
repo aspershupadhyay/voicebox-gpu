@@ -694,6 +694,8 @@ def make_job(body):
         return make_dataset_job(body)
     if body.get("kind") == "benchmark":
         return make_benchmark_job(body)
+    if body.get("kind") == "train":
+        return make_train_job(body)
     job = _base_job("tts", body)
     _voice_setup(job, body, body.get("lines") or [])
     return _enqueue(job)
@@ -2132,9 +2134,81 @@ def run_benchmark(job):
     job["benchmark"] = {"target": job.get("target_voice") or None, "candidates": ranked}
 
 
+TRAIN_STEP_S = 10.0  # prior for one optimizer step on a T4, replaced by the measured speed once training runs
+
+
+def make_train_job(body):
+    """Fine-tune Orpheus on your dataset (train.py). parts: [{url}] (the dataset zips, signed by the dashboard)."""
+    parts = [{"url": _http_url(p.get("url"), f"part {i + 1} url")} for i, p in enumerate(body.get("parts") or [])][:200]
+    if not parts:
+        raise ValueError("parts: the dataset has no recordings yet (Your model: collect first)")
+    minutes = float(body.get("minutes") or 0)
+    job = _base_job("train", body)
+    job.update({"voice": str(body.get("name") or "me")[:64], "lines": [], "engine": "myvoice", "parts": parts,
+                "speaker": "me", "epochs": body.get("epochs"), "learning_rate": body.get("learning_rate")})
+    # T4 (fp16, no bf16): ~10 s per optimizer step of 4 clips; ~8 clips a minute of audio; 3 epochs under 40 min, else 2
+    clips = max(30, minutes * 8)
+    epochs = job["epochs"] or (3 if minutes < 40 else 2)
+    job["est_total"] = 300 + clips * 0.4 + clips / 4 * epochs * TRAIN_STEP_S + 120 + (0 if os.path.exists(_train_python()) else C.TRAIN_INSTALL_S)
+    return _enqueue(job)
+
+
+def _train_python():
+    tag = hashlib.sha1(C.TRAIN_PACKAGES.encode()).hexdigest()[:8]
+    return os.environ.get("VOICEBOX_PY_TRAIN") or os.path.join(C.VENVS, f"train-{tag}", "bin", "python")
+
+
+def run_train(job):
+    """The whole GPU for training: stop every engine, install the train venv once, run train.py, then install the
+    adapter for the myvoice engine on this worker (the dashboard also keeps a copy in R2 for the next runtime)."""
+    jdir = os.path.join(JOBS_DIR, job["id"])
+    prog = os.path.join(jdir, "progress.json")
+    job["progress_file"] = prog
+    t0 = time.time()
+    job["cur"] = {"t0": t0, "est": job["est_total"], "label": ""}
+    for name in list(ENG.procs):
+        log(f"stopping {name}: training your voice needs the whole GPU")
+        ENG.stop(name)
+    py = _train_python()
+    if not os.path.exists(py):
+        job["stage"] = "installing"
+        venv = os.path.dirname(os.path.dirname(py))
+        with open(os.path.join(LOGS_DIR, "train-install.log"), "a") as logf:
+            subprocess.run(["uv", "venv", "--python", "3.11", venv, "-q", "--allow-existing"], check=True, stdout=logf, stderr=logf)
+            subprocess.run(f"uv pip install --python {py} -q {C.TRAIN_PACKAGES}", shell=True, check=True, stdout=logf, stderr=logf)
+    cfg = os.path.join(jdir, "train.json")
+    json.dump({"parts": job["parts"], "speaker": job["speaker"], "epochs": job.get("epochs"), "learning_rate": job.get("learning_rate"),
+               "work": os.path.join(jdir, "work"), "out": jdir, "progress": prog}, open(cfg, "w"))
+    job["stage"] = "training"
+    env = {**os.environ, "HF_HOME": cache_dir("myvoice"), "TOKENIZERS_PARALLELISM": "false", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
+    with open(os.path.join(LOGS_DIR, "train.log"), "a") as logf:
+        p = subprocess.Popen([py, os.path.join(HERE, "train.py"), cfg], stdout=logf, stderr=logf, env=env, cwd=HERE, start_new_session=True)
+        while p.poll() is None:
+            if job["cancel"]:
+                import signal
+                os.killpg(p.pid, signal.SIGKILL)
+                p.wait()
+                raise Cancelled()
+            time.sleep(2)
+    shutil.rmtree(os.path.join(jdir, "work"), ignore_errors=True)
+    if p.returncode != 0:
+        raise RuntimeError(f"training stopped (exit {p.returncode}); see the train log on the Engines page")
+    job["train"] = json.load(open(os.path.join(jdir, "result.json")))
+    if job["train"].get("sample"):
+        job["results"].append({"id": "sample", "text": job["train"]["sample"]["text"], "duration": job["train"]["sample"]["duration"]})
+    dst = os.path.join(C.MYVOICE_DIR, "adapter")
+    shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(os.path.join(jdir, "adapter"), dst)
+    shutil.rmtree(os.path.join(jdir, "adapter"), ignore_errors=True)
+    ENG.errors.pop("myvoice", None)
+    job["cur"], job["est_done"] = None, time.time() - t0
+    job["est_total"] = job["est_done"]
+    log(f"job {job['id']} trained your voice: {job['train']}")
+
+
 def package(job):
     job["stage"] = "packaging"
-    if job["kind"] in ("video", "reference", "image", "dataset"):
+    if job["kind"] in ("video", "reference", "image", "dataset", "train"):
         return  # single files, served directly; no zip copy of a large video (a dataset packs its own zip)
     jdir = os.path.join(JOBS_DIR, job["id"])
     with zipfile.ZipFile(os.path.join(JOBS_DIR, f"{job['id']}.zip"), "w") as z:
@@ -2191,7 +2265,7 @@ def worker_loop():
         job["status"], job["started"] = "running", time.time()
         try:
             {"transcribe": run_transcribe, "video": run_video, "reference": run_reference,
-             "image": run_image, "dataset": run_dataset}.get(job["kind"], run_tts)(job)
+             "image": run_image, "dataset": run_dataset, "train": run_train}.get(job["kind"], run_tts)(job)
             package(job)
             job["status"], job["stage"] = "done", "done"
         except Cancelled:
@@ -2231,6 +2305,22 @@ def _progress(job):
         elif f and f["phase"] == "loading" and st == "loading":
             left = max(5, min(left, 120))
         extra = left
+    if job["kind"] == "train" and job["status"] == "running":
+        el = now - job["cur"]["t0"] if job.get("cur") else 0
+        if stage == "installing":
+            return min(0.05, 0.05 * el / C.TRAIN_INSTALL_S), round(max(30, job["est_total"] - el)), "installing", "installing the training tools (first time only)"
+        try:
+            pf = json.load(open(job["progress_file"]))
+        except Exception:
+            pf = {"phase": "starting", "step": 0, "total": 0}
+        ph, step, tot = pf.get("phase"), pf.get("step", 0), max(1, pf.get("total") or 1)
+        if ph == "training":
+            t_ref, s_ref = job.setdefault("train_ref", (now, step))  # measure the real step speed from the first sighting
+            per = (now - t_ref) / (step - s_ref) if step - s_ref >= 3 else TRAIN_STEP_S  # prior until a few steps are in
+            return 0.25 + 0.65 * step / tot, round(per * (tot - step) + 120), "training", pf.get("detail") or ""
+        frac = {"starting": 0.05, "downloading": 0.06 + 0.04 * step / tot, "encoding": 0.10 + 0.10 * step / tot, "loading": 0.22,
+                "saving": 0.92, "testing": 0.95, "done": 0.99}.get(ph, 0.05)
+        return frac, round(max(20, job["est_total"] - el)), ph if ph != "starting" else "preparing", pf.get("detail") or ""
     if job["kind"] in ("video", "image") and stage == "rendering" and job.get("progress_file"):
         try:
             pf = json.load(open(job["progress_file"]))
@@ -2291,7 +2381,7 @@ def _progress(job):
 def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
                                  "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup",
-                                 "dataset", "benchmark")}
+                                 "dataset", "benchmark", "train")}
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
     if job["kind"] == "tts":
@@ -2310,7 +2400,7 @@ def job_view(job, urls=True):
     for r in job["results"]:
         r = {k: val for k, val in r.items() if k != "words"} if urls else dict(r)
         if urls:
-            if job["kind"] in ("tts", "reference"):
+            if job["kind"] in ("tts", "reference", "train"):
                 r["url"] = sign(f"/files/{job['id']}/{r['id']}.wav")
             if job["kind"] == "video" and job["status"] == "done":
                 r["url"] = sign(f"/files/{job['id']}/video.mp4")
@@ -2324,7 +2414,7 @@ def job_view(job, urls=True):
                 r["json_url"] = sign(f"/files/{job['id']}/{r['id']}.subs.json")
         res.append(r)
     v["results"] = res
-    if urls and job["status"] == "done" and job["kind"] not in ("video", "reference", "dataset"):
+    if urls and job["status"] == "done" and job["kind"] not in ("video", "reference", "dataset", "train"):
         v["zip_url"] = sign(f"/files/{job['id']}.zip")
         if job.get("subs"):
             v["subs_urls"] = {ext: sign(f"/files/{job['id']}/subtitles.{ext}") for ext in ("srt", "vtt", "json")}
@@ -2399,7 +2489,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/jobs":
             return self._json(200, {"jobs": [job_view(j, urls=False) for j in reversed(JOBS.values())][:30]})
         m = re.match(r"^/logs/([a-z0-9]+)$", u.path)
-        if m and (m.group(1) in C.ENGINES or m.group(1) in ("gateway", "tunnel")):
+        if m and (m.group(1) in C.ENGINES or m.group(1) in ("gateway", "tunnel", "train")):
             names = [f"{m.group(1)}.log", f"{m.group(1)}-install.log"]
             n = min(400, int(parse_qs(u.query).get("n", ["120"])[0]))
             text = ""

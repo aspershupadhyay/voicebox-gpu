@@ -57,11 +57,15 @@ Everything below runs on free compute.
    worker removes noise (never "restores" the tone, so the model learns your real voice), Whisper cuts 2-12 s clips at
    sentence ends, and noisy, clipped or mis-timed clips are dropped. The meter shows minutes collected: 15 works, 30 is
    good, 60 is best. Same mic and room every session.
-2. **Train.** Open `notebook/train_my_voice.ipynb` in Colab (free T4) or download it from the page. Add `DASHBOARD_URL`,
-   `MCP_TOKEN` and a write `HF_TOKEN` in its Secrets, set your Hugging Face repo, Run all. It fine-tunes Orpheus 3B with a
-   LoRA adapter (Unsloth), plays two test lines, and pushes the merged model to your private repo. About 1-2 hours.
-3. **Use it.** Set `MY_VOICE_MODEL` (the repo) and `MY_VOICE_SPEAKER` (default `me`) on Vercel and restart the worker.
-   The model is the **myvoice** engine everywhere: Voiceover, Settings, and MCP (`engine: "myvoice"`).
+2. **Train** (same page, **Train my voice**). The GPU worker that's already running in Colab does it: it pauses other
+   jobs, fine-tunes Orpheus 3B with a LoRA adapter (Unsloth) on every clip, voices a test line you can play on the page,
+   and saves the adapter (a few hundred MB) to your R2 bucket. No Hugging Face account needed. About 1-2 hours on a free
+   T4, less on an L4. The first run also installs the training tools (~7 min). Keep the Colab tab open until it's done.
+   *Manual route:* `notebook/train_my_voice.ipynb` trains in a separate Colab and pushes the full model to Hugging Face.
+3. **Use it.** Nothing to set: the trained model is the **myvoice** engine everywhere (Voiceover, Settings, MCP
+   `engine: "myvoice"`) right away, and a fresh worker downloads it from R2 at start-up. Training again replaces it.
+   To serve a model from Hugging Face instead (the notebook route), set `MY_VOICE_MODEL` (the repo) and
+   `MY_VOICE_SPEAKER` on Vercel; that takes priority.
 4. **Benchmark** (same page, or the `benchmark_voices` MCP tool). The same unseen sentences in your model, your Qwen
    and Chatterbox clones, and optionally an Orpheus preset, scored identically: script accuracy, voice match against
    your real recording, naturalness (UTMOS) and speed. Listen side by side, then make the winner your default.
