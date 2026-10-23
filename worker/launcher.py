@@ -9,7 +9,7 @@ Reads settings from Colab Secrets (or environment variables):
 Keeps running (the notebook cell stays busy) and repairs itself: if the tunnel dies it opens a new
 one and re-registers the new URL.
 """
-import json, os, platform, re, subprocess, sys, threading, time, urllib.request
+import json, os, platform, re, subprocess, sys, threading, time, urllib.error, urllib.parse, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -93,14 +93,28 @@ def health(secret):
 
 
 def register(register_url, secret, url):
+    """Heartbeat. Returns the URL that answered: urllib won't follow a 307/308 on POST (e.g. an old Vercel domain
+    that now redirects to the new one), so follow it here, keeping the Authorization header, and remember it."""
     h = health(secret)
     body = json.dumps({"url": url, "version": C.VERSION, "gpu": h["gpu"], "engines": h["engines"],
                        "loaded": h["loaded"], "queue": h["queue"], "started_at": time.time() - h["uptime_s"]}).encode()
-    req = urllib.request.Request(register_url, data=body, method="POST",
-                                 headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json",
-                                          "User-Agent": f"voicebox-worker/{C.VERSION}"})
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return r.status
+    for _ in range(4):
+        req = urllib.request.Request(register_url, data=body, method="POST",
+                                     headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json",
+                                              "User-Agent": f"voicebox-worker/{C.VERSION}"})
+        try:
+            with urllib.request.urlopen(req, timeout=20):
+                return register_url
+        except urllib.error.HTTPError as e:
+            loc = e.headers.get("Location")
+            if e.code not in (301, 302, 303, 307, 308) or not loc:
+                raise
+            nxt = urllib.parse.urljoin(register_url, loc)
+            if not nxt.startswith("https://"):
+                raise
+            log(f"REGISTER_URL moved: {register_url} -> {nxt} (update the Colab secret to skip the redirect)")
+            register_url = nxt
+    raise RuntimeError(f"too many redirects registering at {register_url}")
 
 
 def main():
@@ -171,7 +185,7 @@ def main():
             log(f"new public URL {url}")
         if register_url:
             try:
-                register(register_url, secret, url)
+                register_url = register(register_url, secret, url)
                 status = "registered"
             except Exception as e:
                 status = f"register failed: {e}"
