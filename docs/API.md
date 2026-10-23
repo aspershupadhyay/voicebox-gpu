@@ -8,14 +8,12 @@ Two layers. You normally only touch the first.
 |---|---|
 | `worker_status` | Online? GPU, VRAM, loaded engines, queue. Says "re-run the notebook" if the heartbeat is older than 4 min. |
 | `list_voices` | Engines, voices, presets, every parameter with default/min/max, uploaded references. |
-| `voice_lines` | `{engine, voice?, style?, platform?, takes?, lines:[{id?, text, window?, start?, params?}], params?, post?, subtitles?, captions?, pronounce?, lexicon?, language?, label?, wait_seconds?}` → job. Blocks up to 45 s, then returns progress + a hint to call `get_job`. Engines: `orpheus`, `qwen`, `chatterbox`, `kokoro`. `platform` masters the audio (see *Platforms*); `takes: 2-4` = best-of-N per sentence; `[pause 0.8]` / `[beat]` / `[breath]` in the text insert silence. |
+| `voice_lines` | `{engine, voice?, style?, platform?, takes?, lines?:[{id?, text, window?, start?, params?}], post_id?, params?, post?, subtitles?, captions?, pronounce?, lexicon?, language?, label?, wait_seconds?}` → job. With `post_id` (and no `lines`) it voices that workspace post's script and attaches the result to the post. Blocks up to 45 s, then returns progress + a hint to call `get_job`. Engines: `orpheus`, `qwen`, `chatterbox`, `kokoro`. `platform` masters the audio (see *Platforms*); `takes: 2-4` = best-of-N per sentence; `[pause 0.8]` / `[beat]` / `[breath]` in the text insert silence. |
 | `revoice` | `{url, voice, platform?, subtitles?, language?, label?}` → speech-to-speech job: a performance (audio or video URL) re-spoken in a recorded voice (Chatterbox VC), timing kept, mastered for the platform. |
-| `make_video` | `{scenes:[{text, visual?, image_url?}], platform?, aspect?, engine?, voice?, style?, takes?, pronounce?, visuals?: images\|clips, visual_style?, captions_look?: bold\|clean\|none, transition?: fade\|cut, music_url?, music_lufs?, seed?, label?}` → script-to-video job: voices each scene, times one shot to it (Z-Image still with Ken Burns motion, or a Wan 2.2 clip), burns in captions, ducks the music, masters to the platform. MP4 + `voiceover.wav` + `.srt` land in the library. |
 | `clean_audio` | `{url, params?: {mode: enhance\|denoise, strength, steps}, platform?, subtitles?}` → studio clean-up (Resemble Enhance) of any recording, mastered, same length. |
 | `preview_pronunciation` | `{lines, pronounce?, lexicon?}` → what the voice will actually read (no GPU). |
 | `get_settings` / `update_settings` | The shared studio defaults (R2 `settings.json`); every tool fills unset arguments from them, and the pronunciation dictionary merges into every request. |
 | `my_voices` | Voices the user recorded on the dashboard's Voices page. Use the `name` as `voice` with `qwen` (best) or `chatterbox` (Hindi, emotion dial). |
-| `animate` | `{prompt, model?: wan\|ltx, aspect?: 9:16\|16:9\|1:1, seconds?, quality?: fast\|full, seed?, negative?, audio?, image_url? \| from_library?, label?}` → video job (minutes; poll `get_job`). Saved to the library as MP4 + poster. |
 | `get_job` | `{job_id, wait_seconds?}` long-poll. When done, each result has `duration`, `fits` (vs `window`) and a signed `url`; the job has `zip_url`. Links expire after 6 h. |
 | `list_jobs` | Last 30 jobs. |
 | `cancel_job` | Cancel a queued job, or stop a running one after the current line. |
@@ -23,6 +21,22 @@ Two layers. You normally only touch the first.
 | `transcribe` | `{sources:[{url, name?, text?}] \| library_job, language?}` → Whisper large-v3 subtitles (SRT/VTT/JSON, word timing). |
 | `list_library` | Saved jobs in the dashboard library. |
 | `engine` | `{name, action: load\|unload\|forget}` prewarm, free VRAM, or delete downloaded weights to free disk. |
+| `imagine` | `{prompt, model?: zimage\|qwenimage, aspect?, count?, ...}` → stills (thumbnails, B-roll) saved to the library. |
+
+**Shared workspace** (Appwrite; needs `APPWRITE_API_KEY` on the server). Changes made through MCP show up live on both
+dashboards and are signed "Claude (MCP)" in the activity feed.
+
+| Tool | What it does |
+|---|---|
+| `workspace_board` | `{status?, platform?, search?, limit?}` → posts with stage, platforms, due date, owner, voiceover count. |
+| `get_post` | `{post_id}` → script, caption, notes, comments, media (view links), voiceover job ids, recent activity. |
+| `create_post` / `update_post` | title, status (`idea`, `draft`, `review`, `scheduled`, `posted`), platforms, script (`script_mode: append` adds to it), caption, notes, `due_at` (ISO with offset), link, assignee (name or email). |
+| `delete_post` | Only when asked. |
+| `comment_on_post` | `{post_id, text}` → a note in the post's discussion. |
+| `content_calendar` | `{from?, to?}` → scheduled posts in order (default: the next 14 days) plus unscheduled work in progress. |
+| `workspace_media` / `add_media` | List files (optionally one post's); copy a file from a URL into the media library (≤150 MB), attached to a post. |
+| `attach_voiceover` | `{post_id, job_id}` → link a library voiceover to a post. |
+| `workspace_activity` / `workspace_members` | Who did what, newest first; who is on the team. |
 
 `voice` resolves as: `female` / `male` preset → engine voice name (`tara`, `af_heart`, …) → a recorded voice (`my_voices`).
 Recorded voices live in R2 (`voices/<name>/reference.wav` + transcript); the dashboard passes the worker a signed link

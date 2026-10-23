@@ -11,6 +11,7 @@ export type Settings = {
   enhance_recordings: boolean; enhance_input: boolean; enhance_output: boolean;
   visuals: "images" | "clips"; visual_style: (typeof VISUAL_STYLES)[number]; captions_look: "auto" | "bold" | "clean" | "none";
   transition: "fade" | "cut"; music_lufs: number;
+  backup_media: boolean;
 };
 
 export const DEFAULTS: Settings = {
@@ -18,6 +19,7 @@ export const DEFAULTS: Settings = {
   lexicon: true, pronounce: {},
   enhance_recordings: true, enhance_input: true, enhance_output: false,
   visuals: "images", visual_style: "tech", captions_look: "auto", transition: "fade", music_lufs: -28,
+  backup_media: true,
 };
 
 const KEY = "settings.json";
@@ -39,7 +41,7 @@ export async function updateSettings(patch: Record<string, unknown>): Promise<Se
   str("engine", ["qwen", "orpheus", "chatterbox", "kokoro"]); str("voice"); str("style", ["tech", "hype", "narrator", "neutral"]);
   str("platform", PLATFORMS); str("visuals", ["images", "clips"]); str("visual_style", VISUAL_STYLES);
   str("captions_look", ["auto", "bold", "clean", "none"]); str("transition", ["fade", "cut"]);
-  for (const k of ["subtitles", "lexicon", "enhance_recordings", "enhance_input", "enhance_output"] as const) bool(k);
+  for (const k of ["subtitles", "lexicon", "enhance_recordings", "enhance_input", "enhance_output", "backup_media"] as const) bool(k);
   if (typeof patch.takes === "number") next.takes = Math.max(1, Math.min(4, Math.round(patch.takes)));
   if (typeof patch.music_lufs === "number") next.music_lufs = Math.max(-40, Math.min(-18, patch.music_lufs));
   if (patch.pronounce && typeof patch.pronounce === "object") {

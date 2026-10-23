@@ -1,7 +1,8 @@
 # voicebox-gpu
 
-Expressive voiceover, your own cloned voice and generated video clips on a Colab GPU, driven from any MCP client or the
-dashboard. Nothing runs on your machine.
+Expressive voiceover in your own cloned voice on a Colab GPU, plus a shared workspace where two creators plan, write,
+voice and schedule posts together, live. Driven from the dashboard (installable on phone and desktop) or any MCP client.
+Nothing runs on your machine.
 
 ```
 MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER_SECRET──▶ Cloudflare tunnel ──▶ Colab worker
@@ -15,7 +16,9 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
 - **Your voice:** record 20 s in the browser (Voices page); the worker cleans it and Whisper transcribes it; it's kept in R2.
   [docs/YOUR_VOICE.md](docs/YOUR_VOICE.md) has the recording and settings guide for a pro tech-explainer sound.
   Every built-in voice also has an audition sample (`scripts/make-samples.py`), so you can pick without the GPU.
-- **Video:** Wan 2.2 TI2V 5B (sharp 720p, Turbo 4-step) and LTX-2.3 distilled (picture + soundtrack, up to 10 s), from text or a start frame.
+- **Shared workspace (Appwrite Cloud):** a board of posts by stage (idea, in production, review, scheduled, posted), a
+  content calendar, comments, an activity feed and a media library (images and videos up to 2 GB a file), live on both
+  screens. Two logins, one team. Media is also backed up to R2. See [docs/WORKSPACE.md](docs/WORKSPACE.md).
 - **Lean GPU use:** only one engine group (voice or video) holds the GPU at a time, idle engines unload after 10 min, and model
   weights download on first use into per-engine folders that are evicted least-recently-used when disk runs short.
 - **Made for YouTube, Shorts, Reels and TikTok:** pick a `platform` and every line gets a broadcast voice chain (rumble cut,
@@ -26,16 +29,16 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
   pronunciations. `[pause 0.8]`, `[beat]` and `[breath]` put real silence in the script.
 - **Re-voice:** upload any take of yourself (voice memo, screen recording) and get it back in your clean recorded voice,
   timing and emotion intact. Hindi lines in a Qwen script are voiced by Chatterbox in the same voice.
-- **Script → video:** write `what you say || what we see` per scene; get back a 1080p video with your voice, AI pictures
-  (or animated clips) moving in time with it, bold word-by-word captions, cross-fades and a ducked music bed (Studio page or
-  the `make_video` MCP tool).
 - **Bad mic, studio sound:** Resemble Enhance removes noise and room echo and restores the detail a cheap mic loses. It
-  runs on your voice recordings before cloning, and the Studio page cleans up any recording or video soundtrack.
-- **Settings:** studio-wide defaults (voice, platform, pronunciation dictionary, enhance switches, video look) shared by the
-  dashboard and every MCP client.
+  runs on your voice recordings before cloning, and the Clean-up page cleans up any recording or video soundtrack.
+- **Settings:** studio-wide defaults (voice, platform, pronunciation dictionary, enhance switches, R2 backup) shared by both
+  of you and every MCP client.
 - **Subtitles:** Whisper large-v3 with word timestamps → SRT / VTT / JSON, per line and for the whole timeline, plus a script-match score
   and a voice-match score for cloned voices.
-- **Dashboard:** `https://<app>/` (sign in with `MCP_TOKEN`): Overview, Generate, Voices, Video, Subtitles, Library (private Cloudflare R2 storage).
+- **Dashboard:** `https://<app>/` (sign in with your account, or `MCP_TOKEN` for the studio only): Board, Calendar, Media,
+  Voiceover, Voices, Clean-up, Subtitles, Images, Library, Engines, Settings. Light and dark themes; installable as an app.
+- **MCP covers the whole dashboard:** voice, clean-up, re-voice, subtitles, images, library, settings, and the workspace
+  (read the board and calendar, create and edit posts and scripts, comment, attach media, voice a post's script).
 - **Output:** 48 kHz mono WAV, trimmed and mastered for the platform (or peak-normalised with `platform: raw`), plus a `fits` flag when you pass the line's timeline `window`.
 - **Security:** two random secrets, both outside git. The tunnel URL is only stored in the private R2 bucket. Downloads are HMAC-signed and expire after 6 h.
 

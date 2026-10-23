@@ -1,17 +1,27 @@
-// Voicebox MCP: exposes the Colab GPU worker (Kokoro, Chatterbox, Orpheus, Qwen TTS + Whisper subtitles + Wan / LTX video) as MCP tools.
+// Voicebox MCP: everything on the dashboard, as tools. The Colab GPU worker (Kokoro, Chatterbox, Orpheus, Qwen TTS,
+// Whisper subtitles, Resemble Enhance clean-up, Z-Image / Qwen-Image stills) plus the shared workspace in Appwrite
+// (posts and their scripts, calendar, comments, media, activity), so an assistant can plan, write, voice and file a post.
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
 import { loadWorker, STALE_MS } from "@/lib/registry";
 import { call, safeEqual, WorkerOffline } from "@/lib/worker";
 import { archiveWorkerJob, listLibrary, presignPath } from "@/lib/library";
-import { getSettings, updateSettings, VISUAL_STYLES, withDefaults } from "@/lib/settings";
+import { getSettings, updateSettings, withDefaults } from "@/lib/settings";
+import {
+  addComment, addMediaFromUrl, createPost, deletePost, getPost, hasKey, linkJob, listActivity, listComments, listMedia, listMembers, listPosts, postsBetween, updatePost,
+} from "@/lib/appwrite";
+import { fileUrl, PLATFORMS as POST_PLATFORMS, STATUSES, type Post } from "@/lib/workspace";
 import { isCustomVoice, listMyVoices, refSync } from "@/lib/voices";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen"] as const;
-const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "whisper", "enhance", "wan", "wan14", "ltx", "animate", "zimage", "qwenimage"] as const;
+const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "whisper", "enhance", "zimage", "qwenimage"] as const;
+const POST_STATUS = STATUSES.map((s) => s.id) as [Post["status"], ...Post["status"][]];
+const POST_PLAT = POST_PLATFORMS.map((p) => p.id) as [Post["platforms"][number], ...Post["platforms"][number][]];
+const CLAUDE = { name: "Claude (MCP)" }; // shows up in the activity feed as the author of MCP changes
+const POST_ID = z.string().regex(/^[A-Za-z0-9._-]{1,36}$/);
 const PLATFORMS = ["youtube", "shorts", "reels", "tiktok", "podcast", "raw"] as const;
 const MAX_WAIT = 45; // seconds a tool call may block; Vercel caps the request at maxDuration
 
@@ -110,11 +120,13 @@ const handler = createMcpHandler(
           "voice: 'female' / 'male' presets, an engine voice (e.g. tara, dan, af_heart), or the name of a recorded voice from my_voices (qwen or chatterbox).",
           "style sets the delivery (default 'tech'): tech = bright YouTube-tech pace (~185 wpm), hype = max energy for promos, narrator = calm documentary (~165 wpm), neutral = engine defaults. Explicit params override the style. For energy the voice matters most (Orpheus temperature does not add energy): orpheus mia/leo, kokoro am_fenrir/af_bella; chatterbox via exaggeration.",
           "First use of an engine installs + loads it (several minutes); the job keeps running, so poll with get_job.",
+          "post_id: voice a workspace post. Without lines, its script is used (one line per non-empty line); the voiceover is attached to the post either way.",
         ].join(" "),
         inputSchema: z.object({
           engine: z.enum(ENGINES).optional().describe("default from settings (qwen unless changed)"),
           voice: z.string().optional().describe("default from settings"),
-          lines: z.array(line).min(1).max(1000),
+          lines: z.array(line).min(1).max(1000).optional().describe("required unless post_id is given"),
+          post_id: POST_ID.optional().describe("workspace post: voice its script and attach the result to it"),
           subtitles: z.boolean().optional().describe("also make word-timed subtitles with Whisper large-v3"),
           language: z.string().max(8).optional().describe("ISO code for Whisper/Chatterbox, e.g. en, hi; omit to auto-detect"),
           style: z.enum(["tech", "hype", "narrator", "neutral"]).optional().describe("delivery style; default tech"),
@@ -138,11 +150,25 @@ const handler = createMcpHandler(
           wait_seconds: z.number().min(0).max(MAX_WAIT).optional().describe(`block up to this long for results (default ${MAX_WAIT})`),
         }),
       },
-      async ({ wait_seconds, ...body }) => {
+      async ({ wait_seconds, post_id, ...body }) => {
         try {
+          let post: Post | null = null;
+          if (post_id) {
+            post = await getPost(post_id);
+            if (!body.lines?.length) {
+              const ls = (post.script ?? "").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+              if (!ls.length) throw new Error(`post "${post.title}" has no script yet; update_post with a script first`);
+              body.lines = ls.map((t, i) => ({ id: String(i + 1).padStart(2, "0"), text: t }));
+            }
+            body.label ??= post.title;
+            const plat = post.platforms.find((x) => (PLATFORMS as readonly string[]).includes(x === "instagram" ? "reels" : x));
+            if (!body.platform && plat) body.platform = (plat === "instagram" ? "reels" : plat) as (typeof PLATFORMS)[number];
+          }
+          if (!body.lines?.length) throw new Error("send lines, or a post_id whose script to voice");
           const full = withDefaults(body, await getSettings());
           const ref = typeof full.voice === "string" && isCustomVoice(full.voice) ? await refSync(full.voice) : null;
           const job = await call<Job>("/jobs", { body: ref ? { ...full, ref } : full });
+          if (post) await linkJob(post.$id, job.id, CLAUDE);
           return text(withHint(await waitFor(job.id, wait_seconds ?? MAX_WAIT)));
         } catch (e) {
           return fail(e);
@@ -177,53 +203,6 @@ const handler = createMcpHandler(
           const ref = isCustomVoice(String(full.voice)) ? await refSync(String(full.voice)) : null;
           const job = await call<Job>("/jobs", { body: { ...full, ...(ref ? { ref } : {}) } });
           return text(withHint(await waitFor(job.id, wait_seconds ?? MAX_WAIT)));
-        } catch (e) {
-          return fail(e);
-        }
-      },
-    );
-
-    server.registerTool(
-      "make_video",
-      {
-        title: "Script -> finished video",
-        description: [
-          "Turn a script into a finished, captioned, mastered video in one job: every scene is one voiced line plus one shot.",
-          "You (the assistant) should write a concrete `visual` for each scene: subject, setting, light, camera, e.g. 'a glowing smartphone on a dark desk, blue location pin hovering above'. Never put words/text in visuals. Without one, a visual metaphor is imagined from the line.",
-          "Voice: every voice_lines option (engine, voice incl. the user's recorded voice, style, takes, pronounce, [pause] markers); defaults come from settings.",
-          "platform sets the frame and the sound: shorts/reels/tiktok = 1080x1920 with bold pop-up word captions, youtube/podcast = 1920x1080 with clean subtitles; audio mastered to -14 LUFS.",
-          "visuals: images (default; Z-Image stills with smooth Ken Burns camera moves, seconds per scene) or clips (each still animated by Wan 2.2, a few minutes per scene). visual_style: tech, neon, minimal, photo, paper, blueprint.",
-          "music_url: optional music bed, levelled (music_lufs, default -28) and ducked under the voice. A scene may give image_url to use its own picture.",
-          "Keep scenes to 1-2 sentences (3-8 s each); 6-12 scenes makes a 30-60 s short. Rendering takes minutes: poll get_job; the MP4 (+ voiceover.wav and .srt) lands in the library.",
-        ].join(" "),
-        inputSchema: z.object({
-          scenes: z.array(z.object({
-            text: z.string().min(1).max(2000).describe("what is said in this scene"),
-            visual: z.string().max(1500).optional().describe("what we see: concrete, visual, no on-screen text"),
-            image_url: z.string().url().optional().describe("use this picture instead of generating one"),
-          })).min(1).max(80),
-          platform: z.enum(PLATFORMS).optional().describe("default from settings"),
-          aspect: z.enum(["16:9", "9:16", "1:1"]).optional().describe("override the platform's frame"),
-          engine: z.enum(ENGINES).optional(), voice: z.string().optional(),
-          style: z.enum(["tech", "hype", "narrator", "neutral"]).optional(),
-          takes: z.number().int().min(1).max(4).optional(),
-          pronounce: z.record(z.string(), z.string()).optional(),
-          visuals: z.enum(["images", "clips"]).optional(),
-          visual_style: z.enum(VISUAL_STYLES).optional(),
-          captions_look: z.enum(["bold", "clean", "none"]).optional().describe("default: bold for vertical, clean for wide"),
-          transition: z.enum(["fade", "cut"]).optional(),
-          music_url: z.string().url().optional(), music_lufs: z.number().min(-40).max(-18).optional(),
-          seed: z.number().int().optional(),
-          label: z.string().max(80).optional(),
-          wait_seconds: z.number().min(0).max(MAX_WAIT).optional().describe("default 10; renders take minutes"),
-        }),
-      },
-      async ({ wait_seconds, ...body }) => {
-        try {
-          const full = withDefaults({ ...body, kind: "story" }, await getSettings());
-          const ref = typeof full.voice === "string" && isCustomVoice(full.voice) ? await refSync(full.voice) : null;
-          const job = await call<Job>("/jobs", { body: ref ? { ...full, ref } : full });
-          return text(withHint(await waitFor(job.id, wait_seconds ?? 10)));
         } catch (e) {
           return fail(e);
         }
@@ -282,7 +261,7 @@ const handler = createMcpHandler(
       "get_settings",
       {
         title: "Studio defaults",
-        description: "The user's saved defaults (engine, voice, style, platform, takes, pronunciation dictionary, studio enhance switches, script-video look). Every tool fills unset arguments from these.",
+        description: "The user's saved defaults (engine, voice, style, platform, takes, pronunciation dictionary, studio enhance switches, R2 backup of workspace uploads). Every tool fills unset arguments from these.",
         inputSchema: z.object({}),
       },
       async () => {
@@ -304,9 +283,7 @@ const handler = createMcpHandler(
           platform: z.enum(PLATFORMS).optional(), takes: z.number().int().min(1).max(4).optional(), subtitles: z.boolean().optional(),
           lexicon: z.boolean().optional(), pronounce: z.record(z.string(), z.string()).optional(),
           enhance_recordings: z.boolean().optional(), enhance_input: z.boolean().optional(), enhance_output: z.boolean().optional(),
-          visuals: z.enum(["images", "clips"]).optional(), visual_style: z.enum(VISUAL_STYLES).optional(),
-          captions_look: z.enum(["auto", "bold", "clean", "none"]).optional(), transition: z.enum(["fade", "cut"]).optional(),
-          music_lufs: z.number().min(-40).max(-18).optional(),
+          backup_media: z.boolean().optional().describe("copy workspace uploads to R2 as a backup"),
         }),
       },
       async (patch) => {
@@ -328,52 +305,6 @@ const handler = createMcpHandler(
       async () => {
         try {
           return text((await listMyVoices(false)).map((v) => ({ name: v.name, label: v.label, seconds: v.duration, transcript: v.transcript })));
-        } catch (e) {
-          return fail(e);
-        }
-      },
-    );
-
-    server.registerTool(
-      "animate",
-      {
-        title: "Generate a video clip",
-        description: [
-          "Render a short video on the GPU worker and save it to the library (MP4 + poster).",
-          "model wan: Wan 2.2 TI2V 5B, sharp 720p, best prompt following, silent, up to 5 s; quality fast = 4-step Turbo (a few minutes), full = 30 steps (~10x slower).",
-          "model wan14: Wan 2.2 I2V A14B + Lightning, best Wan quality, image-to-video ONLY (needs image_url or from_library), 480p 16 fps, up to 5 s, A100 only; adult: true adds an opt-in community NSFW LoRA (adults only, never real people).",
-          "model ltx: LTX-2.5 distilled, picture + matching soundtrack from the same prompt, up to 10 s; quality full = two-stage at 2x resolution (text-to-video only). Describe sounds too (\"Audio: ...\").",
-          "quality draft (all three): quickest preview (tiny decoder / half size). Use it to find the prompt and seed, then re-run fast or full.",
-          "model animate: Wan 2.2 Animate 14B, the character in image_url performs the motion in video_url (an exercise, a dance), up to 10 s, 16 fps, A100 only; prompt optional; retarget (default true) fits the motion to the character's body.",
-          "Prompts: subject, action, place, camera move, light, style; 40-100 words for wan. With a start frame (image_url or from_library) describe the motion, not the look.",
-          "Video and voice engines never share the GPU: this unloads voice engines first. First use downloads the weights (wan ~23 GB, wan14 ~69 GB, ltx ~71 GB, animate ~85 GB).",
-          "Rendering takes minutes: this returns a job id; poll get_job until done (the finished clip is archived to the library).",
-        ].join(" "),
-        inputSchema: z.object({
-          prompt: z.string().max(4000).describe("the shot (animate: optional scene/style hint)"),
-          model: z.enum(["wan", "wan14", "ltx", "animate"]).optional().describe("default wan"),
-          aspect: z.enum(["9:16", "16:9", "1:1"]).optional().describe("default 9:16"),
-          seconds: z.number().min(1).max(10).optional().describe("default 5 (wan max 5, ltx max 10)"),
-          quality: z.enum(["draft", "fast", "full"]).optional().describe("draft = quickest preview; full = wan and ltx only; default fast"),
-          seed: z.number().int().optional(),
-          negative: z.string().max(2000).optional().describe("things to avoid"),
-          audio: z.boolean().optional().describe("ltx only: generate the soundtrack (default true)"),
-          adult: z.boolean().optional().describe("wan14 only: enable the adult LoRA (default false)"),
-          image_url: z.string().url().optional().describe("start frame (animate: the character), public or signed https URL"),
-          video_url: z.string().url().optional().describe("animate only: the driving video whose motion is copied"),
-          retarget: z.boolean().optional().describe("animate only: fit the motion to the character's proportions (default true)"),
-          from_library: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional().describe("start from a library video's poster frame"),
-          label: z.string().max(80).optional(),
-          wait_seconds: z.number().min(0).max(MAX_WAIT).optional().describe("block up to this long (default 10; renders take minutes)"),
-        }),
-      },
-      async ({ wait_seconds, from_library, ...body }) => {
-        try {
-          const image_url = from_library ? await presignPath(`library/${from_library}/poster.jpg`, 3600) : body.image_url;
-          if (body.model === "animate" && (!image_url || !body.video_url)) throw new Error("model animate needs image_url (the character) and video_url (the motion)");
-          if (body.model !== "animate" && body.prompt.trim().length < 3) throw new Error("prompt is required");
-          const job = await call<Job>("/jobs", { body: { ...body, image_url, kind: body.model === "animate" ? "animate" : "video" } });
-          return text(withHint(await waitFor(job.id, wait_seconds ?? 10)));
         } catch (e) {
           return fail(e);
         }
@@ -432,7 +363,7 @@ const handler = createMcpHandler(
       "get_job",
       {
         title: "Get job",
-        description: "Status and results of a voice job. Waits up to wait_seconds for it to finish.",
+        description: "Status and results of any job (voice, clean-up, re-voice, subtitles, images). Waits up to wait_seconds for it to finish.",
         inputSchema: z.object({
           job_id: z.string().regex(/^[a-f0-9]{12}$/),
           wait_seconds: z.number().min(0).max(MAX_WAIT).optional(),
@@ -571,17 +502,199 @@ const handler = createMcpHandler(
         }
       },
     );
+
+    // ── shared workspace (Appwrite): the same posts, calendar, comments and media the two of you see on the dashboard
+
+    const brief = (p: Post) => ({
+      id: p.$id, title: p.title, status: p.status, platforms: p.platforms, due_at: p.due_at, owner: p.owner_name, assignee: p.assignee_name,
+      voiceovers: p.jobs?.length ?? 0, script_words: p.script?.trim() ? p.script.trim().split(/\s+/).length : 0, updated: p.$updatedAt,
+      link: `/workspace?post=${p.$id}`,
+    });
+    const ws = async <T,>(fn: () => Promise<T>) => {
+      if (!hasKey()) return { ...text("ERROR: the shared workspace is not configured on the server (APPWRITE_API_KEY)."), isError: true };
+      try { return text(await fn()); } catch (e) { return fail(e); }
+    };
+    const resolveMember = async (who?: string | null) => {
+      if (!who) return { assignee_id: null, assignee_name: null };
+      const m = (await listMembers()).find((x) => [x.id, x.email.toLowerCase(), x.name.toLowerCase(), x.name.split(" ")[0].toLowerCase()].includes(who.toLowerCase()));
+      if (!m) throw new Error(`no workspace member matches "${who}"; see workspace_members`);
+      return { assignee_id: m.id, assignee_name: m.name };
+    };
+    const postFields = {
+      title: z.string().min(1).max(200).optional(),
+      status: z.enum(POST_STATUS).optional().describe("idea, draft (in production), review, scheduled, posted"),
+      platforms: z.array(z.enum(POST_PLAT)).optional().describe("where it goes: youtube, shorts, reels, instagram, tiktok, x, linkedin, podcast"),
+      script: z.string().max(100_000).optional().describe("what will be said; one line per beat; [pause]/[beat] markers work"),
+      caption: z.string().max(10_000).optional().describe("post caption + hashtags"),
+      notes: z.string().max(10_000).optional(),
+      due_at: z.string().datetime({ offset: true }).nullable().optional().describe("publish time, ISO 8601 with offset; null clears it"),
+      link: z.string().url().nullable().optional().describe("the live post URL once it's out"),
+      assignee: z.string().nullable().optional().describe("who owns it: a member's name, first name or email (see workspace_members); null = nobody"),
+    };
+
+    server.registerTool(
+      "workspace_board",
+      {
+        title: "The shared board",
+        description: "Posts the two creators are working on, newest first, with status (idea -> draft -> review -> scheduled -> posted), platforms, due date, owner and how many voiceovers each has. Filter by status, platform or text. Use get_post for the full script, caption, comments and media.",
+        inputSchema: z.object({
+          status: z.enum(POST_STATUS).optional(), platform: z.enum(POST_PLAT).optional(),
+          search: z.string().max(200).optional().describe("matches title, script and caption"), limit: z.number().int().min(1).max(200).optional(),
+        }),
+      },
+      async ({ status, platform, search, limit }) => ws(async () => {
+        let posts = await listPosts({ status, limit: search || platform ? 200 : limit ?? 50 });
+        if (platform) posts = posts.filter((p) => p.platforms.includes(platform));
+        if (search) posts = posts.filter((p) => `${p.title} ${p.script ?? ""} ${p.caption ?? ""}`.toLowerCase().includes(search.toLowerCase()));
+        return posts.slice(0, limit ?? 50).map(brief);
+      }),
+    );
+
+    server.registerTool(
+      "get_post",
+      {
+        title: "Open a post",
+        description: "Everything about one workspace post: script, caption, notes, schedule, comments thread, attached media (with view links) and voiceover library ids (open them with list_library / get_job).",
+        inputSchema: z.object({ post_id: POST_ID }),
+      },
+      async ({ post_id }) => ws(async () => {
+        const [p, comments, media, activity] = await Promise.all([getPost(post_id), listComments(post_id), listMedia(post_id), listActivity(15, post_id)]);
+        return {
+          ...brief(p), script: p.script, caption: p.caption, notes: p.notes, posted_at: p.posted_at, live_link: p.link, voiceover_jobs: p.jobs,
+          comments: comments.map((c) => ({ by: c.author_name, at: c.$createdAt, text: c.body })),
+          media: media.map((m) => ({ id: m.$id, name: m.name, kind: m.kind, mb: m.size ? +(m.size / 1e6).toFixed(1) : null, url: m.token ? fileUrl(m) : null, backed_up: !!m.r2_key })),
+          activity: activity.map((a) => `${a.$createdAt.slice(0, 16)} ${a.actor_name ?? "someone"} ${a.verb} ${a.text ?? ""}`.trim()),
+        };
+      }),
+    );
+
+    server.registerTool(
+      "create_post",
+      {
+        title: "Create a post",
+        description: "Add a post to the shared board (it appears live on both creators' screens). Good for turning an idea into a planned piece: give it a title, platforms, a draft script and caption, and a due_at to put it on the calendar. Write scripts as the creator would say them, one line per beat.",
+        inputSchema: z.object({ ...postFields, title: z.string().min(1).max(200) }),
+      },
+      async ({ assignee, ...data }) => ws(async () => brief(await createPost({ ...data, ...(assignee !== undefined ? await resolveMember(assignee) : {}) } as Partial<Post>, CLAUDE))),
+    );
+
+    server.registerTool(
+      "update_post",
+      {
+        title: "Edit a post",
+        description: "Change any field of a post: move it along (status), rewrite or append to the script, set the caption, schedule it (due_at), assign it, add the live link. Only the fields you send change. script_mode append adds to the end of the existing script.",
+        inputSchema: z.object({ post_id: POST_ID, ...postFields, script_mode: z.enum(["replace", "append"]).optional().describe("default replace") }),
+      },
+      async ({ post_id, assignee, script_mode, ...data }) => ws(async () => {
+        if (script_mode === "append" && data.script) data.script = `${((await getPost(post_id)).script ?? "").trimEnd()}\n${data.script}`.trim();
+        if (data.status === "posted") (data as Partial<Post>).posted_at ??= new Date().toISOString();
+        return brief(await updatePost(post_id, { ...data, ...(assignee !== undefined ? await resolveMember(assignee) : {}) } as Partial<Post>, CLAUDE));
+      }),
+    );
+
+    server.registerTool(
+      "delete_post",
+      {
+        title: "Delete a post",
+        description: "Permanently delete a post from the board (its media files stay in the Media library). Only when the user explicitly asks.",
+        inputSchema: z.object({ post_id: POST_ID }),
+      },
+      async ({ post_id }) => ws(async () => { await deletePost(post_id, CLAUDE); return { deleted: post_id }; }),
+    );
+
+    server.registerTool(
+      "comment_on_post",
+      {
+        title: "Comment on a post",
+        description: "Leave a note in a post's discussion thread (both creators see it live, signed as Claude). Use it for review feedback, script suggestions, or to explain what you changed.",
+        inputSchema: z.object({ post_id: POST_ID, text: z.string().min(1).max(5000) }),
+      },
+      async ({ post_id, text: body }) => ws(async () => { const c = await addComment(post_id, body, CLAUDE); return { id: c.$id, post_id }; }),
+    );
+
+    server.registerTool(
+      "content_calendar",
+      {
+        title: "Content calendar",
+        description: "Scheduled posts between two dates (default: today through the next 14 days), in publish order, plus the unscheduled posts still in progress. Use it to plan a week, find gaps, or spread posts across platforms.",
+        inputSchema: z.object({
+          from: z.string().datetime({ offset: true }).optional(), to: z.string().datetime({ offset: true }).optional(),
+        }),
+      },
+      async ({ from, to }) => ws(async () => {
+        const start = from ?? new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
+        const end = to ?? new Date(Date.parse(start) + 14 * 864e5).toISOString();
+        const [scheduled, all] = await Promise.all([postsBetween(start, end), listPosts({ limit: 200 })]);
+        return { from: start, to: end, scheduled: scheduled.map(brief), unscheduled: all.filter((p) => !p.due_at && p.status !== "posted").map(brief) };
+      }),
+    );
+
+    server.registerTool(
+      "workspace_media",
+      {
+        title: "Workspace media",
+        description: "Files in the shared Media library (images, videos, audio, docs), newest first, optionally only one post's. Each has a view url that works in a browser.",
+        inputSchema: z.object({ post_id: POST_ID.optional() }),
+      },
+      async ({ post_id }) => ws(async () => (await listMedia(post_id)).map((m) => ({
+        id: m.$id, name: m.name, kind: m.kind, mb: m.size ? +(m.size / 1e6).toFixed(1) : null, post_id: m.post_id, by: m.uploaded_name, at: m.$createdAt,
+        url: m.token ? fileUrl(m) : null, backed_up_to_r2: !!m.r2_key,
+      }))),
+    );
+
+    server.registerTool(
+      "add_media",
+      {
+        title: "Add a file to the workspace",
+        description: "Copy a file from a URL (a generated image or voiceover link from this server, or any public link) into the shared Media library, optionally attached to a post. Up to 150 MB; it is also backed up to R2 when the backup setting is on.",
+        inputSchema: z.object({ url: z.string().url(), name: z.string().max(200).optional(), post_id: POST_ID.optional() }),
+      },
+      async ({ url, name, post_id }) => ws(async () => {
+        const { media, backup } = await addMediaFromUrl(url, { name, postId: post_id, backup: (await getSettings()).backup_media }, CLAUDE);
+        return { id: media.$id, name: media.name, kind: media.kind, url: fileUrl(media), r2_backup: media.r2_key ? "saved" : backup ?? "off" };
+      }),
+    );
+
+    server.registerTool(
+      "attach_voiceover",
+      {
+        title: "Attach a voiceover to a post",
+        description: "Link a finished library voiceover (job id from list_library or voice_lines) to a post, so it shows under the post's Voiceovers. voice_lines with post_id does this automatically.",
+        inputSchema: z.object({ post_id: POST_ID, job_id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/) }),
+      },
+      async ({ post_id, job_id }) => ws(async () => brief(await linkJob(post_id, job_id, CLAUDE))),
+    );
+
+    server.registerTool(
+      "workspace_activity",
+      {
+        title: "What changed",
+        description: "The shared activity feed: who created, moved, edited, voiced, commented on or uploaded what, newest first. Use it to catch up on what the other creator did.",
+        inputSchema: z.object({ limit: z.number().int().min(1).max(100).optional(), post_id: POST_ID.optional() }),
+      },
+      async ({ limit, post_id }) => ws(async () => (await listActivity(limit ?? 30, post_id)).map((a) => ({ at: a.$createdAt, who: a.actor_name, did: a.verb, what: a.text, post_id: a.post_id }))),
+    );
+
+    server.registerTool(
+      "workspace_members",
+      {
+        title: "Who's in the workspace",
+        description: "The people on the shared workspace (name, email, id). Use a name or email as `assignee` on create_post / update_post.",
+        inputSchema: z.object({}),
+      },
+      async () => ws(async () => listMembers()),
+    );
   },
   {
-    serverInfo: { name: "voicebox", version: "2.0.0" },
+    serverInfo: { name: "voicebox", version: "3.0.0" },
     instructions: [
-      "Voicebox: the user's own GPU voice + video studio (Colab worker). Typical flows:",
-      "1) Check worker_status first; if offline, ask the user to run the Colab notebook.",
-      "2) Voiceover: voice_lines with lines of 1-3 sentences. The user's recorded voices (my_voices) work on qwen. Defaults (engine, voice, platform, pronunciations) come from get_settings, so most calls only need lines.",
+      "Voicebox: two creators' shared studio. Their own GPU voice studio (Colab worker) plus a shared workspace (board, calendar, comments, media) they both see live. Typical flows:",
+      "1) Plan and write: workspace_board / content_calendar to see what's in flight; create_post or update_post to add ideas, write scripts (as the creator would say them, one line per beat) and captions, schedule with due_at; comment_on_post to leave review notes. workspace_activity shows what the other person did.",
+      "2) Voice it: check worker_status (if offline, ask the user to run the Colab notebook), then voice_lines with post_id to voice a post's script and attach the result, or with lines for a one-off. The user's recorded voices (my_voices) work on qwen. Defaults come from get_settings.",
       "3) Before a long or term-heavy script, preview_pronunciation and add fixes via pronounce.",
-      "4) Finished video from a script: make_video with scenes [{text, visual}]; write a concrete visual for each scene.",
-      "5) A recording from a bad mic: clean_audio. A rough take the user performed: revoice into their clean voice.",
-      "6) Long jobs return a job id: poll get_job (each call waits up to 45 s). Results are archived to the dashboard library; links expire after 6 h.",
+      "4) A recording from a bad mic: clean_audio. A rough take the user performed: revoice into their clean voice. Subtitles for any file: transcribe. Stills and thumbnails: imagine, then add_media to put one on the post.",
+      "5) Long jobs return a job id: poll get_job (each call waits up to 45 s). Results are archived to the dashboard library; links expire after 6 h.",
+      "6) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",
       "Scores: match = how closely Whisper heard the script (>=0.95 good); similarity = voice match vs the recording (>=0.86 same speaker).",
     ].join("\n"),
   },

@@ -10,6 +10,8 @@ import JobProgress from "./JobProgress";
 import LineRow from "./LineRow";
 import { SampleButton, useSamples } from "./Sample";
 import { useStatus } from "./Shell";
+import { aw, logActivity } from "./aw";
+import { AW, type Post } from "@/lib/workspace";
 
 type Param = { type: "number" | "integer" | "string"; default: number | string; min?: number; max?: number; about?: string };
 type Engine = { kind: string; about: string; voices: string[]; presets: Record<string, string>; params: Record<string, Param>; state: string; seconds_per_char?: number };
@@ -25,6 +27,7 @@ const STYLE_ORDER = ["tech", "hype", "narrator", "neutral"];
 const TAGS = ["<laugh>", "<chuckle>", "<sigh>", "<gasp>", "<groan>", "<yawn>", "<sniffle>", "<cough>"];
 const MARKS = ["[pause]", "[pause 1.2]", "[beat]", "[breath]"];
 const PLATFORM_ORDER = ["youtube", "shorts", "reels", "tiktok", "podcast", "raw"];
+const POST_PLATFORM: Record<string, string> = { youtube: "youtube", shorts: "shorts", reels: "reels", instagram: "reels", tiktok: "tiktok", podcast: "podcast" };
 const PLATFORM_ICON: Record<string, string> = { youtube: "▶", shorts: "▮", reels: "◎", tiktok: "♪", podcast: "◉", raw: "∿" };
 
 /** "word = how to say it", one per line. */
@@ -88,6 +91,7 @@ export default function Generate() {
   const ta = useRef<HTMLTextAreaElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loaded = useRef(false);
+  const [forPost, setForPost] = useState<Post | null>(null);
 
   useEffect(() => {
     const s = JSON.parse(localStorage.getItem("vb-gen2") || "{}");
@@ -99,6 +103,15 @@ export default function Generate() {
     if (q.get("engine") && (TTS as readonly string[]).includes(q.get("engine")!)) { setEngine(q.get("engine")!); setParams({}); }
     if (q.get("voice")) { setVoice(q.get("voice")!); if (/^[a-z]{2}_/.test(q.get("voice")!)) setLang(KOKORO_LANG[q.get("voice")![0]] ?? "en"); }
     api<{ voices: MyVoice[] }>("myvoices").then((r) => setMine(r.voices)).catch(() => {}).finally(() => setMineLoaded(true));
+    // from a workspace post: /generate?post=<id> loads its script; the finished voiceover is attached back to the post
+    const pid = q.get("post");
+    if (pid) aw().tables.getRow<Post>({ databaseId: AW.db, tableId: "posts", rowId: pid }).then((p) => {
+      setForPost(p);
+      if (p.script?.trim()) setScript(p.script);
+      setLabel(p.title);
+      const plat = p.platforms.map((x) => POST_PLATFORM[x]).find(Boolean);
+      if (plat) setPlatform(plat);
+    }).catch(() => {});
     loaded.current = true;
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, []);
@@ -187,6 +200,11 @@ export default function Generate() {
       });
       setJob(j);
       timer.current = setTimeout(() => poll(j.id), 800);
+      if (forPost) {
+        const jobs = [...(forPost.jobs ?? []).filter((x) => x !== j.id), j.id];
+        aw().tables.updateRow<Post>({ databaseId: AW.db, tableId: "posts", rowId: forPost.$id, data: { jobs } }).then(setForPost).catch(() => {});
+        logActivity(forPost.$id, "voiced", `${engine} · ${label || forPost.title}`);
+      }
       window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
     } catch (e) {
       setErr((e as Error).message);
@@ -201,7 +219,7 @@ export default function Generate() {
     <>
       <div className="head">
         <div>
-          <div className="eyebrow">Record</div>
+          <div className="eyebrow">Voiceover</div>
           <h1>Write it, <em>hear it.</em></h1>
           <p className="sub">Script on the left, the voice on the right. Every take lands in the Library with word-timed subtitles.</p>
         </div>
@@ -209,6 +227,7 @@ export default function Generate() {
       </div>
       {!status?.online && status && <div className="banner"><WarningCircle size={20} weight="duotone" color="var(--signal2)" /><div><b>The GPU worker is offline.</b> <span className="dim">Run the Colab notebook; this page reconnects by itself.</span></div></div>}
       {catErr && <p className="err">{catErr}</p>}
+      {forPost && <div className="note-strip"><Link href={`/workspace?post=${forPost.$id}`}><b>{forPost.title}</b></Link><span className="dim">Voiceovers you make here are attached to this post{forPost.jobs?.length ? ` · ${forPost.jobs.length} so far` : ""}.</span></div>}
 
       <div className="split">
         <div className="stack" style={{ gap: 16 }}>

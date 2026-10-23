@@ -1,13 +1,13 @@
 "use client";
 import { CheckCircle, FloppyDisk } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { api, rangeFill, type MyVoice } from "./api";
+import { api, type MyVoice } from "./api";
 import { useDialog } from "./Dialog";
 
 type S = {
   engine: string; voice: string; style: string; platform: string; takes: number; subtitles: boolean; lexicon: boolean;
   pronounce: Record<string, string>; enhance_recordings: boolean; enhance_input: boolean; enhance_output: boolean;
-  visuals: string; visual_style: string; captions_look: string; transition: string; music_lufs: number;
+  backup_media: boolean;
 };
 
 const opt = (pairs: readonly (readonly [string, string])[]) => pairs.map(([v, l]) => <option key={v} value={v}>{l}</option>);
@@ -115,30 +115,13 @@ export default function Settings() {
               </select></div>
           </div>
           <div className="card">
-            <div className="card-head"><h2>Script videos</h2></div>
-            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div className="field" style={{ margin: 0 }}><label className="f">Look</label>
-                <select value={s.visual_style} onChange={(e) => set("visual_style", e.target.value)}>
-                  {opt([["tech", "Tech 3D"], ["neon", "Neon cinematic"], ["minimal", "Minimal flat"], ["photo", "Photo b-roll"], ["paper", "Paper cut"], ["blueprint", "Blueprint"]])}
-                </select></div>
-              <div className="field" style={{ margin: 0 }}><label className="f">Pictures</label>
-                <select value={s.visuals} onChange={(e) => set("visuals", e.target.value)}>{opt([["images", "Stills + motion"], ["clips", "Animated (slow)"]])}</select></div>
-              <div className="field" style={{ margin: 0 }}><label className="f">Captions</label>
-                <select value={s.captions_look} onChange={(e) => set("captions_look", e.target.value)}>
-                  {opt([["auto", "Auto by platform"], ["bold", "Bold pop"], ["clean", "Clean subtitles"], ["none", "None"]])}
-                </select></div>
-              <div className="field" style={{ margin: 0 }}><label className="f">Transitions</label>
-                <select value={s.transition} onChange={(e) => set("transition", e.target.value)}>{opt([["fade", "Cross-fade"], ["cut", "Hard cut"]])}</select></div>
-            </div>
-            <div className="field" style={{ margin: "14px 0 0" }}>
-              <div className="row between"><label className="f" style={{ margin: 0 }}>Music level</label><span className="mono small">{s.music_lufs} LUFS</span></div>
-              <input type="range" min={-40} max={-18} step={1} value={s.music_lufs} style={rangeFill(s.music_lufs, -40, -18)} onChange={(e) => set("music_lufs", +e.target.value)} />
-              <div className="dim tiny">-28 sits well under a voice; it also ducks automatically while you speak.</div>
-            </div>
+            <div className="card-head"><h2>Workspace</h2><span className="dim tiny">Appwrite + R2</span></div>
+            <Toggle on={s.backup_media} set={(v) => set("backup_media", v)} title="Back up uploads to R2"
+              about="Every file you add to the workspace is also copied to your R2 bucket (files up to ~180 MB), so nothing is lost if Appwrite is down or the plan ends." />
           </div>
           <div className="card flat">
             <div className="row" style={{ gap: 10 }}><CheckCircle size={18} weight="duotone" color="var(--ok)" />
-              <span className="small">Stored with your library (R2), not in this browser, so Claude and other MCP clients see the same defaults.</span></div>
+              <span className="small">Stored with your library (R2), not in this browser, so both of you, and Claude through MCP, use the same defaults.</span></div>
           </div>
         </div>
       </div>

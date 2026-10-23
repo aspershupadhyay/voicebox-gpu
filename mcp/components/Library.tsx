@@ -69,7 +69,6 @@ function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) {
               {j.subs && <a className="btn ghost sm" href={fileUrl(j.id, "subtitles.srt", `${slug}.srt`)}><ClosedCaptioning size={14} />.srt</a>}
               {j.subs && <a className="btn ghost sm" href={fileUrl(j.id, "subtitles.vtt", `${slug}.vtt`)}>.vtt</a>}
               {v?.voice_job && <a className="btn quiet sm" href={`#${v.voice_job}`}><Microphone size={14} />Voice lines</a>}
-              {j.gen && <Link className="btn quiet sm" href={`/video?from=${j.id}`}><FilmSlate size={14} />Open in Video</Link>}
             </div>
           </div>
         </div>

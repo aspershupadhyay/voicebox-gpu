@@ -42,17 +42,11 @@ straight onto the edit.
 
 ## 4 · Your own recordings, cleaned up
 
-Recorded the voiceover yourself on a cheap mic? **Studio → Studio clean-up** (or the `clean_audio` MCP tool) makes it
+Recorded the voiceover yourself on a cheap mic? **Clean-up** (or the `clean_audio` MCP tool) makes it
 sound studio-grade and masters it for the platform, at the same length so it stays in sync with your video.
 *Denoise only* keeps your exact tone; *Studio* also restores detail.
 
-## 5 · Script to video
-
-**Studio → Script → video**: one scene per line, `what you say || what we see`. Pick the platform (Shorts/Reels/TikTok
-give 1080×1920 with bold pop-up captions), a look, and optionally a music track. Stills with camera motion take seconds
-per scene; animated clips take minutes. From Claude, ask for a video and it will call `make_video` and write the shots.
-
-## 6 · Going further: train on your voice
+## 5 · Going further: train on your voice
 
 Zero-shot cloning from 20 seconds has a ceiling. For the best quality, record **30–60 minutes** of yourself reading
 tech scripts (same mic and room, varied sentences) and fine-tune a model on it:
