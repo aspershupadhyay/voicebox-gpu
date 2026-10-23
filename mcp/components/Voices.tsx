@@ -10,10 +10,12 @@ import { useDialog } from "./Dialog";
 import { GuideButton } from "./GuideDrawer";
 import { KOKORO_LANG, LANGUAGES } from "./guides";
 import JobProgress from "./JobProgress";
+import { useResumeJob } from "./jobs";
 import LineRow from "./LineRow";
 import Player from "./Player";
 import { SampleButton, useSamples } from "./Sample";
 import { useStatus } from "./Shell";
+import { SavedTakes, startRecording, VoiceOrb, type Recording } from "./Recorder";
 
 const READS = [
   "Okay, so here's something wild. Your phone figures out exactly where you are by listening to clocks in space. Twenty thousand kilometres up, a few billionths of a second, and some very clever math. Let me show you how it works.",
@@ -84,7 +86,9 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
   const [job, setJob] = useState<Job | null>(null);
   const [upFrac, setUpFrac] = useState<number | null>(null);
   const [err, setErr] = useState("");
-  const rec = useRef<MediaRecorder | null>(null);
+  const rec = useRef<Recording | null>(null);
+  const forget = useRef<(() => void) | null>(null); // drops the take from this device once it's saved as a voice
+  const [kept, setKept] = useState<string | null>(null);
   const t0 = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileIn = useRef<HTMLInputElement>(null);
@@ -102,22 +106,11 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
   async function start() {
     setErr(""); setPhase("asking");
     try {
-      // raw input: browser noise suppression / AGC leave artefacts the cloner would copy; the worker cleans instead
-      const s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
-      setStream(s);
-      const mime = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
-      const r = new MediaRecorder(s, mime ? { mimeType: mime, audioBitsPerSecond: 192000 } : undefined);
-      const chunks: Blob[] = [];
-      r.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-      r.onstop = () => {
-        s.getTracks().forEach((t) => t.stop());
-        setStream(null);
-        const blob = new Blob(chunks, { type: r.mimeType || "audio/webm" });
-        setTake({ blob, url: URL.createObjectURL(blob), name: `recording.${(r.mimeType || "audio/webm").includes("mp4") ? "m4a" : "webm"}` });
-        setPhase("review");
-      };
+      // raw input: browser noise suppression / AGC leave artefacts the cloner would copy; the worker cleans instead.
+      // Saved to this device every second, so a refresh mid-take doesn't lose it (SavedTakes offers it back).
+      const r = await startRecording("voices", READS[read].slice(0, 24) + "…");
       rec.current = r;
-      r.start(250);
+      setStream(r.stream);
       t0.current = performance.now();
       setSecs(0);
       setPhase("recording");
@@ -127,8 +120,19 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
     }
   }
 
-  const stop = () => rec.current?.state === "recording" && rec.current.stop();
+  async function stop() {
+    const r = rec.current;
+    if (!r) return;
+    rec.current = null;
+    const f = await r.stop();
+    setStream(null);
+    forget.current = r.forget;
+    setKept(r.take.id);
+    setTake({ blob: f, url: URL.createObjectURL(f), name: f.name });
+    setPhase("review");
+  }
   useEffect(() => { if (phase === "recording" && secs >= 45) stop(); }, [phase, secs]);
+  useEffect(() => () => { rec.current?.stream.getTracks().forEach((t) => t.stop()); }, []);
 
   const slug = (label || "my-voice").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "my-voice";
 
@@ -150,12 +154,17 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
       const key = await uploadFile(take.blob, take.name, setUpFrac);
       setUpFrac(null);
       const j = await api<Job>("myvoices", { body: { name: slug, label: label || "My voice", key } });
+      forget.current?.(); forget.current = null; setKept(null);
       setJob(j);
       timer.current = setTimeout(() => poll(j.id), 1000);
     } catch (e) { setUpFrac(null); setErr((e as Error).message); setPhase("review"); }
   }
 
-  const reset = () => { setTake(null); setJob(null); setPhase("idle"); setErr(""); };
+  useResumeJob<Job>(["reference"], (j) => { setPhase("saving"); setJob(j); timer.current = setTimeout(() => poll(j.id), 300); });
+  const reset = () => {
+    if (phase === "review") { forget.current?.(); forget.current = null; } // a retake replaces this take
+    setKept(null); setTake(null); setJob(null); setPhase("idle"); setErr("");
+  };
   const segs = 28, lit = Math.round(Math.min(1, level * 1.4) * segs);
   const progress = Math.min(1, secs / 20);
 
@@ -171,18 +180,22 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
               <button className="linkish" onClick={() => fileIn.current?.click()}>Upload a file instead</button></span>
             <input ref={fileIn} type="file" accept="audio/*,video/*" hidden onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) { setTake({ blob: f, url: URL.createObjectURL(f), name: f.name }); setLabel(f.name.replace(/\.[^.]+$/, "")); setPhase("review"); }
+              if (f) { forget.current = null; setTake({ blob: f, url: URL.createObjectURL(f), name: f.name }); setLabel(f.name.replace(/\.[^.]+$/, "")); setPhase("review"); }
             }} />
+            <div style={{ width: "100%", maxWidth: 380, marginTop: 10 }}>
+              <SavedTakes scope="voices" live={kept} onUse={(f, t) => {
+                forget.current = () => import("./takes").then((m) => m.dropTake(t.id)); setKept(t.id);
+                setTake({ blob: f, url: URL.createObjectURL(f), name: f.name }); setPhase("review");
+              }} />
+            </div>
           </div>
         ) : phase === "recording" ? (
           <div className="rec-live">
             <div className="rec-clock"><span className="recdot"><i />REC</span><span className="num">{secs.toFixed(1)}<small>s</small></span></div>
-            <div className="led big" aria-label="Input level">
-              {Array.from({ length: segs }, (_, i) => <i key={i} className={`${i / segs < 0.7 ? "g" : i / segs < 0.88 ? "a" : "r"} ${i < lit ? "on" : ""}`} />)}
-            </div>
-            <div className="dim tiny">{level > 0.95 ? "Too loud: back off a little" : level < 0.05 && secs > 1.5 ? "Very quiet: come closer" : secs < 10 ? "Keep going…" : secs < 20 ? "Good. Finish the card." : "Perfect. Stop whenever you like."}</div>
-            <div className="bar thin live" style={{ width: "100%" }}><i style={{ width: `${progress * 100}%`, background: secs >= 10 ? "var(--ok)" : undefined }} /></div>
-            <button className="rec-btn on" onClick={stop} aria-label="Stop recording"><Stop size={26} weight="fill" /></button>
+            <VoiceOrb stream={stream} size={232} target={20} secs={secs}>
+              <button className="rec-btn on" onClick={stop} aria-label="Stop recording"><Stop size={26} weight="fill" /></button>
+            </VoiceOrb>
+            <div className="dim small">{level > 0.95 ? "Too loud: back off a little" : level < 0.05 && secs > 1.5 ? "Very quiet: come closer" : secs < 10 ? "Keep going…" : secs < 20 ? "Good. Finish the card." : "Perfect. Stop whenever you like."}</div>
           </div>
         ) : (
           <div className="rec-review">
@@ -271,6 +284,7 @@ function Revoice({ mine }: { mine: MyVoice[] }) {
     }
   }
 
+  useResumeJob<Job>(["revoice"], (j) => { setJob(j); timer.current = setTimeout(() => poll(j.id), 300); });
   const busy = upFrac !== null || (!!job && (["queued", "running"].includes(job.status) || (job.status === "done" && !job.library)));
   const voices = [...mine.map((m) => [m.name, m.label] as const), ["female", "female preset"] as const, ["male", "male preset"] as const];
   return (
