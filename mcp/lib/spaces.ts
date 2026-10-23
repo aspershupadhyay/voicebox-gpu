@@ -31,8 +31,16 @@ export const SPACE_IDS = SPACES.map((s) => s.id) as [SpaceId, ...SpaceId[]];
 export const spaceOf = (id: string) => SPACES.find((s) => s.id === id);
 export const spaceName = (id: string) => { const s = spaceOf(id); return s ? `${s.networkLabel} ${s.label}` : id; };
 
-export type Target = { space: SpaceId; status: Status; due_at?: string | null; link?: string | null };
+export type Target = { space: SpaceId; status: Status; due_at?: string | null; link?: string | null; posted_at?: string | null };
 export type TargetMap = Record<string, Target[]>;
+/** Weekly goal per space (how many posts a week you're aiming for), shared by the whole studio. */
+export type Goals = Partial<Record<SpaceId, number>>;
+
+/** The shape a format takes on screen: vertical video, wide video, square, text, audio. */
+export const SHAPE: Record<SpaceId, "tall" | "wide" | "square" | "text" | "audio"> = {
+  yt_video: "wide", yt_short: "tall", yt_post: "text", ig_reel: "tall", ig_post: "square", ig_story: "tall",
+  x_post: "text", x_thread: "text", tt_video: "tall", li_post: "square", pod_episode: "audio",
+};
 
 const RANK = Object.fromEntries(STATUSES.map((s, i) => [s.id, i])) as Record<Status, number>;
 const FIRST_FOR: Partial<Record<Platform, SpaceId>> = { youtube: "yt_video", shorts: "yt_short", reels: "ig_reel", instagram: "ig_post", x: "x_post", tiktok: "tt_video", linkedin: "li_post", podcast: "pod_episode" };
@@ -55,6 +63,18 @@ export function postFromTargets(targets: Target[]): { platforms: Platform[]; sta
   return { platforms, status, ...(open.length ? { due_at: open[0] } : {}) };
 }
 
+export function cleanGoals(given: unknown): Goals {
+  const out: Goals = {};
+  if (!given || typeof given !== "object") return out;
+  for (const [k, v] of Object.entries(given as Record<string, unknown>)) {
+    if (spaceOf(k) && typeof v === "number" && v > 0) out[k as SpaceId] = Math.min(50, Math.round(v));
+  }
+  return out;
+}
+
+/** When something went live: the target's own posted_at, else the post's. */
+export const shippedAt = (t: Target, p: Pick<Post, "posted_at" | "$updatedAt">) => (t.status === "posted" ? t.posted_at ?? p.posted_at ?? p.$updatedAt : null);
+
 export function cleanTargets(given: unknown): Target[] {
   if (!Array.isArray(given)) return [];
   const seen = new Set<string>();
@@ -67,7 +87,8 @@ export function cleanTargets(given: unknown): Target[] {
     const status = (STATUSES.some((s) => s.id === x.status) ? x.status : "idea") as Status;
     const due = typeof x.due_at === "string" && !Number.isNaN(Date.parse(x.due_at)) ? new Date(x.due_at).toISOString() : null;
     const link = typeof x.link === "string" && /^https?:\/\//.test(x.link) ? x.link.slice(0, 500) : null;
-    out.push({ space: x.space as SpaceId, status, due_at: due, link });
+    const posted = status === "posted" && typeof x.posted_at === "string" && !Number.isNaN(Date.parse(x.posted_at)) ? new Date(x.posted_at).toISOString() : null;
+    out.push({ space: x.space as SpaceId, status, due_at: due, link, posted_at: posted });
   }
   return out;
 }
