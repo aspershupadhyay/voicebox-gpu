@@ -1,0 +1,43 @@
+# Deploys the dashboard + MCP server (mcp/) to Vercel on every push that touches it, with the current worker bundle.
+# One-time setup: repo Settings → Secrets and variables → Actions → New repository secret VERCEL_TOKEN
+# (vercel.com/account/settings/tokens). Env vars stay as they are on Vercel; this only ships code.
+name: Deploy
+on:
+  push:
+    branches: [main, claude/optimistic-heisenberg-ik2pah]
+    paths: [mcp/**, worker/**, notebook/build_notebook.py, .github/workflows/deploy.yml]
+  workflow_dispatch:
+concurrency: { group: deploy, cancel-in-progress: false }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_SCOPE: forchatgptuseho-9784
+      VERCEL_PROJECT: mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: Check the token
+        run: '[ -n "$VERCEL_TOKEN" ] || { echo "::error::Add the VERCEL_TOKEN repository secret (see the top of this file)"; exit 1; }'
+      - name: Worker bundle (what Colab pulls from /api/bundle)
+        run: python3 notebook/build_notebook.py
+      - name: Deploy
+        # from a git-free copy: Vercel blocks deploys whose commit author has no Vercel account
+        run: |
+          tmp=$(mktemp -d)/mcp && mkdir -p "$tmp"
+          rsync -a --exclude node_modules --exclude .next --exclude '.env*' --exclude .vercel mcp/ "$tmp/"
+          cd "$tmp"
+          npx -y vercel@latest link --yes --project "$VERCEL_PROJECT" --scope "$VERCEL_SCOPE" --token "$VERCEL_TOKEN"
+          npx -y vercel@latest deploy --prod --yes --scope "$VERCEL_SCOPE" --token "$VERCEL_TOKEN"
+      - name: Smoke test
+        run: |
+          sleep 10
+          for p in /login /api/register; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://mcp-eta-tawny.vercel.app$p")
+            echo "$p $code"
+            if [ "$code" = 500 ] || [ "$code" = 000 ]; then exit 1; fi
+          done
