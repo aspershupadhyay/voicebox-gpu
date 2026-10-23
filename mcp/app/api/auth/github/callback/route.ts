@@ -1,6 +1,6 @@
-// GitHub sign-in callback: only logins listed in OWNER_GITHUB get the dashboard session cookie.
+// GitHub sign-in callback: only allowed logins (OWNER_GITHUB + Settings → Claude / MCP access) get the session cookie.
 import { cookies } from "next/headers";
-import { githubEnabled, githubLogin, owners, safeNext, STATE_COOKIE } from "@/lib/github";
+import { allowedLogins, githubEnabled, githubLogin, safeNext, STATE_COOKIE } from "@/lib/github";
 import { origin } from "@/lib/oauth";
 import { COOKIE, sessionValue } from "@/lib/session";
 import { safeEqual } from "@/lib/worker";
@@ -25,7 +25,7 @@ export async function GET(req: Request) {
   } catch (e) {
     return deny((e as Error).message, 502);
   }
-  if (!login || !owners().includes(login)) return deny(`GitHub account "${login || "?"}" isn't allowed on this voicebox.`);
+  if (!login || !(await allowedLogins()).includes(login)) return deny(`GitHub account "${login || "?"}" isn't allowed on this voicebox.`);
 
   jar.set(COOKIE, sessionValue(), { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 30 });
   const next = safeNext(Buffer.from(nextB64 ?? "", "base64url").toString());

@@ -15,21 +15,25 @@ export type Settings = {
   transition: "fade" | "cut"; music_lufs: number;
   backup_media: boolean; review: boolean;
   people: Record<string, { engine: string; voice: string }>;
+  /** GitHub usernames (up to 4) that may connect Claude / MCP clients and sign in with GitHub, besides OWNER_GITHUB. */
+  mcp_github: string[];
 };
+
+export const MCP_PEOPLE = 4;
 
 export const DEFAULTS: Settings = {
   engine: "qwen", voice: "female", style: "tech", platform: "youtube", takes: 1, subtitles: true,
   lexicon: true, pronounce: {},
   enhance_recordings: true, enhance_input: true, enhance_output: false,
   visuals: "images", visual_style: "tech", captions_look: "auto", transition: "fade", music_lufs: -28,
-  backup_media: true, review: true, people: {},
+  backup_media: true, review: true, people: {}, mcp_github: [],
 };
 
 const KEY = "settings.json";
 
 export async function getSettings(): Promise<Settings> {
   const s = await getJson<Partial<Settings>>(KEY).catch(() => null);
-  return { ...DEFAULTS, ...(s ?? {}), pronounce: { ...(s?.pronounce ?? {}) }, people: { ...(s?.people ?? {}) } };
+  return { ...DEFAULTS, ...(s ?? {}), pronounce: { ...(s?.pronounce ?? {}) }, people: { ...(s?.people ?? {}) }, mcp_github: [...(s?.mcp_github ?? [])] };
 }
 
 /** The settings as one person sees them: their own engine + voice over the studio's, when they keep one. */
@@ -57,6 +61,10 @@ export async function updateSettings(patch: Record<string, unknown>, userId?: st
     next.pronounce = Object.fromEntries(Object.entries(patch.pronounce as Record<string, unknown>)
       .filter(([k, v]) => k.trim() && typeof v === "string" && v.trim()).slice(0, 300)
       .map(([k, v]) => [k.trim().slice(0, 60), (v as string).trim().slice(0, 120)]));
+  }
+  if (Array.isArray(patch.mcp_github)) {
+    next.mcp_github = [...new Set(patch.mcp_github.map((x) => String(x).trim().replace(/^@/, "").toLowerCase())
+      .filter((x) => /^[a-z0-9](?:[a-z0-9-]{0,38})$/.test(x)))].slice(0, MCP_PEOPLE);
   }
   if (userId && typeof patch.personal === "boolean") {
     // "just for me": the engine + voice go to this person; the studio default stays as it was

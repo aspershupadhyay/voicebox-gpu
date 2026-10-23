@@ -1,12 +1,19 @@
-// "Continue with GitHub" for the owner: replaces pasting MCP_TOKEN in the browser.
-// Enabled when GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET and OWNER_GITHUB (comma-separated logins) are set.
+// "Continue with GitHub": replaces pasting MCP_TOKEN in the browser, for the dashboard and for connecting Claude / MCP
+// clients. Enabled when GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are set. Who may sign in: OWNER_GITHUB
+// (comma-separated logins, on Vercel) plus up to 4 people added in Settings → Claude / MCP access.
 export const STATE_COOKIE = "vb_gh_state";
 
-export const githubEnabled = () =>
-  !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET && owners().length);
+export const githubEnabled = () => !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET);
 
 export const owners = () =>
   (process.env.OWNER_GITHUB ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+/** Everyone allowed: OWNER_GITHUB and the people added in Settings. */
+export async function allowedLogins() {
+  const { getSettings } = await import("./settings");
+  const extra = await getSettings().then((s) => s.mcp_github).catch(() => [] as string[]);
+  return [...new Set([...owners(), ...extra])];
+}
 
 /** Only same-site paths, so the callback can't be turned into an open redirect. */
 export const safeNext = (n: string | null | undefined) => (n && n.startsWith("/") && !n.startsWith("//") && !n.startsWith("/\\") ? n : "/");

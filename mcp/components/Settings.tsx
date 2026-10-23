@@ -1,5 +1,5 @@
 "use client";
-import { CheckCircle, FloppyDisk } from "@phosphor-icons/react";
+import { CheckCircle, Copy, FloppyDisk, GithubLogo } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api, type MyVoice } from "./api";
 import { useDialog } from "./Dialog";
@@ -7,7 +7,7 @@ import { useDialog } from "./Dialog";
 type S = {
   engine: string; voice: string; style: string; platform: string; takes: number; subtitles: boolean; lexicon: boolean;
   pronounce: Record<string, string>; enhance_recordings: boolean; enhance_input: boolean; enhance_output: boolean;
-  backup_media: boolean; review: boolean; personal?: boolean;
+  backup_media: boolean; review: boolean; personal?: boolean; mcp_github: string[];
 };
 
 const opt = (pairs: readonly (readonly [string, string])[]) => pairs.map(([v, l]) => <option key={v} value={v}>{l}</option>);
@@ -100,6 +100,27 @@ export default function Settings() {
             <textarea value={lex} onChange={(e) => setLex(e.target.value)} spellCheck={false} style={{ minHeight: 120 }}
               placeholder={"One per line: word = how to say it\nKubernetes = koo-ber-net-eez\nYourBrand = your brand"} />
             <div className="dim tiny" style={{ marginTop: 4 }}>Applied to every voiceover and video; a request&apos;s own pronunciations win per word.</div>
+          </div>
+
+          <div className="card">
+            <div className="card-head"><h2>Claude / MCP access</h2><span className="dim tiny">up to 4 people</span></div>
+            <label className="f">MCP server URL</label>
+            <div className="row" style={{ gap: 8 }}>
+              <input readOnly value={typeof window === "undefined" ? "" : `${location.origin}/api/mcp`} onFocus={(e) => e.currentTarget.select()} style={{ fontFamily: "var(--mono)", fontSize: 12.5 }} />
+              <button className="ghost sm" onClick={() => { navigator.clipboard.writeText(`${location.origin}/api/mcp`).then(() => toast("Copied", "ok")).catch(() => {}); }}><Copy size={14} />Copy</button>
+            </div>
+            <div className="dim tiny" style={{ margin: "6px 0 14px" }}>In claude.ai: Settings → Connectors → Add custom connector, paste the URL, leave the OAuth fields empty. Each person connects their own Claude; there&apos;s no limit on connections.</div>
+            <label className="f">GitHub accounts that can connect</label>
+            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="row" style={{ gap: 6 }}>
+                  <GithubLogo size={16} className="dim" />
+                  <input value={s.mcp_github?.[i] ?? ""} placeholder={`GitHub username ${i + 1}`} spellCheck={false} autoCapitalize="off"
+                    onChange={(e) => { const next = [...(s.mcp_github ?? [])]; next[i] = e.target.value.trim(); set("mcp_github", next.filter((x, k) => x || k < next.length - 1).slice(0, 4)); }} />
+                </div>
+              ))}
+            </div>
+            <div className="dim tiny" style={{ marginTop: 6 }}>They tap &ldquo;Continue with GitHub&rdquo; when Claude asks to connect (needs GitHub sign-in set up: GITHUB_CLIENT_ID / SECRET on Vercel). Anyone with the access token can also connect. Save defaults to apply.</div>
           </div>
 
           <div className="card">
