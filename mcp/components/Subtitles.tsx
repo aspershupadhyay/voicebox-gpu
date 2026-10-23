@@ -7,6 +7,7 @@ import { CaptionArt, VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
 import { LANGUAGES } from "./guides";
 import JobProgress from "./JobProgress";
+import { useResumeJob } from "./jobs";
 import Player from "./Player";
 import Recorder from "./Recorder";
 import { useStatus } from "./Shell";
@@ -54,6 +55,7 @@ export default function Subtitles() {
   const { status } = useStatus();
   const [mode, setMode] = useState<"upload" | "record" | "library">("upload");
   const [libQ, setLibQ] = useState("");
+  const forget = useRef<(() => void) | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [lang, setLang] = useState("");
   const [over, setOver] = useState(false);
@@ -92,6 +94,7 @@ export default function Subtitles() {
       setUploading(false);
       const j = await api<Job>("jobs", { body: { kind: "transcribe", sources: done, language: lang || undefined, label: items.length === 1 ? items[0].file.name : `${items.length} files` } });
       setJob(j);
+      forget.current?.(); forget.current = null;
       timer.current = setTimeout(() => poll(j.id), 800);
     } catch (e) { setUploading(false); setErr((e as Error).message); }
   }
@@ -105,6 +108,7 @@ export default function Subtitles() {
     } catch (e) { setErr((e as Error).message); }
   }
 
+  useResumeJob<Job>(["transcribe"], (j) => { setJob(j); timer.current = setTimeout(() => poll(j.id), 300); });
   const totalUp = items.length ? items.reduce((s, i) => s + i.frac, 0) / items.length : 0;
   const busy = uploading || (!!job && (["queued", "running"].includes(job.status) || (job.status === "done" && !job.library)));
   const local = (id: string) => items.find((i) => i.id === id)?.url;
@@ -136,7 +140,7 @@ export default function Subtitles() {
       {mode === "record" ? (
         <div className="card">
           <div className="card-head"><h2>Record, then subtitle it</h2></div>
-          <Recorder name="subtitles" onReady={(f) => { setItems(f ? [{ file: f, id: "recording", frac: 0, url: URL.createObjectURL(f) }] : []); }} />
+          <Recorder scope="subtitles" onReady={(f, fg) => { forget.current = fg ?? null; setItems(f ? [{ file: f, id: "recording", frac: 0, url: URL.createObjectURL(f) }] : []); }} />
           {items.length > 0 && (
             <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
               <button className="sig" disabled={busy || !status?.online} onClick={start}><ClosedCaptioning size={16} weight="bold" />{status?.online ? "Make subtitles" : "GPU offline"}</button>

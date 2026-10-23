@@ -21,10 +21,21 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [x] MCP: create/update posts with targets (spaces), list a space, upload a file to the workspace media (URL or
       base64), delete a file
 
+## Reliability + polish (round 3)
+- [x] Jobs survive a refresh / tab switch: every job started from the dashboard is remembered (localStorage), a tray
+      follows it from any page (which also finishes archiving it), and each page picks its running job back up
+- [x] Recordings are saved while you record (IndexedDB, every second): after a refresh or crash, the take is offered back
+      to use, keep recording another, or discard (Voices, Your model, Clean-up, Subtitles)
+- [x] Voice-reactive animation while recording (an orb that moves with your voice, a ring for the target length)
+- [x] Sidebar: nav scrolls on its own, GPU card is one compact row (details on Engines), name / settings / sign out
+      always visible
+
 ## Notes for whoever picks this up
 - Spaces are defined once in `mcp/lib/spaces.ts` (add a space there and it shows everywhere: sidebar, drawer, MCP enum).
 - The Content page is `mcp/components/Content.tsx`; the drawer's "Publish to" editor is `TargetsEditor` in `Workspace.tsx`.
 - Targets refresh every 15 s (not Appwrite Realtime): `mcp/components/useTargets.ts`.
+- Job tracking: `mcp/components/jobs.ts` (localStorage, `useResumeJob`), the tray `JobTray.tsx`; `api()` tracks every
+  POST to `jobs` / `myvoices`. Saved recordings: `takes.ts` (IndexedDB); `startRecording(scope)` in `Recorder.tsx`.
 
 ## Later (not started)
 - [ ] Listen to a few of the cut training clips per session on Your model (the worker would push samples next to the zip)

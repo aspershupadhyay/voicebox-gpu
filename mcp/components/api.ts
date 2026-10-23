@@ -9,6 +9,12 @@ export async function api<T = any>(path: string, init?: { method?: string; body?
   if (r.status === 401) { location.href = "/login"; throw new Error("unauthorized"); }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  if ((path === "jobs" || path === "myvoices") && init?.body && data?.id) {
+    // remember it so the tray and this page can follow it through a refresh (jobs.ts)
+    const b = init.body as { kind?: string; label?: string; name?: string };
+    const kind = path === "myvoices" ? "reference" : b.kind || "voice";
+    import("./jobs").then((m) => m.trackJob(data, kind, b.label || (kind === "reference" ? `Voice · ${b.name}` : undefined)));
+  }
   return data as T;
 }
 

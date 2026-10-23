@@ -8,9 +8,10 @@ import { READ_ALONG } from "@/lib/readalong";
 import { api, fmtS, pct, simClass, matchClass, uploadFile, type Job, type MyVoice } from "./api";
 import { useDialog } from "./Dialog";
 import JobProgress from "./JobProgress";
+import { useResumeJob } from "./jobs";
 import LineRow from "./LineRow";
 import Player from "./Player";
-import { FilePreview } from "./Recorder";
+import { FilePreview, SavedTakes, startRecording, VoiceOrb, type Recording } from "./Recorder";
 import { useStatus } from "./Shell";
 
 type Part = { job: string; clips: number; minutes: number; input_minutes: number; dropped: Record<string, number>; created: number;
@@ -57,12 +58,13 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
   const { toast } = useDialog();
   const [tab, setTab] = useState<"read" | "upload">("read");
   const [i, setI] = useState(0);
-  const [rec, setRec] = useState<{ r: MediaRecorder; s: MediaStream; t0: number } | null>(null);
+  const [rec, setRec] = useState<(Recording & { t0: number }) | null>(null);
   const [secs, setSecs] = useState(0);
   const [files, setFiles] = useState<File[]>([]);
   const [take, setTake] = useState<File | null>(null); // a finished session, waiting for you to listen and keep it
   const [up, setUp] = useState<number | null>(null);
-  const chunks = useRef<Blob[]>([]);
+  const forget = useRef<(() => void)[]>([]); // drop the sent sessions from this device once the dataset job is queued
+  const [kept, setKept] = useState<string | null>(null);
   const { job, start } = usePoll((j) => { toast(`Added ${j.part?.clips ?? 0} clips (${j.part?.minutes ?? 0} min) to ${name}`, "ok"); onAdded(); });
 
   useEffect(() => { try { setI(Number(localStorage.getItem(`vb-read-${name}`)) || 0); } catch {} }, [name]);
@@ -80,24 +82,18 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
   }, [rec]);
 
   async function begin() {
-    const s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
-    const mime = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
-    const r = new MediaRecorder(s, mime ? { mimeType: mime, audioBitsPerSecond: 192000 } : undefined);
-    chunks.current = [];
-    r.ondataavailable = (e) => e.data.size && chunks.current.push(e.data);
-    r.start(1000);
+    // saved to this device every second: a refresh mid-session keeps it (offered back below the card)
+    const r = await startRecording(`dataset:${name}`, `line ${i + 1}`);
     setSecs(0);
-    setRec({ r, s, t0: performance.now() });
+    setRec({ ...r, t0: performance.now() });
   }
   async function finish() {
     if (!rec) return;
-    const stopped = new Promise((ok) => (rec.r.onstop = ok));
-    rec.r.stop();
-    await stopped;
-    rec.s.getTracks().forEach((t) => t.stop());
-    const type = rec.r.mimeType || "audio/webm";
+    const f = await rec.stop();
+    forget.current = [rec.forget];
+    setKept(rec.take.id);
     setRec(null);
-    setTake(new File(chunks.current, `read-along-${Date.now()}.${type.includes("mp4") ? "m4a" : "webm"}`, { type }));
+    setTake(f);
   }
   async function send(list: File[]) {
     try {
@@ -110,12 +106,14 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
       setFiles([]);
       setTake(null);
       start(await api<Job>("jobs", { body: { kind: "dataset", name, sources: keys, label: `Dataset · ${name}` } }));
+      forget.current.forEach((f) => f()); forget.current = []; setKept(null);
     } catch (e) {
       setUp(null);
       toast((e as Error).message, "bad");
     }
   }
   const busy = !!job && ["queued", "running"].includes(job.status);
+  useResumeJob<Polled>(["dataset"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
 
   return (
     <div className="card">
@@ -135,17 +133,20 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
             </div>
             {rec ? (
               <div className="row" style={{ gap: 12 }}>
-                <span className="rec-live-dot" /><span className="mono">{fmtS(secs)}</span>
+                <VoiceOrb stream={rec.stream} size={64} /><span className="mono">{fmtS(secs)}</span>
                 <button onClick={finish}><Stop size={15} weight="fill" /> Stop</button>
               </div>
             ) : !take && <button onClick={begin} disabled={busy || up !== null || !status?.online}><Microphone size={15} weight="fill" /> Start a session</button>}
           </div>
+          {!rec && !take && <div style={{ marginTop: 12 }}><SavedTakes scope={`dataset:${name}`} live={kept} useLabel="Review" onUse={(f, t) => {
+            forget.current = [() => import("./takes").then((m) => m.dropTake(t.id))]; setKept(t.id); setTake(f);
+          }} /></div>}
           {take && (
             <div className="stack" style={{ gap: 8, marginTop: 12, padding: 12, border: "1px solid var(--line)", borderRadius: 12 }}>
               <b className="small">Listen before it goes into {name}&apos;s dataset</b>
               <FilePreview file={take} />
               <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
-                <button className="ghost sm" onClick={() => setTake(null)}>Discard</button>
+                <button className="ghost sm" onClick={() => { forget.current.forEach((f) => f()); forget.current = []; setKept(null); setTake(null); }}>Discard</button>
                 <button className="sm" onClick={() => send([take])} disabled={busy || up !== null || !status?.online}>Add to dataset <ArrowRight size={13} /></button>
               </div>
             </div>
@@ -191,6 +192,7 @@ function Train({ name, minutes, onTrained }: { name: string; minutes: number; on
   const { job, start } = usePoll((j) => { toast(`${name} is trained. Pick "${name}" under Your model in Voiceover.`, "ok"); if (j.model) { loadModel(); onTrained(); } });
   const busy = !!job && ["queued", "running"].includes(job.status);
   const p = job?.progress;
+  useResumeJob<Polled>(["train"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
 
   async function train() {
     setErr("");
@@ -264,6 +266,7 @@ function Benchmark({ mine, name }: { mine: MyVoice[]; name: string }) {
       setErr((e as Error).message);
     }
   }
+  useResumeJob<Polled>(["benchmark"], start);
   const b = job?.benchmark;
   const best = b?.candidates.find((c) => !c.error);
 

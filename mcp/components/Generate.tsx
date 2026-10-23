@@ -2,6 +2,7 @@
 import { ArrowSquareOut, CaretDown, ClosedCaptioning, DownloadSimple, Eye, Flask, Microphone, Plus, SlidersHorizontal, Sparkle, Trophy, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useResumeJob } from "./jobs";
 import { api, fmtS, pct, rangeFill, simClass, type Job, type MyVoice } from "./api";
 import { EngineArt, StyleGlyph, VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
@@ -215,6 +216,7 @@ export default function Generate() {
     }
   }
 
+  useResumeJob<Job>(["voice"], (j) => { setJob(j); timer.current = setTimeout(() => poll(j.id), 300); });
   const running = !!job && (["queued", "running"].includes(job.status) || (job.status === "done" && !job.library));
   const libAudio = (id: string) => lib?.results.find((r) => r.id === id)?.audio;
   const slug = (label || `${engine}-${voice}`).replace(/[^A-Za-z0-9._-]/g, "_");

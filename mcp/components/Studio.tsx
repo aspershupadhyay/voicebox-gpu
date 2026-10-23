@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, rangeFill, uploadFile, type Cleanup, type Job } from "./api";
 import JobProgress from "./JobProgress";
+import { useResumeJob } from "./jobs";
 import LineRow from "./LineRow";
 import Recorder, { FilePreview } from "./Recorder";
 import { useStatus } from "./Shell";
@@ -63,6 +64,7 @@ function CleanUp({ settings }: { settings: Settings | null }) {
   const { status } = useStatus();
   const [file, setFile] = useState<File | null>(null);
   const [src, setSrc] = useState<"upload" | "record">("upload");
+  const forget = useRef<(() => void) | null>(null); // drops a recorded take from this device once it's been sent
   const [mode, setMode] = useState("auto");
   const [strength, setStrength] = useState(0.6);
   const [platform, setPlatform] = useState("youtube");
@@ -78,12 +80,15 @@ function CleanUp({ settings }: { settings: Settings | null }) {
       setUpFrac(0);
       const key = await uploadFile(file, file.name.replace(/[^A-Za-z0-9._-]/g, "_") || "recording.wav", setUpFrac);
       setUpFrac(null);
+      const sent = forget.current;
       start(await api<Job>("jobs", { body: { kind: "clean", source_key: key, platform, subtitles, cleanup: mode, params: { strength }, label: `Clean-up · ${file.name.slice(0, 50)}` } }));
+      sent?.();
     } catch (e) {
       setUpFrac(null);
       setErr((e as Error).message);
     }
   }
+  useResumeJob<Job>(["clean"], start);
   const r = job?.results[0];
   return (
     <div className="card" style={{ marginTop: 16 }}>
@@ -114,7 +119,7 @@ function CleanUp({ settings }: { settings: Settings | null }) {
             {[...PLATFORMS.map(([p, l]) => [p, l] as const), ["raw", "Raw (no mastering)"] as const].map(([p, l]) => <option key={p} value={p}>{l}</option>)}
           </select></div>
       </div>
-      {src === "record" && <div style={{ marginTop: 12 }}><Recorder name="clean-up" onReady={setFile} hint="Record, listen back, then press Clean it up." /></div>}
+      {src === "record" && <div style={{ marginTop: 12 }}><Recorder scope="clean-up" onReady={(f, fg) => { setFile(f); forget.current = fg ?? null; }} target={60} hint="Record, listen back, then press Clean it up. It's saved on this device as you go." /></div>}
       {src === "upload" && file && <div style={{ marginTop: 12 }}><FilePreview file={file} onRemove={() => setFile(null)} /></div>}
       {mode === "enhance" && (
         <div className="field" style={{ margin: "12px 0 0" }}>
