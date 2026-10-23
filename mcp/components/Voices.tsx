@@ -5,7 +5,7 @@ import {
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api, uploadFile, type Job, type MyVoice } from "./api";
-import { MicArt, VoiceGlyph } from "./art";
+import { VoiceGlyph } from "./art";
 import { useDialog } from "./Dialog";
 import { GuideButton } from "./GuideDrawer";
 import { KOKORO_LANG, LANGUAGES } from "./guides";
@@ -173,7 +173,6 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
       <div className="rec-main">
         {phase === "idle" || phase === "asking" ? (
           <div className="rec-idle">
-            <MicArt />
             <button className="rec-btn" onClick={start} disabled={phase === "asking"} aria-label="Start recording"><Microphone size={28} weight="fill" /></button>
             <b>{phase === "asking" ? "Allow the microphone…" : "Record your voice"}</b>
             <span className="dim small">Read the card on the right, about 20 seconds.{" "}

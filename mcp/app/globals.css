@@ -914,3 +914,18 @@ button.linkish.plain { color: inherit; text-decoration: none; }
   .pgrid { grid-template-columns: 1fr; }
   .pc-del { opacity: 1; }
 }
+
+/* palette from the voice art: mint, iris, rose, ember (round 6) */
+:root { --mint: #34c38f; --iris: #6b8cff; --rosy: #e8798f; --ember: #f06a3c; }
+.rec-btn { background: radial-gradient(circle at 35% 30%, #5fe0b0, #1f9e6e); box-shadow: 0 0 0 6px color-mix(in srgb, var(--mint) 16%, transparent), 0 18px 36px -12px color-mix(in srgb, var(--mint) 60%, transparent); }
+.rec-btn.on { background: radial-gradient(circle at 35% 30%, #ff8a63, #e2401d); }
+.sample-btn { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+.sample-btn:hover { background: var(--mint); border-color: var(--mint); color: #fff; }
+.sample-btn.on { background: var(--mint); border-color: var(--mint); color: #fff; }
+.col-dot.s-draft, .pc-stage.st-draft i, .stage-steps i.on.s-draft { background: var(--iris); }
+.col-dot.s-review, .pc-stage.st-review i { background: var(--rosy); }
+.col-dot.s-scheduled, .pc-stage.st-scheduled i { background: var(--ember); }
+.col-dot.s-posted, .pc-stage.st-posted i { background: var(--mint); }
+.pf.on, .fmt.on { background: var(--mint); color: #fff; }
+.fmt-t.on { border-bottom-color: var(--mint); }
+.stats .hot { color: var(--ember); }
