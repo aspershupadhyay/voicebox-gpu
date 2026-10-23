@@ -5,7 +5,7 @@ name: Deploy
 on:
   push:
     branches: [main, claude/optimistic-heisenberg-ik2pah]
-    paths: [mcp/**, worker/**, notebook/build_notebook.py, .github/workflows/deploy.yml]
+    paths: [mcp/**, worker/**, notebook/build_notebook.py, scripts/vercel_deploy.py, .github/workflows/deploy.yml]
   workflow_dispatch:
 concurrency: { group: deploy, cancel-in-progress: false }
 jobs:
@@ -19,27 +19,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - uses: actions/setup-node@v4
-        with: { node-version: "22" }
       - name: Check the token
         run: |
           [ -n "$VERCEL_TOKEN" ] || { echo "::error::Add the VERCEL_TOKEN repository secret (see the top of this file)"; exit 1; }
           t=$(printf %s "$VERCEL_TOKEN" | tr -d '[:space:]')
-          echo "token length: ${#t} (a Vercel token is ~24 characters)"
+          echo "token length: ${#t}"
           for path in /v2/user "/v2/teams/$VERCEL_SCOPE" "/v9/projects/$VERCEL_PROJECT?slug=$VERCEL_SCOPE"; do
             echo "$path -> $(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $t" "https://api.vercel.com$path")"
           done
       - name: Worker bundle (what Colab pulls from /api/bundle)
         run: python3 notebook/build_notebook.py
       - name: Deploy
-        # from a git-free copy: Vercel blocks deploys whose commit author has no Vercel account
-        run: |
-          VERCEL_TOKEN=$(printf %s "$VERCEL_TOKEN" | tr -d '[:space:]')  # a pasted secret often carries a newline
-          tmp=$(mktemp -d)/mcp && mkdir -p "$tmp"
-          rsync -a --exclude node_modules --exclude .next --exclude '.env*' --exclude .vercel mcp/ "$tmp/"
-          cd "$tmp"
-          npx -y vercel@latest link --yes --project "$VERCEL_PROJECT" --scope "$VERCEL_SCOPE" --token "$VERCEL_TOKEN"
-          npx -y vercel@latest deploy --prod --yes --scope "$VERCEL_SCOPE" --token "$VERCEL_TOKEN"
+        # REST API, not the Vercel CLI: project-scoped tokens can't load a user, which the CLI always does
+        run: python3 scripts/vercel_deploy.py --scope "$VERCEL_SCOPE" --project "$VERCEL_PROJECT"
       - name: Smoke test
         run: |
           sleep 10
