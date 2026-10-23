@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, rangeFill, uploadFile, type Cleanup, type Job } from "./api";
 import JobProgress from "./JobProgress";
 import LineRow from "./LineRow";
+import Recorder, { FilePreview } from "./Recorder";
 import { useStatus } from "./Shell";
 
 type Settings = { engine: string; voice: string; style: string; platform: string; takes: number; visuals: string; visual_style: string; captions_look: string; transition: string; music_lufs: number };
@@ -61,6 +62,7 @@ function CleanupReport({ c }: { c: Cleanup }) {
 function CleanUp({ settings }: { settings: Settings | null }) {
   const { status } = useStatus();
   const [file, setFile] = useState<File | null>(null);
+  const [src, setSrc] = useState<"upload" | "record">("upload");
   const [mode, setMode] = useState("auto");
   const [strength, setStrength] = useState(0.6);
   const [platform, setPlatform] = useState("youtube");
@@ -87,16 +89,22 @@ function CleanUp({ settings }: { settings: Settings | null }) {
     <div className="card" style={{ marginTop: 16 }}>
       <div className="card-head"><h2><Waveform size={18} weight="duotone" /> Studio clean-up</h2><span className="dim tiny">bad mic in, studio sound out</span></div>
       <p className="dim small" style={{ marginTop: 0 }}>
-        Upload any recording of yourself (laptop mic, phone, a noisy room, or a video). It measures the noise, the room echo and how much
+        Upload any recording of yourself (laptop mic, phone, a noisy room, or a video), or record one right here. It measures the noise, the room echo and how much
         of the voice the mic captured, runs only what that recording needs, and checks it still sounds like you. Same length as the
         original, so it drops back onto your edit.
       </p>
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, alignItems: "end" }}>
         <div className="field" style={{ margin: 0 }}><label className="f">Recording (audio or video)</label>
-          <label className="btn ghost sm" style={{ width: "100%", justifyContent: "flex-start", overflow: "hidden" }}>
-            <UploadSimple size={14} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file ? file.name : "Choose a file"}</span>
-            <input type="file" accept="audio/*,video/*" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-          </label></div>
+          <div className="seg" style={{ marginBottom: 6 }}>
+            <button className={src === "upload" ? "on" : ""} onClick={() => { setSrc("upload"); setFile(null); }}>Upload</button>
+            <button className={src === "record" ? "on" : ""} onClick={() => { setSrc("record"); setFile(null); }}>Record</button>
+          </div>
+          {src === "upload" && (
+            <label className="btn ghost sm" style={{ width: "100%", justifyContent: "flex-start", overflow: "hidden" }}>
+              <UploadSimple size={14} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file ? file.name : "Choose a file"}</span>
+              <input type="file" accept="audio/*,video/*" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            </label>
+          )}</div>
         <div className="field" style={{ margin: 0 }}><label className="f">Mode</label>
           <select value={mode} onChange={(e) => setMode(e.target.value)}>
             <option value="auto">Auto: measured per recording</option><option value="denoise">Denoise only: keep my exact tone</option><option value="enhance">Restore: rebuild a thin or echoey voice</option>
@@ -106,6 +114,8 @@ function CleanUp({ settings }: { settings: Settings | null }) {
             {[...PLATFORMS.map(([p, l]) => [p, l] as const), ["raw", "Raw (no mastering)"] as const].map(([p, l]) => <option key={p} value={p}>{l}</option>)}
           </select></div>
       </div>
+      {src === "record" && <div style={{ marginTop: 12 }}><Recorder name="clean-up" onReady={setFile} hint="Record, listen back, then press Clean it up." /></div>}
+      {src === "upload" && file && <div style={{ marginTop: 12 }}><FilePreview file={file} onRemove={() => setFile(null)} /></div>}
       {mode === "enhance" && (
         <div className="field" style={{ margin: "12px 0 0" }}>
           <div className="row between"><label className="f" style={{ margin: 0 }}>Clean-up strength</label><span className="mono small">{strength.toFixed(2)}</span></div>

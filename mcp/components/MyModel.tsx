@@ -10,6 +10,7 @@ import { useDialog } from "./Dialog";
 import JobProgress from "./JobProgress";
 import LineRow from "./LineRow";
 import Player from "./Player";
+import { FilePreview } from "./Recorder";
 import { useStatus } from "./Shell";
 
 type Part = { job: string; clips: number; minutes: number; input_minutes: number; dropped: Record<string, number>; created: number;
@@ -59,6 +60,7 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
   const [rec, setRec] = useState<{ r: MediaRecorder; s: MediaStream; t0: number } | null>(null);
   const [secs, setSecs] = useState(0);
   const [files, setFiles] = useState<File[]>([]);
+  const [take, setTake] = useState<File | null>(null); // a finished session, waiting for you to listen and keep it
   const [up, setUp] = useState<number | null>(null);
   const chunks = useRef<Blob[]>([]);
   const { job, start } = usePoll((j) => { toast(`Added ${j.part?.clips ?? 0} clips (${j.part?.minutes ?? 0} min) to ${name}`, "ok"); onAdded(); });
@@ -95,7 +97,7 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
     rec.s.getTracks().forEach((t) => t.stop());
     const type = rec.r.mimeType || "audio/webm";
     setRec(null);
-    await send([new File(chunks.current, `read-along-${Date.now()}.${type.includes("mp4") ? "m4a" : "webm"}`, { type })]);
+    setTake(new File(chunks.current, `read-along-${Date.now()}.${type.includes("mp4") ? "m4a" : "webm"}`, { type }));
   }
   async function send(list: File[]) {
     try {
@@ -106,6 +108,7 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
       }
       setUp(null);
       setFiles([]);
+      setTake(null);
       start(await api<Job>("jobs", { body: { kind: "dataset", name, sources: keys, label: `Dataset · ${name}` } }));
     } catch (e) {
       setUp(null);
@@ -133,10 +136,20 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
             {rec ? (
               <div className="row" style={{ gap: 12 }}>
                 <span className="rec-live-dot" /><span className="mono">{fmtS(secs)}</span>
-                <button onClick={finish}><Stop size={15} weight="fill" /> Stop and add</button>
+                <button onClick={finish}><Stop size={15} weight="fill" /> Stop</button>
               </div>
-            ) : <button onClick={begin} disabled={busy || up !== null || !status?.online}><Microphone size={15} weight="fill" /> Start a session</button>}
+            ) : !take && <button onClick={begin} disabled={busy || up !== null || !status?.online}><Microphone size={15} weight="fill" /> Start a session</button>}
           </div>
+          {take && (
+            <div className="stack" style={{ gap: 8, marginTop: 12, padding: 12, border: "1px solid var(--line)", borderRadius: 12 }}>
+              <b className="small">Listen before it goes into {name}&apos;s dataset</b>
+              <FilePreview file={take} />
+              <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+                <button className="ghost sm" onClick={() => setTake(null)}>Discard</button>
+                <button className="sm" onClick={() => send([take])} disabled={busy || up !== null || !status?.online}>Add to dataset <ArrowRight size={13} /></button>
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -145,6 +158,11 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
             <UploadSimple size={18} /><span className="small">{files.length ? files.map((f) => f.name).join(", ") : "Choose audio or video files"}</span>
             <input type="file" hidden multiple accept="audio/*,video/*" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
           </label>
+          {files.length > 0 && (
+            <div className="stack" style={{ gap: 10, marginTop: 10 }}>
+              {files.map((f, k) => <FilePreview key={`${f.name}-${k}`} file={f} onRemove={() => setFiles(files.filter((_, j) => j !== k))} />)}
+            </div>
+          )}
           <div className="row" style={{ justifyContent: "flex-end", marginTop: 10 }}>
             <button onClick={() => send(files)} disabled={!files.length || busy || up !== null || !status?.online}>Add to dataset <ArrowRight size={14} /></button>
           </div>

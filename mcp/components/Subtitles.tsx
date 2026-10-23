@@ -8,10 +8,11 @@ import { GuideButton } from "./GuideDrawer";
 import { LANGUAGES } from "./guides";
 import JobProgress from "./JobProgress";
 import Player from "./Player";
+import Recorder from "./Recorder";
 import { useStatus } from "./Shell";
 
 type Item = { file: File; id: string; frac: number; url: string };
-type Lib = { id: string; kind?: string; engine: string; voice: string; label?: string; subs?: unknown; results: { duration: number }[] };
+type Lib = { id: string; kind?: string; engine: string; voice: string; label?: string; subs?: unknown; created?: number; results: { duration: number; audio?: string | null }[] };
 
 const safeId = (name: string, taken: Set<string>) => {
   let base = name.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "file";
@@ -51,7 +52,8 @@ function Result({ jobId, id, name, src, heard, duration, match }: { jobId: strin
 
 export default function Subtitles() {
   const { status } = useStatus();
-  const [mode, setMode] = useState<"upload" | "library">("upload");
+  const [mode, setMode] = useState<"upload" | "record" | "library">("upload");
+  const [libQ, setLibQ] = useState("");
   const [items, setItems] = useState<Item[]>([]);
   const [lang, setLang] = useState("");
   const [over, setOver] = useState(false);
@@ -121,7 +123,8 @@ export default function Subtitles() {
       <div className="row" style={{ marginBottom: 16 }}>
         <div className="seg">
           <button className={mode === "upload" ? "on" : ""} onClick={() => setMode("upload")}>Upload files</button>
-          <button className={mode === "library" ? "on" : ""} onClick={() => setMode("library")}>From your library</button>
+          <button className={mode === "record" ? "on" : ""} onClick={() => setMode("record")}>Record</button>
+          <button className={mode === "library" ? "on" : ""} onClick={() => setMode("library")}>Generated voiceovers</button>
         </div>
         <div style={{ flex: 1 }} />
         <select value={lang} onChange={(e) => setLang(e.target.value)} style={{ width: 240 }}>
@@ -130,7 +133,17 @@ export default function Subtitles() {
         </select>
       </div>
 
-      {mode === "upload" ? (
+      {mode === "record" ? (
+        <div className="card">
+          <div className="card-head"><h2>Record, then subtitle it</h2></div>
+          <Recorder name="subtitles" onReady={(f) => { setItems(f ? [{ file: f, id: "recording", frac: 0, url: URL.createObjectURL(f) }] : []); }} />
+          {items.length > 0 && (
+            <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+              <button className="sig" disabled={busy || !status?.online} onClick={start}><ClosedCaptioning size={16} weight="bold" />{status?.online ? "Make subtitles" : "GPU offline"}</button>
+            </div>
+          )}
+        </div>
+      ) : mode === "upload" ? (
         <div className="card">
           <div className={`drop ${over ? "over" : ""}`} onClick={() => input.current?.click()}
             onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
@@ -161,15 +174,21 @@ export default function Subtitles() {
         </div>
       ) : (
         <div className="card">
-          <div className="card-head"><h2>Voiceovers without subtitles</h2></div>
-          {lib.filter((j) => !j.subs && j.kind !== "video").length === 0 && <div className="empty"><ClosedCaptioning size={30} weight="duotone" /><b>All caught up</b><span>Every voiceover in your library already has subtitles.</span></div>}
-          {lib.filter((j) => !j.subs && j.kind !== "video").map((j) => (
-            <div key={j.id} className="list-row" style={{ gridTemplateColumns: "40px minmax(0,1fr) auto" }}>
-              <VoiceGlyph name={j.voice || j.engine} size={40} />
-              <div style={{ minWidth: 0 }}><div className="t1">{j.label || j.id}</div><div className="t2">{j.engine} · {j.voice} · {j.results.length} lines</div></div>
-              <button className="ghost sm" disabled={busy || !status?.online} onClick={() => fromLibrary(j.id)}><Plus size={14} weight="bold" />Subtitles</button>
-            </div>
-          ))}
+          <div className="card-head"><h2>Your generated voiceovers</h2>
+            <input value={libQ} onChange={(e) => setLibQ(e.target.value)} placeholder="Search" style={{ width: 200 }} /></div>
+          {(() => {
+            const shown = lib.filter((j) => j.kind !== "video" && (!libQ || `${j.label ?? ""} ${j.voice} ${j.engine}`.toLowerCase().includes(libQ.toLowerCase())));
+            if (!shown.length) return <div className="empty"><ClosedCaptioning size={30} weight="duotone" /><b>No voiceovers yet</b><span>Make one on the Voiceover page, then subtitle it here.</span></div>;
+            return shown.map((j) => (
+              <div key={j.id} className="list-row" style={{ gridTemplateColumns: "40px minmax(0,1fr) minmax(0, 220px) auto" }}>
+                <VoiceGlyph name={j.voice || j.engine} size={40} />
+                <div style={{ minWidth: 0 }}><div className="t1">{j.label || j.id}</div>
+                  <div className="t2">{j.engine} · {j.voice} · {j.results.length} line{j.results.length === 1 ? "" : "s"} · {fmtS(j.results.reduce((a, r) => a + r.duration, 0))}{j.subs ? " · has subtitles" : ""}</div></div>
+                <div style={{ minWidth: 0 }}>{j.results[0]?.audio && <Player src={j.results[0].audio} compact />}</div>
+                <button className="ghost sm" disabled={busy || !status?.online} onClick={() => fromLibrary(j.id)}><Plus size={14} weight="bold" />{j.subs ? "Make again" : "Subtitles"}</button>
+              </div>
+            ));
+          })()}
         </div>
       )}
       {err && <p className="err">{err}</p>}

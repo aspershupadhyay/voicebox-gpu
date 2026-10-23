@@ -778,7 +778,7 @@ def _models(given):
     if not isinstance(given, dict):
         return {}
     out = {}
-    for name, m in list(given.items())[:20]:
+    for name, m in list(given.items())[:500]:
         if isinstance(m, dict) and ID_RE.match(str(name)) and ID_RE.match(str(m.get("job") or "")) and str(m.get("url") or "").startswith("http"):
             out[str(name)] = {"job": str(m["job"]), "url": str(m["url"]), "speaker": str(m.get("speaker") or "me")[:64]}
     return out
