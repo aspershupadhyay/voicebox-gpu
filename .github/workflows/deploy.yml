@@ -28,6 +28,7 @@ jobs:
       - name: Deploy
         # from a git-free copy: Vercel blocks deploys whose commit author has no Vercel account
         run: |
+          VERCEL_TOKEN=$(printf %s "$VERCEL_TOKEN" | tr -d '[:space:]')  # a pasted secret often carries a newline
           tmp=$(mktemp -d)/mcp && mkdir -p "$tmp"
           rsync -a --exclude node_modules --exclude .next --exclude '.env*' --exclude .vercel mcp/ "$tmp/"
           cd "$tmp"
