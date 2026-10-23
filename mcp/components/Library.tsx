@@ -14,7 +14,7 @@ type LibJob = {
   id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; created: number; source?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; subs?: { cues: number; timeline: string } | null; match?: number | null; results: (Line & { audio?: string | null })[];
   video?: { width: number; height: number; duration: number; size: number; voice_job?: string; has_audio?: boolean }; video_url?: string; poster_url?: string | null;
-  gen?: Gen; images?: GenImage[];
+  gen?: Gen; images?: GenImage[]; scenes?: { id: string; text: string; start: number; seconds: number }[];
 };
 type CardProps = { j: LibJob; open: boolean; selected: boolean; onSelect: (shift: boolean) => void; onDelete: () => void };
 
@@ -36,7 +36,7 @@ function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) {
         <div style={{ minWidth: 0 }}>
           <div className="lc-title">{j.label || j.id}</div>
           <div className="lc-meta">
-            <span className="pill sig"><FilmStrip size={11} weight="bold" />{j.gen ? ({ ltx: "LTX-2.5", wan14: "Wan 14B", animate: "Wan Animate" }[j.gen.model] ?? "Wan 2.2") : "video"}</span>
+            <span className="pill sig"><FilmStrip size={11} weight="bold" />{j.gen ? ({ ltx: "LTX-2.5", wan14: "Wan 14B", animate: "Wan Animate", story: "Script video" }[j.gen.model] ?? "Wan 2.2") : "video"}</span>
             {j.video?.has_audio && <span className="pill">sound</span>}
             {j.subs && <span className="pill blue">CC · {j.subs.cues}</span>}
             {v && <span className="dim tiny mono">{fmtS(v.duration)} · {ago(j.created)}</span>}
@@ -55,7 +55,10 @@ function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) {
             <dl className="facts">
               {j.gen ? <>
                 <dt>Prompt</dt><dd className="small">{j.gen.prompt}</dd>
-                <dt>Render</dt><dd className="mono">{j.gen.mode === "i2v" ? "from image" : "from text"} · seed {j.gen.seed} · {j.gen.steps} steps</dd>
+                <dt>Render</dt><dd className="mono">{j.gen.mode === "story" ? `${j.scenes?.length ?? 0} scenes · voice ${j.engine} · ${j.voice}` : j.gen.mode === "i2v" ? "from image" : "from text"} · seed {j.gen.seed}{j.gen.mode === "story" ? "" : ` · ${j.gen.steps} steps`}</dd>
+                {j.gen.mode === "story" && <><dt>Extras</dt><dd className="row" style={{ gap: 8 }}>
+                  <a className="btn ghost sm" href={fileUrl(j.id, "voiceover.wav", `${slug}-voiceover.wav`)}>voiceover.wav</a>
+                  {j.subs && <a className="btn ghost sm" href={fileUrl(j.id, "subtitles.srt", `${slug}.srt`)}>.srt</a>}</dd></>}
               </> : <><dt>Voice</dt><dd><span style={{ textTransform: "capitalize" }}>{j.engine}</span> · {j.voice}</dd></>}
               {v && <><dt>Format</dt><dd className="mono">{v.width}×{v.height} · {fmtS(v.duration)} · {(v.size / 1e6).toFixed(1)} MB</dd></>}
               {j.subs && <><dt>Subtitles</dt><dd>{j.subs.cues} cues, timed to the video</dd></>}

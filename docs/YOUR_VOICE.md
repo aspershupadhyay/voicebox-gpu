@@ -12,6 +12,10 @@ The cloner copies **how** you speak as well as how you sound, so record the way 
 - **Check the result:** the saved voice shows its level. If it warns *quiet* or *clips*, record again.
 - **Make a few:** `me_tech` (default explainer), `me_hype` (hooks and launches), `me_calm` (deep dives). Pick per video.
 
+**Bad mic?** Leave *Enhance voice recordings* on (Settings). Before cloning, the studio enhancer removes background
+noise and room echo and rebuilds the crisp detail a laptop or phone mic loses. The voice card shows *studio-enhanced*
+when it ran. A quiet room still helps most; the enhancer can't undo clipping, so keep the level out of the red.
+
 ## 2 · Generate
 
 | Setting | Tech explainer | Short / Reel hook |
@@ -36,7 +40,19 @@ Record the take yourself with your timing and emphasis, even on a phone, then us
 Voices page (or the `revoice` MCP tool). You get it back in your clean recorded voice, the same length, so it drops
 straight onto the edit.
 
-## 4 · Going further: train on your voice
+## 4 · Your own recordings, cleaned up
+
+Recorded the voiceover yourself on a cheap mic? **Studio → Studio clean-up** (or the `clean_audio` MCP tool) makes it
+sound studio-grade and masters it for the platform, at the same length so it stays in sync with your video.
+*Denoise only* keeps your exact tone; *Studio* also restores detail.
+
+## 5 · Script to video
+
+**Studio → Script → video**: one scene per line, `what you say || what we see`. Pick the platform (Shorts/Reels/TikTok
+give 1080×1920 with bold pop-up captions), a look, and optionally a music track. Stills with camera motion take seconds
+per scene; animated clips take minutes. From Claude, ask for a video and it will call `make_video` and write the shots.
+
+## 6 · Going further: train on your voice
 
 Zero-shot cloning from 20 seconds has a ceiling. For the best quality, record **30–60 minutes** of yourself reading
 tech scripts (same mic and room, varied sentences) and fine-tune a model on it:

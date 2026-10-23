@@ -71,7 +71,7 @@ export type JobResult = {
   url?: string; heard?: string; match?: number | null; subs?: boolean; name?: string; chunks?: number; cues?: number;
   srt_url?: string; vtt_url?: string; poster_url?: string; cut?: boolean; level_db?: number;
   file?: string; thumb?: string; width?: number; height?: number; transparent?: boolean; thumb_url?: string;
-  lufs?: number | null; similarity?: number | null; spoken?: string; engine?: string; takes?: { n: number; picked: number[]; match: number; similarity: number | null };
+  lufs?: number | null; similarity?: number | null; spoken?: string; engine?: string; enhanced?: boolean; takes?: { n: number; picked: number[]; match: number; similarity: number | null };
 };
 export type Job = {
   id: string; kind: "tts" | "transcribe" | "video" | "reference" | "image"; engine: string; voice: string; status: string; error?: string; label?: string;
@@ -79,8 +79,9 @@ export type Job = {
   queue_position?: number; results: JobResult[]; warnings?: string[]; subs?: { cues: number; timeline: string } | null;
   match?: number | null; library?: { id: string } | null; subtitles?: boolean; gen?: Gen; video?: VideoInfo | null;
   myvoice?: MyVoice | null; platform?: string; captions?: string; takes?: number; mode?: string; similarity?: number | null;
+  scenes?: { id: string; text: string; start: number; seconds: number; prompt?: string | null; match?: number | null; animated?: boolean }[];
 };
-export type MyVoice = { name: string; label: string; transcript: string; duration: number; version: string; created: number; warnings?: string[]; url?: string; level_db?: number };
+export type MyVoice = { name: string; label: string; transcript: string; duration: number; version: string; created: number; warnings?: string[]; url?: string; level_db?: number; enhanced?: boolean };
 export type Samples = { text: Record<string, string>; voices: Record<string, Record<string, { duration: number; url: string }>> };
 
 /** Fill the slider track up to the thumb (globals.css reads --v). */

@@ -25,6 +25,7 @@ const TIPS = [
   ["15-20 cm away", "A hand's width from the mic, slightly to the side so p and b don't pop."],
   ["Read like the video", "Energy, pace and attitude carry over. Excited in, excited out."],
   ["15-20 seconds", "Read the whole card. Longer takes are trimmed to the best ~20 s."],
+  ["Bad mic? Fine.", "The studio enhancer removes noise and echo and restores detail before cloning (Settings)."],
 ];
 const ENGINES = [
   { id: "orpheus", name: "Orpheus", note: "Most human · English" },
@@ -355,7 +356,8 @@ export default function Voices() {
             <div key={v.name} className="card myvoice reveal">
               <VoiceGlyph name={v.name} size={52} />
               <div style={{ minWidth: 0 }}>
-                <div className="row" style={{ gap: 10 }}><b style={{ font: "400 22px var(--display)" }}>{v.label}</b><span className="mono dim tiny">{v.name}</span><span className="dim tiny">{v.duration.toFixed(1)} s · {ago(v.created)}</span></div>
+                <div className="row" style={{ gap: 10 }}><b style={{ font: "400 22px var(--display)" }}>{v.label}</b><span className="mono dim tiny">{v.name}</span><span className="dim tiny">{v.duration.toFixed(1)} s · {ago(v.created)}</span>
+                  {v.enhanced && <span className="pill ok" title="Cleaned by the studio enhancer: noise and echo removed, detail restored">studio-enhanced</span>}</div>
                 <p className="dim small clamp2" style={{ margin: "4px 0 10px" }}>“{v.transcript}”</p>
                 {v.url && <Player src={v.url} compact />}
                 {v.warnings?.map((w) => <div key={w} className="tiny" style={{ color: "var(--warn)", marginTop: 6 }}><WarningCircle size={12} /> {w}</div>)}

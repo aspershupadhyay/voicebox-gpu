@@ -96,6 +96,25 @@ ENGINES = {
         "presets": {},
         "params": {},
     },
+    "enhance": {
+        "group": "voice",
+        "disk_gb": 0.7,
+        "kind": "enhance",
+        "port": 8107,
+        "gpu_gb": 3.0,
+        # resemble-enhance pins torch 2.1 + DeepSpeed + gradio for training/demo; inference runs on these, and the
+        # package itself goes in without its pins (see engines/enhance.py). numpy<2: its flow solver predates numpy 2.
+        "packages": 'torch==2.5.1 torchaudio==2.5.1 "numpy<2" "pandas<2.3" "scipy<1.14" librosa omegaconf rich matplotlib '
+                    'soundfile tqdm resampy huggingface_hub celluloid tabulate',
+        "nodeps": "resemble-enhance==0.0.1",
+        "about": "Resemble Enhance (MIT). Studio clean-up: removes noise and room echo, restores the detail a cheap mic or phone loses (to 44.1 kHz).",
+        "voices": [], "presets": {},
+        "params": {
+            "mode": {"type": "string", "default": "enhance", "about": "enhance = denoise + restore detail; denoise = remove noise only, timbre untouched"},
+            "strength": {"type": "number", "default": 0.6, "min": 0.0, "max": 1.0, "about": "how hard the denoiser leads: higher for noisy rooms, lower keeps more of the original"},
+            "steps": {"type": "integer", "default": 48, "min": 16, "max": 128, "about": "restoration detail (more = finer, slower)"},
+        },
+    },
     "qwen": {
         "group": "voice",
         "disk_gb": 4.6,
@@ -305,13 +324,13 @@ def style_settings(style, engine):
 
 # Speed priors (seconds of compute per character / per second of audio), refined live by the gateway.
 RATE_PRIORS = {"kokoro": 0.004, "chatterbox": 0.06, "orpheus": 0.03, "whisper": 0.06, "qwen": 0.05,
-               "revoice": 0.25,  # Chatterbox VC: seconds per second of performance
+               "revoice": 0.25, "enhance": 0.4,  # per second of audio  # Chatterbox VC: seconds per second of performance
                # video: seconds per (step x frame x megapixel), x2 when CFG doubles the passes
                "wan": 0.3, "ltx": 0.35, "wan14": 1.2,
                # image: seconds per (step x megapixel x image); animate: per (step x frame x megapixel)
                "zimage": 0.08, "qwenimage": 0.1, "animate": 1.5}
-INSTALL_PRIORS = {"kokoro": 40, "chatterbox": 150, "orpheus": 240, "whisper": 120, "qwen": 150, "wan": 300, "ltx": 600, "wan14": 300, "zimage": 120, "qwenimage": 120, "animate": 300}  # first install, seconds
-LOAD_PRIORS = {"kokoro": 5, "chatterbox": 45, "orpheus": 120, "whisper": 40, "qwen": 60, "wan": 240, "ltx": 480, "wan14": 600, "zimage": 150, "qwenimage": 240, "animate": 600}  # first load includes the weight download
+INSTALL_PRIORS = {"enhance": 150, "kokoro": 40, "chatterbox": 150, "orpheus": 240, "whisper": 120, "qwen": 150, "wan": 300, "ltx": 600, "wan14": 300, "zimage": 120, "qwenimage": 120, "animate": 300}  # first install, seconds
+LOAD_PRIORS = {"enhance": 40, "kokoro": 5, "chatterbox": 45, "orpheus": 120, "whisper": 40, "qwen": 60, "wan": 240, "ltx": 480, "wan14": 600, "zimage": 150, "qwenimage": 240, "animate": 600}  # first load includes the weight download
 
 SUBTITLE_STYLE = {"max_chars": 42, "max_seconds": 3.5, "min_gap": 0.08}
 CAPTION_STYLES = {
@@ -338,5 +357,5 @@ def python_for(engine):
     """Each engine gets a venv named after a hash of its package list, so changing packages means a fresh venv."""
     import hashlib
     override = os.environ.get(f"VOICEBOX_PY_{engine.upper()}")
-    tag = hashlib.sha1(ENGINES[engine]["packages"].encode()).hexdigest()[:8]
+    tag = hashlib.sha1((ENGINES[engine]["packages"] + ENGINES[engine].get("nodeps", "")).encode()).hexdigest()[:8]
     return override or os.path.join(VENVS, f"{engine}-{tag}", "bin", "python")

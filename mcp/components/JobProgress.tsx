@@ -4,11 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { fmtS, type Job } from "./api";
 import FetchBar, { MODEL_NAMES } from "./FetchBar";
 
-const TTS_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["cleaning", "Clean"], ["prepare", "Warm up"], ["generating", "Voicing"], ["choosing", "Best take"], ["subtitles", "Subtitles"], ["saving", "Saving"], ["done", "Done"]] as const;
+const TTS_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["cleaning", "Clean"], ["prepare", "Warm up"], ["enhancing", "Enhance"], ["generating", "Voicing"], ["choosing", "Best take"], ["subtitles", "Subtitles"], ["saving", "Saving"], ["done", "Done"]] as const;
+const STORY_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["prepare", "Warm up"], ["generating", "Voice"], ["choosing", "Best take"], ["subtitles", "Captions"], ["visuals", "Pictures"], ["assembling", "Edit"], ["saving", "Saving"], ["done", "Done"]] as const;
 const ASR_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["downloading", "Fetch"], ["prepare", "Warm up"], ["transcribing", "Transcribe"], ["saving", "Saving"], ["done", "Done"]] as const;
 const VIDEO_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["prepare", "Warm up"], ["rendering", "Render"], ["decoding", "Decode"], ["encoding", "Encode"], ["saving", "Saving"], ["done", "Done"]] as const;
 const IMAGE_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["prepare", "Warm up"], ["rendering", "Render"], ["saving", "Saving"], ["done", "Done"]] as const;
-const REF_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["cleaning", "Clean"], ["prepare", "Warm up"], ["transcribing", "Transcribe"], ["saving", "Saving"], ["done", "Done"]] as const;
+const REF_STEPS = [["upload", "Upload"], ["queued", "Queued"], ["cleaning", "Clean"], ["enhancing", "Studio"], ["prepare", "Warm up"], ["transcribing", "Transcribe"], ["saving", "Saving"], ["done", "Done"]] as const;
 const saved = (job: Job | null) => !!(job?.library || job?.myvoice);
 
 function stepKey(job: Job | null, uploading: boolean) {
@@ -16,7 +17,16 @@ function stepKey(job: Job | null, uploading: boolean) {
   if (!job) return "queued";
   const s = job.progress.stage;
   if (job.status === "done") return saved(job) ? "done" : "saving";
-  if ((job.kind === "reference" || job.mode === "revoice") && s === "downloading") return "cleaning";
+  if ((job.kind === "reference" || job.mode === "revoice" || job.mode === "clean") && s === "downloading") return "cleaning";
+  if (job.mode === "story") {
+    // the story warms up several models; keep the stepper moving forward instead of jumping back to "Warm up"
+    const d = job.progress.detail ?? "";
+    if (["installing", "loading"].includes(s) && /zimage|wan/.test(d)) return "visuals";
+    if (["installing", "loading"].includes(s) && /whisper/.test(d) && job.results.length) return "subtitles";
+    if (s === "downloading") return job.results.length ? "visuals" : "upload";
+  }
+  if (s === "enhancing" && job.kind === "tts" && !job.mode) return "generating"; // post.enhance polish between lines
+  if (s === "enhancing" && job.kind === "reference") return "enhancing";
   if (["installing", "loading", "reference"].includes(s)) return "prepare";
   if (s === "packaging") return "saving";
   if (job.kind === "image" && ["decoding", "encoding"].includes(s)) return "saving";
@@ -31,10 +41,12 @@ export default function JobProgress({ job, uploading, uploadFrac, onCancel, kind
   const [, tick] = useState(0);
   const anchor = useRef({ f: 0, eta: 0, at: 0 });
   const kind = job?.kind ?? kindHint ?? (uploading ? "transcribe" : "tts");
-  const all: readonly (readonly [string, string])[] = kind === "transcribe" ? ASR_STEPS : kind === "video" ? VIDEO_STEPS : kind === "image" ? IMAGE_STEPS : kind === "reference" ? REF_STEPS : TTS_STEPS;
-  const revoice = job?.mode === "revoice";
-  const steps = all.filter(([k]) => (k !== "subtitles" || job?.subtitles) && (k !== "choosing" || (job?.takes ?? 1) > 1) && (k !== "cleaning" || kind !== "tts" || revoice)
-    && (k !== "upload" || kind === "transcribe" || kind === "reference" || revoice || uploading || job?.gen?.source || !!job?.gen?.refs));
+  const all: readonly (readonly [string, string])[] = job?.mode === "story" ? STORY_STEPS : kind === "transcribe" ? ASR_STEPS : kind === "video" ? VIDEO_STEPS : kind === "image" ? IMAGE_STEPS : kind === "reference" ? REF_STEPS : TTS_STEPS;
+  const revoice = job?.mode === "revoice", clean = job?.mode === "clean", story = job?.mode === "story";
+  const steps = all.filter(([k]) => (k !== "subtitles" || job?.subtitles || story) && (k !== "choosing" || (job?.takes ?? 1) > 1)
+    && (k !== "cleaning" || kind !== "tts" || revoice || clean) && (k !== "enhancing" || kind === "reference" || revoice || clean)
+    && (k !== "generating" || !clean)
+    && (k !== "upload" || kind === "transcribe" || kind === "reference" || revoice || clean || uploading || job?.gen?.source || !!job?.gen?.refs));
   const key = stepKey(job, !!uploading);
   const idx = Math.max(0, steps.findIndex(([k]) => k === key));
   const running = uploading || (job && ["queued", "running"].includes(job.status)) || (job?.status === "done" && !saved(job));
@@ -72,7 +84,9 @@ export default function JobProgress({ job, uploading, uploadFrac, onCancel, kind
     : prep ? (p!.fetch?.phase === "downloading" ? `Downloading ${MODEL_NAMES[job.engine] ?? job.engine} (first time only)` : p!.stage === "installing" ? "Installing engine (first run only)" : "Loading model onto the GPU")
     : key === "generating" ? `${revoice ? "Re-voicing" : "Voicing"} ${p!.detail}` : key === "choosing" ? `Picking the best take · ${p!.detail}` : key === "subtitles" ? "Writing subtitles" : key === "transcribing" ? (kind === "reference" ? "Writing down what you said" : `Transcribing ${p!.detail}`)
     : key === "downloading" ? (job.engine === "animate" ? "Fetching your character and motion clip" : kind === "video" ? "Fetching the start frame" : kind === "image" ? "Fetching reference images" : "Fetching your files") : key === "rendering" ? `Rendering · ${p!.detail}` : key === "encoding" ? "Encoding the MP4"
-    : key === "cleaning" ? (revoice ? "Cleaning up your performance" : "Cleaning up your recording") : "Working";
+    : key === "cleaning" ? (revoice ? "Cleaning up your performance" : "Cleaning up your recording")
+    : key === "enhancing" ? `Studio clean-up · ${p!.detail}` : key === "visuals" ? `Making the pictures · ${p!.detail}`
+    : key === "assembling" ? `Editing the video · ${p!.detail}` : "Working";
 
   const done = job?.status === "done" && saved(job);
   const failed = job?.status === "error" || job?.status === "cancelled";
@@ -85,7 +99,7 @@ export default function JobProgress({ job, uploading, uploadFrac, onCancel, kind
           <span className={`recdot ${done ? "done" : ""}`} style={failed ? { color: "var(--dim)" } : undefined}><i style={failed ? { background: "var(--faint)", boxShadow: "none", animation: "none" } : undefined} />{done ? "SAVED" : failed ? "STOPPED" : running ? "REC" : "READY"}</span>
           <h3>{headline}</h3>
           <div className="dim small" style={{ marginTop: 4 }}>
-            {prep ? p?.detail : job?.status === "running" ? (kind === "video" || kind === "reference" || kind === "image" || revoice ? p?.detail || " " : `${p?.done ?? 0} of ${p?.total ?? 0} ${kind === "transcribe" ? "files" : "lines"} finished`) : job?.error ?? " "}
+            {prep ? p?.detail : job?.status === "running" ? (kind === "video" || kind === "reference" || kind === "image" || revoice || clean ? p?.detail || " " : `${p?.done ?? 0} of ${p?.total ?? 0} ${kind === "transcribe" ? "files" : "lines"} finished`) : job?.error ?? " "}
           </div>
         </div>
         <div className="row" style={{ gap: 22, alignItems: "flex-start" }}>

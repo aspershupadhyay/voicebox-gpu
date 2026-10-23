@@ -20,7 +20,9 @@ export type LibJob = {
   gen?: { model: string; mode: string; prompt: string; negative?: string; seed: number; steps: number; fps?: number; frames?: number; seconds?: number;
     source?: boolean; quality?: string; aspect?: string; count?: number; refs?: number; transparent?: boolean; width?: number; height?: number };
   images?: LibImage[];
+  scenes?: LibScene[];
 };
+export type LibScene = { id: string; text: string; start: number; seconds: number; voice_start?: number; prompt?: string | null; match?: number | null; animated?: boolean };
 
 const ROOT = "library/";
 export const FILE_RE = /^(?:[A-Za-z0-9_-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json)|subtitles\.(?:srt|vtt|json)|video\.mp4|poster\.jpg|source\.(?:jpg|png|webp)|image-\d{1,2}\.png|thumb-\d{1,2}\.jpg)$/;
@@ -41,7 +43,7 @@ type WorkerResult = LibLine & { url?: string; srt_url?: string; vtt_url?: string
 type WorkerJob = {
   id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; created?: number; status: string;
-  subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; platform?: string; similarity?: number | null; mode?: string; attach_to?: string; zip_url?: string;
+  subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; platform?: string; scenes?: LibScene[]; similarity?: number | null; mode?: string; attach_to?: string; zip_url?: string;
   gen?: LibJob["gen"] & Record<string, unknown>; video?: { width: number; height: number; duration: number; size: number; has_audio?: boolean; fps?: number; frames?: number } | null;
   results: (WorkerResult & { poster_url?: string; file?: string; thumb?: string; width?: number; height?: number; transparent?: boolean; thumb_url?: string })[];
 };
@@ -90,7 +92,9 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
 /** A generated clip: the MP4, its poster frame and the source image (image-to-video) go straight from the worker to R2. */
 async function archiveVideo(job: WorkerJob): Promise<LibJob> {
   const g = job.gen!;
-  const names = ["video.mp4", "poster.jpg", ...(g.source ? ["source.jpg"] : [])];
+  const story = g.mode === "story";
+  const names = ["video.mp4", "poster.jpg", ...(g.source ? ["source.jpg"] : []),
+    ...(story ? ["voiceover.wav", "subtitles.srt", "subtitles.vtt", "subtitles.json"] : [])];
   const pushed = await pushFromWorker(job.id, job.id, names).catch(() => false);
   if (!pushed) {
     const r = job.results[0];
@@ -107,7 +111,8 @@ async function archiveVideo(job: WorkerJob): Promise<LibJob> {
     created: Math.round((job.created ?? Date.now() / 1000) * 1000), archived: Date.now(), source: "generated", results: [],
     video: { width: v.width, height: v.height, duration: v.duration, size: v.size, poster: true, has_audio: !!v.has_audio },
     gen: { model: g.model, mode: g.mode, prompt: g.prompt, negative: g.negative || undefined, seed: g.seed, steps: g.steps, fps: g.fps,
-      frames: g.frames, seconds: g.seconds, source: !!g.source },
+      frames: g.frames, seconds: g.seconds, source: !!g.source, aspect: g.aspect, width: g.width, height: g.height },
+    ...(story ? { scenes: job.scenes, platform: job.platform, subs: job.subs ?? null } : {}),
   };
   await putLibJob(lib);
   return lib;

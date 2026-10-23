@@ -110,6 +110,16 @@ export default function Generate() {
   const styleParams: Record<string, number> = styles[style]?.params?.[engine] ?? {};
   const effTempo = tempo ?? styles[style]?.post_by_engine?.[engine]?.tempo ?? styles[style]?.post?.tempo ?? 1;
   const lines = useMemo(() => parse(script), [script]);
+  const [spoken, setSpoken] = useState<string[]>([]);
+  useEffect(() => {  // what the voice will actually read (tech terms, your dictionary, [pause] markers): worker dry run, no GPU
+    if (!preview || !status?.online || !lines.length) return;
+    const t = setTimeout(() => {
+      api<{ lines: { parts: { spoken: string; pause_after: number | null }[] }[] }>("speakable", { body: { lines: lines.slice(0, 200).map((l) => l.text), lexicon, pronounce: parsePronounce(pronounce) } })
+        .then((r) => setSpoken(r.lines.map((l) => l.parts.map((p) => p.spoken + (p.pause_after ? ` ⏸${p.pause_after}s` : "")).join(" "))))
+        .catch(() => setSpoken([]));
+    }, 500);
+    return () => clearTimeout(t);
+  }, [preview, status?.online, lines, lexicon, pronounce]);
   const lively = styles[style]?.voices?.[engine] ?? [];
   const chars = lines.reduce((s, l) => s + l.text.length, 0);
   const langs = LANGUAGES.filter((l) => l.engines.includes(engine));
@@ -220,8 +230,9 @@ export default function Generate() {
             </div>
             {preview && (
               <table className="table small" style={{ marginTop: 8 }}><tbody>
-                {lines.map((l) => (
-                  <tr key={l.id}><td className="mono dim" style={{ width: 50 }}>{l.id}</td><td>{l.text}</td>
+                {lines.map((l, i) => (
+                  <tr key={l.id}><td className="mono dim" style={{ width: 50 }}>{l.id}</td><td>{l.text}
+                    {spoken[i] && spoken[i].replace(/ ⏸[\d.]+s/g, "") !== l.text && <div className="dim tiny">reads: {spoken[i]}</div>}</td>
                     <td className="mono dim" style={{ whiteSpace: "nowrap" }}>≈{(l.text.length / 14.5).toFixed(1)}s{l.window ? ` / ${l.window}s` : ""}</td></tr>
                 ))}
               </tbody></table>

@@ -4,13 +4,14 @@ import { z } from "zod";
 import { loadWorker, STALE_MS } from "@/lib/registry";
 import { call, safeEqual, WorkerOffline } from "@/lib/worker";
 import { archiveWorkerJob, listLibrary, presignPath } from "@/lib/library";
+import { getSettings, updateSettings, VISUAL_STYLES, withDefaults } from "@/lib/settings";
 import { isCustomVoice, listMyVoices, refSync } from "@/lib/voices";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen"] as const;
-const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "whisper", "wan", "wan14", "ltx", "animate", "zimage", "qwenimage"] as const;
+const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "whisper", "enhance", "wan", "wan14", "ltx", "animate", "zimage", "qwenimage"] as const;
 const PLATFORMS = ["youtube", "shorts", "reels", "tiktok", "podcast", "raw"] as const;
 const MAX_WAIT = 45; // seconds a tool call may block; Vercel caps the request at maxDuration
 
@@ -111,8 +112,8 @@ const handler = createMcpHandler(
           "First use of an engine installs + loads it (several minutes); the job keeps running, so poll with get_job.",
         ].join(" "),
         inputSchema: z.object({
-          engine: z.enum(ENGINES),
-          voice: z.string().optional().describe("default 'female'"),
+          engine: z.enum(ENGINES).optional().describe("default from settings (qwen unless changed)"),
+          voice: z.string().optional().describe("default from settings"),
           lines: z.array(line).min(1).max(1000),
           subtitles: z.boolean().optional().describe("also make word-timed subtitles with Whisper large-v3"),
           language: z.string().max(8).optional().describe("ISO code for Whisper/Chatterbox, e.g. en, hi; omit to auto-detect"),
@@ -139,8 +140,9 @@ const handler = createMcpHandler(
       },
       async ({ wait_seconds, ...body }) => {
         try {
-          const ref = body.voice && isCustomVoice(body.voice) ? await refSync(body.voice) : null;
-          const job = await call<Job>("/jobs", { body: ref ? { ...body, ref } : body });
+          const full = withDefaults(body, await getSettings());
+          const ref = typeof full.voice === "string" && isCustomVoice(full.voice) ? await refSync(full.voice) : null;
+          const job = await call<Job>("/jobs", { body: ref ? { ...full, ref } : full });
           return text(withHint(await waitFor(job.id, wait_seconds ?? MAX_WAIT)));
         } catch (e) {
           return fail(e);
@@ -159,7 +161,8 @@ const handler = createMcpHandler(
         ].join(" "),
         inputSchema: z.object({
           url: z.string().url().describe("the performance: public or signed https link to audio or video"),
-          voice: z.string().describe("recorded voice name (my_voices) or female/male"),
+          voice: z.string().optional().describe("recorded voice name (my_voices) or female/male; default from settings"),
+          enhance: z.boolean().optional().describe("denoise the performance first (default from settings: on)"),
           platform: z.enum(PLATFORMS).optional().describe("default youtube"),
           subtitles: z.boolean().optional(),
           language: z.string().max(8).optional().describe("for the subtitles, e.g. en, hi"),
@@ -169,9 +172,146 @@ const handler = createMcpHandler(
       },
       async ({ wait_seconds, ...body }) => {
         try {
-          const ref = isCustomVoice(body.voice) ? await refSync(body.voice) : null;
-          const job = await call<Job>("/jobs", { body: { ...body, kind: "revoice", ...(ref ? { ref } : {}) } });
+          const s = await getSettings();
+          const full = withDefaults({ ...body, kind: "revoice", voice: body.voice ?? (s.engine === "qwen" || s.engine === "chatterbox" ? s.voice : "female") }, s);
+          const ref = isCustomVoice(String(full.voice)) ? await refSync(String(full.voice)) : null;
+          const job = await call<Job>("/jobs", { body: { ...full, ...(ref ? { ref } : {}) } });
           return text(withHint(await waitFor(job.id, wait_seconds ?? MAX_WAIT)));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "make_video",
+      {
+        title: "Script -> finished video",
+        description: [
+          "Turn a script into a finished, captioned, mastered video in one job: every scene is one voiced line plus one shot.",
+          "You (the assistant) should write a concrete `visual` for each scene: subject, setting, light, camera, e.g. 'a glowing smartphone on a dark desk, blue location pin hovering above'. Never put words/text in visuals. Without one, a visual metaphor is imagined from the line.",
+          "Voice: every voice_lines option (engine, voice incl. the user's recorded voice, style, takes, pronounce, [pause] markers); defaults come from settings.",
+          "platform sets the frame and the sound: shorts/reels/tiktok = 1080x1920 with bold pop-up word captions, youtube/podcast = 1920x1080 with clean subtitles; audio mastered to -14 LUFS.",
+          "visuals: images (default; Z-Image stills with smooth Ken Burns camera moves, seconds per scene) or clips (each still animated by Wan 2.2, a few minutes per scene). visual_style: tech, neon, minimal, photo, paper, blueprint.",
+          "music_url: optional music bed, levelled (music_lufs, default -28) and ducked under the voice. A scene may give image_url to use its own picture.",
+          "Keep scenes to 1-2 sentences (3-8 s each); 6-12 scenes makes a 30-60 s short. Rendering takes minutes: poll get_job; the MP4 (+ voiceover.wav and .srt) lands in the library.",
+        ].join(" "),
+        inputSchema: z.object({
+          scenes: z.array(z.object({
+            text: z.string().min(1).max(2000).describe("what is said in this scene"),
+            visual: z.string().max(1500).optional().describe("what we see: concrete, visual, no on-screen text"),
+            image_url: z.string().url().optional().describe("use this picture instead of generating one"),
+          })).min(1).max(80),
+          platform: z.enum(PLATFORMS).optional().describe("default from settings"),
+          aspect: z.enum(["16:9", "9:16", "1:1"]).optional().describe("override the platform's frame"),
+          engine: z.enum(ENGINES).optional(), voice: z.string().optional(),
+          style: z.enum(["tech", "hype", "narrator", "neutral"]).optional(),
+          takes: z.number().int().min(1).max(4).optional(),
+          pronounce: z.record(z.string(), z.string()).optional(),
+          visuals: z.enum(["images", "clips"]).optional(),
+          visual_style: z.enum(VISUAL_STYLES).optional(),
+          captions_look: z.enum(["bold", "clean", "none"]).optional().describe("default: bold for vertical, clean for wide"),
+          transition: z.enum(["fade", "cut"]).optional(),
+          music_url: z.string().url().optional(), music_lufs: z.number().min(-40).max(-18).optional(),
+          seed: z.number().int().optional(),
+          label: z.string().max(80).optional(),
+          wait_seconds: z.number().min(0).max(MAX_WAIT).optional().describe("default 10; renders take minutes"),
+        }),
+      },
+      async ({ wait_seconds, ...body }) => {
+        try {
+          const full = withDefaults({ ...body, kind: "story" }, await getSettings());
+          const ref = typeof full.voice === "string" && isCustomVoice(full.voice) ? await refSync(full.voice) : null;
+          const job = await call<Job>("/jobs", { body: ref ? { ...full, ref } : full });
+          return text(withHint(await waitFor(job.id, wait_seconds ?? 10)));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "clean_audio",
+      {
+        title: "Studio clean-up of a recording",
+        description: [
+          "Make a recording from a bad mic sound studio-grade: Resemble Enhance removes noise and room echo and restores the detail a cheap mic or phone loses (to 44.1 kHz), then it is mastered for the platform. Same length as the input, so it stays in sync with video.",
+          "url: any audio or video link. params.mode: enhance (default; denoise + restore) or denoise (noise only, exact original tone); params.strength 0-1 (default 0.6; higher for noisy, echoey rooms).",
+        ].join(" "),
+        inputSchema: z.object({
+          url: z.string().url(),
+          params: z.object({ mode: z.enum(["enhance", "denoise"]).optional(), strength: z.number().min(0).max(1).optional(), steps: z.number().int().min(16).max(128).optional() }).optional(),
+          platform: z.enum(PLATFORMS).optional(),
+          subtitles: z.boolean().optional(),
+          label: z.string().max(80).optional(),
+          wait_seconds: z.number().min(0).max(MAX_WAIT).optional(),
+        }),
+      },
+      async ({ wait_seconds, ...body }) => {
+        try {
+          const job = await call<Job>("/jobs", { body: withDefaults({ ...body, kind: "clean" }, await getSettings()) });
+          return text(withHint(await waitFor(job.id, wait_seconds ?? MAX_WAIT)));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "preview_pronunciation",
+      {
+        title: "Preview what the voice will read",
+        description: "Dry run of the pronunciation layer (no GPU, instant): shows exactly what the engine will say for each line after tech terms, the user's dictionary, markdown/URL clean-up and [pause] markers. Use it before a long render to catch mispronunciations, then fix them with pronounce.",
+        inputSchema: z.object({
+          lines: z.array(z.string().max(5000)).min(1).max(200),
+          pronounce: z.record(z.string(), z.string()).optional(),
+          lexicon: z.boolean().optional(),
+        }),
+      },
+      async (body) => {
+        try {
+          const s = await getSettings();
+          return text(await call("/speakable", { body: { ...body, pronounce: { ...s.pronounce, ...(body.pronounce ?? {}) }, lexicon: body.lexicon ?? s.lexicon } }));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "get_settings",
+      {
+        title: "Studio defaults",
+        description: "The user's saved defaults (engine, voice, style, platform, takes, pronunciation dictionary, studio enhance switches, script-video look). Every tool fills unset arguments from these.",
+        inputSchema: z.object({}),
+      },
+      async () => {
+        try {
+          return text(await getSettings());
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "update_settings",
+      {
+        title: "Change studio defaults",
+        description: "Save new defaults (only the keys given change). pronounce REPLACES the dictionary: read get_settings first and send the merged map. Only change settings when the user asks.",
+        inputSchema: z.object({
+          engine: z.enum(ENGINES).optional(), voice: z.string().max(64).optional(), style: z.enum(["tech", "hype", "narrator", "neutral"]).optional(),
+          platform: z.enum(PLATFORMS).optional(), takes: z.number().int().min(1).max(4).optional(), subtitles: z.boolean().optional(),
+          lexicon: z.boolean().optional(), pronounce: z.record(z.string(), z.string()).optional(),
+          enhance_recordings: z.boolean().optional(), enhance_input: z.boolean().optional(), enhance_output: z.boolean().optional(),
+          visuals: z.enum(["images", "clips"]).optional(), visual_style: z.enum(VISUAL_STYLES).optional(),
+          captions_look: z.enum(["auto", "bold", "clean", "none"]).optional(), transition: z.enum(["fade", "cut"]).optional(),
+          music_lufs: z.number().min(-40).max(-18).optional(),
+        }),
+      },
+      async (patch) => {
+        try {
+          return text(await updateSettings(patch));
         } catch (e) {
           return fail(e);
         }
@@ -432,7 +572,19 @@ const handler = createMcpHandler(
       },
     );
   },
-  { serverInfo: { name: "voicebox", version: "1.0.0" } },
+  {
+    serverInfo: { name: "voicebox", version: "2.0.0" },
+    instructions: [
+      "Voicebox: the user's own GPU voice + video studio (Colab worker). Typical flows:",
+      "1) Check worker_status first; if offline, ask the user to run the Colab notebook.",
+      "2) Voiceover: voice_lines with lines of 1-3 sentences. The user's recorded voices (my_voices) work on qwen. Defaults (engine, voice, platform, pronunciations) come from get_settings, so most calls only need lines.",
+      "3) Before a long or term-heavy script, preview_pronunciation and add fixes via pronounce.",
+      "4) Finished video from a script: make_video with scenes [{text, visual}]; write a concrete visual for each scene.",
+      "5) A recording from a bad mic: clean_audio. A rough take the user performed: revoice into their clean voice.",
+      "6) Long jobs return a job id: poll get_job (each call waits up to 45 s). Results are archived to the dashboard library; links expire after 6 h.",
+      "Scores: match = how closely Whisper heard the script (>=0.95 good); similarity = voice match vs the recording (>=0.86 same speaker).",
+    ].join("\n"),
+  },
 );
 
 const authed = withMcpAuth(

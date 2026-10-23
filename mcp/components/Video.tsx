@@ -142,7 +142,7 @@ export default function Video() {
   const estS = (status?.rates?.[model] ?? PRIOR[model]) * units + 25 + (state === "ready" ? 0 : LOAD_S[model] + fetchS);
   const voiceLoaded = Object.entries(status?.engines ?? {}).filter(([n, s]) => s === "ready" && !(MODELS as readonly string[]).includes(n)).map(([n]) => n);
   const running = !!job && (["queued", "running"].includes(job.status) || (job.status === "done" && !job.library)) || upFrac !== null;
-  const recent = useMemo(() => history.filter((v) => v.kind === "video" && v.gen && v.poster_url), [history]);
+  const recent = useMemo(() => history.filter((v) => v.kind === "video" && v.gen && v.gen.model !== "story" && v.poster_url), [history]);
   const [aw, ah] = anim.sizes[aspect] ?? anim.sizes["9:16"];
   const aFrames = Math.max(1, Math.round((Math.min(seconds, anim.max_seconds) * anim.fps) / 4)) * 4 + 1;
   const aState = status?.engines?.animate;
@@ -201,7 +201,7 @@ export default function Video() {
   }
 
   function reuse(v: LibVideo) {
-    if (!v.gen) return;
+    if (!v.gen || v.gen.model === "story") return; // script videos are remade from the Studio page
     if (v.gen.model !== "animate") setModel(v.gen.model);
     if (v.gen.model === "animate") setAnimPrompt(v.gen.prompt); else setPrompt(v.gen.prompt); setSeed(v.gen.seed); setNegative(v.gen.negative ?? "");
     const a = Object.entries(specs[v.gen.model]?.sizes ?? {}).find(([, [ww, hh]]) => ww === v.video?.width && hh === v.video?.height)?.[0];

@@ -4,7 +4,7 @@ import { fmtS, type Fetch } from "./api";
 
 export const MODEL_NAMES: Record<string, string> = {
   wan: "Wan 2.2", wan14: "Wan 14B", ltx: "LTX-2.5", animate: "Wan Animate", zimage: "Z-Image", qwenimage: "Qwen-Image 2.1",
-  orpheus: "Orpheus", chatterbox: "Chatterbox", kokoro: "Kokoro", qwen: "Qwen3-TTS", whisper: "Whisper",
+  orpheus: "Orpheus", chatterbox: "Chatterbox", kokoro: "Kokoro", qwen: "Qwen3-TTS", whisper: "Whisper", enhance: "Resemble Enhance",
 };
 
 /** A model warming up: real download progress (GB landed on the worker's disk / expected, speed, time left), then

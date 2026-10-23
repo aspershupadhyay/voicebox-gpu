@@ -26,6 +26,13 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
   pronunciations. `[pause 0.8]`, `[beat]` and `[breath]` put real silence in the script.
 - **Re-voice:** upload any take of yourself (voice memo, screen recording) and get it back in your clean recorded voice,
   timing and emotion intact. Hindi lines in a Qwen script are voiced by Chatterbox in the same voice.
+- **Script → video:** write `what you say || what we see` per scene; get back a 1080p video with your voice, AI pictures
+  (or animated clips) moving in time with it, bold word-by-word captions, cross-fades and a ducked music bed (Studio page or
+  the `make_video` MCP tool).
+- **Bad mic, studio sound:** Resemble Enhance removes noise and room echo and restores the detail a cheap mic loses. It
+  runs on your voice recordings before cloning, and the Studio page cleans up any recording or video soundtrack.
+- **Settings:** studio-wide defaults (voice, platform, pronunciation dictionary, enhance switches, video look) shared by the
+  dashboard and every MCP client.
 - **Subtitles:** Whisper large-v3 with word timestamps → SRT / VTT / JSON, per line and for the whole timeline, plus a script-match score
   and a voice-match score for cloned voices.
 - **Dashboard:** `https://<app>/` (sign in with `MCP_TOKEN`): Overview, Generate, Voices, Video, Subtitles, Library (private Cloudflare R2 storage).

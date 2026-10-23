@@ -1,6 +1,6 @@
 "use client";
 import {
-  ArrowsClockwise, Books, ClosedCaptioning, Cpu, FilmSlate, Fire, HardDrives, ImageSquare, MagnifyingGlass, Microphone, Power, SignOut, SquaresFour, UserSound, Waveform,
+  ArrowsClockwise, Books, ClosedCaptioning, Cpu, FilmSlate, Fire, GearSix, HardDrives, ImageSquare, MagicWand, MagnifyingGlass, Microphone, Power, SignOut, SquaresFour, UserSound, Waveform,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -15,14 +15,16 @@ export const useStatus = () => useContext(StatusCtx);
 const NAV = [
   { href: "/", name: "Overview", Icon: SquaresFour },
   { href: "/generate", name: "Generate", Icon: Microphone },
+  { href: "/studio", name: "Studio", Icon: MagicWand },
   { href: "/voices", name: "Voices", Icon: UserSound },
   { href: "/image", name: "Image", Icon: ImageSquare },
   { href: "/video", name: "Video", Icon: FilmSlate },
   { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning },
   { href: "/library", name: "Library", Icon: Books },
+  { href: "/settings", name: "Settings", Icon: GearSix },
 ] as const;
 const ENGINE_ORDER = ["orpheus", "chatterbox", "kokoro", "qwen", "whisper", "wan", "wan14", "ltx", "animate", "zimage", "qwenimage"];
-const ALL_ENGINES = ["orpheus", "chatterbox", "kokoro", "qwen", "whisper", "wan", "wan14", "ltx", "animate", "zimage", "qwenimage"];
+const ALL_ENGINES = ["orpheus", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "wan", "wan14", "ltx", "animate", "zimage", "qwenimage"];
 const MODE: Record<string, string> = { voice: "Voice mode", visual: "Video mode", idle: "Idle · GPU free", mixed: "Switching" };
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 const stateClass = (s?: string) => (s === "ready" ? "ready" : s === "loading" || s === "installing" || s === "busy" ? "busy" : s === "error" ? "err" : "");

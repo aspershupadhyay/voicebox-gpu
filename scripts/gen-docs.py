@@ -7,7 +7,7 @@ import config as C  # noqa: E402
 
 rows = ["| Engine | Group | VRAM | Download | Presets (female / male) | About |", "|---|---|---|---|---|---|"]
 for name, e in C.ENGINES.items():
-    presets = ('`' + e['presets']['female'] + '` / `' + e['presets']['male'] + '`') if e['presets'] else ('n/a (video)' if e['kind'] == 'video' else 'n/a (subtitles)')
+    presets = ('`' + e['presets']['female'] + '` / `' + e['presets']['male'] + '`') if e['presets'] else ('n/a (' + {'video': 'video', 'asr': 'subtitles', 'enhance': 'clean-up', 'image': 'image', 'animate': 'video'}.get(e['kind'], e['kind']) + ')')
     rows.append(f"| `{name}` | {e['group']} | {e['gpu_gb']:g} GB | {e.get('disk_gb', 0):g} GB | {presets} | {e['about']} |")
 out = ["\n".join(rows), ""]
 for name, e in C.ENGINES.items():
