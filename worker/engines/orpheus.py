@@ -5,10 +5,11 @@ several times faster than token-by-token transformers. Falls back to transformer
 The token budget is sized from the text (Orpheus emits ~86 codec tokens per second of speech), so
 there's no fixed length cap; the gateway also splits long text into sentence chunks.
 """
-import os
+import json, os
 import torch
 
 MODEL = os.environ.get("ORPHEUS_MODEL", "unsloth/orpheus-3b-0.1-ft")  # ungated mirror of canopylabs/orpheus-3b-0.1-ft
+LORA = os.environ.get("ORPHEUS_LORA")  # a LoRA adapter dir on top of MODEL (your trained voice, see engines/myvoice.py)
 START, END_TEXT, END_HUMAN, START_AUDIO, END_AUDIO, CODE_OFFSET = 128259, 128009, 128260, 128257, 128258, 128266
 TOKENS_PER_SEC = 86
 
@@ -32,8 +33,15 @@ class Engine:
                 from vllm import LLM
                 total = torch.cuda.get_device_properties(0).total_memory / 2**30
                 util = min(0.9, float(os.environ.get("ORPHEUS_VRAM_GB", "9")) / total)
+                lora = {}
+                if LORA:
+                    rank = int(json.load(open(os.path.join(LORA, "adapter_config.json"))).get("r", 64))
+                    lora = {"enable_lora": True, "max_lora_rank": max(16, rank), "max_loras": 1}
                 self.llm = LLM(model=MODEL, dtype="bfloat16", gpu_memory_utilization=util, max_model_len=8192,
-                               enable_prefix_caching=True)
+                               enable_prefix_caching=True, **lora)
+                if LORA:
+                    from vllm.lora.request import LoRARequest
+                    self.lora_req = LoRARequest("myvoice", 1, LORA)
                 self.tok = self.llm.get_tokenizer()
                 self.mode = "vllm"
             except Exception as e:  # noqa: BLE001
@@ -43,6 +51,9 @@ class Engine:
             dtype = torch.bfloat16 if self.dev == "cuda" and torch.cuda.is_bf16_supported() else torch.float16
             self.tok = AutoTokenizer.from_pretrained(MODEL)
             self.model = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=dtype).to(self.dev)
+            if LORA:
+                from peft import PeftModel
+                self.model = PeftModel.from_pretrained(self.model, LORA).merge_and_unload()
             self.model.train(False)
         print(f"[orpheus] backend: {self.mode}", flush=True)
 
@@ -89,7 +100,7 @@ class Engine:
                                       repetition_penalty=float(p.get("repetition_penalty", 1.1)),
                                       max_tokens=token_budget(it["text"], p), stop_token_ids=[END_AUDIO],
                                       seed=int(p.get("seed", 7))))
-        results = self.llm.generate(prompts, sps, use_tqdm=False)
+        results = self.llm.generate(prompts, sps, use_tqdm=False, lora_request=getattr(self, "lora_req", None))
         outs = []
         for r in results:
             try:

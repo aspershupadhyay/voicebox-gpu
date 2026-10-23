@@ -34,7 +34,7 @@ def main():
     ap.add_argument("folder"); ap.add_argument("--id", required=True)
     ap.add_argument("--engine", required=True); ap.add_argument("--voice", required=True)
     ap.add_argument("--label", default=""); ap.add_argument("--script")
-    ap.add_argument("--base", default=os.environ.get("VOICEBOX_URL", "https://mcp-eta-tawny.vercel.app"))
+    ap.add_argument("--base", default=os.environ.get("VOICEBOX_URL", "https://voiceboxstudio.vercel.app"))
     a = ap.parse_args()
 
     man = os.path.join(a.folder, "manifest.json")

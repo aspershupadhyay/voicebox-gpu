@@ -3,7 +3,7 @@
 //   samples/<engine>/<voice>.wav + samples/index.json   one short read per voice, playable without the GPU
 import { delPrefix, getJson, listObjs, presign, putJson } from "./store";
 
-export type MyVoice = { name: string; label: string; transcript: string; duration: number; version: string; created: number; warnings?: string[]; level_db?: number };
+export type MyVoice = { name: string; label: string; transcript: string; duration: number; version: string; created: number; warnings?: string[]; level_db?: number; enhanced?: boolean };
 export type SampleIndex = { text: Record<string, string>; voices: Record<string, Record<string, { duration: number; created: number }>> };
 
 export const VOICE_RE = /^[a-z0-9][a-z0-9_-]{0,40}$/;

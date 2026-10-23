@@ -1,5 +1,6 @@
 // Permanent storage for finished jobs: the private R2 bucket under library/<jobId>/.
 // Files are served to the browser (and handed to the worker) through short-lived presigned URLs.
+import { learnFromJob, type Trial } from "./profiles";
 import { delPrefix, getJson, getObj, listObjs, presign, putJson, putObj, typeOf } from "./store";
 import { call } from "./worker";
 import { unzip } from "./zip";
@@ -8,17 +9,22 @@ export type Word = { w: string; s: number; e: number };
 export type LibLine = {
   id: string; text: string; duration: number; window?: number | null; fits?: boolean | null; start?: number | null;
   heard?: string; match?: number | null; subs?: boolean; name?: string; chunks?: number; cues?: number;
+  lufs?: number | null; similarity?: number | null; spoken?: string; engine?: string; takes?: { n: number; picked: number[]; match: number; similarity: number | null };
 };
 export type LibImage = { file: string; thumb: string; width: number; height: number; transparent?: boolean };
 export type LibJob = {
   id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; created: number; archived: number; source?: string;
   subs?: { cues: number; timeline: string } | null; match?: number | null; results: LibLine[];
+  platform?: string; similarity?: number | null; mode?: string;
   video?: { width: number; height: number; duration: number; size: number; poster?: boolean; voice_job?: string; has_audio?: boolean };
   gen?: { model: string; mode: string; prompt: string; negative?: string; seed: number; steps: number; fps?: number; frames?: number; seconds?: number;
     source?: boolean; quality?: string; aspect?: string; count?: number; refs?: number; transparent?: boolean; width?: number; height?: number };
   images?: LibImage[];
+  scenes?: LibScene[];
+  benchmark?: { target: string | null; candidates: { label: string; engine: string; voice: string; match?: number | null; similarity?: number | null; mos?: number | null; rtf?: number; score?: number | null; lines?: string[]; error?: string }[] } | null;
 };
+export type LibScene = { id: string; text: string; start: number; seconds: number; voice_start?: number; prompt?: string | null; match?: number | null; animated?: boolean };
 
 const ROOT = "library/";
 export const FILE_RE = /^(?:[A-Za-z0-9_-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json)|subtitles\.(?:srt|vtt|json)|video\.mp4|poster\.jpg|source\.(?:jpg|png|webp)|image-\d{1,2}\.png|thumb-\d{1,2}\.jpg)$/;
@@ -39,14 +45,15 @@ type WorkerResult = LibLine & { url?: string; srt_url?: string; vtt_url?: string
 type WorkerJob = {
   id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; created?: number; status: string;
-  subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; attach_to?: string; zip_url?: string;
+  subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; platform?: string; scenes?: LibScene[]; similarity?: number | null; mode?: string; attach_to?: string; zip_url?: string;
+  trials?: Trial[] | null; benchmark?: LibJob["benchmark"];
   gen?: LibJob["gen"] & Record<string, unknown>; video?: { width: number; height: number; duration: number; size: number; has_audio?: boolean; fps?: number; frames?: number } | null;
   results: (WorkerResult & { poster_url?: string; file?: string; thumb?: string; width?: number; height?: number; transparent?: boolean; thumb_url?: string })[];
 };
 
 /** Copy a finished worker job (audio + subtitles via signed worker URLs) into the library. Idempotent. */
 export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
-  if (job.status !== "done") return null;
+  if (job.status !== "done" || (job.kind as string) === "dataset") return null; // datasets live in datasets/, not the library
   if (job.attach_to) return attachSubtitles(job);
   const existing = await getLibJob(job.id);
   if (existing) return existing;
@@ -78,17 +85,21 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   const lib: LibJob = {
     id: job.id, kind: job.kind ?? "tts", engine: job.engine, voice: job.voice, label: job.label, language: job.language,
     params: job.params, style: job.style, created: Math.round((job.created ?? Date.now() / 1000) * 1000), archived: Date.now(), source: "worker",
-    subs: job.subs ?? null, match: job.match ?? null,
+    subs: job.subs ?? null, match: job.match ?? null, platform: job.platform, similarity: job.similarity ?? null, mode: job.mode,
+    ...(job.benchmark ? { benchmark: job.benchmark } : {}),
     results: job.results.map(({ url, srt_url, vtt_url, json_url, ...r }) => r),
   };
   await putLibJob(lib);
+  await learnFromJob(job).catch(() => null); // this voice's scores feed its learned defaults
   return lib;
 }
 
 /** A generated clip: the MP4, its poster frame and the source image (image-to-video) go straight from the worker to R2. */
 async function archiveVideo(job: WorkerJob): Promise<LibJob> {
   const g = job.gen!;
-  const names = ["video.mp4", "poster.jpg", ...(g.source ? ["source.jpg"] : [])];
+  const story = g.mode === "story";
+  const names = ["video.mp4", "poster.jpg", ...(g.source ? ["source.jpg"] : []),
+    ...(story ? ["voiceover.wav", "subtitles.srt", "subtitles.vtt", "subtitles.json"] : [])];
   const pushed = await pushFromWorker(job.id, job.id, names).catch(() => false);
   if (!pushed) {
     const r = job.results[0];
@@ -105,7 +116,8 @@ async function archiveVideo(job: WorkerJob): Promise<LibJob> {
     created: Math.round((job.created ?? Date.now() / 1000) * 1000), archived: Date.now(), source: "generated", results: [],
     video: { width: v.width, height: v.height, duration: v.duration, size: v.size, poster: true, has_audio: !!v.has_audio },
     gen: { model: g.model, mode: g.mode, prompt: g.prompt, negative: g.negative || undefined, seed: g.seed, steps: g.steps, fps: g.fps,
-      frames: g.frames, seconds: g.seconds, source: !!g.source },
+      frames: g.frames, seconds: g.seconds, source: !!g.source, aspect: g.aspect, width: g.width, height: g.height },
+    ...(story ? { scenes: job.scenes, platform: job.platform, subs: job.subs ?? null } : {}),
   };
   await putLibJob(lib);
   return lib;

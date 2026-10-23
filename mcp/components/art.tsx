@@ -5,19 +5,15 @@
 const hash = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; };
 const rng = (seed: number) => () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 
-/** The mark: a rounded tile holding five bars shaped like a spoken syllable. */
+/** The mark: an ink tile holding five bars shaped like a spoken syllable; the loudest one is the live accent. */
 export function Logo({ size = 28 }: { size?: number }) {
   const bars = [0.38, 0.72, 1, 0.6, 0.3];
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden className="logo">
-      <defs>
-        <linearGradient id="lg-tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#ff7350" /><stop offset="1" stopColor="#e2401d" /></linearGradient>
-      </defs>
-      <rect width="32" height="32" rx="9" fill="url(#lg-tile)" />
-      <rect x=".5" y=".5" width="31" height="31" rx="8.5" fill="none" stroke="#fff" strokeOpacity=".22" />
+      <rect width="32" height="32" rx="8" fill="var(--ink)" />
       {bars.map((b, i) => {
         const h = 4 + b * 15;
-        return <rect key={i} className="logo-bar" style={{ animationDelay: `${i * 0.11}s` }} x={7 + i * 4} y={16 - h / 2} width="2.4" height={h} rx="1.2" fill="#fff" />;
+        return <rect key={i} className="logo-bar" style={{ animationDelay: `${i * 0.11}s` }} x={7 + i * 4} y={16 - h / 2} width="2.4" height={h} rx="1.2" fill={i === 2 ? "var(--signal)" : "var(--on-ink)"} />;
       })}
     </svg>
   );
@@ -56,6 +52,7 @@ export function VoiceGlyph({ name, size = 40, active = false }: { name: string; 
  *  Qwen = your voice mirrored into its clone; Wan = a subject in motion over a timeline; LTX = film strip + its soundtrack; Whisper = captions. */
 export function EngineArt({ engine, live = false }: { engine: string; live?: boolean }) {
   const cls = `eart ${live ? "live" : ""}`;
+  if (engine === "myvoice") return <VoiceGlyph name="myvoice" size={64} active={live} />;
   if (engine === "orpheus") return (
     <svg viewBox="0 0 120 84" className={cls} aria-hidden>
       <path d="M38 70c-12-6-18-20-14-34 3-10 10-15 16-15 5 0 8 4 6 9" className="ink" />
@@ -222,10 +219,6 @@ export function Orb() {
   const n = 72;
   return (
     <svg viewBox="-110 -110 220 220" className="orb" aria-hidden>
-      <defs>
-        <radialGradient id="orb-glow"><stop offset="0" stopColor="#ff5a36" stopOpacity=".35" /><stop offset="1" stopColor="#ff5a36" stopOpacity="0" /></radialGradient>
-      </defs>
-      <circle r="108" fill="url(#orb-glow)" />
       {[46, 70, 94].map((rad, k) => <circle key={rad} r={rad} fill="none" stroke="var(--line2)" strokeDasharray={k === 1 ? "2 6" : undefined} />)}
       <g className="orb-spin">
         {Array.from({ length: n }, (_, i) => {
@@ -234,7 +227,7 @@ export function Orb() {
             stroke={i % 9 === 0 ? "var(--signal)" : "var(--ink2)"} strokeOpacity={i % 9 === 0 ? 1 : 0.45} strokeWidth="2" strokeLinecap="round" />;
         })}
       </g>
-      <circle cx="94" cy="0" r="3.5" fill="var(--glacier)" className="orb-sat" />
+      <circle cx="94" cy="0" r="3.5" fill="var(--signal)" className="orb-sat" />
     </svg>
   );
 }
