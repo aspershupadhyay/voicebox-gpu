@@ -41,6 +41,11 @@ claude mcp remove voicebox   # only when replacing an older entry
 claude mcp add --transport http voicebox https://voiceboxstudio.vercel.app/api/mcp --header "Authorization: Bearer <MCP_TOKEN>"
 ```
 
+In claude.ai (or any client that can't send a custom header), add a custom connector with just the URL
+`https://voiceboxstudio.vercel.app/api/mcp` and leave the OAuth Client ID/Secret empty. You'll get a voicebox sign-in page:
+paste `MCP_TOKEN` once and press **Allow access** (skipped if you're already signed in to the dashboard). Rotating `MCP_TOKEN`
+signs out every connected app.
+
 ## Every session
 
 In Colab, set **Runtime → L4 → Run all**. Within about a minute `worker_status` reports online.

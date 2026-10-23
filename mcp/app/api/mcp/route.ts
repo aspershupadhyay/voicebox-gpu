@@ -5,6 +5,7 @@ import { loadWorker, STALE_MS } from "@/lib/registry";
 import { call, safeEqual, WorkerOffline } from "@/lib/worker";
 import { archiveWorkerJob, listLibrary, presignPath } from "@/lib/library";
 import { isCustomVoice, listMyVoices, refSync } from "@/lib/voices";
+import { SCOPE, verify } from "@/lib/oauth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -398,8 +399,11 @@ const authed = withMcpAuth(
   handler,
   (_req, token) => {
     const expected = process.env.MCP_TOKEN ?? "";
-    if (expected.length < 24 || !token || !safeEqual(token, expected)) return undefined;
-    return { token, clientId: "owner", scopes: ["voicebox"] };
+    if (expected.length < 24 || !token) return undefined;
+    if (safeEqual(token, expected)) return { token, clientId: "owner", scopes: [SCOPE] };
+    // OAuth access token from /api/oauth/token (claude.ai connectors and other header-less clients)
+    const at = verify<{ typ: "access"; cid: string; exp: number }>(token, "access");
+    return at && { token, clientId: at.cid, scopes: [SCOPE], expiresAt: at.exp };
   },
   { required: true },
 );
