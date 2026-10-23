@@ -58,7 +58,7 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
 ```bash
 scripts/gen-secrets.sh          # writes .secrets.local (gitignored, mode 600)
 npx vercel login
-scripts/deploy-mcp.sh           # links mcp/ to Vercel, sets MCP_TOKEN, WORKER_SECRET and R2_*, deploys
+scripts/deploy-mcp.sh           # links mcp/ to Vercel, sets MCP_TOKEN, WORKER_SECRET, R2_* (and APPWRITE_API_KEY if set), deploys
 ```
 
 1. Create a private Cloudflare R2 bucket (`voicebox`), paste [docs/r2-cors.json](docs/r2-cors.json) into its CORS policy, create an
