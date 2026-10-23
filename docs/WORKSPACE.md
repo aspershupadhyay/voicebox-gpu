@@ -19,9 +19,13 @@ a second. The activity feed under the board says who did what.
 
 ## Accounts
 
-Each of you signs in with your own email and password (**Create an account** on the sign-in page). The project allows
-exactly **two** accounts; a third sign-up is refused. Signing in puts you on the `studio` team, which is what grants access
-to the data. To lock it down further, set `WORKSPACE_EMAILS="you@x.com,friend@y.com"` on Vercel.
+Each person signs in with their own email and password (**Create an account** on the sign-in page). The Appwrite project
+allows up to **four** accounts (Auth → Security → Users limit); a fifth sign-up is refused. Signing in puts you on the
+`studio` team, which is what grants access to the data. To lock it down further, set `WORKSPACE_EMAILS` on Vercel; people
+listed in **Settings → Claude / MCP access → Workspace people** are always let in on top of it.
+
+**Claude / MCP:** any number of connections. In the same Settings card, up to 4 GitHub usernames may connect with
+"Continue with GitHub" (besides `OWNER_GITHUB`); anyone with the access token can connect too.
 
 The old access-token sign-in still works for the studio (voice, library, settings) but can't see the workspace, because
 posts and comments belong to people.

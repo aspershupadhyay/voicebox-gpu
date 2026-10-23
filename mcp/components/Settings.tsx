@@ -7,7 +7,7 @@ import { useDialog } from "./Dialog";
 type S = {
   engine: string; voice: string; style: string; platform: string; takes: number; subtitles: boolean; lexicon: boolean;
   pronounce: Record<string, string>; enhance_recordings: boolean; enhance_input: boolean; enhance_output: boolean;
-  backup_media: boolean; review: boolean; personal?: boolean; mcp_github: string[];
+  backup_media: boolean; review: boolean; personal?: boolean; mcp_github: string[]; workspace_emails: string[];
 };
 
 const opt = (pairs: readonly (readonly [string, string])[]) => pairs.map(([v, l]) => <option key={v} value={v}>{l}</option>);
@@ -120,7 +120,15 @@ export default function Settings() {
                 </div>
               ))}
             </div>
-            <div className="dim tiny" style={{ marginTop: 6 }}>They tap &ldquo;Continue with GitHub&rdquo; when Claude asks to connect (needs GitHub sign-in set up: GITHUB_CLIENT_ID / SECRET on Vercel). Anyone with the access token can also connect. Save defaults to apply.</div>
+            <div className="dim tiny" style={{ marginTop: 6 }}>They tap &ldquo;Continue with GitHub&rdquo; when Claude asks to connect. Anyone with the access token can also connect.</div>
+            <label className="f" style={{ marginTop: 14 }}>Workspace people (board, content, posts)</label>
+            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              {[0, 1, 2, 3].map((i) => (
+                <input key={i} type="email" value={s.workspace_emails?.[i] ?? ""} placeholder={`Email ${i + 1}`} spellCheck={false} autoCapitalize="off"
+                  onChange={(e) => { const next = [...(s.workspace_emails ?? [])]; next[i] = e.target.value.trim(); set("workspace_emails", next.slice(0, 4)); }} />
+              ))}
+            </div>
+            <div className="dim tiny" style={{ marginTop: 6 }}>They create an account on the sign-in page with that email and land in the shared workspace. Save defaults to apply.</div>
           </div>
 
           <div className="card">
