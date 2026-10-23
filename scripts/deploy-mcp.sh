@@ -30,7 +30,10 @@ tmp=$(mktemp -d)/mcp; mkdir -p "$tmp"
 rsync -a --exclude node_modules --exclude .next --exclude '.env*' ./ "$tmp/"
 (cd "$tmp" && npx -y vercel@latest deploy --prod --yes)
 # stable production alias (deployment URLs sit behind Vercel deployment protection)
-project=$(python3 -c 'import json;print(json.load(open(".vercel/project.json"))["projectName"])')
+# newer CLIs link a git checkout through ../.vercel/repo.json instead of .vercel/project.json
+project=$(python3 -c 'import json;print(json.load(open(".vercel/project.json"))["projectName"])' 2>/dev/null \
+  || python3 -c 'import json;print(next(p["name"] for p in json.load(open("../.vercel/repo.json"))["projects"] if p.get("directory") in ("mcp","mcp/")))' 2>/dev/null \
+  || echo mcp)
 url=$(npx -y vercel@latest project inspect "$project" 2>/dev/null | grep -o "https://[a-z0-9.-]*vercel.app" | head -1 || true)
 url=${PUBLIC_URL:-${url:-$(cat ../.local-deploy-url 2>/dev/null || true)}}
 echo "deployed: $url"
