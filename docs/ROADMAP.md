@@ -39,6 +39,9 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
       square posts, text cards for X with a 280 counter, audio for podcasts) grouped Up next / In the works / Ideas /
       Shipped; Pipeline and List views; a "New" menu by platform and format
 - [x] Weekly goals per format and when each target went live (posted_at) are stored with the targets in R2
+- [x] Redone minimal (round 5): no brand gradients; monochrome logos; platforms as a row of logo chips with format tabs
+      under them; one-line stats; the week as a hairline timeline; neutral cards (logos · formats, title, two lines of
+      words, stage dot, date); orange only for today and late
 
 ## Notes for whoever picks this up
 - Spaces are defined once in `mcp/lib/spaces.ts` (add a space there and it shows everywhere: sidebar, drawer, MCP enum).

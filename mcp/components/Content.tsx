@@ -1,12 +1,11 @@
 "use client";
-// The content planner. Built around how a creator thinks about the week, not around a database:
-//   - a rail of platforms (their real logos and colours) and, inside each, its formats (Reels, Shorts, Posts...)
-//   - the next seven days as a strip: what goes out when, and the empty days asking to be filled; drag to reschedule
-//   - momentum: shipped this week against your weekly goal, your streak, the next drop
-//   - the work itself as a gallery shaped like the platform (tall for Reels / Shorts, wide for videos, square for
-//     posts, a text card for X), grouped Up next → In the works → Ideas → Shipped. Pipeline and List views too.
+// The content planner, built around how a creator thinks about the week, kept quiet: ink, hairlines, one accent.
+//   - platforms as a row of logo chips; inside one, its formats (Reels, Shorts, Posts...)
+//   - shipped this week against the weekly goal, the streak
+//   - the next seven days as a hairline timeline: what goes out when; drag a post to another day to reschedule
+//   - the work as cards grouped Up next → In the works → Ideas → Shipped. Pipeline and List views too.
 // A post can go to many formats at once (cross-posting); click one for the full editor.
-import { CaretDown, Check, Flame, Kanban, Lightbulb, ListBullets, Minus, Plus, Sparkle, SquaresFour, TrashSimple, Waveform } from "@phosphor-icons/react";
+import { Flame, Kanban, Lightbulb, ListBullets, Minus, Plus, SquaresFour, TrashSimple } from "@phosphor-icons/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { NETWORKS, SHAPE, SPACES, spaceName, spaceOf, shippedAt, targetsOf, type SpaceId, type Target } from "@/lib/spaces";
@@ -43,65 +42,34 @@ function scopeSpaces(scope: string): SpaceId[] | null {
   return spaceOf(scope) ? [scope as SpaceId] : null;
 }
 
-function Progress({ status }: { status: Status }) {
-  return (
-    <span className="stage-steps" title={STATUSES.find((s) => s.id === status)?.label}>
-      {STATUSES.map((s, i) => <i key={s.id} className={i <= RANK[status] ? `on s-${status}` : ""} />)}
-    </span>
-  );
-}
+const STAGE_LABEL = Object.fromEntries(STATUSES.map((s) => [s.id, s.label])) as Record<Status, string>;
 
-function Ring({ value, goal, size = 64 }: { value: number; goal: number; size?: number }) {
-  const r = size / 2 - 5, c = 2 * Math.PI * r, f = goal ? Math.min(1, value / goal) : 0;
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="ring">
-      <circle cx={size / 2} cy={size / 2} r={r} className="ring-bg" />
-      <circle cx={size / 2} cy={size / 2} r={r} className={`ring-fg ${f >= 1 ? "done" : ""}`} strokeDasharray={c} strokeDashoffset={c * (1 - f)} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
-    </svg>
-  );
-}
-
-function Tile({ e, cover, onOpen, onDelete }: { e: Entry; cover: string | null; onOpen: () => void; onDelete: () => void }) {
-  const space = e.t?.space ?? e.all[0]?.space;
-  const shape = space ? SHAPE[space] : "idea";
-  const net = space ? NET[spaceOf(space)!.network] : null;
+/** One post: logos of where it goes, the title, a line of the words, stage and date. A cover image when there is one. */
+function Card({ e, cover, onOpen, onDelete }: { e: Entry; cover: string | null; onOpen: () => void; onDelete: () => void }) {
   const status = e.t?.status ?? e.p.status;
   const due = e.t ? e.t.due_at ?? null : e.p.due_at;
   const late = !!due && status !== "posted" && Date.parse(due) < Date.now();
   const words = (e.p.caption || e.p.script || e.p.notes || "").trim();
-  const visual = shape === "tall" || shape === "wide" || shape === "square";
+  const formats = e.all.map((t) => spaceOf(t.space)?.label).filter(Boolean);
   return (
-    <article className={`tile t-${shape} ${late ? "late" : ""} ${status === "posted" ? "shipped" : ""}`} onClick={onOpen} role="button" tabIndex={0}
+    <article className={`pcard ${late ? "late" : ""} ${status === "posted" ? "shipped" : ""}`} onClick={onOpen} role="button" tabIndex={0}
       onKeyDown={(k) => { if (k.key === "Enter") onOpen(); }} draggable
       onDragStart={(d) => { d.dataTransfer.setData("text/post", e.p.$id); if (e.t) d.dataTransfer.setData("text/space", e.t.space); }}>
-      {visual ? (
-        <div className="tile-art" style={{ background: cover ? undefined : net?.grad }}>
-          {cover && <img src={cover} alt="" loading="lazy" />}
-          {!cover && <span className="tile-art-title">{e.p.title}</span>}
-          <span className="tile-badges">{e.all.map((t) => <PlatformBadge key={t.space} space={t.space} size={22} solid />)}</span>
-          {status === "posted" && <span className="tile-shipped"><Check size={12} weight="bold" /> Live</span>}
-        </div>
-      ) : shape === "audio" ? (
-        <div className="tile-art audio" style={{ background: net?.grad }}>
-          <Waveform size={44} weight="light" />
-          <span className="tile-badges">{e.all.map((t) => <PlatformBadge key={t.space} space={t.space} size={22} solid />)}</span>
-        </div>
-      ) : (
-        <div className={`tile-text ${shape === "idea" ? "idea" : ""}`}>
-          <span className="tile-badges static">{shape === "idea" ? <span className="idea-dot"><Lightbulb size={13} weight="fill" /></span> : e.all.map((t) => <PlatformBadge key={t.space} space={t.space} size={20} />)}</span>
-          <p>{words ? words.slice(0, 220) : <span className="faint">{shape === "idea" ? "An idea. Give it a platform when it's ready." : "Nothing written yet."}</span>}</p>
-          {space && (space === "x_post" || space === "x_thread") && e.p.caption && <span className={`tiny mono ${e.p.caption.length > 280 ? "over" : "faint"}`}>{e.p.caption.length}/280</span>}
-        </div>
-      )}
-      <div className="tile-foot">
-        {(visual && cover) || !visual ? <b className="tile-title">{e.p.title}</b> : null}
-        <div className="row" style={{ gap: 8 }}>
-          <Progress status={status} />
-          {due && status !== "posted" && <span className={`tile-due ${late ? "late" : ""}`}>{late ? "Overdue" : dueLabel(due)}</span>}
-          <span style={{ marginLeft: "auto" }}>{(e.p.assignee_name || e.p.owner_name) && <Avatar id={e.p.assignee_id ?? e.p.owner_id} name={e.p.assignee_name ?? e.p.owner_name} sm />}</span>
-        </div>
+      {cover && <div className={`pc-cover ${e.t || e.all[0] ? SHAPE[(e.t ?? e.all[0])!.space] : ""}`}><img src={cover} alt="" loading="lazy" /></div>}
+      <div className="pc-top">
+        <span className="pc-logos">
+          {e.all.length ? e.all.map((t) => <PlatformBadge key={t.space} space={t.space} size={20} solid={t.status === "posted"} />) : <Lightbulb size={16} />}
+        </span>
+        <span className="pc-fmt">{formats.length ? [...new Set(formats)].join(" · ") : "Idea"}</span>
       </div>
-      <button className="tile-del" title="Delete post" onClick={(x) => { x.stopPropagation(); onDelete(); }}><TrashSimple size={14} /></button>
+      <h3 className="pc-h">{e.p.title}</h3>
+      {words && <p className="pc-words">{words}</p>}
+      <div className="pc-bottom">
+        <span className={`pc-stage st-${status}`}><i />{STAGE_LABEL[status]}</span>
+        {due && status !== "posted" && <span className={`pc-when ${late ? "late" : ""}`}>{late ? "Late" : dueLabel(due)}</span>}
+        <span style={{ marginLeft: "auto" }}>{(e.p.assignee_name || e.p.owner_name) && <Avatar id={e.p.assignee_id ?? e.p.owner_id} name={e.p.assignee_name ?? e.p.owner_name} sm />}</span>
+      </div>
+      <button className="pc-del" title="Delete post" onClick={(x) => { x.stopPropagation(); onDelete(); }}><TrashSimple size={13} /></button>
     </article>
   );
 }
@@ -114,7 +82,7 @@ function NewMenu({ scope, onPick, onClose }: { scope: string; onPick: (space: Sp
       <div className="new-menu">
         {nets.map((n) => (
           <div key={n.id} className="nm-net">
-            <PlatformBadge net={n.id} size={22} solid />
+            <PlatformBadge net={n.id} size={22} />
             <div className="nm-formats">{n.spaces.map((s) => <button key={s.id} className="nm-f" onClick={() => onPick(s.id)}><ShapeGlyph space={s.id} />{s.label}</button>)}</div>
           </div>
         ))}
@@ -285,205 +253,176 @@ function ContentInner() {
   const countFor = (ids: SpaceId[]) => posts.reduce((n, p) => n + (targetsOf(p, map).some((t) => ids.includes(t.space) && t.status !== "posted") ? 1 : 0), 0);
   const ideasCount = posts.filter((p) => !targetsOf(p, map).length && p.status !== "posted").length;
 
+  const formatTabs = net ? [{ id: net.id, label: `All`, n: countFor(net.spaces.map((x) => x.id)) }, ...net.spaces.map((x) => ({ id: x.id as string, label: x.label, n: countFor([x.id]), sp: x.id }))] : [];
+
   return (
-    <div className="cm">
-      <nav className="cm-rail" aria-label="Platforms">
-        <button className={`rail-btn ${!scope ? "on" : ""}`} onClick={() => go({ space: "", post: null })} title="Everything">
-          <span className="rail-ic all"><Sparkle size={18} weight="fill" /></span><span className="rail-l">All</span>
-        </button>
+    <div className="cp">
+      <header className="cp-head">
+        <div style={{ minWidth: 0 }}>
+          <h1>{headline}</h1>
+          {sub && <p className="sub">{sub}</p>}
+        </div>
+        <div className="row" style={{ gap: 8, position: "relative" }}>
+          <div className="seg view-seg">
+            <button className={view === "gallery" ? "on" : ""} onClick={() => setView("gallery")} title="Cards"><SquaresFour size={15} /></button>
+            <button className={view === "pipeline" ? "on" : ""} onClick={() => setView("pipeline")} title="Pipeline"><Kanban size={15} /></button>
+            <button className={view === "list" ? "on" : ""} onClick={() => setView("list")} title="List"><ListBullets size={15} /></button>
+          </div>
+          <button onClick={() => (space ? newPost(space.id) : setMenu(!menu))}>
+            <Plus size={15} weight="bold" />New{space ? ` ${space.label.replace(/s$/, "").toLowerCase()}` : ""}
+          </button>
+          {menu && <NewMenu scope={scope} onPick={(x) => newPost(x)} onClose={() => setMenu(false)} />}
+        </div>
+      </header>
+
+      <nav className="pf-row" aria-label="Platforms">
+        <button className={`pf ${!scope ? "on" : ""}`} onClick={() => go({ space: "", post: null })}>All</button>
         {NETWORKS.map((n) => {
-          const c = countFor(n.spaces.map((s) => s.id));
-          const on = net?.id === n.id;
+          const c = countFor(n.spaces.map((x) => x.id));
+          const N = NET[n.id].Icon;
           return (
-            <button key={n.id} className={`rail-btn ${on ? "on" : ""}`} onClick={() => go({ space: n.id, post: null })} title={n.label} style={{ ["--pc" as string]: NET[n.id].color }}>
-              <PlatformBadge net={n.id} size={34} solid={on} />
-              <span className="rail-l">{n.label}</span>
-              {c > 0 && <span className="rail-n">{c}</span>}
+            <button key={n.id} className={`pf ${net?.id === n.id ? "on" : ""}`} onClick={() => go({ space: n.id, post: null })} title={n.label}>
+              <N size={16} weight={net?.id === n.id ? "fill" : "regular"} /><span className="pf-l">{n.label}</span>{c > 0 && <span className="pf-n">{c}</span>}
             </button>
           );
         })}
-        <button className={`rail-btn ${scope === IDEAS ? "on" : ""}`} onClick={() => go({ space: IDEAS, post: null })} title="Ideas without a platform yet">
-          <span className="rail-ic idea"><Lightbulb size={18} weight="fill" /></span><span className="rail-l">Ideas</span>
-          {ideasCount > 0 && <span className="rail-n">{ideasCount}</span>}
-        </button>
+        <button className={`pf ${scope === IDEAS ? "on" : ""}`} onClick={() => go({ space: IDEAS, post: null })}><Lightbulb size={16} weight={scope === IDEAS ? "fill" : "regular"} /><span className="pf-l">Ideas</span>{ideasCount > 0 && <span className="pf-n">{ideasCount}</span>}</button>
       </nav>
 
-      <div className="cm-main">
-        <header className="cm-head">
-          <div style={{ minWidth: 0 }}>
-            <div className="eyebrow row" style={{ gap: 8 }}>
-              {net ? <><PlatformBadge net={net.id} size={18} solid />{net.label}{space ? ` · ${space.label}` : ""}</> : scope === IDEAS ? "Idea vault" : "Content planner"}
-            </div>
-            <h1>{headline}</h1>
-            {sub && <p className="sub">{sub}</p>}
-          </div>
-          <div className="row" style={{ gap: 8, position: "relative" }}>
-            <div className="seg view-seg">
-              <button className={view === "gallery" ? "on" : ""} onClick={() => setView("gallery")} title="Gallery"><SquaresFour size={15} /></button>
-              <button className={view === "pipeline" ? "on" : ""} onClick={() => setView("pipeline")} title="Pipeline"><Kanban size={15} /></button>
-              <button className={view === "list" ? "on" : ""} onClick={() => setView("list")} title="List"><ListBullets size={15} /></button>
-            </div>
-            <button className="sig" onClick={() => (space ? newPost(space.id) : setMenu(!menu))}>
-              <Plus size={15} weight="bold" />New{space ? ` ${space.label.replace(/s$/, "").toLowerCase()}` : ""}{!space && <CaretDown size={12} />}
+      {net && (
+        <div className="fmt-row">
+          {formatTabs.map((f) => (
+            <button key={f.id} className={`fmt-t ${scope === f.id ? "on" : ""}`} onClick={() => go({ space: f.id, post: null })}>
+              {"sp" in f && f.sp && <ShapeGlyph space={f.sp} size={13} />}{f.label}{f.n > 0 && <span className="faint">{f.n}</span>}
             </button>
-            {menu && <NewMenu scope={scope} onPick={(s) => newPost(s)} onClose={() => setMenu(false)} />}
-          </div>
-        </header>
-
-        {net && (
-          <div className="fmt-tabs">
-            <button className={`fmt ${scope === net.id ? "on" : ""}`} onClick={() => go({ space: net.id, post: null })}>All {net.label}</button>
-            {net.spaces.map((s) => {
-              const c = countFor([s.id]);
-              return (
-                <button key={s.id} className={`fmt ${scope === s.id ? "on" : ""}`} onClick={() => go({ space: s.id, post: null })} title={s.about}>
-                  <ShapeGlyph space={s.id} />{s.label}{c > 0 && <span className="fmt-n">{c}</span>}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {scope !== IDEAS && (
-          <section className="pulse">
-            <div className="week">
-              {days.map((day, i) => {
-                const items = thisWeek.filter((d) => sameDay(new Date(dueOf(d)!), day));
-                const today = i === 0;
-                return (
-                  <div key={i} className={`day ${today ? "today" : ""} ${items.length ? "" : "empty"} ${overDay === i ? "over" : ""}`}
-                    onDragOver={(x) => { x.preventDefault(); setOverDay(i); }} onDragLeave={() => setOverDay((o) => (o === i ? null : o))}
-                    onDrop={(x) => { x.preventDefault(); setOverDay(null); const id = x.dataTransfer.getData("text/post"); if (id) moveTo(id, x.dataTransfer.getData("text/space") || null, day); }}>
-                    <div className="day-h"><span>{today ? "Today" : day.toLocaleDateString(undefined, { weekday: "short" })}</span><b>{day.getDate()}</b></div>
-                    <div className="day-items">
-                      {items.slice(0, 4).map((d) => (
-                        <button key={`${d.p.$id}-${d.t?.space ?? "p"}`} className="day-drop" draggable onClick={() => go({ post: d.p.$id })}
-                          onDragStart={(x) => { x.dataTransfer.setData("text/post", d.p.$id); if (d.t) x.dataTransfer.setData("text/space", d.t.space); }}
-                          title={`${d.p.title}${d.t ? ` · ${spaceName(d.t.space)}` : ""} · ${new Date(dueOf(d)!).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`}>
-                          {d.t ? <PlatformBadge space={d.t.space} size={16} solid /> : <span className="idea-dot sm"><Lightbulb size={10} weight="fill" /></span>}
-                          <span>{d.p.title}</span>
-                        </button>
-                      ))}
-                      {items.length > 4 && <span className="tiny faint">+{items.length - 4} more</span>}
-                      <button className="day-add" onClick={() => newPost(quickSpace, { due: day })} title="Plan something for this day"><Plus size={12} weight="bold" />{items.length ? "" : "Plan"}</button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="momentum">
-              <div className="mo-ring">
-                <Ring value={shipped} goal={goal} />
-                <div className="mo-num"><b>{shipped}</b>{goal ? <span>/{goal}</span> : null}</div>
-              </div>
-              <div className="mo-text">
-                <b>{goal ? (shipped >= goal ? "Weekly goal hit" : `${goal - shipped} to go this week`) : `${shipped} shipped this week`}</b>
-                <span className={`streak ${streak ? "hot" : ""}`}><Flame size={14} weight="fill" />{streak ? `${streak}-week streak` : "Ship one to start a streak"}</span>
-                {space ? (
-                  <span className="goal-set">
-                    Goal
-                    <button className="icon-btn xs" onClick={() => saveGoals({ ...goals, [space.id]: Math.max(0, (goals[space.id] ?? 0) - 1) }).catch(() => {})} aria-label="Fewer"><Minus size={11} /></button>
-                    <b>{goals[space.id] ?? 0}</b>
-                    <button className="icon-btn xs" onClick={() => saveGoals({ ...goals, [space.id]: (goals[space.id] ?? 0) + 1 }).catch(() => {})} aria-label="More"><Plus size={11} /></button>
-                    / week
-                  </span>
-                ) : <span className="tiny faint">{goal ? "Goals are set per format" : "Open a format to set a weekly goal"}</span>}
-              </div>
-            </div>
-          </section>
-        )}
-
-        <div className="filters cm-filters">
-          <div className="seg">
-            <button className={who === "all" ? "on" : ""} onClick={() => setWho("all")}>Everyone</button>
-            <button className={who === "mine" ? "on" : ""} onClick={() => setWho("mine")}>Mine</button>
-          </div>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles, scripts, captions, notes" style={{ flex: 1, minWidth: 180 }} />
+          ))}
         </div>
-        {error && <p className="err">{error}</p>}
+      )}
 
-        {view === "gallery" ? (
-          <div className="stack" style={{ gap: 28 }}>
-            {!loading && !entries.length && (
-              <div className="cm-empty">
-                {net ? <PlatformBadge net={net.id} size={52} solid /> : <span className="rail-ic idea big"><Lightbulb size={26} weight="fill" /></span>}
-                <b>{space ? `No ${space.label.toLowerCase()} yet` : net ? `Nothing for ${net.label} yet` : scope === IDEAS ? "The idea vault is empty" : "A blank slate"}</b>
-                <span className="dim small">{space ? space.about + ". " : ""}Start with a title; the script, caption and voice can come later.</span>
-                <button className="sig" onClick={() => (space ? newPost(space.id) : setMenu(true))}><Plus size={15} weight="bold" />Start one</button>
-              </div>
+      {scope !== IDEAS && (
+        <>
+          <div className="stats">
+            <span><b>{shipped}{goal ? `/${goal}` : ""}</b> shipped this week</span>
+            <span className={streak ? "hot" : ""}><Flame size={13} weight={streak ? "fill" : "regular"} />{streak ? `${streak}-week streak` : "no streak yet"}</span>
+            {space && (
+              <span className="goal">
+                weekly goal
+                <button className="icon-btn xs" onClick={() => saveGoals({ ...goals, [space.id]: Math.max(0, (goals[space.id] ?? 0) - 1) }).catch(() => {})} aria-label="Lower the goal"><Minus size={10} /></button>
+                <b>{goals[space.id] ?? 0}</b>
+                <button className="icon-btn xs" onClick={() => saveGoals({ ...goals, [space.id]: (goals[space.id] ?? 0) + 1 }).catch(() => {})} aria-label="Raise the goal"><Plus size={10} /></button>
+              </span>
             )}
-            {groups.map(([key, label, list]) => {
-              if (!list.length) return null;
-              const hidden = key === "shipped" && !showShipped;
+          </div>
+          <section className="wk" aria-label="Next seven days">
+            {days.map((day, i) => {
+              const items = thisWeek.filter((d) => sameDay(new Date(dueOf(d)!), day));
               return (
-                <section key={key} className={`g-sec g-${key}`}>
-                  <header className="g-head">
-                    <b>{label}</b><span className="faint mono tiny">{list.length}</span>
-                    {key === "shipped" && <button className="quiet xs" onClick={() => setShowShipped(!showShipped)}>{showShipped ? "Hide" : "Show"}</button>}
-                  </header>
-                  {!hidden && (
-                    <div className="gallery">
-                      {list.map((e) => <Tile key={e.p.$id} e={e} cover={covers(e.p)} onOpen={() => go({ post: e.p.$id })} onDelete={() => remove(e.p)} />)}
-                    </div>
-                  )}
-                </section>
+                <div key={i} className={`wk-day ${i === 0 ? "today" : ""} ${overDay === i ? "over" : ""}`}
+                  onDragOver={(x) => { x.preventDefault(); setOverDay(i); }} onDragLeave={() => setOverDay((o) => (o === i ? null : o))}
+                  onDrop={(x) => { x.preventDefault(); setOverDay(null); const id = x.dataTransfer.getData("text/post"); if (id) moveTo(id, x.dataTransfer.getData("text/space") || null, day); }}>
+                  <div className="wk-h"><span>{i === 0 ? "Today" : day.toLocaleDateString(undefined, { weekday: "short" })}</span><b>{day.getDate()}</b></div>
+                  {items.map((d) => (
+                    <button key={`${d.p.$id}-${d.t?.space ?? "p"}`} className="wk-item" draggable onClick={() => go({ post: d.p.$id })}
+                      onDragStart={(x) => { x.dataTransfer.setData("text/post", d.p.$id); if (d.t) x.dataTransfer.setData("text/space", d.t.space); }}
+                      title={`${d.p.title}${d.t ? ` · ${spaceName(d.t.space)}` : ""}`}>
+                      {d.t ? <PlatformBadge space={d.t.space} size={16} /> : <Lightbulb size={13} />}
+                      <span>{d.p.title}</span>
+                    </button>
+                  ))}
+                  <button className="wk-add" onClick={() => newPost(quickSpace, { due: day })} aria-label="Plan something for this day"><Plus size={12} /></button>
+                </div>
               );
             })}
-          </div>
-        ) : view === "pipeline" ? (
-          <div className="board">
-            {STATUSES.map((s) => {
-              const col = entries.filter((e) => (e.t?.status ?? e.p.status) === s.id);
-              return (
-                <section key={s.id} className="col" onDragOver={(x) => x.preventDefault()}
-                  onDrop={(x) => { x.preventDefault(); const id = x.dataTransfer.getData("text/post"); const e = entries.find((y) => y.p.$id === id); if (e && (e.t?.status ?? e.p.status) !== s.id) setStatus(e, s.id); }}>
-                  <header className="col-head"><span className={`col-dot s-${s.id}`} /><b>{s.label}</b><span className="faint mono tiny">{col.length}</span></header>
-                  <div className="col-body">
-                    {col.map((e) => {
-                      const due = e.t ? e.t.due_at ?? null : e.p.due_at;
-                      return (
-                        <div key={e.p.$id} className="post-card" draggable onDragStart={(x) => x.dataTransfer.setData("text/post", e.p.$id)} onClick={() => go({ post: e.p.$id })} role="button" tabIndex={0}>
-                          <div className="row" style={{ gap: 4, marginBottom: 6 }}>{e.all.map((t) => <PlatformBadge key={t.space} space={t.space} size={18} />)}</div>
-                          <div className="pc-title">{e.p.title}</div>
-                          <div className="pc-foot">
-                            {due ? <span className="pc-due">{dueLabel(due)}</span> : <span className="tiny faint">{timeAgo(e.p.$updatedAt)}</span>}
-                            <span style={{ marginLeft: "auto" }}>{(e.p.assignee_name || e.p.owner_name) && <Avatar id={e.p.assignee_id ?? e.p.owner_id} name={e.p.assignee_name ?? e.p.owner_name} sm />}</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    <button className="col-add" onClick={() => newPost(quickSpace, { status: s.id })}><Plus size={14} /> Add</button>
-                  </div>
-                </section>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="card flush">
-            {entries.length > 0 ? (
-              <table className="table content-table">
-                <thead><tr><th>Title</th><th>Where</th><th>Stage</th><th>Publish</th><th>Owner</th><th /></tr></thead>
-                <tbody>
-                  {entries.map((e) => {
+          </section>
+        </>
+      )}
+
+      <div className="cp-tools">
+        <div className="seg">
+          <button className={who === "all" ? "on" : ""} onClick={() => setWho("all")}>Everyone</button>
+          <button className={who === "mine" ? "on" : ""} onClick={() => setWho("mine")}>Mine</button>
+        </div>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" />
+      </div>
+      {error && <p className="err">{error}</p>}
+
+      {view === "gallery" ? (
+        <div className="stack" style={{ gap: 30 }}>
+          {!loading && !entries.length && (
+            <div className="cp-empty">
+              {net ? <PlatformBadge net={net.id} size={40} /> : <Lightbulb size={30} />}
+              <b>{space ? `No ${space.label.toLowerCase()} yet` : net ? `Nothing for ${net.label} yet` : scope === IDEAS ? "No ideas yet" : "A blank slate"}</b>
+              <span className="dim small">Start with a title. The script, caption and voice come later.</span>
+              <button onClick={() => (space ? newPost(space.id) : setMenu(true))}><Plus size={14} weight="bold" />New</button>
+            </div>
+          )}
+          {groups.map(([key, label, list]) => {
+            if (!list.length) return null;
+            const hidden = key === "shipped" && !showShipped;
+            return (
+              <section key={key}>
+                <header className="sec-h">
+                  <span>{label}</span><span className="faint">{list.length}</span>
+                  {key === "shipped" && <button className="quiet xs" onClick={() => setShowShipped(!showShipped)}>{showShipped ? "Hide" : "Show"}</button>}
+                </header>
+                {!hidden && <div className="pgrid">{list.map((e) => <Card key={e.p.$id} e={e} cover={covers(e.p)} onOpen={() => go({ post: e.p.$id })} onDelete={() => remove(e.p)} />)}</div>}
+              </section>
+            );
+          })}
+        </div>
+      ) : view === "pipeline" ? (
+        <div className="board">
+          {STATUSES.map((st) => {
+            const col = entries.filter((e) => (e.t?.status ?? e.p.status) === st.id);
+            return (
+              <section key={st.id} className="col" onDragOver={(x) => x.preventDefault()}
+                onDrop={(x) => { x.preventDefault(); const id = x.dataTransfer.getData("text/post"); const e = entries.find((y) => y.p.$id === id); if (e && (e.t?.status ?? e.p.status) !== st.id) setStatus(e, st.id); }}>
+                <header className="col-head"><span className={`col-dot s-${st.id}`} /><b>{st.label}</b><span className="faint mono tiny">{col.length}</span></header>
+                <div className="col-body">
+                  {col.map((e) => {
                     const due = e.t ? e.t.due_at ?? null : e.p.due_at;
-                    const local = due ? new Date(Date.parse(due) - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16) : "";
                     return (
-                      <tr key={e.p.$id} className={open === e.p.$id ? "on" : ""}>
-                        <td><button className="linkish" onClick={() => go({ post: e.p.$id })}><b>{e.p.title}</b></button><div className="tiny faint">{timeAgo(e.p.$updatedAt)}</div></td>
-                        <td><div className="row" style={{ gap: 4 }}>{e.all.map((t) => <PlatformBadge key={t.space} space={t.space} size={20} solid={t.status === "posted"} />)}{!e.all.length && <span className="tiny faint">idea</span>}</div></td>
-                        <td><select value={e.t?.status ?? e.p.status} onChange={(x) => setStatus(e, x.target.value as Status)} style={{ width: "auto" }}>{STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select></td>
-                        <td><input type="datetime-local" value={local} style={{ width: "auto" }} onChange={(x) => setDue(e, x.target.value ? new Date(x.target.value).toISOString() : null)} /></td>
-                        <td>{(e.p.assignee_name || e.p.owner_name) && <Avatar id={e.p.assignee_id ?? e.p.owner_id} name={e.p.assignee_name ?? e.p.owner_name} sm />}</td>
-                        <td><button className="icon-btn danger-h" title="Delete post" onClick={() => remove(e.p)}><TrashSimple size={15} /></button></td>
-                      </tr>
+                      <div key={e.p.$id} className="post-card" draggable onDragStart={(x) => x.dataTransfer.setData("text/post", e.p.$id)} onClick={() => go({ post: e.p.$id })} role="button" tabIndex={0}>
+                        <div className="pc-title">{e.p.title}</div>
+                        <div className="pc-foot">
+                          <span className="row" style={{ gap: 4 }}>{e.all.map((t) => <PlatformBadge key={t.space} space={t.space} size={16} />)}</span>
+                          {due ? <span className="pc-due">{dueLabel(due)}</span> : null}
+                          <span style={{ marginLeft: "auto" }}>{(e.p.assignee_name || e.p.owner_name) && <Avatar id={e.p.assignee_id ?? e.p.owner_id} name={e.p.assignee_name ?? e.p.owner_name} sm />}</span>
+                        </div>
+                      </div>
                     );
                   })}
-                </tbody>
-              </table>
-            ) : <div className="empty"><b>Nothing here yet</b></div>}
-          </div>
-        )}
-      </div>
+                  <button className="col-add" onClick={() => newPost(quickSpace, { status: st.id })}><Plus size={14} /> Add</button>
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="card flush">
+          {entries.length > 0 ? (
+            <table className="table content-table">
+              <thead><tr><th>Title</th><th>Where</th><th>Stage</th><th>Publish</th><th>Owner</th><th /></tr></thead>
+              <tbody>
+                {entries.map((e) => {
+                  const due = e.t ? e.t.due_at ?? null : e.p.due_at;
+                  const local = due ? new Date(Date.parse(due) - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16) : "";
+                  return (
+                    <tr key={e.p.$id} className={open === e.p.$id ? "on" : ""}>
+                      <td><button className="linkish plain" onClick={() => go({ post: e.p.$id })}><b>{e.p.title}</b></button><div className="tiny faint">{timeAgo(e.p.$updatedAt)}</div></td>
+                      <td><div className="row" style={{ gap: 4 }}>{e.all.map((t) => <PlatformBadge key={t.space} space={t.space} size={18} solid={t.status === "posted"} />)}{!e.all.length && <span className="tiny faint">idea</span>}</div></td>
+                      <td><select value={e.t?.status ?? e.p.status} onChange={(x) => setStatus(e, x.target.value as Status)} style={{ width: "auto" }}>{STATUSES.map((st) => <option key={st.id} value={st.id}>{st.label}</option>)}</select></td>
+                      <td><input type="datetime-local" value={local} style={{ width: "auto" }} onChange={(x) => setDue(e, x.target.value ? new Date(x.target.value).toISOString() : null)} /></td>
+                      <td>{(e.p.assignee_name || e.p.owner_name) && <Avatar id={e.p.assignee_id ?? e.p.owner_id} name={e.p.assignee_name ?? e.p.owner_name} sm />}</td>
+                      <td><button className="icon-btn danger-h" title="Delete post" onClick={() => remove(e.p)}><TrashSimple size={15} /></button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : <div className="empty"><b>Nothing here yet</b></div>}
+        </div>
+      )}
       {open && openPost && <PostDrawer key={open} post={openPost} onClose={() => go({ post: null })} />}
     </div>
   );
