@@ -7,7 +7,7 @@ Runs inside its own venv (unsloth), started by the gateway's train job, so it ca
 job.json: {"parts": [{"url"}], "speaker", "epochs"?, "learning_rate"?, "work", "out", "progress"}
 Writes <out>/adapter/ (PEFT LoRA for unsloth/orpheus-3b-0.1-ft, loaded by engines/myvoice.py through vLLM's LoRA
 support), <out>/adapter.zip and <out>/sample.wav (a line it never heard you say). Progress goes to the "progress" file
-as JSON: {phase, step, total, loss?, detail}. Same recipe as notebook/train_my_voice.ipynb.
+as JSON: {phase, step, total, loss?, detail}.
 """
 import io, json, os, shutil, sys, time, urllib.request, zipfile
 

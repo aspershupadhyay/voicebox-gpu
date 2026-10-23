@@ -1,7 +1,7 @@
 "use client";
 // Your own voice model, end to end: collect 30-60 minutes of you (read along or upload), train it on the GPU worker
-// with one click (the notebook stays as a manual route), then benchmark it against your cloned voices.
-import { ArrowRight, ArrowSquareOut, CaretLeft, CaretRight, Microphone, Stop, TrashSimple, UploadSimple } from "@phosphor-icons/react";
+// with one click, then benchmark it against your cloned voices.
+import { ArrowRight, CaretLeft, CaretRight, Microphone, Stop, TrashSimple, UploadSimple } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { READ_ALONG } from "@/lib/readalong";
 import { api, fmtS, pct, simClass, matchClass, uploadFile, type Job, type MyVoice } from "./api";
@@ -19,7 +19,6 @@ type Model = { name: string; job: string; created: number; clips: number; minute
 type Bench = { target: string | null; candidates: { label: string; engine: string; voice: string; match?: number | null; similarity?: number | null; mos?: number | null; rtf?: number; score?: number | null; lines?: string[]; error?: string }[] };
 
 const MILESTONES = [[15, "works"], [30, "good"], [60, "best"]] as const;
-const NOTEBOOK = "https://colab.research.google.com/github/aspershupadhyay/voicebox-gpu/blob/main/notebook/train_my_voice.ipynb";
 const TEST = `Okay, let's talk about why your app feels slow, even though the server is fast.
 Here's the twist: the database was never the bottleneck. It was the network all along.
 Honestly? I didn't believe it either, until I measured it.
@@ -209,7 +208,6 @@ function Train({ name, minutes }: { name: string; minutes: number }) {
       <div className="row between" style={{ marginTop: 12 }}>
         <span className="tiny dim">{minutes < 15 ? `Collect at least 15 minutes first (you have ${minutes.toFixed(1)}).` : `${minutes.toFixed(1)} minutes ready to train.`}</span>
         <span className="row" style={{ gap: 6 }}>
-          <a className="btn ghost sm" href={NOTEBOOK} target="_blank" rel="noreferrer" title="Train in your own Colab notebook instead (pushes to Hugging Face)">Notebook <ArrowSquareOut size={13} /></a>
           <button className="sm" onClick={train} disabled={busy || minutes < 15 || !status?.online} title={!status?.online ? "Start the GPU worker first" : undefined}>
             {busy ? "Training…" : model ? "Train again" : "Train my voice"} <ArrowRight size={13} />
           </button>

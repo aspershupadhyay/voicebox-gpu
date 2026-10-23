@@ -2,7 +2,7 @@
 same tags (<laugh>, <sigh>...), one speaker: the name you trained with (MY_VOICE_SPEAKER, default "me").
 
 Where the model comes from, first match wins:
-  1. MY_VOICE_MODEL: a full model on Hugging Face (what notebook/train_my_voice.ipynb pushes; private repos read with HF_TOKEN)
+  1. MY_VOICE_MODEL: a full Orpheus fine-tune on Hugging Face (private repos read with HF_TOKEN)
   2. $VOICEBOX_HOME/myvoice/adapter: the LoRA adapter a train job on this worker just wrote
   3. MY_VOICE_ADAPTER_URL: the same adapter kept in R2 by the dashboard (a signed link from /api/worker-env), for a fresh runtime
 """

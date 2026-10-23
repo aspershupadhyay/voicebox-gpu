@@ -30,8 +30,8 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
   not spelling), so "SQL" vs "sequel" or "Kubernetes" vs "Cubernetes" no longer swings the number. Best-of-N (2–4 takes)
   is still there for final renders.
 - **Your own model:** collect 30-60 minutes on the *Your model* page (read-along or uploads; the worker cleans, cuts and
-  filters clips), fine-tune Orpheus 3B on a free Colab T4 (`notebook/train_my_voice.ipynb`), load it as the `myvoice`
-  engine, and benchmark it against your clones on unseen sentences.
+  filters clips), press **Train my voice** to fine-tune Orpheus 3B on the GPU worker (saved to R2, no Hugging Face), use
+  it as the `myvoice` engine, and benchmark it against your clones on unseen sentences.
 - **Learns each voice:** every reviewed voiceover records how each setting scored for that voice and style; once there's
   enough evidence, the best temperature becomes that voice's default and its usual voice-match becomes the bar.
 - **Says tech right:** SQL, GPU, JSON, 16GB, v2.1, URLs and markdown are read the way a presenter would; add your own

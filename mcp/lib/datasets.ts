@@ -1,5 +1,5 @@
 // Training data for your own voice model, kept in R2: datasets/<name>/<job>.zip (24 kHz clips + metadata.csv, built by
-// the worker's dataset job) and <job>.json (what went in, what was kept). The training notebook reads the manifest.
+// the worker's dataset job) and <job>.json (what went in, what was kept). A train job reads the manifest.
 import { delObjs, getJson, listObjs, presign, putJson } from "./store";
 import { call } from "./worker";
 

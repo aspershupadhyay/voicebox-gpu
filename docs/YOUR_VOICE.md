@@ -61,11 +61,10 @@ Everything below runs on free compute.
    jobs, fine-tunes Orpheus 3B with a LoRA adapter (Unsloth) on every clip, voices a test line you can play on the page,
    and saves the adapter (a few hundred MB) to your R2 bucket. No Hugging Face account needed. About 1-2 hours on a free
    T4, less on an L4. The first run also installs the training tools (~7 min). Keep the Colab tab open until it's done.
-   *Manual route:* `notebook/train_my_voice.ipynb` trains in a separate Colab and pushes the full model to Hugging Face.
 3. **Use it.** Nothing to set: the trained model is the **myvoice** engine everywhere (Voiceover, Settings, MCP
    `engine: "myvoice"`) right away, and a fresh worker downloads it from R2 at start-up. Training again replaces it.
-   To serve a model from Hugging Face instead (the notebook route), set `MY_VOICE_MODEL` (the repo) and
-   `MY_VOICE_SPEAKER` on Vercel; that takes priority.
+   To serve an Orpheus fine-tune from Hugging Face instead, set `MY_VOICE_MODEL` (the repo) and `MY_VOICE_SPEAKER` on
+   Vercel; that takes priority.
 4. **Benchmark** (same page, or the `benchmark_voices` MCP tool). The same unseen sentences in your model, your Qwen
    and Chatterbox clones, and optionally an Orpheus preset, scored identically: script accuracy, voice match against
    your real recording, naturalness (UTMOS) and speed. Listen side by side, then make the winner your default.

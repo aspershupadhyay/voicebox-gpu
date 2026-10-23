@@ -338,7 +338,7 @@ const handler = createMcpHandler(
       "voice_dataset",
       {
         title: "Your voice dataset",
-        description: "Training data collected for the user's own voice model (Your model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-12 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. Training runs in notebook/train_my_voice.ipynb (free Colab T4); then MY_VOICE_MODEL makes it the myvoice engine.",
+        description: "Training data collected for the user's own voice model (Your model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-12 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. Training: the Your model page's Train button runs it on the GPU worker (about 1-2 h); the result becomes the myvoice engine.",
         inputSchema: z.object({
           name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/).optional().describe("dataset name, default me"),
           add_urls: z.array(z.string().url()).max(20).optional().describe("recordings to add"),
