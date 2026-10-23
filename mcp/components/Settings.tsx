@@ -1,5 +1,5 @@
 "use client";
-import { CheckCircle, Copy, FloppyDisk, GithubLogo } from "@phosphor-icons/react";
+import { CheckCircle, Copy, FloppyDisk } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api, type MyVoice } from "./api";
 import { useDialog } from "./Dialog";
@@ -103,32 +103,14 @@ export default function Settings() {
           </div>
 
           <div className="card">
-            <div className="card-head"><h2>Claude / MCP access</h2><span className="dim tiny">up to 4 people</span></div>
+            <div className="card-head"><h2>Claude / MCP access</h2><span className="dim tiny">no setup needed</span></div>
             <label className="f">MCP server URL</label>
             <div className="row" style={{ gap: 8 }}>
               <input readOnly value={typeof window === "undefined" ? "" : `${location.origin}/api/mcp`} onFocus={(e) => e.currentTarget.select()} style={{ fontFamily: "var(--mono)", fontSize: 12.5 }} />
               <button className="ghost sm" onClick={() => { navigator.clipboard.writeText(`${location.origin}/api/mcp`).then(() => toast("Copied", "ok")).catch(() => {}); }}><Copy size={14} />Copy</button>
             </div>
             <div className="dim tiny" style={{ margin: "6px 0 14px" }}>In claude.ai: Settings → Connectors → Add custom connector, paste the URL, leave the OAuth fields empty. Each person connects their own Claude; there&apos;s no limit on connections.</div>
-            <label className="f">GitHub accounts that can connect</label>
-            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="row" style={{ gap: 6 }}>
-                  <GithubLogo size={16} className="dim" />
-                  <input value={s.mcp_github?.[i] ?? ""} placeholder={`GitHub username ${i + 1}`} spellCheck={false} autoCapitalize="off"
-                    onChange={(e) => { const next = [...(s.mcp_github ?? [])]; next[i] = e.target.value.trim(); set("mcp_github", next.filter((x, k) => x || k < next.length - 1).slice(0, 4)); }} />
-                </div>
-              ))}
-            </div>
-            <div className="dim tiny" style={{ marginTop: 6 }}>They tap &ldquo;Continue with GitHub&rdquo; when Claude asks to connect. Anyone with the access token can also connect.</div>
-            <label className="f" style={{ marginTop: 14 }}>Workspace people (board, content, posts)</label>
-            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {[0, 1, 2, 3].map((i) => (
-                <input key={i} type="email" value={s.workspace_emails?.[i] ?? ""} placeholder={`Email ${i + 1}`} spellCheck={false} autoCapitalize="off"
-                  onChange={(e) => { const next = [...(s.workspace_emails ?? [])]; next[i] = e.target.value.trim(); set("workspace_emails", next.slice(0, 4)); }} />
-              ))}
-            </div>
-            <div className="dim tiny" style={{ marginTop: 6 }}>They create an account on the sign-in page with that email and land in the shared workspace. Save defaults to apply.</div>
+            <div className="dim tiny">Anyone signed in to this dashboard can connect: they press Allow and they're in. Up to 4 people can create a workspace account on the sign-in page.</div>
           </div>
 
           <div className="card">
