@@ -11,6 +11,8 @@ import { aw, getMe, ID, logActivity, Query, timeAgo, useLive, useMe, useMembers 
 import { useDialog } from "./Dialog";
 import Player from "./Player";
 import { Avatar, deleteMedia, Gate, MediaTile, MediaViewer, UploadList, useUploader } from "./wsparts";
+import { NETWORKS, spaceName, spaceOf, targetsOf, type Target } from "@/lib/spaces";
+import { forgetTargets, saveTargets, useTargets } from "./useTargets";
 
 const T = { databaseId: AW.db, tableId: "posts" };
 const LABEL = Object.fromEntries(PLATFORMS.map((p) => [p.id, p.label])) as Record<Platform, string>;
@@ -44,15 +46,17 @@ export async function savePost(p: Post, data: Partial<Post>) {
   return row;
 }
 
-function PostCard({ p, onOpen, dragging }: { p: Post; onOpen: () => void; dragging: (id: string | null) => void }) {
+export function PostCard({ p, onOpen, dragging }: { p: Post; onOpen: () => void; dragging: (id: string | null) => void }) {
+  const { map } = useTargets();
+  const tags = targetsOf(p, map).map((t) => { const s = spaceOf(t.space); return s ? `${s.networkLabel === "Instagram" ? "IG" : s.networkLabel === "YouTube" ? "YT" : s.networkLabel} ${s.label}` : t.space; });
   return (
     <div className={`post-card ${overdue(p) ? "late" : ""}`} draggable onDragStart={(e) => { e.dataTransfer.setData("text/post", p.$id); e.dataTransfer.effectAllowed = "move"; dragging(p.$id); }}
       onDragEnd={() => dragging(null)} onClick={onOpen} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }}>
       <div className="pc-title">{p.title}</div>
-      {(p.platforms.length > 0 || p.due_at) && (
+      {tags.length > 0 && (
         <div className="pc-meta">
-          {p.platforms.slice(0, 3).map((x) => <span key={x} className="pc-tag">{LABEL[x]}</span>)}
-          {p.platforms.length > 3 && <span className="pc-tag">+{p.platforms.length - 3}</span>}
+          {tags.slice(0, 3).map((x) => <span key={x} className="pc-tag">{x}</span>)}
+          {tags.length > 3 && <span className="pc-tag">+{tags.length - 3}</span>}
         </div>
       )}
       <div className="pc-foot">
@@ -102,6 +106,7 @@ function BoardInner() {
   const me = useMe();
   const { toast } = useDialog();
   const { rows: posts, setRows, loading, error } = useLive<Post>("posts", [Query.orderDesc("$updatedAt"), Query.limit(500)]);
+  const { map } = useTargets();
   const [drag, setDrag] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [who, setWho] = useState<"all" | "mine">("all");
@@ -121,7 +126,11 @@ function BoardInner() {
     const p = posts.find((x) => x.$id === id);
     if (!p || p.status === status) return;
     setRows((cur) => cur.map((x) => (x.$id === id ? { ...x, status } : x))); // optimistic; realtime confirms
-    try { await savePost(p, { status }); } catch (e) { toast((e as Error).message, "bad"); setRows((cur) => cur.map((x) => (x.$id === id ? p : x))); }
+    try {
+      // the whole post moved: every platform it goes to moves with it
+      if (map[id]?.length) await saveTargets(id, map[id].map((t) => ({ ...t, status })));
+      else await savePost(p, { status });
+    } catch (e) { toast((e as Error).message, "bad"); setRows((cur) => cur.map((x) => (x.$id === id ? p : x))); }
   }
   const go = (id: string | null) => router.push(id ? `/workspace?post=${id}` : "/workspace", { scroll: false });
 
@@ -263,7 +272,48 @@ function Comments({ postId }: { postId: string }) {
 
 const LIMITS: [string, number][] = [["X", 280], ["Instagram", 2200], ["TikTok", 2200], ["YouTube", 5000]];
 
-function PostDrawer({ post, onClose }: { post: Post; onClose: () => void }) {
+const toLocal = (iso?: string | null) => { if (!iso) return ""; const x = new Date(iso); return new Date(x.getTime() - x.getTimezoneOffset() * 6e4).toISOString().slice(0, 16); };
+
+function LinkInput({ value, onSave }: { value: string; onSave: (v: string | null) => void }) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  return <input value={v} placeholder="Live link https://…" onChange={(e) => setV(e.target.value)} onBlur={() => { if (v !== value) onSave(v.trim() || null); }} style={{ minWidth: 0 }} />;
+}
+
+/** Where a post goes: one row per platform space, each with its own stage, publish time and live link. */
+export function TargetsEditor({ post }: { post: Post }) {
+  const { map } = useTargets();
+  const { toast } = useDialog();
+  const targets = targetsOf(post, map);
+  const set = (next: Target[]) => saveTargets(post.$id, next).catch((e) => toast((e as Error).message, "bad"));
+  const patch = (i: number, p: Partial<Target>) => set(targets.map((t, k) => (k === i ? { ...t, ...p } : t)));
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      {targets.map((t, i) => (
+        <div key={t.space} className="target-row">
+          <b className="small" title={spaceOf(t.space)?.about}>{spaceName(t.space)}</b>
+          <select value={t.status} onChange={(e) => patch(i, { status: e.target.value as Status })}>
+            {STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+          <input type="datetime-local" value={toLocal(t.due_at)} onChange={(e) => patch(i, { due_at: e.target.value ? new Date(e.target.value).toISOString() : null })} />
+          <LinkInput value={t.link ?? ""} onSave={(link) => patch(i, { link })} />
+          <button className="icon-btn danger-h" title={`Stop posting to ${spaceName(t.space)}`} onClick={() => set(targets.filter((_, k) => k !== i))}><X size={14} /></button>
+        </div>
+      ))}
+      <select value="" style={{ width: "auto", alignSelf: "flex-start" }}
+        onChange={(e) => { const sp = spaceOf(e.target.value); if (sp) set([...targets, { space: sp.id, status: post.status === "posted" ? "draft" : post.status, due_at: post.due_at, link: null }]); }}>
+        <option value="">{targets.length ? "+ Cross-post to…" : "+ Where does it go?"}</option>
+        {NETWORKS.map((n) => (
+          <optgroup key={n.id} label={n.label}>
+            {n.spaces.filter((sp) => !targets.some((t) => t.space === sp.id)).map((sp) => <option key={sp.id} value={sp.id}>{n.label} {sp.label}</option>)}
+          </optgroup>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+export function PostDrawer({ post, onClose }: { post: Post; onClose: () => void }) {
   const { confirm, toast } = useDialog();
   const members = useMembers();
   const [draft, setDraft] = useState<Partial<Post>>({});
@@ -305,12 +355,14 @@ function PostDrawer({ post, onClose }: { post: Post; onClose: () => void }) {
   const script = val("script") ?? "";
   const words = script.trim() ? script.trim().split(/\s+/).length : 0;
   const caption = val("caption") ?? "";
-  const platforms = val("platforms") ?? [];
+  const { map: tmap } = useTargets();
+  const hasTargets = targetsOf(post, tmap).length > 0;
   const dueLocal = (() => { const d = val("due_at"); if (!d) return ""; const x = new Date(d); return new Date(x.getTime() - x.getTimezoneOffset() * 6e4).toISOString().slice(0, 16); })();
 
   async function remove() {
     if (!(await confirm({ title: "Delete this post?", body: <>“{post.title}”, its comments stay in the activity log. Media files stay in the Media library.</>, confirm: "Delete", danger: true }))) return;
     await aw().tables.deleteRow({ ...T, rowId: post.$id });
+    forgetTargets(post.$id);
     logActivity(null, "deleted", post.title);
     onClose();
   }
@@ -335,15 +387,15 @@ function PostDrawer({ post, onClose }: { post: Post; onClose: () => void }) {
         </div>
 
         <dl className="props">
-          <dt>Platforms</dt>
-          <dd className="chips">{PLATFORMS.map((p) => (
-            <button key={p.id} className={`chip ${platforms.includes(p.id) ? "on" : ""}`} onClick={() => edit({ platforms: platforms.includes(p.id) ? platforms.filter((x) => x !== p.id) : [...platforms, p.id] }, true)}>{p.label}</button>
-          ))}</dd>
-          <dt>Publish</dt>
-          <dd className="row" style={{ gap: 8 }}>
-            <input type="datetime-local" value={dueLocal} style={{ width: "auto" }} onChange={(e) => edit({ due_at: e.target.value ? new Date(e.target.value).toISOString() : null }, true)} />
-            {val("due_at") && <button className="quiet xs" onClick={() => edit({ due_at: null }, true)}>Clear</button>}
-          </dd>
+          <dt>Publish to</dt>
+          <dd><TargetsEditor post={post} /></dd>
+          {!hasTargets && <>
+            <dt>Publish</dt>
+            <dd className="row" style={{ gap: 8 }}>
+              <input type="datetime-local" value={dueLocal} style={{ width: "auto" }} onChange={(e) => edit({ due_at: e.target.value ? new Date(e.target.value).toISOString() : null }, true)} />
+              {val("due_at") && <button className="quiet xs" onClick={() => edit({ due_at: null }, true)}>Clear</button>}
+            </dd>
+          </>}
           <dt>Owner</dt>
           <dd>
             <select value={val("assignee_id") ?? ""} style={{ width: "auto", minWidth: 180 }} onChange={(e) => { const m = members.find((x) => x.id === e.target.value); edit({ assignee_id: m?.id ?? null, assignee_name: m?.name ?? null }, true); }}>
@@ -351,7 +403,7 @@ function PostDrawer({ post, onClose }: { post: Post; onClose: () => void }) {
               {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           </dd>
-          {(val("status") === "posted" || val("link")) && <><dt>Live link</dt><dd><input value={val("link") ?? ""} placeholder="https://…" onChange={(e) => edit({ link: e.target.value.slice(0, 500) || null })} /></dd></>}
+          {!hasTargets && (val("status") === "posted" || val("link")) && <><dt>Live link</dt><dd><input value={val("link") ?? ""} placeholder="https://…" onChange={(e) => edit({ link: e.target.value.slice(0, 500) || null })} /></dd></>}
         </dl>
 
         <section className="dsec">

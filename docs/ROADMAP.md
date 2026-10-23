@@ -12,16 +12,22 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [x] Subtitles: "Generated voiceovers" tab lists every voiceover (play, subtitle, redo) + a Record tab
 
 ## Content manager (Notion-style spaces per platform)
-- [ ] Spaces: YouTube (Videos, Shorts, Posts), Instagram (Reels, Posts), X (Posts), TikTok, LinkedIn, Podcast;
+- [x] Spaces: YouTube (Videos, Shorts, Posts), Instagram (Reels, Posts), X (Posts), TikTok, LinkedIn, Podcast;
       sidebar with counts, board-by-stage and list views per space, "new post" pre-set to the space
-- [ ] Cross-posting: one post, many targets; each target has its own status, publish time and live link
-- [ ] Delete posts from the list view (and the drawer, already there)
-- [ ] Storage: targets live in R2 (`workspace/spaces.json`) because the Appwrite posts table can't get new columns from
+- [x] Cross-posting: one post, many targets; each target has its own status, publish time and live link
+- [x] Delete posts from the list view (and the drawer, already there)
+- [x] Storage: targets live in R2 (`workspace/spaces.json`) because the Appwrite posts table can't get new columns from
       this deployment's key (no tables.write scope); the legacy `platforms` array is kept in sync for filters and MCP
-- [ ] MCP: create/update posts with targets (spaces), list a space, upload a file to the workspace media (URL or
+- [x] MCP: create/update posts with targets (spaces), list a space, upload a file to the workspace media (URL or
       base64), delete a file
 
+## Notes for whoever picks this up
+- Spaces are defined once in `mcp/lib/spaces.ts` (add a space there and it shows everywhere: sidebar, drawer, MCP enum).
+- The Content page is `mcp/components/Content.tsx`; the drawer's "Publish to" editor is `TargetsEditor` in `Workspace.tsx`.
+- Targets refresh every 15 s (not Appwrite Realtime): `mcp/components/useTargets.ts`.
+
 ## Later (not started)
+- [ ] Listen to a few of the cut training clips per session on Your model (the worker would push samples next to the zip)
 - [ ] Per-target caption overrides (X 280 vs Instagram 2200)
 - [ ] Teach trained voices non-verbal tags (laughs, breaths) from the recordings
 - [ ] Streaming playback while a voiceover renders

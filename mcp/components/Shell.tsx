@@ -1,7 +1,7 @@
 "use client";
 import {
   ArrowsClockwise, Books, CalendarBlank, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, HardDrives, ImageSquare, Kanban, MagicWand, MagnifyingGlass,
-  Microphone, Moon, Power, Brain, SignOut, SquaresFour, Sun, UserSound, Waveform, Images,
+  Microphone, Moon, Power, Brain, SignOut, SquaresFour, Stack, Sun, UserSound, Waveform, Images,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -16,6 +16,7 @@ const StatusCtx = createContext<{ status: Status | null; refresh: () => Promise<
 export const useStatus = () => useContext(StatusCtx);
 
 const NAV = [
+  { href: "/content", name: "Content", Icon: Stack, sec: "Workspace" },
   { href: "/workspace", name: "Board", Icon: Kanban, sec: "Workspace" },
   { href: "/calendar", name: "Calendar", Icon: CalendarBlank, sec: "Workspace" },
   { href: "/media", name: "Media", Icon: Images, sec: "Workspace" },
@@ -29,7 +30,7 @@ const NAV = [
   { href: "/", name: "Engines", Icon: SquaresFour, sec: "Studio" },
   { href: "/settings", name: "Settings", Icon: GearSix, sec: "Studio" },
 ] as const;
-const TABS = ["/workspace", "/calendar", "/generate", "/library"];
+const TABS = ["/content", "/workspace", "/calendar", "/generate"];
 
 function useTheme() {
   const [t, setT] = useState<"light" | "dark" | null>(null);
