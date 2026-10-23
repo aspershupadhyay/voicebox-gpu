@@ -35,8 +35,10 @@ jobs:
       - name: Smoke test
         run: |
           sleep 10
-          for p in /login /api/register; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "https://mcp-eta-tawny.vercel.app$p")
-            echo "$p $code"
-            if [ "$code" = 500 ] || [ "$code" = 000 ]; then exit 1; fi
+          ok=0
+          for site in https://voiceboxstudio.vercel.app https://mcp-eta-tawny.vercel.app; do
+            a=$(curl -s -o /dev/null -w '%{http_code}' "$site/login"); b=$(curl -s -o /dev/null -w '%{http_code}' "$site/api/register")
+            echo "$site: /login $a, /api/register $b"
+            if [ "$a" = 200 ] && [ "$b" = 405 ]; then ok=1; fi
           done
+          [ "$ok" = 1 ]

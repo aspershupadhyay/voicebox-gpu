@@ -26,7 +26,7 @@ def secrets():
             if "=" in ln and not ln.lstrip().startswith("#"):
                 k, v = ln.strip().split("=", 1)
                 os.environ.setdefault(k, v.strip('"'))
-    url, token = os.environ.get("MCP_URL", "https://mcp-eta-tawny.vercel.app").rstrip("/"), os.environ.get("MCP_TOKEN")
+    url, token = os.environ.get("MCP_URL", "https://voiceboxstudio.vercel.app").rstrip("/"), os.environ.get("MCP_TOKEN")
     if not token:
         sys.exit("MCP_TOKEN not set (put it in .secrets.local)")
     return url, token

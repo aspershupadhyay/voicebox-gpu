@@ -52,7 +52,7 @@ and the code paths to R2 (`mcp/lib/store.ts`) are unchanged.
 
 Schema (database `studio`): `posts`, `comments`, `activity`, `media` tables, team-level permissions for `team:studio`;
 storage bucket `media` (2 GB per file, encrypted, antivirus, image previews). The dashboard's web platform is registered
-for `mcp-eta-tawny.vercel.app` and `localhost`; add a platform in the Appwrite console if you add a custom domain.
+for `voiceboxstudio.vercel.app`, `mcp-eta-tawny.vercel.app` and `localhost`; add a platform in the Appwrite console if you add a custom domain.
 
 ## From Claude (MCP)
 
