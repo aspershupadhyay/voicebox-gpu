@@ -1,6 +1,6 @@
 [
   {
-    "AllowedOrigins": ["https://mcp-eta-tawny.vercel.app", "http://localhost:3000"],
+    "AllowedOrigins": ["https://voiceboxstudio.vercel.app", "https://mcp-eta-tawny.vercel.app", "http://localhost:3000"],
     "AllowedMethods": ["GET", "PUT", "HEAD"],
     "AllowedHeaders": ["*"],
     "ExposeHeaders": ["ETag", "Content-Length", "Content-Range", "Accept-Ranges"],

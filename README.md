@@ -37,7 +37,8 @@ scripts/deploy-mcp.sh           # links mcp/ to Vercel, sets MCP_TOKEN, WORKER_S
 3. Add the MCP to your client:
 
 ```bash
-claude mcp add --transport http voicebox https://<app>.vercel.app/api/mcp --header "Authorization: Bearer <MCP_TOKEN>"
+claude mcp remove voicebox   # only when replacing an older entry
+claude mcp add --transport http voicebox https://voiceboxstudio.vercel.app/api/mcp --header "Authorization: Bearer <MCP_TOKEN>"
 ```
 
 ## Every session

@@ -36,7 +36,7 @@ def env():
         if "=" in ln and not ln.startswith("#"):
             k, v = ln.strip().split("=", 1)
             os.environ.setdefault(k, v.strip('"'))
-    return "https://mcp-eta-tawny.vercel.app/api/dash", {"Authorization": f"Bearer {os.environ['MCP_TOKEN']}"}
+    return "https://voiceboxstudio.vercel.app/api/dash", {"Authorization": f"Bearer {os.environ['MCP_TOKEN']}"}
 
 
 def http(url, h, body=None):

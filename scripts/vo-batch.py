@@ -48,7 +48,7 @@ def main():
     ap.add_argument("script"); ap.add_argument("out")
     ap.add_argument("--engine", required=True); ap.add_argument("--voice", default="female")
     ap.add_argument("--param", action="append", default=[], help="key=value, applied to every line")
-    ap.add_argument("--base", default=os.environ.get("VOICEBOX_URL", "https://mcp-eta-tawny.vercel.app"))
+    ap.add_argument("--base", default=os.environ.get("VOICEBOX_URL", "https://voiceboxstudio.vercel.app"))
     ap.add_argument("--label", default="")
     a = ap.parse_args()
     token = secrets()["MCP_TOKEN"]
