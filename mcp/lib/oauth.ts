@@ -108,3 +108,14 @@ export function requestError(a: { response_type: string; code_challenge: string;
   if (!a.code_challenge || a.code_challenge_method !== "S256") return "invalid_request";
   return null;
 }
+
+/** Clients that may connect without a consent click once the owner is signed in (no other site can get a silent code). */
+export function trustedRedirect(u: string) {
+  const extra = (process.env.OAUTH_TRUSTED_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+  try {
+    const url = new URL(u);
+    return url.protocol === "https:" && ["claude.ai", "claude.com", ...extra].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}

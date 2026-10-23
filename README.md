@@ -42,9 +42,13 @@ claude mcp add --transport http voicebox https://voiceboxstudio.vercel.app/api/m
 ```
 
 In claude.ai (or any client that can't send a custom header), add a custom connector with just the URL
-`https://voiceboxstudio.vercel.app/api/mcp` and leave the OAuth Client ID/Secret empty. You'll get a voicebox sign-in page:
-paste `MCP_TOKEN` once and press **Allow access** (skipped if you're already signed in to the dashboard). Rotating `MCP_TOKEN`
-signs out every connected app.
+`https://voiceboxstudio.vercel.app/api/mcp` and leave the OAuth Client ID/Secret empty. If you're signed in to the dashboard
+it connects straight away; otherwise you sign in once (GitHub or `MCP_TOKEN`) and come back connected. Clients other than
+claude.ai/claude.com get an **Allow access** click. Rotating `MCP_TOKEN` disconnects every app.
+
+**Sign in with GitHub (optional, recommended):** create a GitHub OAuth app (Settings → Developer settings → OAuth Apps) with
+callback URL `https://voiceboxstudio.vercel.app/api/auth/github/callback`, then add `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
+and `OWNER_GITHUB=<your login>` to `.secrets.local` and rerun `scripts/deploy-mcp.sh`. Only logins in `OWNER_GITHUB` get in.
 
 ## Every session
 
