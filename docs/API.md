@@ -8,7 +8,8 @@ Two layers. You normally only touch the first.
 |---|---|
 | `worker_status` | Online? GPU, VRAM, loaded engines, queue. Says "re-run the notebook" if the heartbeat is older than 4 min. |
 | `list_voices` | Engines, voices, presets, every parameter with default/min/max, uploaded references. |
-| `voice_lines` | `{engine, voice?, style?, lines:[{id?, text, window?, start?, params?}], params?, post?, subtitles?, language?, label?, wait_seconds?}` → job. Blocks up to 45 s, then returns progress + a hint to call `get_job`. Engines: `orpheus`, `qwen`, `chatterbox`, `kokoro`. |
+| `voice_lines` | `{engine, voice?, style?, platform?, takes?, lines:[{id?, text, window?, start?, params?}], params?, post?, subtitles?, captions?, pronounce?, lexicon?, language?, label?, wait_seconds?}` → job. Blocks up to 45 s, then returns progress + a hint to call `get_job`. Engines: `orpheus`, `qwen`, `chatterbox`, `kokoro`. `platform` masters the audio (see *Platforms*); `takes: 2-4` = best-of-N per sentence; `[pause 0.8]` / `[beat]` / `[breath]` in the text insert silence. |
+| `revoice` | `{url, voice, platform?, subtitles?, language?, label?}` → speech-to-speech job: a performance (audio or video URL) re-spoken in a recorded voice (Chatterbox VC), timing kept, mastered for the platform. |
 | `my_voices` | Voices the user recorded on the dashboard's Voices page. Use the `name` as `voice` with `qwen` (best) or `chatterbox` (Hindi, emotion dial). |
 | `animate` | `{prompt, model?: wan\|ltx, aspect?: 9:16\|16:9\|1:1, seconds?, quality?: fast\|full, seed?, negative?, audio?, image_url? \| from_library?, label?}` → video job (minutes; poll `get_job`). Saved to the library as MP4 + poster. |
 | `get_job` | `{job_id, wait_seconds?}` long-poll. When done, each result has `duration`, `fits` (vs `window`) and a signed `url`; the job has `zip_url`. Links expire after 6 h. |
@@ -33,7 +34,7 @@ All routes need `Authorization: Bearer $WORKER_SECRET`, except `/files/*`, which
 |---|---|
 | `GET /health` | GPU, VRAM budget, engine states, queue |
 | `GET /voices` | catalogue (same as `list_voices`) |
-| `POST /jobs` · `GET /jobs` · `GET /jobs/{id}` · `POST /jobs/{id}/cancel` | job queue (FIFO, one job at a time). `kind`: `tts` (default), `transcribe`, `video`, `reference` |
+| `POST /jobs` · `GET /jobs` · `GET /jobs/{id}` · `POST /jobs/{id}/cancel` | job queue (FIFO, one job at a time). `kind`: `tts` (default), `transcribe`, `video`, `image`, `animate`, `reference`, `revoice` |
 | `POST /jobs/{id}/push` | `{targets: {file: presigned PUT url}}`: the worker uploads results straight to R2 |
 | `POST /refs` | `{name, audio_b64 \| url, transcript?}` (raw; the dashboard uses `kind: reference` jobs, which clean + transcribe) |
 | `POST /engines/{name}/load\|unload\|forget` | `forget` also deletes the engine's downloaded weights |
@@ -41,6 +42,18 @@ All routes need `Authorization: Bearer $WORKER_SECRET`, except `/files/*`, which
 
 **Video job** `{kind: "video", model, prompt, aspect, seconds, quality, seed, negative?, audio?, image_url?}`: frames are
 `seconds × 24` rounded to the model's frame step (+1). Progress reports real denoising steps (`step 3 of 8`).
+**Voice job extras.** What the engine reads is rewritten from the script (`lexicon`, on by default for English):
+markdown and links cleaned, tech terms said right (`SQL` → sequel, `GPU` → G P U, `JSON` → jay-son, `16GB` → 16 gigabytes,
+`v2.1` → version 2.1), plus your `pronounce: {word: say}` map. The script stays as written for subtitles and the match
+score; each result's `spoken` shows what was read. `[pause]`, `[pause 0.8]`, `[pause 500ms]`, `[beat]`, `[breath]`
+become real silence. On `qwen` with a recorded voice, Devanagari lines go to Chatterbox (`hi`) in the same voice.
+`takes: N` voices each sentence N times (different seeds); Whisper transcribes every take and the WavLM speaker
+model (`microsoft/wavlm-base-plus-sv`, in the whisper venv) compares it with the reference; the most accurate,
+most-like-you take without a run-on tail wins, per sentence. Results carry `lufs`, `takes {n, picked, match, similarity}`
+and, with subtitles on a cloned voice, `similarity` (0.86+ = same speaker).
+**Re-voice job** `{kind: "revoice", url, voice, platform?, subtitles?}`: the performance is cleaned (high-pass, FFT denoise),
+cut into ≤ 20 s pieces at its quietest moments, converted with Chatterbox VC and re-joined without gaps, untrimmed, so it
+stays frame-accurate against the source video.
 **Reference job** `{kind: "reference", name, url, version}`: ffmpeg cleans the recording (high-pass, low-pass, FFT
 denoise, trim, −3 dBFS), Whisper transcribes it, takes over ~24 s are cut to ≤ 20 s at a word boundary.
 
@@ -69,7 +82,11 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 | `whisper` | voice | 6 GB | 3.2 GB | n/a (subtitles) | Whisper large-v3 (OpenAI). Best open subtitle model: word-level timestamps, 99 languages. |
 | `qwen` | voice | 6 GB | 4.6 GB | `female` / `male` | Qwen3-TTS 1.7B Base (Alibaba, Apache-2.0). Best voice cloning: a 10-20 s recording of you becomes your voice. 10 languages (no Hindi: use Chatterbox). |
 | `wan` | visual | 20 GB | 23 GB | n/a (video) | Wan 2.2 TI2V 5B (Alibaba, Apache-2.0). Sharp 720p, strong motion and prompt following. Turbo: 4 steps. |
-| `ltx` | visual | 20 GB | 48 GB | n/a (video) | LTX-2.3 22B distilled (Lightricks). Video *with matching sound* in 8 steps; up to 10 s. 4-bit on the L4. |
+| `wan14` | visual | 62 GB | 69 GB | n/a (video) | Wan 2.2 I2V A14B + Lightning (Alibaba, Apache-2.0). Best motion and detail of the Wan family; animates a start frame. 480p, 4 steps, A100 only. |
+| `ltx` | visual | 52 GB | 71 GB | n/a (video) | LTX-2.5 22B distilled (Lightricks). Video *with matching sound* in 8 steps; up to 10 s. Full = two-stage, 2x resolution. |
+| `zimage` | visual | 22 GB | 33 GB | n/a (subtitles) | Z-Image-Turbo (Tongyi-MAI, Apache-2.0: commercial use OK). 6B, 8 steps, photoreal, ~2 s per image. |
+| `qwenimage` | visual | 40 GB | 47 GB | n/a (subtitles) | Qwen-Image-2.1 (Alibaba Qwen). Native 2K, sharp text in images, edits with up to 10 references, transparent PNGs. |
+| `animate` | visual | 48 GB | 85 GB | n/a (subtitles) | Wan 2.2 Animate 14B (Alibaba, Apache-2.0). Your character (one image) performs the motion of a driving video: exercises, dances, gestures. |
 
 #### `kokoro` params
 
@@ -115,13 +132,19 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 
 - Sizes: 16:9 = 1280×704, 9:16 = 704×1280, 1:1 = 960×960
 - 24 fps, up to 5 s (frames are multiples of 4 + 1)
-- Quality: `fast`: 4 steps, CFG 1 (Turbo distill, ~2-4 min per 5 s clip); `full`: 30 steps, CFG 5 (Original model, best detail, ~20-30 min on an L4)
+- Quality: `draft`: 4 steps, CFG 1 (Turbo + tiny decoder: quickest preview, slightly softer); `fast`: 4 steps, CFG 1 (Turbo distill with the full decoder); `full`: 30 steps, CFG 5 (Original model, best detail, ~20-30 min on an L4)
+
+#### `wan14` video
+
+- Sizes: 16:9 = 832×480, 9:16 = 480×832, 1:1 = 640×640
+- 16 fps, up to 5 s (frames are multiples of 4 + 1)
+- Quality: `draft`: 4 steps, CFG 1 (Lightning + tiny decoder: quickest preview); `fast`: 4 steps, CFG 1 (Lightning distill, 4 steps, full decoder)
 
 #### `ltx` video
 
-- Sizes: 16:9 = 1024×576, 9:16 = 576×1024, 1:1 = 768×768
+- Sizes: 16:9 = 960×544, 9:16 = 544×960, 1:1 = 768×768
 - 24 fps, up to 10 s (frames are multiples of 8 + 1)
-- Quality: `fast`: 8 steps, CFG 1 (Distilled, ~3-5 min per 5 s clip with audio)
+- Quality: `draft`: 8 steps, CFG 1 (One pass at about half size: quickest preview); `fast`: 8 steps, CFG 1 (Distilled, one pass); `full`: 11 steps, CFG 1 (Two-stage: x2 latent upsample + refine, double resolution (text only))
 
 #### Post-processing (`post`)
 
@@ -132,6 +155,7 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 | `normalize_dbfs` | `-3.0` |
 | `sample_rate` | `48000` |
 | `tempo` | `1.0` |
+| `master` | `'youtube'` |
 
 #### Delivery styles (`style`, default `tech`)
 
@@ -143,4 +167,22 @@ A style sets engine params and `post` defaults; explicit values in the request w
 | `hype` | Maximum energy for promos and hooks (~200 wpm). Best with mia or leo. | temperature=0.7, top_p=0.95, repetition_penalty=1.1 | temperature=0.9 | exaggeration=1.05, cfg_weight=0.3, temperature=0.85 | speed=1.2 | tempo=1.08 |
 | `narrator` | Measured documentary read with room to breathe (~165 wpm). | temperature=0.6, top_p=0.95, repetition_penalty=1.1 | temperature=0.7 | exaggeration=0.4, cfg_weight=0.5, temperature=0.8 | speed=0.95 | tempo=0.95 |
 | `neutral` | Engine defaults, no styling. | defaults | defaults | defaults | defaults | — |
+
+#### Platforms (`platform`, default `youtube`)
+
+Mastering runs the broadcast voice chain (`highpass=f=75,equalizer=f=280:t=q:w=1.1:g=-2.5,equalizer=f=3200:t=q:w=1.0:g=2.0,highshelf=f=9000:g=1.5,deesser=i=0.35:m=0.5:f=0.5:s=o,acompressor=threshold=-20dB:ratio=3:attack=6:release=90:makeup=2:knee=4`) then two-pass EBU R128 loudness to the target. `post.master` / `captions` in the request override it.
+
+| Platform | Loudness | True peak | Captions | About |
+|---|---|---|---|---|
+| `youtube` | -14 LUFS | -1 dBTP | `subtitles` | Long-form video: -14 LUFS, subtitle-style captions. |
+| `shorts` | -14 LUFS | -1 dBTP | `punchy` | Vertical: -14 LUFS, 1-3 word pop-up captions. |
+| `reels` | -14 LUFS | -1 dBTP | `punchy` | Vertical: -14 LUFS, 1-3 word pop-up captions. |
+| `tiktok` | -14 LUFS | -1 dBTP | `punchy` | Vertical: -14 LUFS, 1-3 word pop-up captions. |
+| `podcast` | -16 LUFS | -1.5 dBTP | `subtitles` | Audio-first: -16 LUFS, subtitle-style transcript. |
+| `raw` | peak -3 dBFS | — | `subtitles` | No mastering: peak-normalised to -3 dBFS, for mixing yourself. |
+
+| Caption style | Max chars | Max seconds |
+|---|---|---|
+| `subtitles` | 42 | 3.5 |
+| `punchy` | 16 | 1.2 |
 <!-- engines:end -->

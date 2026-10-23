@@ -13,13 +13,23 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
   Chatterbox (emotion dial, cloning, 23 languages incl. Hindi), Kokoro (instant drafts). Each has `female` and `male` presets; all
   parameters are in [docs/API.md](docs/API.md). No length limits: long text is split at sentences and re-joined.
 - **Your voice:** record 20 s in the browser (Voices page); the worker cleans it and Whisper transcribes it; it's kept in R2.
+  [docs/YOUR_VOICE.md](docs/YOUR_VOICE.md) has the recording and settings guide for a pro tech-explainer sound.
   Every built-in voice also has an audition sample (`scripts/make-samples.py`), so you can pick without the GPU.
 - **Video:** Wan 2.2 TI2V 5B (sharp 720p, Turbo 4-step) and LTX-2.3 distilled (picture + soundtrack, up to 10 s), from text or a start frame.
 - **Lean GPU use:** only one engine group (voice or video) holds the GPU at a time, idle engines unload after 10 min, and model
   weights download on first use into per-engine folders that are evicted least-recently-used when disk runs short.
-- **Subtitles:** Whisper large-v3 with word timestamps → SRT / VTT / JSON, per line and for the whole timeline, plus a script-match score.
+- **Made for YouTube, Shorts, Reels and TikTok:** pick a `platform` and every line gets a broadcast voice chain (rumble cut,
+  presence, de-ess, gentle compression) and two-pass loudness to the platform's target (−14 LUFS; podcast −16), with
+  pop-up 1–3 word captions for vertical video.
+- **Best-of-N takes:** voice each sentence 2–4 times; Whisper and a speaker-match model keep the cleanest take that sounds most like you.
+- **Says tech right:** SQL, GPU, JSON, 16GB, v2.1, URLs and markdown are read the way a presenter would; add your own
+  pronunciations. `[pause 0.8]`, `[beat]` and `[breath]` put real silence in the script.
+- **Re-voice:** upload any take of yourself (voice memo, screen recording) and get it back in your clean recorded voice,
+  timing and emotion intact. Hindi lines in a Qwen script are voiced by Chatterbox in the same voice.
+- **Subtitles:** Whisper large-v3 with word timestamps → SRT / VTT / JSON, per line and for the whole timeline, plus a script-match score
+  and a voice-match score for cloned voices.
 - **Dashboard:** `https://<app>/` (sign in with `MCP_TOKEN`): Overview, Generate, Voices, Video, Subtitles, Library (private Cloudflare R2 storage).
-- **Output:** 48 kHz mono WAV, trimmed and peak-normalised, plus a `fits` flag when you pass the line's timeline `window`.
+- **Output:** 48 kHz mono WAV, trimmed and mastered for the platform (or peak-normalised with `platform: raw`), plus a `fits` flag when you pass the line's timeline `window`.
 - **Security:** two random secrets, both outside git. The tunnel URL is only stored in the private R2 bucket. Downloads are HMAC-signed and expire after 6 h.
 
 ## Setup (once)

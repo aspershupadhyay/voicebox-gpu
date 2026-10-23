@@ -220,10 +220,32 @@ ENGINES = {
 POST_DEFAULTS = {
     "trim": True,            # trim leading/trailing silence (keeps 60 ms of air)
     "trim_db": -45.0,
-    "normalize_dbfs": -3.0,  # peak-normalise; null to keep the engine's level
+    "normalize_dbfs": -3.0,  # peak-normalise; only used when master is "raw"/null
     "sample_rate": 48000,    # resample for video timelines; null keeps native
     "tempo": 1.0,            # pitch-preserving pace multiplier (0.5-2.0) applied after synthesis
+    "master": "youtube",     # voice chain + loudness target from PLATFORMS; "raw"/null = peak-normalise only
 }
+
+# Where the voiceover is going. Each platform sets the mastering loudness and the caption cut.
+#  - Loudness: YouTube, Instagram and TikTok all turn louder uploads down to about -14 LUFS, so mastering there
+#    keeps the full dynamic range on playback; podcasts sit at -16 (Apple / Spotify spec). True peak stays under
+#    -1 dBTP so the platforms' lossy re-encode doesn't clip.
+#  - Captions: long-form gets two-line subtitles; vertical shorts get 1-3 punchy words at a time, read at a glance.
+PLATFORMS = {
+    "youtube": {"label": "YouTube", "about": "Long-form video: -14 LUFS, subtitle-style captions.", "lufs": -14.0, "tp": -1.0, "captions": "subtitles"},
+    "shorts": {"label": "YouTube Shorts", "about": "Vertical: -14 LUFS, 1-3 word pop-up captions.", "lufs": -14.0, "tp": -1.0, "captions": "punchy"},
+    "reels": {"label": "Instagram Reels", "about": "Vertical: -14 LUFS, 1-3 word pop-up captions.", "lufs": -14.0, "tp": -1.0, "captions": "punchy"},
+    "tiktok": {"label": "TikTok", "about": "Vertical: -14 LUFS, 1-3 word pop-up captions.", "lufs": -14.0, "tp": -1.0, "captions": "punchy"},
+    "podcast": {"label": "Podcast", "about": "Audio-first: -16 LUFS, subtitle-style transcript.", "lufs": -16.0, "tp": -1.5, "captions": "subtitles"},
+    "raw": {"label": "Raw", "about": "No mastering: peak-normalised to -3 dBFS, for mixing yourself.", "lufs": None, "tp": None, "captions": "subtitles"},
+}
+DEFAULT_PLATFORM = "youtube"
+
+# The broadcast voice chain that runs before the loudness target (ffmpeg filters, in order): cut rumble, clear
+# boxiness, lift presence and air, tame sibilance, then gentle 3:1 compression so every word sits at one level.
+VOICE_CHAIN = ("highpass=f=75,equalizer=f=280:t=q:w=1.1:g=-2.5,equalizer=f=3200:t=q:w=1.0:g=2.0,"
+               "highshelf=f=9000:g=1.5,deesser=i=0.35:m=0.5:f=0.5:s=o,"
+               "acompressor=threshold=-20dB:ratio=3:attack=6:release=90:makeup=2:knee=4")
 
 
 TTS_ENGINES = [n for n, e in ENGINES.items() if e["kind"] == "tts"]
@@ -283,6 +305,7 @@ def style_settings(style, engine):
 
 # Speed priors (seconds of compute per character / per second of audio), refined live by the gateway.
 RATE_PRIORS = {"kokoro": 0.004, "chatterbox": 0.06, "orpheus": 0.03, "whisper": 0.06, "qwen": 0.05,
+               "revoice": 0.25,  # Chatterbox VC: seconds per second of performance
                # video: seconds per (step x frame x megapixel), x2 when CFG doubles the passes
                "wan": 0.3, "ltx": 0.35, "wan14": 1.2,
                # image: seconds per (step x megapixel x image); animate: per (step x frame x megapixel)
@@ -291,6 +314,12 @@ INSTALL_PRIORS = {"kokoro": 40, "chatterbox": 150, "orpheus": 240, "whisper": 12
 LOAD_PRIORS = {"kokoro": 5, "chatterbox": 45, "orpheus": 120, "whisper": 40, "qwen": 60, "wan": 240, "ltx": 480, "wan14": 600, "zimage": 150, "qwenimage": 240, "animate": 600}  # first load includes the weight download
 
 SUBTITLE_STYLE = {"max_chars": 42, "max_seconds": 3.5, "min_gap": 0.08}
+CAPTION_STYLES = {
+    "subtitles": SUBTITLE_STYLE,                                       # one or two lines, sentence by sentence
+    "punchy": {"max_chars": 16, "max_seconds": 1.2, "min_gap": 0.0},   # Shorts / Reels / TikTok: 1-3 words at a time
+}
+
+MAX_TAKES = 4  # best-of-N: each chunk is voiced N times and the take Whisper (and the voice match) likes best wins
 
 
 def resolve_params(engine, given):

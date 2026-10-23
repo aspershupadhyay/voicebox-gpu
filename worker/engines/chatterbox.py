@@ -1,4 +1,4 @@
-"""Chatterbox (Resemble AI). English model + lazily-loaded multilingual model."""
+"""Chatterbox (Resemble AI). English model + lazily-loaded multilingual model + lazily-loaded voice conversion (VC)."""
 import torch
 
 
@@ -17,6 +17,7 @@ class Engine:
         from chatterbox.tts import ChatterboxTTS
         self.en = ChatterboxTTS.from_pretrained(device=self.device)
         self.mtl = None
+        self.vc = None
 
     def synth(self, text, voice, params, ref_path=None, ref_text=None):
         torch.manual_seed(int(params.get("seed", 7)))
@@ -32,3 +33,13 @@ class Engine:
             wav = self.en.generate(text, audio_prompt_path=ref_path, **kw)
             sr = self.en.sr
         return wav.squeeze().float().cpu().numpy(), sr
+
+    def revoice(self, src_path, ref_path):
+        """Speech-to-speech: the words, timing and delivery of src_path in the voice of ref_path."""
+        if self.vc is None:
+            from chatterbox.vc import ChatterboxVC
+            self.vc = ChatterboxVC.from_pretrained(self.device)
+        wav = self.vc.generate(audio=src_path, target_voice_path=ref_path)
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
+        return wav.squeeze().float().cpu().numpy(), self.vc.sr

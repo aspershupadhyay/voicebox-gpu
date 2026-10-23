@@ -45,6 +45,8 @@ export const fileUrl = (job: string, name: string, download?: string) =>
   `/api/file/${job}/${name}${download ? `?download&name=${encodeURIComponent(download)}` : ""}`;
 export const pct = (x?: number | null) => (x == null ? "—" : `${Math.round(x * 100)}%`);
 export const matchClass = (x?: number | null) => (x == null ? "" : x >= 0.95 ? "ok" : x >= 0.85 ? "warn" : "bad");
+/** Speaker-embedding cosine: 0.86 is the same-speaker threshold of the WavLM SV model. */
+export const simClass = (x?: number | null) => (x == null ? "" : x >= 0.9 ? "ok" : x >= 0.86 ? "warn" : "bad");
 
 export type Status = {
   online: boolean; reason?: string; last_seen?: number; uptime_s?: number; queue?: number; running?: string[];
@@ -69,13 +71,14 @@ export type JobResult = {
   url?: string; heard?: string; match?: number | null; subs?: boolean; name?: string; chunks?: number; cues?: number;
   srt_url?: string; vtt_url?: string; poster_url?: string; cut?: boolean; level_db?: number;
   file?: string; thumb?: string; width?: number; height?: number; transparent?: boolean; thumb_url?: string;
+  lufs?: number | null; similarity?: number | null; spoken?: string; engine?: string; takes?: { n: number; picked: number[]; match: number; similarity: number | null };
 };
 export type Job = {
   id: string; kind: "tts" | "transcribe" | "video" | "reference" | "image"; engine: string; voice: string; status: string; error?: string; label?: string;
   progress: { done: number; total: number; fraction: number; eta_s: number; stage: string; detail: string; elapsed_s: number; fetch?: Fetch | null };
   queue_position?: number; results: JobResult[]; warnings?: string[]; subs?: { cues: number; timeline: string } | null;
   match?: number | null; library?: { id: string } | null; subtitles?: boolean; gen?: Gen; video?: VideoInfo | null;
-  myvoice?: MyVoice | null;
+  myvoice?: MyVoice | null; platform?: string; captions?: string; takes?: number; mode?: string; similarity?: number | null;
 };
 export type MyVoice = { name: string; label: string; transcript: string; duration: number; version: string; created: number; warnings?: string[]; url?: string; level_db?: number };
 export type Samples = { text: Record<string, string>; voices: Record<string, Record<string, { duration: number; url: string }>> };

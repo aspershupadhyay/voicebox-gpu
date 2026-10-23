@@ -1,8 +1,8 @@
 "use client";
-import { ArrowSquareOut, CaretDown, ClosedCaptioning, DownloadSimple, Eye, Flask, Microphone, Plus, SlidersHorizontal, Sparkle, WarningCircle } from "@phosphor-icons/react";
+import { ArrowSquareOut, CaretDown, ClosedCaptioning, DownloadSimple, Eye, Flask, Microphone, Plus, SlidersHorizontal, Sparkle, Trophy, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, fmtS, pct, rangeFill, type Job, type MyVoice } from "./api";
+import { api, fmtS, pct, rangeFill, simClass, type Job, type MyVoice } from "./api";
 import { EngineArt, StyleGlyph, VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
 import { GUIDES, KOKORO_LANG, LANGUAGES, QWEN_LANG } from "./guides";
@@ -14,7 +14,8 @@ import { useStatus } from "./Shell";
 type Param = { type: "number" | "integer" | "string"; default: number | string; min?: number; max?: number; about?: string };
 type Engine = { kind: string; about: string; voices: string[]; presets: Record<string, string>; params: Record<string, Param>; state: string; seconds_per_char?: number };
 type Style = { label: string; about: string; params: Record<string, Record<string, number>>; post: { tempo?: number }; post_by_engine?: Record<string, { tempo?: number }>; voices: Record<string, string[]> };
-type Catalogue = { engines: Record<string, Engine>; references: string[]; styles?: Record<string, Style>; default_style?: string };
+type Platform = { label: string; about: string; lufs: number | null; tp: number | null; captions: string };
+type Catalogue = { engines: Record<string, Engine>; references: string[]; styles?: Record<string, Style>; default_style?: string; platforms?: Record<string, Platform>; max_takes?: number };
 type ParsedLine = { id: string; text: string; window?: number; start?: number; params?: Record<string, number> };
 
 const TTS = ["orpheus", "qwen", "chatterbox", "kokoro"] as const;
@@ -22,6 +23,19 @@ const BLURB: Record<string, string> = { orpheus: "Most human · English", qwen: 
 const CLONERS = ["qwen", "chatterbox"];
 const STYLE_ORDER = ["tech", "hype", "narrator", "neutral"];
 const TAGS = ["<laugh>", "<chuckle>", "<sigh>", "<gasp>", "<groan>", "<yawn>", "<sniffle>", "<cough>"];
+const MARKS = ["[pause]", "[pause 1.2]", "[beat]", "[breath]"];
+const PLATFORM_ORDER = ["youtube", "shorts", "reels", "tiktok", "podcast", "raw"];
+const PLATFORM_ICON: Record<string, string> = { youtube: "▶", shorts: "▮", reels: "◎", tiktok: "♪", podcast: "◉", raw: "∿" };
+
+/** "word = how to say it", one per line. */
+function parsePronounce(src: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const l of src.split("\n")) {
+    const i = l.indexOf("=");
+    if (i > 0 && l.slice(0, i).trim() && l.slice(i + 1).trim()) out[l.slice(0, i).trim()] = l.slice(i + 1).trim();
+  }
+  return out;
+}
 const LOAD_S: Record<string, number> = { orpheus: 120, chatterbox: 45, kokoro: 5, whisper: 40, qwen: 60 };
 const RATE: Record<string, number> = { orpheus: 0.03, chatterbox: 0.06, kokoro: 0.004, whisper: 0.06, qwen: 0.05 };
 const SAMPLE = `This little dot knows exactly where you are.
@@ -55,7 +69,12 @@ export default function Generate() {
   const [style, setStyle] = useState("tech");
   const [tempo, setTempo] = useState<number | null>(null);
   const [subtitles, setSubtitles] = useState(true);
-  const [post, setPost] = useState({ trim: true, normalize: true, sample_rate: 48000 });
+  const [post, setPost] = useState({ trim: true, sample_rate: 48000 });
+  const [platform, setPlatform] = useState("youtube");
+  const [takes, setTakes] = useState(1);
+  const [lexicon, setLexicon] = useState(true);
+  const [pronounce, setPronounce] = useState("");
+  const [showLex, setShowLex] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [script, setScript] = useState(SAMPLE);
   const [label, setLabel] = useState("");
@@ -74,6 +93,7 @@ export default function Generate() {
     const s = JSON.parse(localStorage.getItem("vb-gen2") || "{}");
     if (s.engine) setEngine(s.engine); if (s.voice) setVoice(s.voice); if (s.script) setScript(s.script);
     if (s.params) setParams(s.params); if (s.style) setStyle(s.style); if (s.lang) setLang(s.lang); if (s.subtitles !== undefined) setSubtitles(s.subtitles);
+    if (s.platform) setPlatform(s.platform); if (s.takes) setTakes(s.takes); if (s.lexicon !== undefined) setLexicon(s.lexicon); if (s.pronounce) setPronounce(s.pronounce);
     // deep links from the Voices page: /generate?engine=qwen&voice=<name>
     const q = new URLSearchParams(location.search);
     if (q.get("engine") && (TTS as readonly string[]).includes(q.get("engine")!)) { setEngine(q.get("engine")!); setParams({}); }
@@ -82,7 +102,7 @@ export default function Generate() {
     loaded.current = true;
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, []);
-  useEffect(() => { if (loaded.current) localStorage.setItem("vb-gen2", JSON.stringify({ engine, voice, script, params, style, lang, subtitles })); }, [engine, voice, script, params, style, lang, subtitles]);
+  useEffect(() => { if (loaded.current) localStorage.setItem("vb-gen2", JSON.stringify({ engine, voice, script, params, style, lang, subtitles, platform, takes, lexicon, pronounce })); }, [engine, voice, script, params, style, lang, subtitles, platform, takes, lexicon, pronounce]);
   useEffect(() => { if (status?.online && !cat) api<Catalogue>("voices").then(setCat).catch((e) => setCatErr(e.message)); }, [status?.online, cat]);
 
   const eng = cat?.engines[engine];
@@ -113,7 +133,12 @@ export default function Generate() {
   const audioS = chars / 14.5;
   const ready = status?.engines?.[engine] === "ready";
   const subsReady = status?.engines?.whisper === "ready";
-  const estS = rate * chars + (ready ? 0 : LOAD_S[engine]) + (subtitles ? (status?.rates?.whisper ?? RATE.whisper) * audioS + (subsReady ? 0 : LOAD_S.whisper) : 0) + 4;
+  const nTakes = engine === "kokoro" ? 1 : takes;
+  const whisperRate = status?.rates?.whisper ?? RATE.whisper;
+  const estS = rate * chars * nTakes + (ready ? 0 : LOAD_S[engine]) + (subtitles ? whisperRate * audioS + (subsReady ? 0 : LOAD_S.whisper) : 0)
+    + (nTakes > 1 ? whisperRate * audioS * nTakes + (subtitles || subsReady ? 0 : LOAD_S.whisper) : 0) + 4;
+  const platforms: Record<string, Platform> = cat?.platforms ?? {};
+  const plat = platforms[platform];
 
   function insertTag(tag: string) {
     const el = ta.current!;
@@ -146,7 +171,8 @@ export default function Generate() {
       const j = await api<Job>("jobs", {
         body: {
           engine, voice, style, lines: only ?? lines, params: p, label: label || undefined, subtitles, language: lang,
-          post: { trim: post.trim, normalize_dbfs: post.normalize ? -3 : null, sample_rate: post.sample_rate || null, ...(tempo != null ? { tempo } : {}) },
+          platform, takes: nTakes, lexicon, pronounce: parsePronounce(pronounce),
+          post: { trim: post.trim, normalize_dbfs: -3, sample_rate: post.sample_rate || null, ...(tempo != null ? { tempo } : {}) },
         },
       });
       setJob(j);
@@ -181,12 +207,11 @@ export default function Generate() {
               <h2>Script</h2>
               <span className="dim tiny">one line per row · <span className="mono">id | text | seconds</span> · or paste a timeline TSV</span>
             </div>
-            {engine === "orpheus" && (
-              <div className="chips" style={{ marginBottom: 12 }}>
-                <span className="label" style={{ alignSelf: "center", marginRight: 4 }}>Insert</span>
-                {TAGS.map((t) => <button key={t} className="chip tag" onClick={() => insertTag(t)}>{t}</button>)}
-              </div>
-            )}
+            <div className="chips" style={{ marginBottom: 12 }}>
+              <span className="label" style={{ alignSelf: "center", marginRight: 4 }}>Insert</span>
+              {MARKS.map((t) => <button key={t} className="chip tag" title="Real silence, in seconds" onClick={() => insertTag(t)}>{t}</button>)}
+              {engine === "orpheus" && TAGS.map((t) => <button key={t} className="chip tag" onClick={() => insertTag(t)}>{t}</button>)}
+            </div>
             <textarea ref={ta} value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false}
               placeholder={lang === "hi" ? "यहाँ अपनी स्क्रिप्ट लिखें, हर पंक्ति एक लाइन…" : "Write your script here, one line per row…"} />
             <div className="row between" style={{ marginTop: 10 }}>
@@ -242,6 +267,38 @@ export default function Generate() {
               <input type="range" min={0.85} max={1.2} step={0.01} value={effTempo} style={rangeFill(effTempo, 0.85, 1.2)} onChange={(e) => setTempo(+e.target.value)} />
               <div className="dim tiny" style={{ marginTop: 4 }}>Pitch-preserving, applied after the voice is generated. Stay within ±8% to keep it natural.</div>
             </div>
+          </div>
+
+          <div className="card">
+            <div className="card-head"><h2>Publish for</h2><span className="dim tiny">mastering + captions</span></div>
+            <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+              {PLATFORM_ORDER.filter((k) => !cat || platforms[k]).map((k) => (
+                <button key={k} className={`pick ${platform === k ? "on" : ""}`} title={platforms[k]?.about} onClick={() => setPlatform(k)} style={{ padding: "10px 8px" }}>
+                  <div className="t1" style={{ fontSize: 14 }}><span aria-hidden style={{ marginRight: 6, opacity: 0.7 }}>{PLATFORM_ICON[k]}</span>{platforms[k]?.label ?? k}</div>
+                  <div className="dim tiny mono">{platforms[k] ? (platforms[k].lufs != null ? `${platforms[k].lufs} LUFS` : "unmastered") : ""}</div>
+                </button>
+              ))}
+            </div>
+            {plat && <p className="dim small" style={{ margin: "12px 0 0" }}>{plat.about}{plat.lufs != null ? " Broadcast voice chain: rumble cut, presence lift, de-ess, gentle compression." : ""}</p>}
+            <div className="field" style={{ margin: "16px 0 0" }}>
+              <div className="row between" style={{ marginBottom: 6 }}><label className="f" style={{ margin: 0 }}><Trophy size={13} weight="duotone" /> Best of</label>
+                <span className="dim tiny">{nTakes > 1 ? `${nTakes} takes per sentence, the best one wins` : "one take"}</span></div>
+              <div className="seg">
+                {Array.from({ length: cat?.max_takes ?? 4 }, (_, i) => i + 1).map((n) => (
+                  <button key={n} className={nTakes === n ? "on" : ""} disabled={engine === "kokoro" && n > 1} onClick={() => setTakes(n)}>{n}×</button>
+                ))}
+              </div>
+              <div className="dim tiny" style={{ marginTop: 5 }}>{engine === "kokoro" ? "Kokoro gives the same take every time." : "Whisper checks every word of every take" + (CLONERS.includes(engine) ? " and how much it sounds like the voice" : "") + ". Takes N× longer; use it for the final render."}</div>
+            </div>
+            <div className="row between" style={{ marginTop: 14 }}>
+              <div style={{ minWidth: 0 }}><b className="small">Tech pronunciation</b><div className="dim tiny">SQL → sequel, GPU → G-P-U, 16GB → 16 gigabytes, markdown and links cleaned</div></div>
+              <button className={`switch ${lexicon ? "on" : ""}`} onClick={() => setLexicon(!lexicon)} aria-label="Tech pronunciation" />
+            </div>
+            <button className="quiet xs" style={{ marginTop: 8 }} onClick={() => setShowLex(!showLex)}><CaretDown size={12} style={{ transform: showLex ? "rotate(180deg)" : "none", transition: "transform .2s" }} />Your pronunciations{Object.keys(parsePronounce(pronounce)).length ? ` (${Object.keys(parsePronounce(pronounce)).length})` : ""}</button>
+            {showLex && (
+              <textarea value={pronounce} onChange={(e) => setPronounce(e.target.value)} spellCheck={false} style={{ minHeight: 90, marginTop: 8 }}
+                placeholder={"One per line: word = how to say it\nKubernetes = koo-ber-net-eez\nYourBrand = your brand"} />
+            )}
           </div>
 
           <div className="card">
@@ -306,7 +363,6 @@ export default function Generate() {
             {advanced && (
               <div style={{ marginTop: 12 }}>
                 <label className="row small" style={{ gap: 8, marginBottom: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={post.trim} onChange={(e) => setPost({ ...post, trim: e.target.checked })} />Trim leading/trailing silence</label>
-                <label className="row small" style={{ gap: 8, marginBottom: 10 }}><input type="checkbox" style={{ width: "auto" }} checked={post.normalize} onChange={(e) => setPost({ ...post, normalize: e.target.checked })} />Normalize peaks to −3 dB</label>
                 <select value={post.sample_rate} onChange={(e) => setPost({ ...post, sample_rate: +e.target.value })}>
                   <option value={48000}>48 kHz · video</option><option value={44100}>44.1 kHz · music</option><option value={24000}>24 kHz</option><option value={0}>engine native</option>
                 </select>
@@ -335,7 +391,9 @@ export default function Generate() {
           {job.results.length > 0 && (
             <div className="card reveal">
               <div className="row between" style={{ marginBottom: 6 }}>
-                <h2 style={{ margin: 0 }}>Takes{job.match != null ? <span className={`pill ${job.match >= 0.95 ? "ok" : "warn"}`}>script match {pct(job.match)}</span> : null}</h2>
+                <h2 style={{ margin: 0 }}>Takes{job.match != null ? <span className={`pill ${job.match >= 0.95 ? "ok" : "warn"}`}>script match {pct(job.match)}</span> : null}
+                  {job.similarity != null ? <span className={`pill ${simClass(job.similarity)}`} title="Speaker match vs the recording (0.86+ = same speaker)">voice match {pct(job.similarity)}</span> : null}
+                  {job.platform && platforms[job.platform] ? <span className="pill">{platforms[job.platform].label}</span> : null}</h2>
                 {job.library && (
                   <div className="row">
                     <Link className="btn ghost sm" href={`/library#${job.id}`}><ArrowSquareOut size={14} />Library</Link>

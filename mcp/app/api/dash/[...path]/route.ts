@@ -146,7 +146,19 @@ export async function POST(req: Request, ctx: Ctx) {
           delete body.image_key; delete body.image_from; delete body.video_key; delete body.video_from;
         }
       }
-      if (!body.kind && typeof body.voice === "string" && isCustomVoice(body.voice)) {
+      if (body.kind === "revoice") {
+        // the performance: an upload (uploads/...) or a library video's soundtrack
+        if (body.source_key) {
+          if (!/^uploads\/[A-Za-z0-9._-]+$/.test(String(body.source_key))) throw new Error("bad source_key");
+          body.url = await presignPath(String(body.source_key), 3600);
+        } else if (body.source_from) {
+          const lib = await getLibJob(String(body.source_from));
+          if (!lib || lib.kind !== "video") throw new Error("pick a video from the library");
+          body.url = await presignPath(`library/${lib.id}/video.mp4`, 3600);
+        }
+        delete body.source_key; delete body.source_from;
+      }
+      if ((!body.kind || body.kind === "revoice") && typeof body.voice === "string" && isCustomVoice(body.voice)) {
         // a recorded voice: hand the worker a link to it (its disk is wiped whenever Colab recycles the runtime)
         const ref = await refSync(body.voice);
         if (ref) body.ref = ref;

@@ -4,6 +4,8 @@ import numpy as np
 import torch
 
 MODEL = os.environ.get("WHISPER_MODEL", "openai/whisper-large-v3")
+# Speaker verification for the "sounds like you" score (and best-of-N takes). Small (~380 MB), loaded on first use.
+SV_MODEL = os.environ.get("VOICE_MATCH_MODEL", "microsoft/wavlm-base-plus-sv")
 
 
 def load_16k(path):
@@ -35,6 +37,23 @@ class Engine:
         proc = AutoProcessor.from_pretrained(MODEL)
         self.pipe = pipeline("automatic-speech-recognition", model=model, tokenizer=proc.tokenizer,
                              feature_extractor=proc.feature_extractor, torch_dtype=dtype, device=self.dev)
+        self.sv = None
+
+    def similarity(self, ref, paths):
+        """Cosine similarity of WavLM x-vectors, each file vs the reference. ~0.86+ is the model card's same-speaker
+        threshold; a good clone of a clean recording usually lands around 0.90-0.97."""
+        if self.sv is None:
+            from transformers import AutoFeatureExtractor, WavLMForXVector
+            self.sv = (AutoFeatureExtractor.from_pretrained(SV_MODEL), WavLMForXVector.from_pretrained(SV_MODEL).to(self.dev).eval())
+        fe, model = self.sv
+
+        def emb(p):
+            a = load_16k(p)[: 16000 * 20]  # 20 s is plenty for a voice print
+            x = fe(a, sampling_rate=16000, return_tensors="pt").to(self.dev)
+            with torch.inference_mode():
+                return torch.nn.functional.normalize(model(**x).embeddings, dim=-1)[0]
+        r = emb(ref)
+        return [round(float((r * emb(p)).sum()), 3) for p in paths]
 
     def _gen(self, language):
         gen = {} if MODEL.endswith(".en") else {"task": "transcribe"}

@@ -11,6 +11,7 @@ export const maxDuration = 60;
 
 const ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen"] as const;
 const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "whisper", "wan", "wan14", "ltx", "animate", "zimage", "qwenimage"] as const;
+const PLATFORMS = ["youtube", "shorts", "reels", "tiktok", "podcast", "raw"] as const;
 const MAX_WAIT = 45; // seconds a tool call may block; Vercel caps the request at maxDuration
 
 type Job = { id: string; status: string; progress: { done: number; total: number }; [k: string]: unknown };
@@ -80,7 +81,7 @@ const handler = createMcpHandler(
       {
         title: "List voices and parameters",
         description:
-          "Engines, voices, presets (female/male), every tunable parameter with default/min/max, post-processing defaults, and uploaded reference voices.",
+          "Engines, voices, presets (female/male), every tunable parameter with default/min/max, post-processing defaults, delivery styles, publishing platforms (loudness + caption presets), and uploaded reference voices.",
         inputSchema: z.object({}),
       },
       async () => {
@@ -97,7 +98,11 @@ const handler = createMcpHandler(
       {
         title: "Generate voiceover lines",
         description: [
-          "Synthesise one or more lines on the GPU worker and return signed WAV links (48 kHz mono, trimmed, peak -3 dBFS by default).",
+          "Synthesise one or more lines on the GPU worker and return signed WAV links (48 kHz mono, trimmed, mastered for the platform: broadcast voice chain + -14 LUFS by default).",
+          "platform (default youtube) masters for where it's going: youtube / shorts / reels / tiktok = -14 LUFS, podcast = -16 LUFS, raw = no mastering (peak -3 dBFS, for mixing yourself); shorts/reels/tiktok also cut subtitles into 1-3 word pop-up captions. Each result reports its lufs.",
+          "takes: 2-4 = best-of-N: every sentence is voiced N times and the take Whisper hears most accurately (and, for a cloned voice, that sounds most like the recording) wins. Costs N x the time; worth it for final renders.",
+          "Script markup: [pause], [pause 0.8], [pause 500ms], [beat], [breath] insert real silence. Tech terms are said right automatically (SQL -> sequel, GPU -> G P U, JSON -> jay-son, 16GB -> 16 gigabytes, markdown and URLs cleaned); pronounce: {word: 'how to say it'} adds your own, lexicon: false turns it off. The script itself is untouched for subtitles.",
+          "With a recorded voice on qwen, lines in Devanagari (Hindi) are voiced by Chatterbox in the same voice automatically. With subtitles on and a cloned voice, each line also gets similarity (voice match vs the recording; 0.86+ = same speaker).",
           "Engines: kokoro (fast drafts, many languages), chatterbox (emotion dial + cloning, 23 languages incl. Hindi), orpheus (most human, English; tags like <laugh> <sigh>), qwen (best cloning of the user's recorded voice; 10 languages, no Hindi; params.language takes names like English).",
           "No length limit: long text is split at sentences, voiced in one batch and re-joined.",
           "subtitles: true adds Whisper large-v3 word-timed SRT/VTT per line and for the whole timeline (uses each line's start when given), plus a match score vs the script.",
@@ -112,6 +117,11 @@ const handler = createMcpHandler(
           subtitles: z.boolean().optional().describe("also make word-timed subtitles with Whisper large-v3"),
           language: z.string().max(8).optional().describe("ISO code for Whisper/Chatterbox, e.g. en, hi; omit to auto-detect"),
           style: z.enum(["tech", "hype", "narrator", "neutral"]).optional().describe("delivery style; default tech"),
+          platform: z.enum(PLATFORMS).optional().describe("where it's going: sets loudness + caption cut; default youtube"),
+          takes: z.number().int().min(1).max(4).optional().describe("best-of-N per sentence (default 1)"),
+          captions: z.enum(["subtitles", "punchy"]).optional().describe("override the platform's caption cut"),
+          pronounce: z.record(z.string(), z.string()).optional().describe("custom pronunciations, e.g. {\"Kubernetes\": \"koo-ber-net-eez\"}"),
+          lexicon: z.boolean().optional().describe("built-in tech pronunciation (default true)"),
           params: z.record(z.string(), z.any()).optional().describe("engine params for all lines (override the style); see list_voices"),
           post: z
             .object({
@@ -120,6 +130,7 @@ const handler = createMcpHandler(
               trim_db: z.number().optional(),
               normalize_dbfs: z.number().nullable().optional(),
               sample_rate: z.number().int().nullable().optional(),
+              master: z.enum(PLATFORMS).nullable().optional().describe("override the platform's mastering; raw/null = peak normalise only"),
             })
             .optional(),
           label: z.string().max(80).optional(),
@@ -130,6 +141,36 @@ const handler = createMcpHandler(
         try {
           const ref = body.voice && isCustomVoice(body.voice) ? await refSync(body.voice) : null;
           const job = await call<Job>("/jobs", { body: ref ? { ...body, ref } : body });
+          return text(withHint(await waitFor(job.id, wait_seconds ?? MAX_WAIT)));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "revoice",
+      {
+        title: "Re-voice a performance in a recorded voice",
+        description: [
+          "Speech-to-speech: take a performance (any audio or video URL: a phone voice memo, a rough take, a screen recording) and re-speak it in a recorded voice (my_voices name, or female/male) with Chatterbox VC.",
+          "Timing, emphasis and emotion come from the performance, the voice and studio clarity from the recording, so it stays in sync with the original video. Up to 15 minutes.",
+          "Mastered for the platform like voice_lines; subtitles: true adds word-timed captions of what was said plus the voice match score.",
+        ].join(" "),
+        inputSchema: z.object({
+          url: z.string().url().describe("the performance: public or signed https link to audio or video"),
+          voice: z.string().describe("recorded voice name (my_voices) or female/male"),
+          platform: z.enum(PLATFORMS).optional().describe("default youtube"),
+          subtitles: z.boolean().optional(),
+          language: z.string().max(8).optional().describe("for the subtitles, e.g. en, hi"),
+          label: z.string().max(80).optional(),
+          wait_seconds: z.number().min(0).max(MAX_WAIT).optional().describe(`block up to this long (default ${MAX_WAIT})`),
+        }),
+      },
+      async ({ wait_seconds, ...body }) => {
+        try {
+          const ref = isCustomVoice(body.voice) ? await refSync(body.voice) : null;
+          const job = await call<Job>("/jobs", { body: { ...body, kind: "revoice", ...(ref ? { ref } : {}) } });
           return text(withHint(await waitFor(job.id, wait_seconds ?? MAX_WAIT)));
         } catch (e) {
           return fail(e);

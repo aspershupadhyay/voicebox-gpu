@@ -8,12 +8,14 @@ export type Word = { w: string; s: number; e: number };
 export type LibLine = {
   id: string; text: string; duration: number; window?: number | null; fits?: boolean | null; start?: number | null;
   heard?: string; match?: number | null; subs?: boolean; name?: string; chunks?: number; cues?: number;
+  lufs?: number | null; similarity?: number | null; spoken?: string; engine?: string; takes?: { n: number; picked: number[]; match: number; similarity: number | null };
 };
 export type LibImage = { file: string; thumb: string; width: number; height: number; transparent?: boolean };
 export type LibJob = {
   id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; created: number; archived: number; source?: string;
   subs?: { cues: number; timeline: string } | null; match?: number | null; results: LibLine[];
+  platform?: string; similarity?: number | null; mode?: string;
   video?: { width: number; height: number; duration: number; size: number; poster?: boolean; voice_job?: string; has_audio?: boolean };
   gen?: { model: string; mode: string; prompt: string; negative?: string; seed: number; steps: number; fps?: number; frames?: number; seconds?: number;
     source?: boolean; quality?: string; aspect?: string; count?: number; refs?: number; transparent?: boolean; width?: number; height?: number };
@@ -39,7 +41,7 @@ type WorkerResult = LibLine & { url?: string; srt_url?: string; vtt_url?: string
 type WorkerJob = {
   id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; created?: number; status: string;
-  subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; attach_to?: string; zip_url?: string;
+  subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; platform?: string; similarity?: number | null; mode?: string; attach_to?: string; zip_url?: string;
   gen?: LibJob["gen"] & Record<string, unknown>; video?: { width: number; height: number; duration: number; size: number; has_audio?: boolean; fps?: number; frames?: number } | null;
   results: (WorkerResult & { poster_url?: string; file?: string; thumb?: string; width?: number; height?: number; transparent?: boolean; thumb_url?: string })[];
 };
@@ -78,7 +80,7 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   const lib: LibJob = {
     id: job.id, kind: job.kind ?? "tts", engine: job.engine, voice: job.voice, label: job.label, language: job.language,
     params: job.params, style: job.style, created: Math.round((job.created ?? Date.now() / 1000) * 1000), archived: Date.now(), source: "worker",
-    subs: job.subs ?? null, match: job.match ?? null,
+    subs: job.subs ?? null, match: job.match ?? null, platform: job.platform, similarity: job.similarity ?? null, mode: job.mode,
     results: job.results.map(({ url, srt_url, vtt_url, json_url, ...r }) => r),
   };
   await putLibJob(lib);

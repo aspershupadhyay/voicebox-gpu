@@ -5,6 +5,8 @@
 POST /synth        {"text", "voice", "params", "ref_path"?, "ref_text"?, "out_path"} -> {"duration", "sample_rate"}
 POST /synth_batch  {"items": [<synth payload>, ...]} -> {"results": [{"duration", "sample_rate"} | {"error"}]}
 POST /transcribe   {"paths": [...], "language"?, "prompt"?} -> {"results": [{"text", "words", "duration"}]}
+POST /similarity   {"ref", "paths": [...]} -> {"scores": [cosine, ...]}            (whisper host: speaker match)
+POST /revoice      {"src_path", "ref_path", "out_path"} -> {"duration", "sample_rate"}  (chatterbox host: voice conversion)
 POST /video        {"prompt", "width", "height", "num_frames", "fps", "steps", "seed", "out_path", "progress_path", ...}
                    -> {"frames", "width", "height", "fps", "duration", "has_audio"}
 GET  /ready        -> {"ready": true, "batch": bool}
@@ -96,6 +98,12 @@ def main():
                         return self._send(200, engine.image(req))
                     if self.path == "/animate":
                         return self._send(200, engine.animate(req))
+                    if self.path == "/similarity":
+                        return self._send(200, {"scores": engine.similarity(req["ref"], req["paths"])})
+                    if self.path == "/revoice":
+                        audio, sr = engine.revoice(req["src_path"], req["ref_path"])
+                        sf.write(req["out_path"], audio, sr)
+                        return self._send(200, {"duration": len(audio) / sr, "sample_rate": sr})
                     if self.path == "/transcribe":
                         if hasattr(engine, "transcribe_batch"):
                             return self._send(200, {"results": engine.transcribe_batch(req["paths"], req.get("language"))})

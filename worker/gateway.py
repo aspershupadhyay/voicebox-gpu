@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as C  # noqa: E402
+from lexicon import is_devanagari, segments, speakable  # noqa: E402
 
 SECRET = os.environ.get("WORKER_SECRET", "")
 HOME = C.HOME
@@ -343,6 +344,13 @@ class Engines:
     def transcribe(self, paths, language=None):
         return self._post("whisper", "/transcribe", {"paths": paths, "language": language})["results"]
 
+    def similarity(self, ref_path, paths):
+        """Speaker-embedding cosine of each file vs the reference (WavLM SV, ~0.86+ = same speaker)."""
+        return self._post("whisper", "/similarity", {"ref": ref_path, "paths": paths})["scores"]
+
+    def revoice(self, payload):
+        return self._post("chatterbox", "/revoice", payload)
+
     def video(self, name, payload):
         return self._post(name, "/video", payload, timeout=3 * 60 * 60)
 
@@ -405,7 +413,9 @@ def add_ref(name, audio_bytes, transcript=None):
 
 
 # --------------------------------------------------------------------------------------- audio
-def postprocess(src, dst, post):
+def postprocess(src, dst, post, info=None):
+    """trim -> tempo -> resample -> master (voice chain + platform loudness) or peak normalise.
+    info, when given, receives {"lufs": integrated loudness of the result, or None when not mastered}."""
     import numpy as np
     import soundfile as sf
     try:
@@ -443,12 +453,67 @@ def postprocess(src, dst, post):
             n = int(round(len(audio) * int(target) / sr))
             audio = np.interp(np.linspace(0, len(audio) - 1, n), np.arange(len(audio)), audio).astype("float32")
         sr = int(target)
-    if post.get("normalize_dbfs") is not None:
+    plat = C.PLATFORMS.get(post.get("master") or "raw") or C.PLATFORMS["raw"]
+    lufs = None
+    if plat["lufs"] is not None and len(audio) > 0.6 * sr:
+        try:
+            audio, lufs = master(audio, sr, plat, dst)
+        except Exception as e:  # noqa: BLE001  never lose a take over mastering: fall back to peak normalising
+            log(f"mastering skipped ({type(e).__name__}: {e})")
+    if lufs is None and post.get("normalize_dbfs") is not None:
         peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
         if peak > 0:
             audio = audio * (10 ** (float(post["normalize_dbfs"]) / 20) / peak)
     sf.write(dst, audio, sr, subtype="PCM_16")
+    if info is not None:
+        info["lufs"] = lufs
     return len(audio) / sr
+
+
+def _loudnorm_stats(stderr):
+    """The JSON block loudnorm prints at the end of a run."""
+    m = re.findall(r"\{[^{}]*\"input_i\"[^{}]*\}", stderr)
+    if not m:
+        raise RuntimeError("loudnorm printed no measurement")
+    return json.loads(m[-1])
+
+
+def master(audio, sr, plat, dst):
+    """Broadcast voice chain (C.VOICE_CHAIN) + two-pass EBU R128 loudness to the platform's LUFS and true-peak
+    target. Pass one measures, pass two applies one linear gain, so the read keeps its dynamics.
+    Returns (audio, integrated LUFS of the result)."""
+    import soundfile as sf
+    tin, tout = dst + ".min.wav", dst + ".mout.wav"
+    sf.write(tin, audio, sr, subtype="FLOAT")
+    target = f"I={plat['lufs']}:TP={plat['tp']}:LRA=11"
+    try:
+        for chain in (C.VOICE_CHAIN, re.sub(r"deesser=[^,]*,", "", C.VOICE_CHAIN)):  # older ffmpeg has no deesser
+            p1 = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", tin, "-af", f"{chain},loudnorm={target}:print_format=json",
+                                 "-f", "null", "-"], capture_output=True, text=True)
+            if p1.returncode == 0:
+                break
+        else:
+            raise RuntimeError(p1.stderr.strip().splitlines()[-1] if p1.stderr.strip() else "ffmpeg failed")
+        s = _loudnorm_stats(p1.stderr)
+        if not re.match(r"^-?\d", str(s["input_i"])):  # silence measures -inf: nothing to master
+            raise RuntimeError("no measurable loudness")
+        measured = (f"measured_I={s['input_i']}:measured_TP={s['input_tp']}:measured_LRA={s['input_lra']}:"
+                    f"measured_thresh={s['input_thresh']}:offset={s['target_offset']}:linear=true")
+        p2 = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-y", "-i", tin, "-af",
+                             f"{chain},loudnorm={target}:{measured}:print_format=json,aresample={sr}",
+                             "-ar", str(sr), "-c:a", "pcm_f32le", tout], capture_output=True, text=True)
+        if p2.returncode != 0:
+            raise RuntimeError(p2.stderr.strip().splitlines()[-1] if p2.stderr.strip() else "ffmpeg failed")
+        out, _ = sf.read(tout, dtype="float32", always_2d=False)
+        try:
+            lufs = round(float(_loudnorm_stats(p2.stderr)["output_i"]), 1)
+        except Exception:
+            lufs = float(plat["lufs"])
+        return (out.mean(axis=1) if out.ndim > 1 else out), lufs
+    finally:
+        for f in (tin, tout):
+            if os.path.exists(f):
+                os.remove(f)
 
 
 # --------------------------------------------------------------------------------------- text + speed model
@@ -631,6 +696,8 @@ def make_job(body):
         return make_image_job(body)
     if body.get("kind") == "reference":
         return make_reference_job(body)
+    if body.get("kind") == "revoice":
+        return make_revoice_job(body)
     engine = body.get("engine")
     if engine not in C.TTS_ENGINES:
         raise ValueError(f"engine must be one of {C.TTS_ENGINES}")
@@ -647,17 +714,68 @@ def make_job(body):
             raise ValueError(f"line {i + 1}: duplicate id '{lid}'")
         if len(text) > MAX_TEXT:
             raise ValueError(f"line {lid}: text over {MAX_TEXT} characters; split it into several lines")
+        if not segments(text):
+            raise ValueError(f"line {lid}: only pause markers, nothing to say")
         seen.add(lid)
         clean.append({"id": lid, "text": text, "window": ln.get("window"), "start": ln.get("start"), "params": ln.get("params") or {}})
     style = body.get("style") or C.DEFAULT_STYLE
     style_params, style_post = C.style_settings(style, engine)
     job = _base_job("tts", body)
     job.update({"engine": engine, "voice": resolve_voice(engine, body.get("voice")), "style": style,
-                "params": {**style_params, **(body.get("params") or {})},
-                "post": {**C.POST_DEFAULTS, **style_post, **(body.get("post") or {})}, "lines": clean,
-                "subtitles": bool(body.get("subtitles")), "ref": body.get("ref") if isinstance(body.get("ref"), dict) else None})
+                "params": {**style_params, **(body.get("params") or {})}, "lines": clean,
+                "subtitles": bool(body.get("subtitles")), "ref": body.get("ref") if isinstance(body.get("ref"), dict) else None,
+                "lexicon": body.get("lexicon", True) is not False, "pronounce": _pronounce(body.get("pronounce")),
+                "takes": 1 if engine == "kokoro" else max(1, min(C.MAX_TAKES, int(body.get("takes") or 1)))})
+    _platform(job, body, style_post)
+    if engine == "kokoro" and int(body.get("takes") or 1) > 1:
+        job["warnings"].append("kokoro is deterministic, so every take would be identical: made one")
     chars = sum(len(l["text"]) for l in clean)
-    job["est_total"] = RATES[engine] * chars + (RATES["whisper"] * chars / 14 if job["subtitles"] else 0)
+    job["est_total"] = (RATES[engine] * chars * job["takes"] + (RATES["whisper"] * chars / 14 if job["subtitles"] else 0)
+                        + (RATES["whisper"] * chars / 14 * job["takes"] if job["takes"] > 1 else 0))
+    return _enqueue(job)
+
+
+def _pronounce(given):
+    """{"word": "how to say it"} from the request, trimmed to something sane."""
+    if not isinstance(given, dict):
+        return {}
+    return {str(k)[:60]: str(v)[:120] for k, v in list(given.items())[:300] if str(k).strip() and str(v).strip()}
+
+
+def _platform(job, body, style_post=None):
+    """Where the audio is going: sets the mastering target and the caption cut. An explicit post.master or
+    captions in the request wins over the platform's."""
+    platform = body.get("platform") or C.DEFAULT_PLATFORM
+    if platform not in C.PLATFORMS:
+        raise ValueError(f"platform must be one of {list(C.PLATFORMS)}")
+    given = body.get("post") or {}
+    if given.get("master") not in (None, "", *C.PLATFORMS):
+        raise ValueError(f"post.master must be one of {list(C.PLATFORMS)} or null")
+    job["platform"] = platform
+    job["post"] = {**C.POST_DEFAULTS, **(style_post or {}), **given}
+    job["post"]["master"] = given["master"] if "master" in given else platform
+    captions = body.get("captions") or C.PLATFORMS[platform]["captions"]
+    if captions not in C.CAPTION_STYLES:
+        raise ValueError(f"captions must be one of {list(C.CAPTION_STYLES)}")
+    job["captions"] = captions
+
+
+def make_revoice_job(body):
+    """Re-voice a performance: the user's own take (any recording, even a phone voice memo or a video) keeps its
+    timing, emphasis and emotion, but comes out in a clean studio copy of a recorded voice (Chatterbox VC)."""
+    url = _http_url(body.get("url"), "url")
+    if not url:
+        raise ValueError("url must point at the performance to re-voice (audio or video)")
+    voice = str(body.get("voice") or "")
+    if not voice or voice == "default":
+        raise ValueError("voice: the recorded voice to speak in (a my_voices name, or female/male)")
+    job = _base_job("tts", body)
+    job.update({"engine": "chatterbox", "voice": voice, "style": "neutral", "mode": "revoice", "params": {},
+                "lines": [{"id": "revoice", "text": "", "url": url, "window": None, "start": None, "params": {}}],
+                "subtitles": bool(body.get("subtitles")), "ref": body.get("ref") if isinstance(body.get("ref"), dict) else None,
+                "takes": 1, "lexicon": False, "pronounce": {}})
+    _platform(job, {**body, "post": {"trim": False, **(body.get("post") or {})}})  # untrimmed: stays in sync with the video
+    job["est_total"] = 60.0  # refined once the source's length is known
     return _enqueue(job)
 
 
@@ -833,11 +951,12 @@ def _prepare(job, name):
     ENG.ensure(name)
 
 
-def _join_chunks(paths, out_path, gap=0.2):
+def _join_chunks(paths, out_path, gaps=None):
+    """Join chunk WAVs with a natural 0.2 s pause, or the gap a [pause] marker asked for (gaps[i] follows chunk i)."""
     import numpy as np
     import soundfile as sf
     parts, sr = [], None
-    for p in paths:
+    for i, p in enumerate(paths):
         a, sr_ = sf.read(p, dtype="float32", always_2d=False)
         if a.ndim > 1:
             a = a.mean(axis=1)
@@ -847,71 +966,114 @@ def _join_chunks(paths, out_path, gap=0.2):
             if len(idx):
                 a = a[max(0, idx[0] - int(0.04 * sr)): idx[-1] + int(0.06 * sr)]
         parts.append(a)
-        parts.append(np.zeros(int(gap * sr), dtype="float32"))
+        gap = (gaps[i] if gaps and i < len(gaps) else None)
+        parts.append(np.zeros(int((0.2 if gap is None else gap) * sr), dtype="float32"))
     sf.write(out_path, np.concatenate(parts[:-1]) if parts else np.zeros(1, "float32"), sr)
 
 
+def _is_english(engine, voice, params, job):
+    if engine == "orpheus":
+        return True
+    if engine == "kokoro":
+        return (voice or "a")[0] in "ab"
+    lang = params.get("language") or job.get("language") or "en"
+    return str(lang).lower().startswith("en")
+
+
+def _line_plan(job, ln, engine, voice_arg):
+    """How one line gets voiced: which engine (Hindi lines on a Qwen job go to Chatterbox, same voice), its params,
+    and its chunks as (script text, spoken text, gap after) — split at [pause] markers, then at sentences."""
+    eng, params = engine, {**job["params"], **ln["params"]}
+    if engine == "qwen" and is_devanagari(ln["text"]):
+        eng = "chatterbox"
+        params = {**C.style_settings(job["style"], "chatterbox")[0], **{k: v for k, v in params.items() if k == "seed"}, "language": "hi"}
+    params = C.resolve_params(eng, params)
+    english = _is_english(eng, voice_arg if eng == engine else None, params, job)
+    chunks = []
+    for seg, gap in segments(ln["text"]):
+        parts = split_text(seg, C.ENGINES[eng].get("chunk_chars", 0))
+        for k, part in enumerate(parts):
+            said = speakable(part, job.get("pronounce"), tech=english and job.get("lexicon", True)) or part
+            chunks.append((part, said, gap if k == len(parts) - 1 else None))
+    return {"ln": ln, "engine": eng, "params": params, "chunks": chunks,
+            "voice_arg": voice_arg if eng == engine else None}
+
+
 def run_tts(job):
+    if job.get("mode") == "revoice":
+        return run_revoice(job)
     engine, voice = job["engine"], job["voice"]
     jdir = os.path.join(JOBS_DIR, job["id"])
     ref_path = ref_text = None
     if C.ENGINES[engine].get("clone") or (engine == "chatterbox" and voice != "default"):
         job["stage"] = "reference"
         ref_path, ref_text = get_ref(voice, job.get("ref"))
+    job["ref_path"] = ref_path
     voice_arg = voice if engine in ("kokoro", "orpheus") else None
-    _prepare(job, engine)
-    job["stage"] = "generating"
-    max_chars = C.ENGINES[engine].get("chunk_chars", 0)
+    takes = job.get("takes", 1)
 
-    plan = []  # (line, [chunk texts])
-    for ln in job["lines"]:
-        plan.append((ln, split_text(ln["text"], max_chars)))
-    if any(len(c) > 1 for _, c in plan):
-        job["warnings"].append(f"long lines split into {sum(len(c) for _, c in plan)} sentence chunks and re-joined")
+    plans = [_line_plan(job, ln, engine, voice_arg) for ln in job["lines"]]
+    order = {p["ln"]["id"]: i for i, p in enumerate(plans)}
+    if any(len(p["chunks"]) > 1 for p in plans):
+        job["warnings"].append(f"long lines split into {sum(len(p['chunks']) for p in plans)} chunks (sentences and [pause] markers) and re-joined")
+    rerouted = [p["ln"]["id"] for p in plans if p["engine"] != engine]
+    if rerouted:
+        job["warnings"].append(f"{len(rerouted)} Hindi line(s) voiced by Chatterbox in the same voice (Qwen has no Hindi)")
+    if any(c[0] != c[1] for p in plans for c in p["chunks"]):
+        job["warnings"].append("tech terms / markdown rewritten for speech (lexicon: false to turn off)")
 
-    # group lines: big batches on batch engines (vLLM), one line at a time elsewhere
-    groups, cur, n = [], [], 0
-    batch_size = 8 if ENG.batch.get(engine) else 1
-    for item in plan:
-        cur.append(item); n += len(item[1])
-        if n >= batch_size:
-            groups.append(cur); cur, n = [], 0
-    if cur:
-        groups.append(cur)
+    def out(p, i, k):
+        return os.path.join(jdir, f"{p['ln']['id']}.c{i}.t{k}.wav")
 
-    for group in groups:
-        items, owners = [], []
-        for ln, chunks in group:
-            params = C.resolve_params(engine, {**job["params"], **ln["params"]})
-            for k, text in enumerate(chunks):
-                items.append({"text": text, "voice": voice_arg, "params": params, "ref_path": ref_path, "ref_text": ref_text,
-                              "out_path": os.path.join(jdir, f"{ln['id']}.c{k}.wav")})
-                owners.append(ln["id"])
-        chars = sum(len(it["text"]) for it in items)
-        t0 = time.time()
-        first, last = len(job["results"]) + 1, len(job["results"]) + len(group)
-        label = f"line {first} of {len(job['lines'])}" if first == last else f"lines {first}–{last} of {len(job['lines'])} together"
-        res = _run_unit(job, RATES[engine] * chars, lambda: ENG.synth_batch(engine, items), label)
-        if ENG.batch.get(engine) and len(items) > 1:
-            learn_rate(engine, time.time() - t0, chars)
-        elif not ENG.batch.get(engine):
-            learn_rate(engine, time.time() - t0, chars)
-        errs = [r["error"] for r in res if "error" in r]
-        if errs:
-            raise RuntimeError(errs[0])
-        for ln, chunks in group:
-            raw = os.path.join(jdir, f"{ln['id']}.raw.wav")
-            paths = [os.path.join(jdir, f"{ln['id']}.c{k}.wav") for k in range(len(chunks))]
-            _join_chunks(paths, raw)
-            for p in paths:
-                os.remove(p)
-            dur = postprocess(raw, os.path.join(jdir, f"{ln['id']}.wav"), job["post"])
-            os.remove(raw)
-            win = ln.get("window")
-            job["results"].append({"id": ln["id"], "text": ln["text"], "duration": round(dur, 3), "window": win,
-                                   "start": ln.get("start"), "chunks": len(chunks),
-                                   "fits": None if win in (None, "") else dur <= float(win)})
-        log(f"job {job['id']} {engine}/{voice} {len(job['results'])}/{len(job['lines'])} lines")
+    # batches: per engine, whole lines, up to 8 items on batch engines (vLLM / Qwen), one at a time elsewhere
+    for eng in dict.fromkeys(p["engine"] for p in plans):
+        mine = [p for p in plans if p["engine"] == eng]
+        _prepare(job, eng)
+        job["stage"] = "generating"
+        batch_size = 8 if ENG.batch.get(eng) else 1
+        groups, cur, n = [], [], 0
+        for p in mine:
+            cur.append(p); n += len(p["chunks"]) * takes
+            if n >= batch_size:
+                groups.append(cur); cur, n = [], 0
+        if cur:
+            groups.append(cur)
+        for group in groups:
+            items = []
+            for p in group:
+                for i, (_, said, _) in enumerate(p["chunks"]):
+                    for k in range(takes):
+                        params = {**p["params"], "seed": int(p["params"].get("seed", 7)) + 1000 * k} if k else p["params"]
+                        items.append({"text": said, "voice": p["voice_arg"], "params": params, "ref_path": ref_path,
+                                      "ref_text": ref_text, "out_path": out(p, i, k)})
+            chars = sum(len(it["text"]) for it in items)
+            t0 = time.time()
+            first, last = order[group[0]["ln"]["id"]] + 1, order[group[-1]["ln"]["id"]] + 1
+            label = f"line {first} of {len(plans)}" if first == last else f"lines {first}–{last} of {len(plans)} together"
+            if takes > 1:
+                label += f" · {takes} takes each"
+            res = _run_unit(job, RATES[eng] * chars, lambda: ENG.synth_batch(eng, items), label)
+            if not ENG.batch.get(eng) or len(items) > 1:
+                learn_rate(eng, time.time() - t0, chars)
+            errs = [r["error"] for r in res if "error" in r]
+            if errs:
+                raise RuntimeError(errs[0])
+            if takes == 1:
+                for p in group:
+                    _assemble(job, jdir, p, [out(p, i, 0) for i in range(len(p["chunks"]))])
+            log(f"job {job['id']} {eng}/{voice} {sum(len(g) for g in groups[:groups.index(group) + 1])}/{len(mine)} lines")
+
+    if takes > 1:
+        picks = _pick_takes(job, plans, out, ref_path)
+        for p in plans:
+            _assemble(job, jdir, p, [out(p, i, picks[p["ln"]["id"]]["take"][i]) for i in range(len(p["chunks"]))],
+                      picks[p["ln"]["id"]])
+        for p in plans:  # the takes that lost
+            for i in range(len(p["chunks"])):
+                for k in range(takes):
+                    if os.path.exists(out(p, i, k)):
+                        os.remove(out(p, i, k))
+    job["results"].sort(key=lambda r: order[r["id"]])
 
     if job["subtitles"]:
         try:
@@ -925,9 +1087,159 @@ def run_tts(job):
                 r.pop("words", None); r.pop("subs", None)
 
 
+def _assemble(job, jdir, p, paths, pick=None):
+    """Chunks -> one line WAV: join with the asked-for gaps, then trim, pace, resample and master."""
+    ln = p["ln"]
+    raw = os.path.join(jdir, f"{ln['id']}.raw.wav")
+    _join_chunks(paths, raw, [c[2] for c in p["chunks"]])
+    for x in paths:
+        if os.path.exists(x):
+            os.remove(x)
+    info = {}
+    dur = postprocess(raw, os.path.join(jdir, f"{ln['id']}.wav"), job["post"], info)
+    os.remove(raw)
+    win = ln.get("window")
+    r = {"id": ln["id"], "text": ln["text"], "duration": round(dur, 3), "window": win, "start": ln.get("start"),
+         "chunks": len(p["chunks"]), "fits": None if win in (None, "") else dur <= float(win), "lufs": info.get("lufs")}
+    if p["engine"] != job["engine"]:
+        r["engine"] = p["engine"]
+    if any(c[0] != c[1] for c in p["chunks"]):
+        r["spoken"] = " ".join(c[1] for c in p["chunks"])
+    if pick:
+        r["takes"] = {"n": job["takes"], "picked": [k + 1 for k in pick["take"]], "match": pick["match"], "similarity": pick["similarity"]}
+    job["results"].append(r)
+
+
+def _pick_takes(job, plans, out, ref_path):
+    """Best-of-N: Whisper transcribes every take of every chunk; the winner reads the script most faithfully
+    (match vs the script or its spoken form), sounds most like the reference voice (when cloning), and hasn't run on
+    (a take far longer than its siblings is usually a hallucinated tail). Picked per chunk, so one fluffed sentence
+    doesn't cost a whole line."""
+    takes = job["takes"]
+    _prepare(job, "whisper")
+    job["stage"] = "choosing"
+    entries = [(p, i, k) for p in plans for i in range(len(p["chunks"])) for k in range(takes)]
+    paths = [out(p, i, k) for p, i, k in entries]
+    import soundfile as sf
+    durs = [sf.info(x).duration for x in paths]
+    heard = []
+    for b in range(0, len(paths), 4):
+        batch = paths[b:b + 4]
+        audio_s = sum(durs[b:b + 4])
+        t0 = time.time()
+        heard += _run_unit(job, RATES["whisper"] * audio_s, lambda: ENG.transcribe(batch, job.get("language")),
+                           f"listening to takes {b + 1}–{b + len(batch)} of {len(paths)}")
+        learn_rate("whisper", time.time() - t0, audio_s)
+    sims = [None] * len(paths)
+    if ref_path:
+        try:
+            sims = _run_unit(job, 0.3 * len(paths) + 5, lambda: ENG.similarity(ref_path, paths), "comparing each take with your voice")
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001  a missing voice-match model only costs the similarity half of the score
+            job["warnings"].append(f"voice match unavailable ({type(e).__name__}); takes chosen on script accuracy")
+    picks = {}
+    for p in plans:
+        chosen, matches, simil = [], [], []
+        for i, (text, said, _) in enumerate(p["chunks"]):
+            idx = [n for n, (q, j, _) in enumerate(entries) if q is p and j == i]
+            med = sorted(durs[n] for n in idx)[len(idx) // 2]
+
+            def score(n):
+                m = max(match_score(text, heard[n]["text"]) or 0, match_score(said, heard[n]["text"]) or 0)
+                return m + 0.5 * (sims[n] or 0) - (0.3 if durs[n] > 1.5 * med + 0.5 else 0)
+            best = max(idx, key=score)
+            chosen.append(entries[best][2])
+            matches.append(max(match_score(text, heard[best]["text"]) or 0, match_score(said, heard[best]["text"]) or 0))
+            if sims[best] is not None:
+                simil.append(sims[best])
+        picks[p["ln"]["id"]] = {"take": chosen, "match": round(sum(matches) / len(matches), 3),
+                                "similarity": round(sum(simil) / len(simil), 3) if simil else None}
+    return picks
+
+
+def run_revoice(job):
+    """Speech-to-speech: clean the user's performance, cut it into <= ~20 s pieces at the quietest moments, convert
+    each to the target voice with Chatterbox VC, and butt them back together with no gaps so the timing still
+    matches the original video frame for frame."""
+    import numpy as np
+    import soundfile as sf
+    jdir = os.path.join(JOBS_DIR, job["id"])
+    job["stage"] = "downloading"
+    raw = os.path.join(jdir, "performance.in")
+    _download(job["lines"][0]["url"], raw, 600 * 1024 * 1024)
+    job["stage"] = "cleaning"
+    clean = os.path.join(jdir, "performance.wav")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", raw, "-vn", "-ac", "1", "-ar", "24000",
+                    "-af", "highpass=f=70,lowpass=f=11000,afftdn=nf=-28", clean], check=True)
+    os.remove(raw)
+    a, sr = sf.read(clean, dtype="float32", always_2d=False)
+    dur = len(a) / sr
+    if dur < 1:
+        raise ValueError("the performance is under a second long")
+    if dur > 15 * 60:
+        raise ValueError("re-voice takes up to 15 minutes at a time; split the performance")
+    # cut points: the quietest 50 ms within +-4 s of every 20 s mark
+    win = int(0.05 * sr)
+    energy = np.convolve(a ** 2, np.ones(win) / win, mode="same")
+    cuts, t = [0], 20.0
+    while t < dur - 5:
+        lo, hi = int((t - 4) * sr), int(min(dur, t + 4) * sr)
+        c = lo + int(np.argmin(energy[lo:hi]))
+        cuts.append(c)
+        t = c / sr + 20.0
+    cuts.append(len(a))
+    pieces = []
+    for n in range(len(cuts) - 1):
+        p = os.path.join(jdir, f"piece{n}.wav")
+        sf.write(p, a[cuts[n]:cuts[n + 1]], sr)
+        pieces.append((p, (cuts[n + 1] - cuts[n]) / sr))
+    os.remove(clean)
+    job["stage"] = "reference"
+    ref_path, _ = get_ref(job["voice"], job.get("ref"))
+    job["ref_path"] = ref_path
+    job["est_total"] = RATES["revoice"] * dur + (RATES["whisper"] * dur if job["subtitles"] else 0) + 10
+    _prepare(job, "chatterbox")
+    job["stage"] = "generating"
+    outs = []
+    for n, (p, d) in enumerate(pieces):
+        o = os.path.join(jdir, f"piece{n}.out.wav")
+        t0 = time.time()
+        _run_unit(job, RATES["revoice"] * d, lambda: ENG.revoice({"src_path": p, "ref_path": ref_path, "out_path": o}),
+                  f"piece {n + 1} of {len(pieces)}")
+        learn_rate("revoice", time.time() - t0, d)
+        outs.append(o)
+        os.remove(p)
+    parts, osr = [], None
+    for o in outs:
+        x, osr = sf.read(o, dtype="float32", always_2d=False)
+        parts.append(x.mean(axis=1) if x.ndim > 1 else x)
+        os.remove(o)
+    joined = os.path.join(jdir, "revoice.raw.wav")
+    sf.write(joined, np.concatenate(parts), osr)
+    info = {}
+    final = postprocess(joined, os.path.join(jdir, "revoice.wav"), job["post"], info)
+    os.remove(joined)
+    job["results"].append({"id": "revoice", "text": "", "duration": round(final, 3), "window": None, "start": None,
+                           "chunks": len(pieces), "fits": None, "lufs": info.get("lufs"), "source_s": round(dur, 2)})
+    if job["subtitles"]:
+        try:
+            subtitle_tts(job, jdir)
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001
+            traceback.print_exc()
+            job["warnings"].append(f"subtitles failed ({type(e).__name__}); audio is saved")
+    r = job["results"][0]
+    r["text"] = r.get("heard") or "Re-voiced performance"
+    r["match"] = None
+    job["match"] = None
+
+
 def subtitle_tts(job, jdir):
     _prepare(job, "whisper")
     job["stage"] = "subtitles"
+    style = C.CAPTION_STYLES[job.get("captions") or "subtitles"]
     res_by_id = {r["id"]: r for r in job["results"]}
     ids = [r["id"] for r in job["results"]]
     for i in range(0, len(ids), 4):
@@ -940,16 +1252,29 @@ def subtitle_tts(job, jdir):
         for x, o in zip(batch, outs):
             r = res_by_id[x]
             r["heard"] = o["text"]
-            r["match"] = match_score(r["text"], o["text"])
+            scores = [match_score(r["text"], o["text"]), match_score(r.get("spoken") or "", o["text"])]
+            r["match"] = max((m for m in scores if m is not None), default=None)  # Whisper may write "SQL" or "sequel"
             r["words"] = o["words"]
-            cues = cues_from_words(o["words"])
+            cues = cues_from_words(o["words"], style=style)
             write_subs(jdir, f"{x}.subs", cues, o["words"])
             r["subs"] = True
+    if job.get("ref_path"):  # how much each finished line sounds like the cloned voice
+        try:
+            ids = [r["id"] for r in job["results"]]
+            sims = _run_unit(job, 0.3 * len(ids) + 5, lambda: ENG.similarity(job["ref_path"], [os.path.join(jdir, f"{x}.wav") for x in ids]),
+                             "comparing with the reference voice")
+            for x, s in zip(ids, sims):
+                res_by_id[x]["similarity"] = s
+            job["similarity"] = round(sum(sims) / len(sims), 3) if sims else None
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001
+            job["warnings"].append(f"voice match unavailable ({type(e).__name__})")
     # one subtitle file for the whole timeline: real starts when given, else lines back to back
     t, cues, words = 0.0, [], []
     for r in job["results"]:
         off = float(r["start"]) if r.get("start") not in (None, "") else t
-        cues += cues_from_words(r.get("words") or [], off)
+        cues += cues_from_words(r.get("words") or [], off, style)
         words += [{**w, "s": round(w["s"] + off, 3), "e": round(w["e"] + off, 3), "line": r["id"]} for w in r.get("words") or []]
         t = off + r["duration"]
     write_subs(jdir, "subtitles", cues, words)
@@ -1304,16 +1629,19 @@ def _progress(job):
     if stage == "generating":
         detail = (cur or {}).get("label") or f"line {min(len(job['results']) + 1, len(job['lines']))} of {len(job['lines'])}"
     elif stage == "subtitles":
-        detail = "Whisper large-v3, word timestamps"
+        detail = (cur or {}).get("label") or "Whisper large-v3, word timestamps"
     elif stage == "transcribing":
         detail = "Whisper is writing down what you said" if job["kind"] == "reference" else f"file {min(len(job['results']) + 1, len(job['lines']))} of {len(job['lines'])}"
     elif stage == "cleaning":
         detail = "removing rumble and hiss, levelling"
+    elif stage == "choosing":
+        detail = (cur or {}).get("label") or "Whisper is picking the best take"
     return frac, round(eta), stage, detail
 
 
 def job_view(job, urls=True):
-    v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version")}
+    v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
+                                 "platform", "captions", "takes", "mode", "similarity")}
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
     if job["kind"] == "tts":
@@ -1370,7 +1698,8 @@ def catalogue():
         out[name][unit] = RATES.get(name)
     refs = sorted(f[:-4] for f in os.listdir(REFS_DIR) if f.endswith(".wav"))
     return {"engines": out, "references": refs, "preset_references": list(C.PRESET_REFS),
-            "post_defaults": C.POST_DEFAULTS, "subtitle_style": C.SUBTITLE_STYLE,
+            "post_defaults": C.POST_DEFAULTS, "subtitle_style": C.SUBTITLE_STYLE, "caption_styles": C.CAPTION_STYLES,
+            "platforms": C.PLATFORMS, "default_platform": C.DEFAULT_PLATFORM, "max_takes": C.MAX_TAKES,
             "styles": C.STYLES, "default_style": C.DEFAULT_STYLE, "groups": C.GROUPS, "idle_min": C.IDLE_MIN}
 
 
