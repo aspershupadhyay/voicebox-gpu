@@ -1,6 +1,7 @@
 "use client";
 // Your own voice model, end to end: collect 30-60 minutes of you (read along or upload), train it on the GPU worker
-// with one click, then benchmark it against your cloned voices.
+// with one click, then benchmark it against your cloned voices. One dataset and one model per person: each of you picks
+// your own name, and both models stay available to everyone (the myvoice engine, voice = the name).
 import { ArrowRight, CaretLeft, CaretRight, Microphone, Stop, TrashSimple, UploadSimple } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { READ_ALONG } from "@/lib/readalong";
@@ -15,7 +16,7 @@ type Part = { job: string; clips: number; minutes: number; input_minutes: number
   sources: { name: string; duration: number; clips: number }[] };
 type Dataset = { name: string; parts: Part[]; clips: number; minutes: number };
 type Model = { name: string; job: string; created: number; clips: number; minutes: number; epochs: number; loss: number;
-  sample: { text: string; duration: number } | null; sample_url?: string | null };
+  sample: { text: string; duration: number } | null; sample_url?: string | null; best_epoch?: number; flow_clips?: number };
 type Bench = { target: string | null; candidates: { label: string; engine: string; voice: string; match?: number | null; similarity?: number | null; mos?: number | null; rtf?: number; score?: number | null; lines?: string[]; error?: string }[] };
 
 const MILESTONES = [[15, "works"], [30, "good"], [60, "best"]] as const;
@@ -159,20 +160,23 @@ const TRAIN_STAGES: Record<string, string> = { queued: "Waiting for the GPU", in
   downloading: "Fetching your recordings", encoding: "Turning your clips into tokens", loading: "Loading Orpheus 3B",
   training: "Learning your voice", saving: "Saving your model", testing: "Voicing a test line", done: "Done" };
 
-function Train({ name, minutes }: { name: string; minutes: number }) {
+function Train({ name, minutes, onTrained }: { name: string; minutes: number; onTrained: () => void }) {
   const { status } = useStatus();
   const { confirm, toast } = useDialog();
   const [model, setModel] = useState<Model | null>(null);
   const [err, setErr] = useState("");
-  const loadModel = useCallback(() => { api<{ model: Model | null }>("model").then((r) => setModel(r.model)).catch(() => {}); }, []);
+  const loadModel = useCallback(() => {
+    setModel(null);
+    api<{ model: Model | null }>(`model?name=${encodeURIComponent(name)}`).then((r) => setModel(r.model?.name === name ? r.model : null)).catch(() => {});
+  }, [name]);
   useEffect(loadModel, [loadModel]);
-  const { job, start } = usePoll((j) => { toast("Your voice is trained. It's the myvoice engine now.", "ok"); if (j.model) loadModel(); });
+  const { job, start } = usePoll((j) => { toast(`${name} is trained. Pick "${name}" under Your model in Voiceover.`, "ok"); if (j.model) { loadModel(); onTrained(); } });
   const busy = !!job && ["queued", "running"].includes(job.status);
   const p = job?.progress;
 
   async function train() {
     setErr("");
-    if (model && !(await confirm({ title: "Train a new model?", body: "It replaces the model the myvoice engine uses now. Voice and video jobs wait while the GPU trains (about 1-2 hours).", confirm: "Train" }))) return;
+    if (model && !(await confirm({ title: `Train ${name} again?`, body: `It replaces ${name}'s model (other people's models stay). Voice and video jobs wait while the GPU trains (about 1-2 hours on a free T4).`, confirm: "Train" }))) return;
     try {
       start(await api<Job>("jobs", { body: { kind: "train", name } }));
     } catch (e) {
@@ -184,13 +188,13 @@ function Train({ name, minutes }: { name: string; minutes: number }) {
     <div className="card">
       <div className="card-head"><h2>2 · Train</h2><span className="dim tiny">on your GPU worker · about 1-2 h on a free T4</span></div>
       <p className="dim small" style={{ marginTop: 0 }}>
-        Fine-tunes Orpheus 3B on every clip in <b>{name}</b>. The worker pauses other jobs while it trains, then your model is
-        saved to your storage and becomes the <b>myvoice</b> engine. Keep the Colab tab open until it finishes.
+        Fine-tunes Orpheus 3B on every clip in <b>{name}</b>. The worker pauses other jobs while it trains, then the model is
+        saved to your storage as <b>{name}</b> under <b>Your model</b> in Voiceover, for both of you. Keep the Colab tab open until it finishes.
       </p>
       {model && !busy && (
         <div className="stack" style={{ gap: 8, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
           <div className="row between small"><b>Current model · {model.name}</b>
-            <span className="dim">{model.minutes.toFixed(1)} min · {model.clips} clips · {model.epochs} epochs · loss {model.loss.toFixed(3)} · {new Date(model.created).toLocaleDateString()}</span></div>
+            <span className="dim">{model.minutes.toFixed(1)} min · {model.clips} clips · {model.best_epoch ? `best of ${model.epochs} epochs: ${model.best_epoch}` : `${model.epochs} epochs`} · loss {model.loss.toFixed(3)}{model.flow_clips ? " · flow" : ""} · {new Date(model.created).toLocaleDateString()}</span></div>
           {model.sample_url && <><span className="dim tiny">“{model.sample?.text}”</span><Player src={model.sample_url} compact /></>}
         </div>
       )}
@@ -218,7 +222,7 @@ function Train({ name, minutes }: { name: string; minutes: number }) {
   );
 }
 
-function Benchmark({ mine }: { mine: MyVoice[] }) {
+function Benchmark({ mine, name }: { mine: MyVoice[]; name: string }) {
   const { status } = useStatus();
   const [voice, setVoice] = useState(mine[0]?.name ?? "");
   const [lines, setLines] = useState(TEST);
@@ -230,7 +234,7 @@ function Benchmark({ mine }: { mine: MyVoice[] }) {
   async function run() {
     setErr("");
     const cands = [
-      picks.myvoice && { engine: "myvoice", voice: "me", label: "Your model" },
+      picks.myvoice && { engine: "myvoice", voice: name, label: `Your model · ${name}` },
       picks.qwen && voice && { engine: "qwen", voice, label: `Qwen clone · ${voice}` },
       picks.chatterbox && voice && { engine: "chatterbox", voice, label: `Chatterbox clone · ${voice}` },
       picks.orpheus && { engine: "orpheus", voice: "tara", label: "Orpheus preset (baseline)" },
@@ -285,15 +289,34 @@ function Benchmark({ mine }: { mine: MyVoice[] }) {
   );
 }
 
+type Person = { name: string; minutes: number; clips: number };
+
 export default function MyModel() {
   const { confirm } = useDialog();
   const [mine, setMine] = useState<MyVoice[]>([]);
-  const [name, setName] = useState("me");
+  const [name, setName] = useState("");
+  const [people, setPeople] = useState<Person[]>([]);
+  const [models, setModels] = useState<Model[]>([]);
   const [ds, setDs] = useState<Dataset | null>(null);
-  const load = useCallback(() => { api<Dataset>(`datasets/${name}`).then(setDs).catch(() => setDs(null)); }, [name]);
+  const load = useCallback(() => { if (name) api<Dataset>(`datasets/${name}`).then(setDs).catch(() => setDs(null)); }, [name]);
+  const loadModels = useCallback(() => { api<{ models: Model[] }>("models").then((r) => setModels(r.models)).catch(() => {}); }, []);
   useEffect(() => { api<{ voices: MyVoice[] }>("myvoices").then((r) => setMine(r.voices)).catch(() => {}); }, []);
+  useEffect(loadModels, [loadModels]);
+  useEffect(() => {
+    // whose dataset to open: the one picked last on this device, else yours (from your sign-in name), else the first one
+    Promise.all([api<{ datasets: Person[] }>("datasets").catch(() => ({ datasets: [] as Person[] })),
+      fetch("/api/ws/me").then((r) => r.json()).catch(() => ({}))]).then(([d, me]) => {
+      setPeople(d.datasets);
+      let saved = "";
+      try { saved = localStorage.getItem("vb-dataset") ?? ""; } catch {}
+      const slug = String(me?.user?.name ?? "").toLowerCase().split(/\s+/)[0]?.replace(/[^a-z0-9_-]/g, "") ?? "";
+      setName(saved || (slug && d.datasets.some((x) => x.name === slug) ? slug : "") || d.datasets[0]?.name || slug || "me");
+    });
+  }, []);
+  useEffect(() => { if (name) try { localStorage.setItem("vb-dataset", name); } catch {} }, [name]);
   useEffect(load, [load]);
   const minutes = ds?.minutes ?? 0;
+  const refresh = () => { load(); api<{ datasets: Person[] }>("datasets").then((d) => setPeople(d.datasets)).catch(() => {}); };
 
   return (
     <>
@@ -301,13 +324,32 @@ export default function MyModel() {
         <div>
           <div className="eyebrow">Your model</div>
           <h1>A voice model that is <em>only you.</em></h1>
-          <p className="sub">Cloning copies 20 seconds of you. A trained model learns how you actually talk from 30-60 minutes of it: your pace, your emphasis, the way you land a joke. Collect, train for free, then let the numbers decide.</p>
+          <p className="sub">Cloning copies 20 seconds of you. A trained model learns how you actually talk from 30-60 minutes of it: your pace, your emphasis, the way you land a joke. Collect, train for free, then let the numbers decide. Each of you gets your own: pick your name.</p>
         </div>
-        <div className="field" style={{ margin: 0, minWidth: 180 }}><label className="f">Dataset</label>
-          <input value={name} onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))} /></div>
+        <div className="field" style={{ margin: 0, minWidth: 180 }}><label className="f">Whose voice (dataset)</label>
+          <input list="vb-people" value={name} placeholder="your name" onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))} />
+          <datalist id="vb-people">{people.map((p) => <option key={p.name} value={p.name}>{p.minutes.toFixed(1)} min</option>)}</datalist></div>
       </div>
+      {(people.length > 1 || models.length > 0) && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-head"><h2>Everyone&apos;s voices</h2><span className="dim tiny">trained models are shared: use them in Voiceover under Your model</span></div>
+          <div className="stack" style={{ gap: 8 }}>
+            {[...new Set([...people.map((p) => p.name), ...models.map((m) => m.name)])].map((n) => {
+              const m = models.find((x) => x.name === n);
+              const p = people.find((x) => x.name === n);
+              return (
+                <div key={n} className="row between small" style={{ padding: "6px 0", borderTop: "1px solid var(--line)", gap: 12 }}>
+                  <button className={`quiet xs ${n === name ? "on" : ""}`} onClick={() => setName(n)}><b>{n}</b></button>
+                  <span className="dim">{p ? `${p.minutes.toFixed(1)} min collected` : ""}{m ? ` · trained ${new Date(m.created).toLocaleDateString()}` : " · not trained yet"}</span>
+                  {m?.sample_url ? <span style={{ minWidth: 0, flex: "0 1 260px" }}><Player src={m.sample_url} compact /></span> : <span />}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="row between"><b>{minutes.toFixed(1)} min collected</b><span className="dim small">{ds?.clips ?? 0} clips · {ds?.parts.length ?? 0} sessions</span></div>
+        <div className="row between"><b>{name || "…"} · {minutes.toFixed(1)} min collected</b><span className="dim small">{ds?.clips ?? 0} clips · {ds?.parts.length ?? 0} sessions</span></div>
         <div className="meter"><i style={{ width: `${Math.min(100, (minutes / 60) * 100)}%` }} />{MILESTONES.map(([m, l]) => <span key={m} style={{ left: `${(m / 60) * 100}%` }}><em>{m} min · {l}</em></span>)}</div>
         {ds && ds.parts.length > 0 && (
           <div className="stack" style={{ gap: 4, marginTop: 30 }}>
@@ -316,18 +358,20 @@ export default function MyModel() {
                 <span>{p.sources.map((s) => s.name).join(", ")}</span>
                 <span className="row" style={{ gap: 10 }}>
                   <span className="dim">{p.minutes.toFixed(1)} of {p.input_minutes.toFixed(1)} min kept{Object.keys(p.dropped).length ? ` · dropped ${Object.entries(p.dropped).map(([k, v]) => `${v} ${k}`).join(", ")}` : ""}</span>
-                  <button className="icon-btn danger-h" aria-label="Remove session" onClick={async () => { if (await confirm({ title: "Remove this session from the dataset?", confirm: "Remove", danger: true })) { await api(`datasets/${name}/${p.job}`, { method: "DELETE" }); load(); } }}><TrashSimple size={14} /></button>
+                  <button className="icon-btn danger-h" aria-label="Remove session" onClick={async () => { if (await confirm({ title: "Remove this session from the dataset?", confirm: "Remove", danger: true })) { await api(`datasets/${name}/${p.job}`, { method: "DELETE" }); refresh(); } }}><TrashSimple size={14} /></button>
                 </span>
               </div>
             ))}
           </div>
         )}
       </div>
-      <div className="stack" style={{ gap: 16 }}>
-        <Collect name={name} onAdded={load} />
-        <Train name={name} minutes={minutes} />
-        <Benchmark mine={mine} />
-      </div>
+      {name && (
+        <div className="stack" style={{ gap: 16 }}>
+          <Collect name={name} onAdded={refresh} />
+          <Train name={name} minutes={minutes} onTrained={loadModels} />
+          <Benchmark mine={mine} name={name} />
+        </div>
+      )}
       <div style={{ height: 30 }} />
     </>
   );

@@ -1,12 +1,12 @@
 // JSON API behind the dashboard (cookie session or Bearer MCP_TOKEN).
-import { isAuthed } from "@/lib/session";
+import { currentUser, isAuthed } from "@/lib/session";
 import { call, WorkerOffline } from "@/lib/worker";
 import { loadWorker, STALE_MS } from "@/lib/registry";
 import { archiveWorkerJob, deleteLibJob, FILE_RE, getLibJob, listLibrary, presignPath, presignPuts, putFile, putLibJob, signer, withUrls, type LibJob } from "@/lib/library";
-import { getSettings, updateSettings, withDefaults } from "@/lib/settings";
+import { getSettings, settingsFor, updateSettings, withDefaults } from "@/lib/settings";
 import { describeProfile, profileFor, withProfile } from "@/lib/profiles";
-import { archiveDataset, datasetManifest, deleteDatasetPart, listDataset } from "@/lib/datasets";
-import { archiveModel, currentModel } from "@/lib/voicemodel";
+import { archiveDataset, datasetManifest, deleteDatasetPart, listDataset, listDatasets } from "@/lib/datasets";
+import { archiveModel, currentModel, listModelsWithSamples } from "@/lib/voicemodel";
 import { deleteMyVoice, getMyVoice, getSamples, isCustomVoice, listMyVoices, putMyVoice, recordSample, refSync, samplePutUrl, VOICE_RE, voicePutUrl } from "@/lib/voices";
 
 type RefJob = { id: string; kind: string; status: string; voice: string; label?: string; version?: string; warnings?: string[];
@@ -57,13 +57,15 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "voices") return Response.json(await call("/voices"));
     if (a === "samples") return Response.json(await getSamples());
     if (a === "myvoices") return Response.json({ voices: await listMyVoices() });
-    if (a === "settings") return Response.json(await getSettings());
+    if (a === "settings") return Response.json(settingsFor(await getSettings(), (await currentUser())?.id));
     if (a === "profile" && b && c) {
       const style = new URL(req.url).searchParams.get("style") ?? "tech";
       return Response.json(await describeProfile(b, c, style) ?? { engine: b, voice: c, style, jobs: 0 });
     }
+    if (a === "datasets" && !b) return Response.json({ datasets: await listDatasets() });
     if (a === "datasets" && b && VOICE_RE.test(b)) return Response.json(c === "manifest" ? await datasetManifest(b) : await listDataset(b));
-    if (a === "model" && !b) return Response.json({ model: await currentModel() });
+    if (a === "model" && !b) return Response.json({ model: await currentModel(new URL(req.url).searchParams.get("name") ?? undefined) });
+    if (a === "models" && !b) return Response.json({ models: await listModelsWithSamples() });
     if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
     if (a === "jobs" && !b) return Response.json(await call("/jobs"));
     if (a === "jobs" && b) {
@@ -104,10 +106,13 @@ export async function POST(req: Request, ctx: Ctx) {
   const [a, b, c] = g.path;
   try {
     let body = await req.json().catch(() => ({}));
-    if (a === "settings") return Response.json(await updateSettings(body));
+    if (a === "settings") {
+      const who = (await currentUser())?.id;
+      return Response.json(settingsFor(await updateSettings(body, who), who));
+    }
     if (a === "speakable") return Response.json(await call("/speakable", { body }));
     if (a === "jobs" && !b) {
-      if (!body.kind || ["story", "revoice", "clean"].includes(body.kind)) body = await withProfile(withDefaults(body, await getSettings()));
+      if (!body.kind || ["story", "revoice", "clean"].includes(body.kind)) body = await withProfile(withDefaults(body, settingsFor(await getSettings(), (await currentUser())?.id)));
       if (body.kind === "story" || body.kind === "clean") {
         // uploads: scene images (scenes[i].image_key), the music bed (music_key), the recording to clean (source_key)
         const up = async (k: unknown) => {

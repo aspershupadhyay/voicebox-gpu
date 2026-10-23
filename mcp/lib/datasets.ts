@@ -25,6 +25,12 @@ export async function archiveDataset(job: DatasetJob): Promise<DatasetPart | nul
   return part;
 }
 
+/** Every dataset (one per person) with its minutes collected. */
+export async function listDatasets() {
+  const names = [...new Set((await listObjs("datasets/")).map((o) => o.key.split("/")[1]).filter(Boolean))];
+  return Promise.all(names.map(async (n) => { const d = await listDataset(n); return { name: n, minutes: d.minutes, clips: d.clips }; }));
+}
+
 export async function listDataset(name: string) {
   const keys = (await listObjs(dir(name))).map((o) => o.key).filter((k) => k.endsWith(".json"));
   const parts = (await Promise.all(keys.map((k) => getJson<DatasetPart>(k).catch(() => null)))).filter(Boolean) as DatasetPart[];

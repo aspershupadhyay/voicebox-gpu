@@ -13,7 +13,7 @@ import { useStatus } from "./Shell";
 import { aw, logActivity } from "./aw";
 import { AW, type Post } from "@/lib/workspace";
 
-type Param = { type: "number" | "integer" | "string"; default: number | string; min?: number; max?: number; about?: string };
+type Param = { type: "number" | "integer" | "string" | "boolean"; default: number | string | boolean; min?: number; max?: number; about?: string };
 type Engine = { kind: string; about: string; voices: string[]; presets: Record<string, string>; params: Record<string, Param>; state: string; seconds_per_char?: number };
 type Style = { label: string; about: string; params: Record<string, Record<string, number>>; post: { tempo?: number }; post_by_engine?: Record<string, { tempo?: number }>; voices: Record<string, string[]> };
 type Platform = { label: string; about: string; lufs: number | null; tp: number | null; captions: string };
@@ -68,7 +68,7 @@ export default function Generate() {
   const [engine, setEngine] = useState<string>("orpheus");
   const [lang, setLang] = useState("en");
   const [voice, setVoice] = useState("female");
-  const [params, setParams] = useState<Record<string, number | string>>({});
+  const [params, setParams] = useState<Record<string, number | string | boolean>>({});
   const [style, setStyle] = useState("tech");
   const [tempo, setTempo] = useState<number | null>(null);
   const [subtitles, setSubtitles] = useState(true);
@@ -87,6 +87,7 @@ export default function Generate() {
   const [err, setErr] = useState("");
   const [mine, setMine] = useState<MyVoice[]>([]);
   const [mineLoaded, setMineLoaded] = useState(false);
+  const [models, setModels] = useState<{ name: string; sample_url?: string | null }[] | null>(null); // trained voices, everyone's
   const samples = useSamples();
   const ta = useRef<HTMLTextAreaElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -103,6 +104,7 @@ export default function Generate() {
     if (q.get("engine") && (TTS as readonly string[]).includes(q.get("engine")!)) { setEngine(q.get("engine")!); setParams({}); }
     if (q.get("voice")) { setVoice(q.get("voice")!); if (/^[a-z]{2}_/.test(q.get("voice")!)) setLang(KOKORO_LANG[q.get("voice")![0]] ?? "en"); }
     api<{ voices: MyVoice[] }>("myvoices").then((r) => setMine(r.voices)).catch(() => {}).finally(() => setMineLoaded(true));
+    api<{ models: { name: string; sample_url?: string | null }[] }>("models").then((r) => setModels(r.models)).catch(() => setModels([]));
     // from a workspace post: /generate?post=<id> loads its script; the finished voiceover is attached back to the post
     const pid = q.get("post");
     if (pid) aw().tables.getRow<Post>({ databaseId: AW.db, tableId: "posts", rowId: pid }).then((p) => {
@@ -139,9 +141,10 @@ export default function Generate() {
   const voices = useMemo(() => {
     if (engine === "kokoro") return (eng?.voices ?? []).filter((v) => KOKORO_LANG[v[0]] === lang);
     if (engine === "orpheus") return eng?.voices ?? [];
+    if (engine === "myvoice") return models?.length ? models.map((m) => m.name) : ["me"];
     const base = ["female", "male", ...(eng?.voices ?? []).filter((v) => !v.startsWith("<") && v !== "female" && v !== "male")];
     return CLONERS.includes(engine) ? [...mine.map((m) => m.name), ...base.filter((b) => !mine.some((m) => m.name === b))] : base;
-  }, [eng, engine, lang, mine]);
+  }, [eng, engine, lang, mine, models]);
   const myVoice = (v: string) => mine.find((m) => m.name === v);
 
   useEffect(() => {
@@ -150,7 +153,8 @@ export default function Generate() {
     if (engine === "orpheus" && !voices.includes(voice) && voices.length) setVoice(voice === "male" ? "dan" : "tara");
     // cloners: wait for your voices to load so a deep-linked recording isn't replaced by a preset
     if (CLONERS.includes(engine) && !voices.includes(voice) && mineLoaded) setVoice(mine[0]?.name ?? "female");
-  }, [engine, lang, voices, voice, langs, mine, mineLoaded]);
+    if (engine === "myvoice" && models && !voices.includes(voice)) setVoice(voices[0]);
+  }, [engine, lang, voices, voice, langs, mine, mineLoaded, models]);
 
   const rate = status?.rates?.[engine] ?? eng?.seconds_per_char ?? RATE[engine];
   const audioS = chars / 14.5;
@@ -349,14 +353,15 @@ export default function Generate() {
                 {[...voices.filter((v) => lively.includes(v)), ...voices.filter((v) => !lively.includes(v))].map((v) => {
                   const real = eng?.presets[v] && eng.presets[v] !== v ? eng.presets[v] : v;
                   const mv = myVoice(v);
-                  const sample = mv ? mv.url : samples?.voices[engine]?.[v]?.url;
+                  const trained = engine === "myvoice" ? models?.find((m) => m.name === v) : undefined;
+                  const sample = trained ? trained.sample_url ?? undefined : mv ? mv.url : samples?.voices[engine]?.[v]?.url;
                   return (
                     <button key={v} className={`pick voice-pick ${voice === v ? "on" : ""} ${mv ? "mine" : ""}`} onClick={() => setVoice(v)}>
                       {lively.includes(v) && <Sparkle size={12} weight="fill" className="star" />}
                       <span className="vplay"><SampleButton id={`gen/${engine}/${v}`} url={sample} size={24} label={mv?.label ?? v} /></span>
                       <VoiceGlyph name={CLONERS.includes(engine) && !mv ? (v === "male" ? "dan" : "tara") : real} size={46} active={voice === v} />
                       <span className="vn">{mv?.label ?? v}</span>
-                      <span className="vs">{mv ? "your voice" : real !== v ? real : engine === "kokoro" ? KOKORO_LANG[v[0]] ?? "" : engine}</span>
+                      <span className="vs">{engine === "myvoice" ? "trained model" : mv ? "your voice" : real !== v ? real : engine === "kokoro" ? KOKORO_LANG[v[0]] ?? "" : engine}</span>
                     </button>
                   );
                 })}
@@ -373,6 +378,11 @@ export default function Generate() {
             </div>
             {eng && Object.entries(eng.params).filter(([k]) => !((engine === "chatterbox" || engine === "qwen") && k === "language") && !(engine === "kokoro" && k === "lang")).map(([k, p]) => {
               const v = params[k] ?? styleParams[k] ?? p.default;
+              if (p.type === "boolean") return (
+                <div className="field" key={k}>
+                  <label className="row small" style={{ gap: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={Boolean(v)} onChange={(e) => setParams({ ...params, [k]: e.target.checked })} />{k.replace(/_/g, " ")}</label>
+                  {p.about && <div className="dim tiny" style={{ marginTop: 4 }}>{p.about}</div>}</div>
+              );
               if (p.min === undefined) return (
                 <div className="field" key={k}><label className="f">{k}</label>
                   <input type={p.type === "string" ? "text" : "number"} value={String(v)} onChange={(e) => setParams({ ...params, [k]: p.type === "string" ? e.target.value : +e.target.value })} />

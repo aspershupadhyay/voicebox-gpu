@@ -7,7 +7,7 @@ import { useDialog } from "./Dialog";
 type S = {
   engine: string; voice: string; style: string; platform: string; takes: number; subtitles: boolean; lexicon: boolean;
   pronounce: Record<string, string>; enhance_recordings: boolean; enhance_input: boolean; enhance_output: boolean;
-  backup_media: boolean; review: boolean;
+  backup_media: boolean; review: boolean; personal?: boolean;
 };
 
 const opt = (pairs: readonly (readonly [string, string])[]) => pairs.map(([v, l]) => <option key={v} value={v}>{l}</option>);
@@ -26,6 +26,8 @@ export default function Settings() {
   const { toast } = useDialog();
   const [s, setS] = useState<S | null>(null);
   const [mine, setMine] = useState<MyVoice[]>([]);
+  const [models, setModels] = useState<string[]>([]);
+  const [signedIn, setSignedIn] = useState(false);
   const [lex, setLex] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
@@ -33,6 +35,8 @@ export default function Settings() {
   useEffect(() => {
     api<S>("settings").then((x) => { setS(x); setLex(Object.entries(x.pronounce).map(([k, v]) => `${k} = ${v}`).join("\n")); }).catch((e) => setErr(e.message));
     api<{ voices: MyVoice[] }>("myvoices").then((r) => setMine(r.voices)).catch(() => {});
+    api<{ models: { name: string }[] }>("models").then((r) => setModels(r.models.map((m) => m.name))).catch(() => {});
+    fetch("/api/ws/me").then((r) => r.json()).then((m) => setSignedIn(!!m?.user)).catch(() => {});
   }, []);
   if (!s) return <>{err ? <p className="err">{err}</p> : <p className="dim">Loading…</p>}</>;
   const set = <K extends keyof S>(k: K, v: S[K]) => setS({ ...s, [k]: v });
@@ -55,7 +59,7 @@ export default function Settings() {
     }
   }
 
-  const voices: [string, string][] = s.engine === "myvoice" ? [["me", "you (trained)"]] : s.engine === "orpheus" ? ["tara", "leah", "jess", "mia", "zoe", "leo", "dan", "zac"].map((v) => [v, v])
+  const voices: [string, string][] = s.engine === "myvoice" ? (models.length ? models.map((n) => [n, `${n} (trained)`] as [string, string]) : [["me", "trained model"]]) : s.engine === "orpheus" ? ["tara", "leah", "jess", "mia", "zoe", "leo", "dan", "zac"].map((v) => [v, v])
     : s.engine === "kokoro" ? ["af_heart", "af_bella", "am_fenrir", "am_michael", "am_puck"].map((v) => [v, v])
     : [...mine.map((m) => [m.name, `${m.label} (your voice)`] as [string, string]), ["female", "female preset"], ["male", "male preset"]];
 
@@ -76,7 +80,7 @@ export default function Settings() {
             <div className="card-head"><h2>Voice</h2></div>
             <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div className="field" style={{ margin: 0 }}><label className="f">Engine</label>
-                <select value={s.engine} onChange={(e) => setS({ ...s, engine: e.target.value, voice: e.target.value === "myvoice" ? "me" : e.target.value === "orpheus" ? "tara" : e.target.value === "kokoro" ? "af_heart" : mine[0]?.name ?? "female" })}>
+                <select value={s.engine} onChange={(e) => setS({ ...s, engine: e.target.value, voice: e.target.value === "myvoice" ? models[0] ?? "me" : e.target.value === "orpheus" ? "tara" : e.target.value === "kokoro" ? "af_heart" : mine[0]?.name ?? "female" })}>
                   {opt([["qwen", "Qwen · your voice"], ["myvoice", "Your trained model"], ["orpheus", "Orpheus · most human"], ["chatterbox", "Chatterbox · emotion"], ["kokoro", "Kokoro · instant"]])}
                 </select></div>
               <div className="field" style={{ margin: 0 }}><label className="f">Voice</label>
@@ -86,6 +90,8 @@ export default function Settings() {
               <div className="field" style={{ margin: 0 }}><label className="f">Best of</label>
                 <div className="seg">{[1, 2, 3, 4].map((n) => <button key={n} className={s.takes === n ? "on" : ""} onClick={() => set("takes", n)}>{n}×</button>)}</div></div>
             </div>
+            {signedIn && <Toggle on={!!s.personal} set={(v) => set("personal", v)} title="This engine and voice just for me"
+              about="On: only your voiceovers default to them; the other person keeps theirs. Off: they're the studio default for both of you and every MCP client." />}
             <Toggle on={s.subtitles} set={(v) => set("subtitles", v)} title="Subtitles" about="Word-timed SRT/VTT, script match and voice match scores." />
             <Toggle on={s.review} set={(v) => set("review", v)} title="Review every sentence"
               about="Whisper listens back; a sentence that skips, swaps or invents a word, or drifts off your voice, is re-voiced (up to 2 more tries). The scores teach each voice its best settings." />

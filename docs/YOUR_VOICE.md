@@ -54,19 +54,41 @@ Everything below runs on free compute.
 1. **Collect** (dashboard → **Your model**). *Read along* shows one line at a time from a script written like a tech
    video (hooks, explanations, numbers, questions, asides) plus tongue-twisters that cover every English sound; press
    space for the next line and record 5-15 minutes per session. Or *Upload* long recordings of only you talking. The
-   worker removes noise (never "restores" the tone, so the model learns your real voice), Whisper cuts 2-12 s clips at
-   sentence ends, and noisy, clipped or mis-timed clips are dropped. The meter shows minutes collected: 15 works, 30 is
+   worker removes noise (never "restores" the tone, so the model learns your real voice), Whisper cuts clips at
+   sentence ends in a deliberate mix of lengths (about 4, 9 and 15 s, up to 20 s, so long ones hold two or three
+   sentences and the model hears how you move between them), and noisy, clipped or mis-timed clips are dropped. The meter shows minutes collected: 15 works, 30 is
    good, 60 is best. Same mic and room every session.
 2. **Train** (same page, **Train my voice**). The GPU worker that's already running in Colab does it: it pauses other
-   jobs, fine-tunes Orpheus 3B with a LoRA adapter (Unsloth) on every clip, voices a test line you can play on the page,
-   and saves the adapter (a few hundred MB) to your R2 bucket. No Hugging Face account needed. About 1-2 hours on a free
-   T4, less on an L4. The first run also installs the training tools (~7 min). Keep the Colab tab open until it's done.
+   jobs, fine-tunes Orpheus 3B with a LoRA adapter (Unsloth), voices a test line you can play on the page, and saves the
+   adapter (a few hundred MB) to your R2 bucket. What makes it sound like you talking rather than reading:
+   - **Flow.** About half the clips are trained with the clip you said just before them as context, and the model is
+     then used the same way: each sentence is voiced with the one before it, so pitch, pace and energy carry through a
+     whole script instead of resetting at every sentence. Long scripts take longer because sentences go in order;
+     `flow: false` turns it off for a quick draft.
+   - **Speech-only loss.** It learns how you sound, not to predict the script.
+   - **Same spoken form.** Transcripts go through the same tech lexicon as the scripts you voice later ("GPU" is learnt
+     as "G P U"), so terms come out the way you say them.
+   - **Best epoch.** A few clips are held out and the adapter is checked against them after every epoch; the best epoch
+     is kept, not the last (which over-fits on a small dataset). The result lists each epoch's score.
+   Datasets collected before this update still train with flow (neighbouring clips are found from the file names), but
+   re-running collection on your original recordings gives the longer, multi-sentence clips too. Models trained before
+   this update keep working with flow off; train again to turn it on. No Hugging Face account needed. About 1.5-3 hours on a free
+   T4, under an hour on an L4. The first run also installs the training tools (~7 min). Keep the Colab tab open until it's done.
 3. **Use it.** Nothing to set: the trained model is the **myvoice** engine everywhere (Voiceover, Settings, MCP
-   `engine: "myvoice"`) right away, and a fresh worker downloads it from R2 at start-up. Training again replaces it.
+   `engine: "myvoice"`, `voice: "<your name>"`) right away. The worker fetches it from R2 the first time a job asks for
+   it and keeps it. Training again replaces only your model.
+
+   **Two of you, two models.** Each person picks their own name at the top of the Your model page (it opens on yours
+   when you're signed in) and collects and trains their own. Both models live side by side: in Voiceover, *Your model*
+   lists every trained voice with its test line; in Settings, *This engine and voice just for me* makes your trained
+   voice your default without changing the other person's; MCP clients see both under `my_voices` → `trained`.
    To serve an Orpheus fine-tune from Hugging Face instead, set `MY_VOICE_MODEL` (the repo) and `MY_VOICE_SPEAKER` on
    Vercel; that takes priority.
 4. **Benchmark** (same page, or the `benchmark_voices` MCP tool). The same unseen sentences in your model, your Qwen
    and Chatterbox clones, and optionally an Orpheus preset, scored identically: script accuracy, voice match against
    your real recording, naturalness (UTMOS) and speed. Listen side by side, then make the winner your default.
+
+**Between sentences** every engine now pauses the way a presenter does: longer after a question than after a full stop,
+shortest after a comma, and a longer breath at a blank line (a new paragraph). `[pause]` markers still win.
 
 The review keeps learning per voice as you use it, so whichever engine wins also gets its best settings over time.

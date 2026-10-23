@@ -413,6 +413,31 @@ def get_ref(name, sync=None):
     return wav, transcript
 
 
+def get_adapter(job, voice):
+    """(adapter dir, speaker) for a trained voice: downloaded once per model into myvoice/models/<train job>/ (a model
+    trained on this worker is already there), or (None, default speaker) = the engine's default model."""
+    models = job.get("models") or {}
+    m = models.get(voice) or (models.get("me") if voice in ("me", "female", "male", "default") else None)
+    if not m:
+        if models and voice not in ("me", "female", "male", "default"):
+            raise ValueError(f"no trained model called '{voice}' (trained: {', '.join(sorted(k for k in models if k != 'me'))})")
+        return None, None
+    path = os.path.join(C.MYVOICE_DIR, "models", m["job"])
+    if not os.path.exists(os.path.join(path, "adapter_config.json")):
+        job["stage"] = "fetching the voice model"
+        log(f"downloading voice model '{voice}' ({m['job']})")
+        tmp = path + ".part"
+        shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with urllib.request.urlopen(m["url"], timeout=900) as r, open(tmp + ".zip", "wb") as f:
+            shutil.copyfileobj(r, f)
+        zipfile.ZipFile(tmp + ".zip").extractall(tmp)
+        os.remove(tmp + ".zip")
+        shutil.rmtree(path, ignore_errors=True)
+        os.replace(tmp, path)
+    return path, m["speaker"]
+
+
 def add_ref(name, audio_bytes, transcript=None):
     if not ID_RE.match(name):
         raise ValueError("reference name must be 1-64 chars of letters, digits, - or _")
@@ -735,6 +760,7 @@ def _voice_setup(job, body, lines):
                             "learned": learned},
                 "review": body.get("review", engine != "kokoro") is not False,
                 "subtitles": bool(body.get("subtitles")), "ref": body.get("ref") if isinstance(body.get("ref"), dict) else None,
+                "models": _models(body.get("models")),
                 "lexicon": body.get("lexicon", True) is not False, "pronounce": _pronounce(body.get("pronounce")),
                 "takes": 1 if engine == "kokoro" else max(1, min(C.MAX_TAKES, int(body.get("takes") or 1)))})
     _platform(job, body, style_post)
@@ -745,6 +771,17 @@ def _voice_setup(job, body, lines):
     chars = sum(len(l["text"]) for l in clean)
     job["est_total"] = (RATES[engine] * chars * job["takes"] + (RATES["whisper"] * chars / 14 if job["subtitles"] else 0)
                         + (RATES["whisper"] * chars / 14 * job["takes"] if job["takes"] > 1 or job["review"] else 0))
+
+
+def _models(given):
+    """{voice: {job, url, speaker}}: the trained models a myvoice job may use (signed links from the dashboard)."""
+    if not isinstance(given, dict):
+        return {}
+    out = {}
+    for name, m in list(given.items())[:20]:
+        if isinstance(m, dict) and ID_RE.match(str(name)) and ID_RE.match(str(m.get("job") or "")) and str(m.get("url") or "").startswith("http"):
+            out[str(name)] = {"job": str(m["job"]), "url": str(m["url"]), "speaker": str(m.get("speaker") or "me")[:64]}
+    return out
 
 
 def _pronounce(given):
@@ -785,6 +822,7 @@ def make_revoice_job(body):
     job.update({"engine": "chatterbox", "voice": voice, "style": "neutral", "mode": "revoice", "params": {},
                 "lines": [{"id": "revoice", "text": "", "url": url, "window": None, "start": None, "params": {}}],
                 "subtitles": bool(body.get("subtitles")), "ref": body.get("ref") if isinstance(body.get("ref"), dict) else None,
+                "models": _models(body.get("models")),
                 "takes": 1, "lexicon": False, "pronounce": {}})
     _platform(job, {**body, "post": {"trim": False, **(body.get("post") or {})}})  # untrimmed: stays in sync with the video
     job["enhance"] = body.get("enhance", True) is not False
@@ -1291,8 +1329,22 @@ def _prepare(job, name):
     ENG.ensure(name)
 
 
-def _join_chunks(paths, out_path, gaps=None):
-    """Join chunk WAVs with a natural 0.2 s pause, or the gap a [pause] marker asked for (gaps[i] follows chunk i)."""
+# The pause after a chunk when the script doesn't ask for one: what a presenter leaves after that punctuation.
+NATURAL_GAP = ((re.compile(r"\?[\"')\]]*$"), 0.42), (re.compile(r"!+[\"')\]]*$"), 0.36), (re.compile(r"[.…][\"')\]]*$"), 0.34),
+               (re.compile(r"[,;:–—-][\"')\]]*$"), 0.16))
+
+
+def natural_gap(text):
+    for pat, gap in NATURAL_GAP:
+        if pat.search((text or "").strip()):
+            return gap
+    return 0.22
+
+
+def _join_chunks(paths, out_path, gaps=None, texts=None):
+    """Join chunk WAVs with the pause their punctuation calls for (a question gets a longer one than a comma), or the
+    gap a [pause] marker asked for (gaps[i] follows chunk i). Each chunk is trimmed to its speech and gets a few ms of
+    fade at both ends, so the joins don't click."""
     import numpy as np
     import soundfile as sf
     parts, sr = [], None
@@ -1304,10 +1356,17 @@ def _join_chunks(paths, out_path, gaps=None):
         if len(paths) > 1:
             idx = np.where(np.abs(a) > 10 ** (-45 / 20))[0]
             if len(idx):
-                a = a[max(0, idx[0] - int(0.04 * sr)): idx[-1] + int(0.06 * sr)]
+                a = a[max(0, idx[0] - int(0.04 * sr)): idx[-1] + int(0.06 * sr)].copy()
+            f = min(len(a) // 4, int(0.008 * sr))
+            if f > 1:
+                ramp = np.linspace(0.0, 1.0, f, dtype="float32")
+                a[:f] *= ramp
+                a[-f:] *= ramp[::-1]
         parts.append(a)
-        gap = (gaps[i] if gaps and i < len(gaps) else None)
-        parts.append(np.zeros(int((0.2 if gap is None else gap) * sr), dtype="float32"))
+        gap = gaps[i] if gaps and i < len(gaps) else None
+        if gap is None:
+            gap = natural_gap(texts[i]) if texts and i < len(texts) else 0.2
+        parts.append(np.zeros(int(gap * sr), dtype="float32"))
     sf.write(out_path, np.concatenate(parts[:-1]) if parts else np.zeros(1, "float32"), sr)
 
 
@@ -1330,7 +1389,8 @@ def _line_plan(job, ln, engine, voice_arg):
     params = C.resolve_params(eng, params)
     english = _is_english(eng, voice_arg if eng == engine else None, params, job)
     chunks = []
-    for seg, gap in segments(ln["text"]):
+    text = re.sub(r"\s*\n\s*\n\s*", " [pause 0.7] ", ln["text"].strip())  # a new paragraph is a longer breath
+    for seg, gap in segments(text):
         parts = split_text(seg, C.ENGINES[eng].get("chunk_chars", 0))
         for k, part in enumerate(parts):
             said = speakable(part, job.get("pronounce"), tech=english and job.get("lexicon", True)) or part
@@ -1354,9 +1414,16 @@ def run_tts(job):
         ref_path, ref_text = get_ref(voice, job.get("ref"))
     job["ref_path"] = ref_path
     voice_arg = voice if engine in ("kokoro", "orpheus", "myvoice") else None
+    lora = None
+    if engine == "myvoice":
+        lora, speaker = get_adapter(job, voice)
+        voice_arg = speaker or voice_arg
     takes = job.get("takes", 1)
 
     plans = [_line_plan(job, ln, engine, voice_arg) for ln in job["lines"]]
+    for p in plans:
+        p["lora"] = lora if p["engine"] == "myvoice" else None
+    _chain(plans)
     order = {p["ln"]["id"]: i for i, p in enumerate(plans)}
     if any(len(p["chunks"]) > 1 for p in plans):
         job["warnings"].append(f"long lines split into {sum(len(p['chunks']) for p in plans)} chunks (sentences and [pause] markers) and re-joined")
@@ -1414,6 +1481,20 @@ def _take_params(p, k):
     return params
 
 
+def _chain(plans):
+    """Script order for flow: each line's first chunk follows the previous line's last one (see _flow)."""
+    for a, b in zip(plans, plans[1:]):
+        b["after"] = f"{a['ln']['id']}/{len(a['chunks']) - 1}"
+
+
+def _flow(job, p, i, k):
+    """Names for one chunk take: its own key, and the keys of the chunk before it (same take first, else the first
+    take), so an engine that keeps flow (your trained voice) can carry the delivery on from the audio it just made."""
+    base = f"{job['id']}/"
+    before = f"{p['ln']['id']}/{i - 1}" if i else p.get("after")
+    return {"key": f"{base}{p['ln']['id']}/{i}/{k}", "ctx": [f"{base}{before}/{k}", f"{base}{before}/0"] if before else []}
+
+
 def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
     """Synthesise (plan, chunk, take, params) items: per engine, batched up to 8 on batch engines (vLLM / Qwen)."""
     for eng in dict.fromkeys(w[0]["engine"] for w in wanted):
@@ -1424,7 +1505,7 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
         for b in range(0, len(mine), size):
             group = mine[b:b + size]
             items = [{"text": p["chunks"][i][1], "voice": p["voice_arg"], "params": params, "ref_path": ref_path,
-                      "ref_text": ref_text, "out_path": out(p, i, k)} for p, i, k, params in group]
+                      "ref_text": ref_text, "out_path": out(p, i, k), "lora": p.get("lora"), **_flow(job, p, i, k)} for p, i, k, params in group]
             chars = sum(len(it["text"]) for it in items)
             lo, hi = order[group[0][0]["ln"]["id"]] + 1, order[group[-1][0]["ln"]["id"]] + 1
             label = (f"line {lo} of {n_lines}" if lo == hi else f"lines {lo}–{hi} of {n_lines} together")
@@ -1446,7 +1527,7 @@ def _assemble(job, jdir, p, paths, pick=None):
     """Chunks -> one line WAV: join with the asked-for gaps, then trim, pace, resample and master."""
     ln = p["ln"]
     raw = os.path.join(jdir, f"{ln['id']}.raw.wav")
-    _join_chunks(paths, raw, [c[2] for c in p["chunks"]])
+    _join_chunks(paths, raw, [c[2] for c in p["chunks"]], [c[1] for c in p["chunks"]])
     for x in paths:
         if os.path.exists(x):
             os.remove(x)
@@ -2094,8 +2175,19 @@ def run_benchmark(job):
             job["stage"] = "reference"
             ref_path, ref_text = get_ref(cand["voice"], (job.get("refs") or {}).get(cand["voice"]))
         voice_arg = cand["voice"] if cand["engine"] in ("kokoro", "orpheus", "myvoice") else None
+        lora = None
+        if cand["engine"] == "myvoice":
+            try:
+                lora, speaker = get_adapter(job, cand["voice"])
+            except Exception as e:  # noqa: BLE001
+                job["warnings"].append(f"{cand['label']}: {e}")
+                board.append({"label": cand["label"], "engine": cand["engine"], "voice": cand["voice"], "error": str(e)[:200]})
+                continue
+            voice_arg = speaker or voice_arg
         lines = [{**ln, "id": f"c{ci + 1}-{ln['id']}"} for ln in keep_lines]
         plans = [_line_plan(job, ln, cand["engine"], voice_arg) for ln in lines]
+        for p in plans:
+            p["lora"] = lora if p["engine"] == "myvoice" else None
         order = {p["ln"]["id"]: i for i, p in enumerate(plans)}
 
         def out(p, i, k):
@@ -2146,10 +2238,11 @@ def make_train_job(body):
     job = _base_job("train", body)
     job.update({"voice": str(body.get("name") or "me")[:64], "lines": [], "engine": "myvoice", "parts": parts,
                 "speaker": "me", "epochs": body.get("epochs"), "learning_rate": body.get("learning_rate")})
-    # T4 (fp16, no bf16): ~10 s per optimizer step of 4 clips; ~8 clips a minute of audio; 3 epochs under 40 min, else 2
-    clips = max(30, minutes * 8)
-    epochs = job["epochs"] or (3 if minutes < 40 else 2)
-    job["est_total"] = 300 + clips * 0.4 + clips / 4 * epochs * TRAIN_STEP_S + 120 + (0 if os.path.exists(_train_python()) else C.TRAIN_INSTALL_S)
+    # T4 (fp16, no bf16): ~10 s per optimizer step of 4 clips; ~6 clips a minute of audio; 4 epochs under 40 min, else 3
+    # (train.py keeps the best epoch); flow clips are about twice as long, so steps cost ~1.4x on average
+    clips = max(30, minutes * 6)
+    epochs = job["epochs"] or (4 if minutes < 40 else 3)
+    job["est_total"] = 300 + clips * 0.4 + clips / 4 * epochs * TRAIN_STEP_S * 1.4 + 120 + (0 if os.path.exists(_train_python()) else C.TRAIN_INSTALL_S)
     return _enqueue(job)
 
 
@@ -2196,6 +2289,11 @@ def run_train(job):
     job["train"] = json.load(open(os.path.join(jdir, "result.json")))
     if job["train"].get("sample"):
         job["results"].append({"id": "sample", "text": job["train"]["sample"]["text"], "duration": job["train"]["sample"]["duration"]})
+    # this person's model, under its train job (what the dashboard names it in later jobs, so no download here), and
+    # the default for jobs that don't name one
+    mine = os.path.join(C.MYVOICE_DIR, "models", job["id"])
+    shutil.rmtree(mine, ignore_errors=True)
+    shutil.copytree(os.path.join(jdir, "adapter"), mine)
     dst = os.path.join(C.MYVOICE_DIR, "adapter")
     shutil.rmtree(dst, ignore_errors=True)
     shutil.copytree(os.path.join(jdir, "adapter"), dst)

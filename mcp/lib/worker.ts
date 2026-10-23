@@ -16,6 +16,11 @@ export async function currentWorker(): Promise<WorkerRecord> {
 
 export async function call<T = unknown>(path: string, init: { method?: string; body?: unknown; timeoutMs?: number } = {}) {
   const w = await currentWorker();
+  if (path === "/jobs" && init.body && typeof init.body === "object") {
+    // a job that uses a trained voice model (either person's) carries signed links to the models
+    const { withModels } = await import("./voicemodel");
+    init = { ...init, body: await withModels(init.body as Record<string, unknown>) };
+  }
   const r = await fetch(w.url + path, {
     method: init.method ?? (init.body ? "POST" : "GET"),
     headers: { Authorization: `Bearer ${process.env.WORKER_SECRET}`, "Content-Type": "application/json" },
