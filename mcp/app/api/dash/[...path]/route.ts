@@ -3,10 +3,14 @@ import { isAuthed } from "@/lib/session";
 import { call, WorkerOffline } from "@/lib/worker";
 import { loadWorker, STALE_MS } from "@/lib/registry";
 import { archiveWorkerJob, deleteLibJob, FILE_RE, getLibJob, listLibrary, presignPath, presignPuts, putFile, putLibJob, signer, withUrls, type LibJob } from "@/lib/library";
+import { getSettings, updateSettings, withDefaults } from "@/lib/settings";
+import { describeProfile, profileFor, withProfile } from "@/lib/profiles";
+import { archiveDataset, datasetManifest, deleteDatasetPart, listDataset } from "@/lib/datasets";
+import { archiveModel, currentModel } from "@/lib/voicemodel";
 import { deleteMyVoice, getMyVoice, getSamples, isCustomVoice, listMyVoices, putMyVoice, recordSample, refSync, samplePutUrl, VOICE_RE, voicePutUrl } from "@/lib/voices";
 
 type RefJob = { id: string; kind: string; status: string; voice: string; label?: string; version?: string; warnings?: string[];
-  results: { id: string; text: string; duration: number; level_db?: number }[] };
+  results: { id: string; text: string; duration: number; level_db?: number; enhanced?: boolean }[] };
 
 /** A finished voice recording job: copy the cleaned reference into R2 (voices/<name>/) and save its metadata. Idempotent. */
 async function archiveReference(job: RefJob) {
@@ -16,7 +20,7 @@ async function archiveReference(job: RefJob) {
   const res = await call<{ failed: Record<string, string> }>(`/jobs/${job.id}/push`, { body: { targets: { "reference.wav": await voicePutUrl(job.voice) }, headers: {} }, timeoutMs: 55_000 });
   if (Object.keys(res.failed).length) throw new Error(`could not store the recording: ${Object.values(res.failed)[0]}`);
   const v = { name: job.voice, label: job.label || job.voice, transcript: r.text, duration: r.duration, version: job.version || String(Date.now()),
-    created: have?.created ?? Date.now(), warnings: job.warnings ?? [], level_db: r.level_db };
+    created: have?.created ?? Date.now(), warnings: job.warnings ?? [], level_db: r.level_db, enhanced: !!r.enhanced };
   await putMyVoice(v);
   return v;
 }
@@ -37,7 +41,7 @@ async function guard(req: Request, ctx: Ctx) {
 export async function GET(req: Request, ctx: Ctx) {
   const g = await guard(req, ctx);
   if (g.deny) return g.deny;
-  const [a, b] = g.path;
+  const [a, b, c] = g.path;
   try {
     if (a === "status") {
       const rec = await loadWorker();
@@ -53,11 +57,26 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "voices") return Response.json(await call("/voices"));
     if (a === "samples") return Response.json(await getSamples());
     if (a === "myvoices") return Response.json({ voices: await listMyVoices() });
+    if (a === "settings") return Response.json(await getSettings());
+    if (a === "profile" && b && c) {
+      const style = new URL(req.url).searchParams.get("style") ?? "tech";
+      return Response.json(await describeProfile(b, c, style) ?? { engine: b, voice: c, style, jobs: 0 });
+    }
+    if (a === "datasets" && b && VOICE_RE.test(b)) return Response.json(c === "manifest" ? await datasetManifest(b) : await listDataset(b));
+    if (a === "model" && !b) return Response.json({ model: await currentModel() });
     if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
     if (a === "jobs" && !b) return Response.json(await call("/jobs"));
     if (a === "jobs" && b) {
       const job = await call<Parameters<typeof archiveWorkerJob>[0]>(`/jobs/${b}`);
       if (new URL(req.url).searchParams.has("raw")) return Response.json(job); // status only, no archiving (sample script)
+      if (job.kind === ("dataset" as string)) {
+        const part = job.status === "done" ? await archiveDataset(job as unknown as Parameters<typeof archiveDataset>[0]) : null;
+        return Response.json({ ...job, part });
+      }
+      if (job.kind === ("train" as string)) {
+        const model = job.status === "done" ? await archiveModel(job as unknown as Parameters<typeof archiveModel>[0]) : null;
+        return Response.json({ ...job, model });
+      }
       if (job.kind === ("reference" as string)) {
         const myvoice = job.status === "done" ? await archiveReference(job as unknown as RefJob) : null;
         return Response.json({ ...job, myvoice });
@@ -84,8 +103,23 @@ export async function POST(req: Request, ctx: Ctx) {
   if (g.deny) return g.deny;
   const [a, b, c] = g.path;
   try {
-    const body = await req.json().catch(() => ({}));
+    let body = await req.json().catch(() => ({}));
+    if (a === "settings") return Response.json(await updateSettings(body));
+    if (a === "speakable") return Response.json(await call("/speakable", { body }));
     if (a === "jobs" && !b) {
+      if (!body.kind || ["story", "revoice", "clean"].includes(body.kind)) body = await withProfile(withDefaults(body, await getSettings()));
+      if (body.kind === "story" || body.kind === "clean") {
+        // uploads: scene images (scenes[i].image_key), the music bed (music_key), the recording to clean (source_key)
+        const up = async (k: unknown) => {
+          if (!/^uploads\/[A-Za-z0-9._-]+$/.test(String(k))) throw new Error("bad upload key");
+          return presignPath(String(k), 3600);
+        };
+        if (Array.isArray(body.scenes)) body.scenes = await Promise.all(body.scenes.map(async (s: Record<string, unknown>) =>
+          s.image_key ? { ...s, image_url: await up(s.image_key), image_key: undefined } : s));
+        if (body.music_key) body.music_url = await up(body.music_key);
+        if (body.source_key) body.url = await up(body.source_key);
+        delete body.music_key; delete body.source_key;
+      }
       if (body.kind === "transcribe") {
         // uploads live in the private bucket: hand the worker short-lived presigned links
         body.sources = await Promise.all(
@@ -146,7 +180,49 @@ export async function POST(req: Request, ctx: Ctx) {
           delete body.image_key; delete body.image_from; delete body.video_key; delete body.video_from;
         }
       }
-      if (!body.kind && typeof body.voice === "string" && isCustomVoice(body.voice)) {
+      if (body.kind === "revoice") {
+        // the performance: an upload (uploads/...) or a library video's soundtrack
+        if (body.source_key) {
+          if (!/^uploads\/[A-Za-z0-9._-]+$/.test(String(body.source_key))) throw new Error("bad source_key");
+          body.url = await presignPath(String(body.source_key), 3600);
+        } else if (body.source_from) {
+          const lib = await getLibJob(String(body.source_from));
+          if (!lib || lib.kind !== "video") throw new Error("pick a video from the library");
+          body.url = await presignPath(`library/${lib.id}/video.mp4`, 3600);
+        }
+        delete body.source_key; delete body.source_from;
+      }
+      if (body.kind === "dataset") {
+        // recordings for your own voice model: uploads -> short-lived links
+        const name = String(body.name ?? "");
+        if (!VOICE_RE.test(name)) throw new Error("name: lowercase letters, digits, - or _");
+        body.sources = await Promise.all((body.sources ?? []).slice(0, 20).map(async (s: { key?: string; name?: string }) => {
+          if (!/^uploads\/[A-Za-z0-9._-]+$/.test(String(s.key))) throw new Error("bad upload key");
+          return { name: s.name, url: await presignPath(String(s.key), 6 * 3600) };
+        }));
+      }
+      if (body.kind === "train") {
+        // train your own voice on the worker: every collected session travels as a signed link
+        const name = String(body.name ?? "");
+        if (!VOICE_RE.test(name)) throw new Error("name: lowercase letters, digits, - or _");
+        const d = await datasetManifest(name);
+        if (d.minutes < 5) throw new Error(`collect at least 15 minutes first (you have ${d.minutes})`);
+        body.parts = d.parts.map((p) => ({ url: p.url }));
+        body.minutes = d.minutes;
+        body.label = body.label ?? `Train your voice · ${name}`;
+      }
+      if (body.kind === "benchmark") {
+        // every recorded voice in the line-up (and the target you're measured against) travels as a signed link
+        const names = new Set<string>([...(body.candidates ?? []).map((c: { voice?: string }) => String(c.voice ?? "")), String(body.target_voice ?? "")].filter((v) => isCustomVoice(v)));
+        body.refs = Object.fromEntries((await Promise.all([...names].map(async (v) => [v, await refSync(v)] as const))).filter(([, r]) => r));
+        if (body.target_voice && body.refs[body.target_voice]) body.target_ref = body.refs[body.target_voice];
+        // each candidate at its own learned settings: a fair fight
+        body.candidates = await Promise.all((body.candidates ?? []).map(async (cand: { engine?: string; voice?: string; params?: Record<string, number> }) => {
+          const prof = await profileFor(cand.engine, cand.voice, body.style ?? "tech").catch(() => null);
+          return { ...cand, params: { ...(prof?.params ?? {}), ...(cand.params ?? {}) } };
+        }));
+      }
+      if ((!body.kind || body.kind === "revoice" || body.kind === "story") && typeof body.voice === "string" && isCustomVoice(body.voice)) {
         // a recorded voice: hand the worker a link to it (its disk is wiped whenever Colab recycles the runtime)
         const ref = await refSync(body.voice);
         if (ref) body.ref = ref;
@@ -159,7 +235,7 @@ export async function POST(req: Request, ctx: Ctx) {
       if (!VOICE_RE.test(name) || !isCustomVoice(name)) return Response.json({ error: "name: lowercase letters, digits, - or _ (not female/male/default)" }, { status: 400 });
       if (!/^uploads\/[A-Za-z0-9._-]+$/.test(String(body.key ?? ""))) return Response.json({ error: "upload the recording first" }, { status: 400 });
       const job = await call("/jobs", { body: { kind: "reference", name, url: await presignPath(String(body.key), 3600), label: String(body.label ?? name).slice(0, 60),
-        version: Date.now().toString(36), language: body.language || undefined } });
+        version: Date.now().toString(36), language: body.language || undefined, enhance: body.enhance ?? (await getSettings()).enhance_recordings } });
       return Response.json(job, { status: 202 });
     }
     if (a === "samples" && b && c) {
@@ -205,6 +281,10 @@ export async function DELETE(req: Request, ctx: Ctx) {
   const g = await guard(req, ctx);
   if (g.deny) return g.deny;
   const [a, b] = g.path;
+  if (a === "datasets" && b && VOICE_RE.test(b) && ID.test(String(g.path[2] ?? ""))) {
+    await deleteDatasetPart(b, String(g.path[2]));
+    return Response.json({ ok: true });
+  }
   if (a === "myvoices" && b) {
     if (!isCustomVoice(b)) return Response.json({ error: "bad voice" }, { status: 400 });
     await deleteMyVoice(b);

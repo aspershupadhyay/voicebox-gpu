@@ -1,6 +1,6 @@
 "use client";
 import {
-  ArrowCounterClockwise, ArrowRight, CheckCircle, Lightbulb, Microphone, Shuffle, Stop, TrashSimple, WarningCircle,
+  ArrowCounterClockwise, ArrowRight, ArrowsClockwise, CheckCircle, Lightbulb, Microphone, Shuffle, Stop, TrashSimple, UploadSimple, WarningCircle,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -10,6 +10,7 @@ import { useDialog } from "./Dialog";
 import { GuideButton } from "./GuideDrawer";
 import { KOKORO_LANG, LANGUAGES } from "./guides";
 import JobProgress from "./JobProgress";
+import LineRow from "./LineRow";
 import Player from "./Player";
 import { SampleButton, useSamples } from "./Sample";
 import { useStatus } from "./Shell";
@@ -24,6 +25,7 @@ const TIPS = [
   ["15-20 cm away", "A hand's width from the mic, slightly to the side so p and b don't pop."],
   ["Read like the video", "Energy, pace and attitude carry over. Excited in, excited out."],
   ["15-20 seconds", "Read the whole card. Longer takes are trimmed to the best ~20 s."],
+  ["Bad mic? Fine.", "The studio enhancer removes noise and echo and restores detail before cloning (Settings)."],
 ];
 const ENGINES = [
   { id: "orpheus", name: "Orpheus", note: "Most human · English" },
@@ -222,6 +224,115 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
   );
 }
 
+const PLATFORMS = [["youtube", "YouTube"], ["shorts", "Shorts"], ["reels", "Reels"], ["tiktok", "TikTok"], ["podcast", "Podcast"], ["raw", "Raw"]] as const;
+
+/** Speech-to-speech: upload any take of yourself (voice memo, screen recording, video) and get it back in a recorded
+ *  voice with studio clarity; timing and emotion stay yours, so it drops straight back onto the edit. */
+function Revoice({ mine }: { mine: MyVoice[] }) {
+  const { status } = useStatus();
+  const [file, setFile] = useState<File | null>(null);
+  const [voice, setVoice] = useState("");
+  const [platform, setPlatform] = useState("youtube");
+  const [subtitles, setSubtitles] = useState(true);
+  const [upFrac, setUpFrac] = useState<number | null>(null);
+  const [job, setJob] = useState<Job | null>(null);
+  const [audio, setAudio] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => { if (!voice && mine.length) setVoice(mine[0].name); }, [mine, voice]);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  async function poll(id: string) {
+    try {
+      const j = await api<Job>(`jobs/${id}`);
+      setJob(j);
+      if (j.library) api<{ results: { id: string; audio: string }[] }>(`library/${id}`).then((l) => setAudio(l.results[0]?.audio ?? null)).catch(() => {});
+      if (["queued", "running"].includes(j.status) || (j.status === "done" && !j.library)) timer.current = setTimeout(() => poll(id), 1500);
+    } catch (e) {
+      setErr((e as Error).message);
+      timer.current = setTimeout(() => poll(id), 4000);
+    }
+  }
+
+  async function go() {
+    if (!file) return;
+    setErr(""); setJob(null); setAudio(null);
+    try {
+      setUpFrac(0);
+      const key = await uploadFile(file, file.name.replace(/[^A-Za-z0-9._-]/g, "_") || "performance.wav", setUpFrac);
+      setUpFrac(null);
+      const j = await api<Job>("jobs", { body: { kind: "revoice", source_key: key, voice: voice || "female", platform, subtitles,
+        label: `Re-voice · ${file.name.slice(0, 50)}` } });
+      setJob(j);
+      timer.current = setTimeout(() => poll(j.id), 800);
+    } catch (e) {
+      setUpFrac(null);
+      setErr((e as Error).message);
+    }
+  }
+
+  const busy = upFrac !== null || (!!job && (["queued", "running"].includes(job.status) || (job.status === "done" && !job.library)));
+  const voices = [...mine.map((m) => [m.name, m.label] as const), ["female", "female preset"] as const, ["male", "male preset"] as const];
+  return (
+    <div className="card" style={{ marginTop: 14 }}>
+      <div className="card-head"><h2><ArrowsClockwise size={18} weight="duotone" /> Re-voice a take</h2><span className="dim tiny">your performance, studio voice</span></div>
+      <p className="dim small" style={{ marginTop: 0 }}>
+        Record yourself anywhere (a phone voice memo, a screen recording, a rough take) and get it back in your clean recorded voice.
+        Your timing, emphasis and emotion stay, so it lines up with the original video frame for frame. Up to 15 minutes.
+      </p>
+      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, alignItems: "end" }}>
+        <div className="field" style={{ margin: 0 }}>
+          <label className="f">Performance (audio or video)</label>
+          <label className="btn ghost sm" style={{ width: "100%", justifyContent: "flex-start", overflow: "hidden" }}>
+            <UploadSimple size={14} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file ? file.name : "Choose a file"}</span>
+            <input type="file" accept="audio/*,video/*" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          </label>
+        </div>
+        <div className="field" style={{ margin: 0 }}>
+          <label className="f">Speak it as</label>
+          <select value={voice} onChange={(e) => setVoice(e.target.value)}>{voices.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+        </div>
+        <div className="field" style={{ margin: 0 }}>
+          <label className="f">Publish for</label>
+          <select value={platform} onChange={(e) => setPlatform(e.target.value)}>{PLATFORMS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+        </div>
+      </div>
+      <div className="row between" style={{ marginTop: 12 }}>
+        <label className="row small" style={{ gap: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} />Subtitles + voice match score</label>
+        <button className="sig" onClick={go} disabled={!file || busy || !status?.online}><ArrowsClockwise size={16} weight="bold" />Re-voice</button>
+      </div>
+      {!status?.online && <div className="dim tiny" style={{ marginTop: 6 }}>Needs the GPU worker online.</div>}
+      {err && <p className="err" style={{ marginTop: 10 }}>{err}</p>}
+      {(job || upFrac !== null) && (
+        <div style={{ marginTop: 14 }}>
+          <JobProgress job={job} kind="tts" uploading={upFrac !== null} uploadFrac={upFrac ?? 0} onCancel={job ? () => api(`jobs/${job.id}/cancel`, { body: {} }) : undefined} />
+        </div>
+      )}
+      {job?.library && job.results[0] && (
+        <div style={{ marginTop: 12 }}>
+          <LineRow jobId={job.id} line={job.results[0]} audio={audio ?? job.results[0].url} slug={`revoice-${job.voice}`} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+type Learnt = { jobs: number; usual_similarity?: number | null; best_temperature?: number | null };
+
+/** What the review has learned about this voice on Qwen (tech delivery): its usual voice match and best temperature. */
+function Learned({ voice }: { voice: string }) {
+  const [p, setP] = useState<Learnt | null>(null);
+  useEffect(() => { api<Learnt>(`profile/qwen/${voice}`).then(setP).catch(() => {}); }, [voice]);
+  if (!p || !p.jobs) return <div className="tiny faint" style={{ marginTop: 8 }}>Learning: every reviewed voiceover teaches this voice its best settings.</div>;
+  return (
+    <div className="tiny dim" style={{ marginTop: 8 }}>
+      Learned from {p.jobs} voiceover{p.jobs > 1 ? "s" : ""}
+      {p.usual_similarity != null && <> · usually {Math.round(p.usual_similarity * 100)}% like you</>}
+      {p.best_temperature != null && <> · best temperature {p.best_temperature}</>}
+    </div>
+  );
+}
+
 export default function Voices() {
   const samples = useSamples();
   const { confirm, toast } = useDialog();
@@ -261,9 +372,11 @@ export default function Voices() {
             <div key={v.name} className="card myvoice reveal">
               <VoiceGlyph name={v.name} size={52} />
               <div style={{ minWidth: 0 }}>
-                <div className="row" style={{ gap: 10 }}><b style={{ font: "400 22px var(--display)" }}>{v.label}</b><span className="mono dim tiny">{v.name}</span><span className="dim tiny">{v.duration.toFixed(1)} s · {ago(v.created)}</span></div>
+                <div className="row" style={{ gap: 10 }}><b style={{ font: "600 19px var(--display)", letterSpacing: "-.02em" }}>{v.label}</b><span className="mono dim tiny">{v.name}</span><span className="dim tiny">{v.duration.toFixed(1)} s · {ago(v.created)}</span>
+                  {v.enhanced && <span className="pill ok" title="Cleaned by the studio enhancer: noise and echo removed, detail restored">studio-enhanced</span>}</div>
                 <p className="dim small clamp2" style={{ margin: "4px 0 10px" }}>“{v.transcript}”</p>
                 {v.url && <Player src={v.url} compact />}
+                <Learned voice={v.name} />
                 {v.warnings?.map((w) => <div key={w} className="tiny" style={{ color: "var(--warn)", marginTop: 6 }}><WarningCircle size={12} /> {w}</div>)}
               </div>
               <div className="stack" style={{ gap: 6 }}>
@@ -275,6 +388,8 @@ export default function Voices() {
           ))}
         </div>
       )}
+
+      {mine && <Revoice mine={mine} />}
 
       <div className="row between" style={{ marginTop: 34 }}>
         <h2 className="section-h" style={{ margin: 0 }}>Every voice, auditioned</h2>

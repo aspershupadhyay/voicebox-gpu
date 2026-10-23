@@ -385,3 +385,9 @@ export const VIDEO_GUIDES: Record<string, Guide> = {
     ],
   },
 };
+
+GUIDES.myvoice = {
+  ...GUIDES.orpheus,
+  title: "Your model",
+  tagline: "Orpheus 3B fine-tuned on 30-60 minutes of you (Your model page). Your pace and emphasis, not just your timbre. English; tags like <laugh> still work.",
+};

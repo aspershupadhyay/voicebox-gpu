@@ -111,17 +111,27 @@ def main():
     if os.environ.get("VOICEBOX_VRAM_GB") is None and setting("VOICEBOX_VRAM_GB"):
         os.environ["VOICEBOX_VRAM_GB"] = setting("VOICEBOX_VRAM_GB")
     # optional Hugging Face read token: anonymous downloads of 50-70 GB video models get rate-limited (HTTP 429)
-    if not os.environ.get("HF_TOKEN") and setting("HF_TOKEN"):
-        os.environ["HF_TOKEN"] = setting("HF_TOKEN")
-    if not os.environ.get("HF_TOKEN") and register_url:
-        try:  # or from the dashboard, which keeps it in its own env (deploy-mcp.sh pushes it from .secrets.local)
+    # and your own voice model (MY_VOICE_MODEL / MY_VOICE_SPEAKER, from the training notebook)
+    wanted = ("HF_TOKEN", "MY_VOICE_MODEL", "MY_VOICE_SPEAKER", "MY_VOICE_ADAPTER_URL")
+    for k in wanted:
+        if not os.environ.get(k) and setting(k):
+            os.environ[k] = setting(k)
+    if register_url and not all(os.environ.get(k) for k in wanted):
+        try:  # or from the dashboard, which keeps them in its own env (deploy-mcp.sh pushes HF_TOKEN from .secrets.local)
             req = urllib.request.Request(register_url.rsplit("/api/", 1)[0] + "/api/worker-env", headers={"Authorization": f"Bearer {secret}"})
             with urllib.request.urlopen(req, timeout=15) as r:
-                tok = json.loads(r.read()).get("HF_TOKEN")
-            if tok:
-                os.environ["HF_TOKEN"] = tok
+                env = json.loads(r.read())
+            for k in wanted:
+                if not os.environ.get(k) and env.get(k):
+                    os.environ[k] = env[k]
         except Exception as e:
             log(f"could not fetch worker settings: {e}")
+    if os.environ.get("HF_TOKEN") and not os.environ["HF_TOKEN"].startswith("hf_"):
+        # e.g. the "[SENSITIVE]" placeholder `vercel env pull` writes: Hugging Face refuses a bad token even for public models
+        log("ignoring HF_TOKEN: it isn't a Hugging Face token (they start with hf_)")
+        del os.environ["HF_TOKEN"]
+    if os.environ.get("MY_VOICE_MODEL"):
+        log(f"your voice model: {os.environ['MY_VOICE_MODEL']}")
     log("Hugging Face token: " + ("set" if os.environ.get("HF_TOKEN") else "none (big downloads may be rate-limited; add HF_TOKEN in Colab Secrets)"))
     cf = ensure_tools()
     # a previous run in this runtime may have left processes behind (e.g. after "interrupt" + re-run)

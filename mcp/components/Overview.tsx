@@ -1,5 +1,5 @@
 "use client";
-import { ArrowRight, Broom, ClosedCaptioning, FilmSlate, FilmStrip, Fire, Microphone, Power, Terminal, X } from "@phosphor-icons/react";
+import { ArrowRight, Broom, ClosedCaptioning, FilmSlate, FilmStrip, Fire, Kanban, Microphone, Power, Terminal, X } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ago, api, fmtS, pct, type Job } from "./api";
@@ -20,10 +20,6 @@ const ENGINES: Record<string, { role: string; lang: string; mem: string; group: 
   chatterbox: { role: "Emotion dial and zero-shot voice cloning.", lang: "23 languages", mem: "≈4 GB", group: "voice" },
   kokoro: { role: "Instant drafts for timing, on the CPU.", lang: "9 languages", mem: "CPU", group: "voice" },
   whisper: { role: "Word-timed subtitles from any audio.", lang: "99 languages", mem: "≈4 GB", group: "voice" },
-  wan: { role: "Sharp 720p clips from text or a start frame.", lang: "720p · silent", mem: "≈20 GB", group: "visual" },
-  wan14: { role: "Top-quality Wan: animates a start frame. A100 only.", lang: "480p · from image", mem: "≈32 GB", group: "visual" },
-  ltx: { role: "Video with its own soundtrack, up to 10 s.", lang: "video + sound", mem: "≈20 GB", group: "visual" },
-  animate: { role: "Your character performs the motion of any clip: exercises, dances.", lang: "image + motion → video", mem: "≈40 GB", group: "visual" },
   zimage: { role: "Photoreal images in about 2 s. Commercial use OK.", lang: "1K images", mem: "≈22 GB", group: "visual" },
   qwenimage: { role: "2K images, sharp text, edits and transparent PNGs. Non-commercial.", lang: "2K images · edit", mem: "≈33 GB", group: "visual" },
 };
@@ -99,7 +95,7 @@ export default function Overview() {
           <p className="sub">{sentence}</p>
           <div className="row" style={{ marginTop: 22 }}>
             <Link href="/generate" className="btn sig"><Microphone size={16} weight="bold" />New voiceover</Link>
-            <Link href="/video" className="btn ghost"><FilmSlate size={16} />Render a clip</Link>
+            <Link href="/workspace" className="btn ghost"><Kanban size={16} />Open the board</Link>
             <Link href="/subtitles" className="btn ghost"><ClosedCaptioning size={16} />Subtitle a file</Link>
           </div>
         </div>
@@ -136,7 +132,7 @@ export default function Overview() {
       {(["voice", "visual"] as const).map((group) => (
         <section key={group}>
           <div className="row between" style={{ margin: "30px 0 14px" }}>
-            <h2 style={{ margin: 0 }} className="row">{group === "voice" ? "Voice engines" : "Video & image engines"}
+            <h2 style={{ margin: 0 }} className="row">{group === "voice" ? "Voice engines" : "Image engines"}
               {st?.mode === group && <span className="pill ok" style={{ marginLeft: 10 }}>on the GPU</span>}</h2>
             <span className="dim small">{group === "voice"
               ? "Load on first use, swap out when memory runs short, unload after " + (st?.idle_min ?? 10) + " idle minutes."

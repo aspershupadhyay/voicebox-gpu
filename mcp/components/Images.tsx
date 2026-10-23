@@ -302,8 +302,6 @@ export default function Images() {
                     <img src={im.thumb_url ?? im.url} alt="" loading="lazy" />
                     <div className="tools" onClick={(e) => e.stopPropagation()}>
                       <a href={dl(item, i)} title="Download PNG"><DownloadSimple size={14} weight="bold" /></a>
-                      <Link href={`/video?frame=${item.id}:${i}`} title="Use as a video start frame"><FilmSlate size={14} /></Link>
-                      <Link href={`/video?tab=animate&character=${item.id}:${i}`} title="Make this character perform a motion"><UserFocus size={14} /></Link>
                     </div>
                   </div>
                 ))}
@@ -326,8 +324,6 @@ export default function Images() {
             </div>
             <div className="bar2" onClick={(e) => e.stopPropagation()}>
               <a className="btn sm" href={dl(open.item, open.i)}><DownloadSimple size={14} weight="bold" />PNG · {im.width}×{im.height}</a>
-              <Link className="btn ghost sm" href={`/video?frame=${open.item.id}:${open.i}`}><FilmSlate size={14} />Animate into a clip</Link>
-              <Link className="btn ghost sm" href={`/video?tab=animate&character=${open.item.id}:${open.i}`}><UserFocus size={14} />Use as Animate character</Link>
               <button className="ghost sm" onClick={() => useAsRef(open.item, open.i)}><Plus size={14} />Use as reference</button>
               <button className="ghost sm" onClick={() => reuse(open.item)}><ArrowsClockwise size={14} />Reuse prompt</button>
               <button className="ghost sm" onClick={() => setOpen(null)}><X size={14} />Close</button>

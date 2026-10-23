@@ -8,9 +8,13 @@ Two layers. You normally only touch the first.
 |---|---|
 | `worker_status` | Online? GPU, VRAM, loaded engines, queue. Says "re-run the notebook" if the heartbeat is older than 4 min. |
 | `list_voices` | Engines, voices, presets, every parameter with default/min/max, uploaded references. |
-| `voice_lines` | `{engine, voice?, style?, lines:[{id?, text, window?, start?, params?}], params?, post?, subtitles?, language?, label?, wait_seconds?}` → job. Blocks up to 45 s, then returns progress + a hint to call `get_job`. Engines: `orpheus`, `qwen`, `chatterbox`, `kokoro`. |
+| `voice_lines` | `{engine, voice?, style?, platform?, takes?, lines?:[{id?, text, window?, start?, params?}], post_id?, params?, post?, subtitles?, captions?, pronounce?, lexicon?, language?, label?, wait_seconds?}` → job. With `post_id` (and no `lines`) it voices that workspace post's script and attaches the result to the post. `review` (default on) listens back and re-voices only the sentences that missed; each result has `review {retried, fixed, issues}`. Blocks up to 45 s, then returns progress + a hint to call `get_job`. Engines: `orpheus`, `qwen`, `chatterbox`, `kokoro`. `platform` masters the audio (see *Platforms*); `takes: 2-4` = best-of-N per sentence; `[pause 0.8]` / `[beat]` / `[breath]` in the text insert silence. |
+| `revoice` | `{url, voice, platform?, subtitles?, language?, label?}` → speech-to-speech job: a performance (audio or video URL) re-spoken in a recorded voice (Chatterbox VC), timing kept, mastered for the platform. |
+| `clean_audio` | `{url, cleanup?: auto\|denoise\|enhance, params?: {strength, steps}, platform?, subtitles?}` → adaptive clean-up: measures the recording, runs DeepFilterNet and/or Resemble Enhance as needed, checks speaker identity, masters, same length. Result has `cleanup {steps, why, identity, before, after}`. |
+| `voice_profile` | `{engine, voice, style?}` → what a voice has learned from reviewed voiceovers: usual voice match, best temperature, every setting tried. |
+| `preview_pronunciation` | `{lines, pronounce?, lexicon?}` → what the voice will actually read (no GPU). |
+| `get_settings` / `update_settings` | The shared studio defaults (R2 `settings.json`); every tool fills unset arguments from them, and the pronunciation dictionary merges into every request. |
 | `my_voices` | Voices the user recorded on the dashboard's Voices page. Use the `name` as `voice` with `qwen` (best) or `chatterbox` (Hindi, emotion dial). |
-| `animate` | `{prompt, model?: wan\|ltx, aspect?: 9:16\|16:9\|1:1, seconds?, quality?: fast\|full, seed?, negative?, audio?, image_url? \| from_library?, label?}` → video job (minutes; poll `get_job`). Saved to the library as MP4 + poster. |
 | `get_job` | `{job_id, wait_seconds?}` long-poll. When done, each result has `duration`, `fits` (vs `window`) and a signed `url`; the job has `zip_url`. Links expire after 6 h. |
 | `list_jobs` | Last 30 jobs. |
 | `cancel_job` | Cancel a queued job, or stop a running one after the current line. |
@@ -18,6 +22,22 @@ Two layers. You normally only touch the first.
 | `transcribe` | `{sources:[{url, name?, text?}] \| library_job, language?}` → Whisper large-v3 subtitles (SRT/VTT/JSON, word timing). |
 | `list_library` | Saved jobs in the dashboard library. |
 | `engine` | `{name, action: load\|unload\|forget}` prewarm, free VRAM, or delete downloaded weights to free disk. |
+| `imagine` | `{prompt, model?: zimage\|qwenimage, aspect?, count?, ...}` → stills (thumbnails, B-roll) saved to the library. |
+
+**Shared workspace** (Appwrite; needs `APPWRITE_API_KEY` on the server). Changes made through MCP show up live on both
+dashboards and are signed "Claude (MCP)" in the activity feed.
+
+| Tool | What it does |
+|---|---|
+| `workspace_board` | `{status?, platform?, search?, limit?}` → posts with stage, platforms, due date, owner, voiceover count. |
+| `get_post` | `{post_id}` → script, caption, notes, comments, media (view links), voiceover job ids, recent activity. |
+| `create_post` / `update_post` | title, status (`idea`, `draft`, `review`, `scheduled`, `posted`), platforms, script (`script_mode: append` adds to it), caption, notes, `due_at` (ISO with offset), link, assignee (name or email). |
+| `delete_post` | Only when asked. |
+| `comment_on_post` | `{post_id, text}` → a note in the post's discussion. |
+| `content_calendar` | `{from?, to?}` → scheduled posts in order (default: the next 14 days) plus unscheduled work in progress. |
+| `workspace_media` / `add_media` | List files (optionally one post's); copy a file from a URL into the media library (≤150 MB), attached to a post. |
+| `attach_voiceover` | `{post_id, job_id}` → link a library voiceover to a post. |
+| `workspace_activity` / `workspace_members` | Who did what, newest first; who is on the team. |
 
 `voice` resolves as: `female` / `male` preset → engine voice name (`tara`, `af_heart`, …) → a recorded voice (`my_voices`).
 Recorded voices live in R2 (`voices/<name>/reference.wav` + transcript); the dashboard passes the worker a signed link
@@ -33,7 +53,8 @@ All routes need `Authorization: Bearer $WORKER_SECRET`, except `/files/*`, which
 |---|---|
 | `GET /health` | GPU, VRAM budget, engine states, queue |
 | `GET /voices` | catalogue (same as `list_voices`) |
-| `POST /jobs` · `GET /jobs` · `GET /jobs/{id}` · `POST /jobs/{id}/cancel` | job queue (FIFO, one job at a time). `kind`: `tts` (default), `transcribe`, `video`, `reference` |
+| `POST /jobs` · `GET /jobs` · `GET /jobs/{id}` · `POST /jobs/{id}/cancel` | job queue (FIFO, one job at a time). `kind`: `tts` (default), `transcribe`, `video`, `image`, `animate`, `reference` (`enhance`), `revoice` (`enhance`), `clean`, `story` |
+| `POST /speakable` | `{lines, pronounce?, lexicon?}` → per line, the spoken parts and pauses (pronunciation dry run) |
 | `POST /jobs/{id}/push` | `{targets: {file: presigned PUT url}}`: the worker uploads results straight to R2 |
 | `POST /refs` | `{name, audio_b64 \| url, transcript?}` (raw; the dashboard uses `kind: reference` jobs, which clean + transcribe) |
 | `POST /engines/{name}/load\|unload\|forget` | `forget` also deletes the engine's downloaded weights |
@@ -41,6 +62,28 @@ All routes need `Authorization: Bearer $WORKER_SECRET`, except `/files/*`, which
 
 **Video job** `{kind: "video", model, prompt, aspect, seconds, quality, seed, negative?, audio?, image_url?}`: frames are
 `seconds × 24` rounded to the model's frame step (+1). Progress reports real denoising steps (`step 3 of 8`).
+**Voice job extras.** What the engine reads is rewritten from the script (`lexicon`, on by default for English):
+markdown and links cleaned, tech terms said right (`SQL` → sequel, `GPU` → G P U, `JSON` → jay-son, `16GB` → 16 gigabytes,
+`v2.1` → version 2.1), plus your `pronounce: {word: say}` map. The script stays as written for subtitles and the match
+score; each result's `spoken` shows what was read. `[pause]`, `[pause 0.8]`, `[pause 500ms]`, `[beat]`, `[breath]`
+become real silence. On `qwen` with a recorded voice, Devanagari lines go to Chatterbox (`hi`) in the same voice.
+`takes: N` voices each sentence N times (different seeds); Whisper transcribes every take and the WavLM speaker
+model (`microsoft/wavlm-base-plus-sv`, in the whisper venv) compares it with the reference; the most accurate,
+most-like-you take without a run-on tail wins, per sentence. Results carry `lufs`, `takes {n, picked, match, similarity}`
+and, with subtitles on a cloned voice, `similarity` (0.86+ = same speaker).
+**Re-voice job** `{kind: "revoice", url, voice, platform?, subtitles?}`: the performance is cleaned (high-pass, FFT denoise),
+cut into ≤ 20 s pieces at its quietest moments, converted with Chatterbox VC and re-joined without gaps, untrimmed, so it
+stays frame-accurate against the source video.
+**Studio enhance.** The `enhance` engine (Resemble Enhance, MIT; ~0.7 GB, ~3 GB VRAM) denoises and restores speech to
+44.1 kHz. Measured on the model's own street-noise sample: the noise floor between words dropped from −54 to −90 dB, and
+an 8 kHz phone-quality copy came back full-band. It runs on voice references (`enhance`, default on), on re-voice input
+(denoise only), on `kind: clean` jobs, and on generated lines with `post.enhance: true`. If it can't install or load, the
+job warns and falls back to the ffmpeg clean-up instead of failing.
+**Story job** `{kind: "story", scenes, ...voice options, platform, visuals, visual_style, captions_look, transition, music_url}`:
+voice lines → scene timeline (0.25 s lead-in, 0.3 s between scenes, 0.8 s tail) → Whisper word timing → one Z-Image
+still per scene (all stills first, then Wan clips if `visuals: clips`, so models switch once) → Ken Burns segments
+(1080×1920 / 1920×1080, 30 fps) → 0.35 s cross-fades → ASS captions (Anton, word-by-word highlight for vertical; Inter
+subtitles for wide) → voice + music (levelled, sidechain-ducked) mastered to the platform → H.264/AAC MP4, faststart.
 **Reference job** `{kind: "reference", name, url, version}`: ffmpeg cleans the recording (high-pass, low-pass, FFT
 denoise, trim, −3 dBFS), Whisper transcribes it, takes over ~24 s are cut to ≤ 20 s at a word boundary.
 
@@ -66,10 +109,16 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 | `kokoro` | voice | 0 GB | 0.4 GB | `af_heart` / `am_michael` | Kokoro-82M. Fast, clean, flat delivery. Best for drafts and timing. |
 | `chatterbox` | voice | 4 GB | 4 GB | `female` / `male` | Chatterbox 0.5B (Resemble AI, MIT). Emotion dial + zero-shot cloning; 23 languages incl. Hindi. |
 | `orpheus` | voice | 11.5 GB | 7 GB | `tara` / `dan` | Orpheus 3B on vLLM. Most human-sounding; inline tags <laugh> <chuckle> <sigh> <cough> <sniffle> <groan> <yawn> <gasp>. |
+| `myvoice` | voice | 11.5 GB | 7 GB | `me` / `me` | Your own voice model: Orpheus 3B fine-tuned on 30-60 min of your recordings (Your model page). Needs MY_VOICE_MODEL. |
 | `whisper` | voice | 6 GB | 3.2 GB | n/a (subtitles) | Whisper large-v3 (OpenAI). Best open subtitle model: word-level timestamps, 99 languages. |
+| `enhance` | voice | 3 GB | 0.7 GB | n/a (clean-up) | Resemble Enhance (MIT). Studio clean-up: removes noise and room echo, restores the detail a cheap mic or phone loses (to 44.1 kHz). |
 | `qwen` | voice | 6 GB | 4.6 GB | `female` / `male` | Qwen3-TTS 1.7B Base (Alibaba, Apache-2.0). Best voice cloning: a 10-20 s recording of you becomes your voice. 10 languages (no Hindi: use Chatterbox). |
 | `wan` | visual | 20 GB | 23 GB | n/a (video) | Wan 2.2 TI2V 5B (Alibaba, Apache-2.0). Sharp 720p, strong motion and prompt following. Turbo: 4 steps. |
-| `ltx` | visual | 20 GB | 48 GB | n/a (video) | LTX-2.3 22B distilled (Lightricks). Video *with matching sound* in 8 steps; up to 10 s. 4-bit on the L4. |
+| `wan14` | visual | 62 GB | 69 GB | n/a (video) | Wan 2.2 I2V A14B + Lightning (Alibaba, Apache-2.0). Best motion and detail of the Wan family; animates a start frame. 480p, 4 steps, A100 only. |
+| `ltx` | visual | 52 GB | 71 GB | n/a (video) | LTX-2.5 22B distilled (Lightricks). Video *with matching sound* in 8 steps; up to 10 s. Full = two-stage, 2x resolution. |
+| `zimage` | visual | 22 GB | 33 GB | n/a (image) | Z-Image-Turbo (Tongyi-MAI, Apache-2.0: commercial use OK). 6B, 8 steps, photoreal, ~2 s per image. |
+| `qwenimage` | visual | 40 GB | 47 GB | n/a (image) | Qwen-Image-2.1 (Alibaba Qwen). Native 2K, sharp text in images, edits with up to 10 references, transparent PNGs. |
+| `animate` | visual | 48 GB | 85 GB | n/a (video) | Wan 2.2 Animate 14B (Alibaba, Apache-2.0). Your character (one image) performs the motion of a driving video: exercises, dances, gestures. |
 
 #### `kokoro` params
 
@@ -97,10 +146,27 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 | `repetition_penalty` | `1.1` | 1 – 2 | >= 1.1 needed for stable output; raise if words repeat |
 | `seed` | `7` |  | change it to get a different take of the same line |
 
+#### `myvoice` params
+
+| Param | Default | Range | Notes |
+|---|---|---|---|
+| `temperature` | `0.6` | 0.1 – 1.5 | lower = steadier and more literal, higher = more expressive but riskier |
+| `top_p` | `0.95` | 0.1 – 1 |  |
+| `repetition_penalty` | `1.1` | 1 – 2 |  |
+| `seed` | `7` |  | change it to get a different take of the same line |
+
 #### `whisper` params
 
 | Param | Default | Range | Notes |
 |---|---|---|---|
+
+#### `enhance` params
+
+| Param | Default | Range | Notes |
+|---|---|---|---|
+| `mode` | `'enhance'` |  | enhance = denoise + restore detail; denoise = remove noise only, timbre untouched |
+| `strength` | `0.6` | 0 – 1 | how hard the denoiser leads: higher for noisy rooms, lower keeps more of the original |
+| `steps` | `48` | 16 – 128 | restoration detail (more = finer, slower) |
 
 #### `qwen` params
 
@@ -115,13 +181,19 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 
 - Sizes: 16:9 = 1280×704, 9:16 = 704×1280, 1:1 = 960×960
 - 24 fps, up to 5 s (frames are multiples of 4 + 1)
-- Quality: `fast`: 4 steps, CFG 1 (Turbo distill, ~2-4 min per 5 s clip); `full`: 30 steps, CFG 5 (Original model, best detail, ~20-30 min on an L4)
+- Quality: `draft`: 4 steps, CFG 1 (Turbo + tiny decoder: quickest preview, slightly softer); `fast`: 4 steps, CFG 1 (Turbo distill with the full decoder); `full`: 30 steps, CFG 5 (Original model, best detail, ~20-30 min on an L4)
+
+#### `wan14` video
+
+- Sizes: 16:9 = 832×480, 9:16 = 480×832, 1:1 = 640×640
+- 16 fps, up to 5 s (frames are multiples of 4 + 1)
+- Quality: `draft`: 4 steps, CFG 1 (Lightning + tiny decoder: quickest preview); `fast`: 4 steps, CFG 1 (Lightning distill, 4 steps, full decoder)
 
 #### `ltx` video
 
-- Sizes: 16:9 = 1024×576, 9:16 = 576×1024, 1:1 = 768×768
+- Sizes: 16:9 = 960×544, 9:16 = 544×960, 1:1 = 768×768
 - 24 fps, up to 10 s (frames are multiples of 8 + 1)
-- Quality: `fast`: 8 steps, CFG 1 (Distilled, ~3-5 min per 5 s clip with audio)
+- Quality: `draft`: 8 steps, CFG 1 (One pass at about half size: quickest preview); `fast`: 8 steps, CFG 1 (Distilled, one pass); `full`: 11 steps, CFG 1 (Two-stage: x2 latent upsample + refine, double resolution (text only))
 
 #### Post-processing (`post`)
 
@@ -132,6 +204,7 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 | `normalize_dbfs` | `-3.0` |
 | `sample_rate` | `48000` |
 | `tempo` | `1.0` |
+| `master` | `'youtube'` |
 
 #### Delivery styles (`style`, default `tech`)
 
@@ -143,4 +216,45 @@ A style sets engine params and `post` defaults; explicit values in the request w
 | `hype` | Maximum energy for promos and hooks (~200 wpm). Best with mia or leo. | temperature=0.7, top_p=0.95, repetition_penalty=1.1 | temperature=0.9 | exaggeration=1.05, cfg_weight=0.3, temperature=0.85 | speed=1.2 | tempo=1.08 |
 | `narrator` | Measured documentary read with room to breathe (~165 wpm). | temperature=0.6, top_p=0.95, repetition_penalty=1.1 | temperature=0.7 | exaggeration=0.4, cfg_weight=0.5, temperature=0.8 | speed=0.95 | tempo=0.95 |
 | `neutral` | Engine defaults, no styling. | defaults | defaults | defaults | defaults | — |
+
+#### Platforms (`platform`, default `youtube`)
+
+Mastering runs the broadcast voice chain (`highpass=f=75,equalizer=f=280:t=q:w=1.1:g=-2.5,equalizer=f=3200:t=q:w=1.0:g=2.0,highshelf=f=9000:g=1.5,deesser=i=0.35:m=0.5:f=0.5:s=o,acompressor=threshold=-20dB:ratio=3:attack=6:release=90:makeup=2:knee=4`) then two-pass EBU R128 loudness to the target. `post.master` / `captions` in the request override it.
+
+| Platform | Loudness | True peak | Captions | About |
+|---|---|---|---|---|
+| `youtube` | -14 LUFS | -1 dBTP | `subtitles` | Long-form video: -14 LUFS, subtitle-style captions. |
+| `shorts` | -14 LUFS | -1 dBTP | `punchy` | Vertical: -14 LUFS, 1-3 word pop-up captions. |
+| `reels` | -14 LUFS | -1 dBTP | `punchy` | Vertical: -14 LUFS, 1-3 word pop-up captions. |
+| `tiktok` | -14 LUFS | -1 dBTP | `punchy` | Vertical: -14 LUFS, 1-3 word pop-up captions. |
+| `podcast` | -16 LUFS | -1.5 dBTP | `subtitles` | Audio-first: -16 LUFS, subtitle-style transcript. |
+| `raw` | peak -3 dBFS | — | `subtitles` | No mastering: peak-normalised to -3 dBFS, for mixing yourself. |
+
+| Caption style | Max chars | Max seconds |
+|---|---|---|
+| `subtitles` | 42 | 3.5 |
+| `punchy` | 16 | 1.2 |
 <!-- engines:end -->
+
+## Voice quality engine
+
+**Scoring** (`worker/quality.py`). The script, its spoken form and what Whisper heard are normalised the same way
+(lexicon, contractions, numbers and decimals spelled out, spelled-out letters joined, compounds reconciled), then compared as
+60% sound-alike words (order-aware) + 40% letters. Spelling variants score about 1.0; a skipped, swapped or invented word
+costs points and is listed in `diff {missed, added}`.
+
+**Review** (`review`, default on except Kokoro). After the first pass, every sentence is transcribed and compared with the
+reference voice (WavLM) and rated for naturalness (UTMOS, when it loads). A sentence below the text gate (0.93) or more
+than 0.05 under the voice's usual similarity is re-voiced with a new seed and a temperature nudge, up to 2 rounds; the best
+take per sentence wins. Every attempt is reported in `trials`.
+
+**Learning** (`mcp/lib/profiles.ts`). Trials are tallied per engine + voice + style in R2 (`profiles/…`). With at least 10
+trials across two or more temperatures (3+ each), the best-scoring temperature is sent as `profile.params` and applied
+unless the request sets one; the median voice match becomes `profile.sim_base`.
+
+**Clean-up** (`worker/cleanup.py`). `analyze` measures level, noise floor/SNR, bandwidth (highest frequency where the
+voice stands 6 dB above the noise and within 50 dB of its peak), room echo (T60 from post-word decay rates) and clipping.
+`cleanup_plan` picks: SNR under 32 dB → DeepFilterNet (attenuation limit 30/60/100 dB by severity); bandwidth under
+7 kHz, echo over 0.45 s or SNR under 18 dB → Resemble Enhance (strength by severity). Afterwards the speaker similarity
+to the input must stay at least 0.80, or the last step is dropped. DeepFilterNet is the official static CLI, fetched once
+into `$VOICEBOX_HOME/bin`.
