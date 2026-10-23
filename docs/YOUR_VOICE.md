@@ -75,7 +75,13 @@ Everything below runs on free compute.
    this update keep working with flow off; train again to turn it on. No Hugging Face account needed. About 1.5-3 hours on a free
    T4, under an hour on an L4. The first run also installs the training tools (~7 min). Keep the Colab tab open until it's done.
 3. **Use it.** Nothing to set: the trained model is the **myvoice** engine everywhere (Voiceover, Settings, MCP
-   `engine: "myvoice"`) right away, and a fresh worker downloads it from R2 at start-up. Training again replaces it.
+   `engine: "myvoice"`, `voice: "<your name>"`) right away. The worker fetches it from R2 the first time a job asks for
+   it and keeps it. Training again replaces only your model.
+
+   **Two of you, two models.** Each person picks their own name at the top of the Your model page (it opens on yours
+   when you're signed in) and collects and trains their own. Both models live side by side: in Voiceover, *Your model*
+   lists every trained voice with its test line; in Settings, *This engine and voice just for me* makes your trained
+   voice your default without changing the other person's; MCP clients see both under `my_voices` → `trained`.
    To serve an Orpheus fine-tune from Hugging Face instead, set `MY_VOICE_MODEL` (the repo) and `MY_VOICE_SPEAKER` on
    Vercel; that takes priority.
 4. **Benchmark** (same page, or the `benchmark_voices` MCP tool). The same unseen sentences in your model, your Qwen

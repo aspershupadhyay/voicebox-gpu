@@ -1,5 +1,7 @@
 // Studio-wide defaults, kept in R2 (settings.json) so the dashboard and every MCP client share them.
 // A request's own values always win; settings only fill what it leaves out. Pronunciations merge (request wins per word).
+// Each signed-in person can also keep their own default engine + voice (people[<user id>]): their dashboard and jobs
+// use it, the other person's don't change, and MCP clients (no person) use the studio default.
 import { getJson, putJson } from "./store";
 
 export const PLATFORMS = ["youtube", "shorts", "reels", "tiktok", "podcast", "raw"] as const;
@@ -12,6 +14,7 @@ export type Settings = {
   visuals: "images" | "clips"; visual_style: (typeof VISUAL_STYLES)[number]; captions_look: "auto" | "bold" | "clean" | "none";
   transition: "fade" | "cut"; music_lufs: number;
   backup_media: boolean; review: boolean;
+  people: Record<string, { engine: string; voice: string }>;
 };
 
 export const DEFAULTS: Settings = {
@@ -19,20 +22,26 @@ export const DEFAULTS: Settings = {
   lexicon: true, pronounce: {},
   enhance_recordings: true, enhance_input: true, enhance_output: false,
   visuals: "images", visual_style: "tech", captions_look: "auto", transition: "fade", music_lufs: -28,
-  backup_media: true, review: true,
+  backup_media: true, review: true, people: {},
 };
 
 const KEY = "settings.json";
 
 export async function getSettings(): Promise<Settings> {
   const s = await getJson<Partial<Settings>>(KEY).catch(() => null);
-  return { ...DEFAULTS, ...(s ?? {}), pronounce: { ...(s?.pronounce ?? {}) } };
+  return { ...DEFAULTS, ...(s ?? {}), pronounce: { ...(s?.pronounce ?? {}) }, people: { ...(s?.people ?? {}) } };
+}
+
+/** The settings as one person sees them: their own engine + voice over the studio's, when they keep one. */
+export function settingsFor(s: Settings, userId?: string | null): Settings & { personal: boolean } {
+  const mine = userId ? s.people[userId] : undefined;
+  return { ...s, ...(mine ?? {}), personal: !!mine };
 }
 
 /** Validate + merge a partial update; unknown keys and bad values are dropped. */
-export async function updateSettings(patch: Record<string, unknown>): Promise<Settings> {
+export async function updateSettings(patch: Record<string, unknown>, userId?: string | null): Promise<Settings> {
   const cur = await getSettings();
-  const next: Settings = { ...cur };
+  const next: Settings = { ...cur, people: { ...cur.people } };
   const str = (k: keyof Settings, ok?: readonly string[]) => {
     const v = patch[k];
     if (typeof v === "string" && v.length <= 64 && (!ok || ok.includes(v))) (next as Record<string, unknown>)[k] = v;
@@ -48,6 +57,12 @@ export async function updateSettings(patch: Record<string, unknown>): Promise<Se
     next.pronounce = Object.fromEntries(Object.entries(patch.pronounce as Record<string, unknown>)
       .filter(([k, v]) => k.trim() && typeof v === "string" && v.trim()).slice(0, 300)
       .map(([k, v]) => [k.trim().slice(0, 60), (v as string).trim().slice(0, 120)]));
+  }
+  if (userId && typeof patch.personal === "boolean") {
+    // "just for me": the engine + voice go to this person; the studio default stays as it was
+    if (patch.personal) next.people[userId.slice(0, 64)] = { engine: next.engine, voice: next.voice };
+    else delete next.people[userId];
+    if (patch.personal) { next.engine = cur.engine; next.voice = cur.voice; }
   }
   await putJson(KEY, next);
   return next;

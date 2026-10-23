@@ -413,6 +413,31 @@ def get_ref(name, sync=None):
     return wav, transcript
 
 
+def get_adapter(job, voice):
+    """(adapter dir, speaker) for a trained voice: downloaded once per model into myvoice/models/<train job>/ (a model
+    trained on this worker is already there), or (None, default speaker) = the engine's default model."""
+    models = job.get("models") or {}
+    m = models.get(voice) or (models.get("me") if voice in ("me", "female", "male", "default") else None)
+    if not m:
+        if models and voice not in ("me", "female", "male", "default"):
+            raise ValueError(f"no trained model called '{voice}' (trained: {', '.join(sorted(k for k in models if k != 'me'))})")
+        return None, None
+    path = os.path.join(C.MYVOICE_DIR, "models", m["job"])
+    if not os.path.exists(os.path.join(path, "adapter_config.json")):
+        job["stage"] = "fetching the voice model"
+        log(f"downloading voice model '{voice}' ({m['job']})")
+        tmp = path + ".part"
+        shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with urllib.request.urlopen(m["url"], timeout=900) as r, open(tmp + ".zip", "wb") as f:
+            shutil.copyfileobj(r, f)
+        zipfile.ZipFile(tmp + ".zip").extractall(tmp)
+        os.remove(tmp + ".zip")
+        shutil.rmtree(path, ignore_errors=True)
+        os.replace(tmp, path)
+    return path, m["speaker"]
+
+
 def add_ref(name, audio_bytes, transcript=None):
     if not ID_RE.match(name):
         raise ValueError("reference name must be 1-64 chars of letters, digits, - or _")
@@ -735,6 +760,7 @@ def _voice_setup(job, body, lines):
                             "learned": learned},
                 "review": body.get("review", engine != "kokoro") is not False,
                 "subtitles": bool(body.get("subtitles")), "ref": body.get("ref") if isinstance(body.get("ref"), dict) else None,
+                "models": _models(body.get("models")),
                 "lexicon": body.get("lexicon", True) is not False, "pronounce": _pronounce(body.get("pronounce")),
                 "takes": 1 if engine == "kokoro" else max(1, min(C.MAX_TAKES, int(body.get("takes") or 1)))})
     _platform(job, body, style_post)
@@ -745,6 +771,17 @@ def _voice_setup(job, body, lines):
     chars = sum(len(l["text"]) for l in clean)
     job["est_total"] = (RATES[engine] * chars * job["takes"] + (RATES["whisper"] * chars / 14 if job["subtitles"] else 0)
                         + (RATES["whisper"] * chars / 14 * job["takes"] if job["takes"] > 1 or job["review"] else 0))
+
+
+def _models(given):
+    """{voice: {job, url, speaker}}: the trained models a myvoice job may use (signed links from the dashboard)."""
+    if not isinstance(given, dict):
+        return {}
+    out = {}
+    for name, m in list(given.items())[:20]:
+        if isinstance(m, dict) and ID_RE.match(str(name)) and ID_RE.match(str(m.get("job") or "")) and str(m.get("url") or "").startswith("http"):
+            out[str(name)] = {"job": str(m["job"]), "url": str(m["url"]), "speaker": str(m.get("speaker") or "me")[:64]}
+    return out
 
 
 def _pronounce(given):
@@ -785,6 +822,7 @@ def make_revoice_job(body):
     job.update({"engine": "chatterbox", "voice": voice, "style": "neutral", "mode": "revoice", "params": {},
                 "lines": [{"id": "revoice", "text": "", "url": url, "window": None, "start": None, "params": {}}],
                 "subtitles": bool(body.get("subtitles")), "ref": body.get("ref") if isinstance(body.get("ref"), dict) else None,
+                "models": _models(body.get("models")),
                 "takes": 1, "lexicon": False, "pronounce": {}})
     _platform(job, {**body, "post": {"trim": False, **(body.get("post") or {})}})  # untrimmed: stays in sync with the video
     job["enhance"] = body.get("enhance", True) is not False
@@ -1376,9 +1414,15 @@ def run_tts(job):
         ref_path, ref_text = get_ref(voice, job.get("ref"))
     job["ref_path"] = ref_path
     voice_arg = voice if engine in ("kokoro", "orpheus", "myvoice") else None
+    lora = None
+    if engine == "myvoice":
+        lora, speaker = get_adapter(job, voice)
+        voice_arg = speaker or voice_arg
     takes = job.get("takes", 1)
 
     plans = [_line_plan(job, ln, engine, voice_arg) for ln in job["lines"]]
+    for p in plans:
+        p["lora"] = lora if p["engine"] == "myvoice" else None
     _chain(plans)
     order = {p["ln"]["id"]: i for i, p in enumerate(plans)}
     if any(len(p["chunks"]) > 1 for p in plans):
@@ -1461,7 +1505,7 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
         for b in range(0, len(mine), size):
             group = mine[b:b + size]
             items = [{"text": p["chunks"][i][1], "voice": p["voice_arg"], "params": params, "ref_path": ref_path,
-                      "ref_text": ref_text, "out_path": out(p, i, k), **_flow(job, p, i, k)} for p, i, k, params in group]
+                      "ref_text": ref_text, "out_path": out(p, i, k), "lora": p.get("lora"), **_flow(job, p, i, k)} for p, i, k, params in group]
             chars = sum(len(it["text"]) for it in items)
             lo, hi = order[group[0][0]["ln"]["id"]] + 1, order[group[-1][0]["ln"]["id"]] + 1
             label = (f"line {lo} of {n_lines}" if lo == hi else f"lines {lo}–{hi} of {n_lines} together")
@@ -2131,8 +2175,19 @@ def run_benchmark(job):
             job["stage"] = "reference"
             ref_path, ref_text = get_ref(cand["voice"], (job.get("refs") or {}).get(cand["voice"]))
         voice_arg = cand["voice"] if cand["engine"] in ("kokoro", "orpheus", "myvoice") else None
+        lora = None
+        if cand["engine"] == "myvoice":
+            try:
+                lora, speaker = get_adapter(job, cand["voice"])
+            except Exception as e:  # noqa: BLE001
+                job["warnings"].append(f"{cand['label']}: {e}")
+                board.append({"label": cand["label"], "engine": cand["engine"], "voice": cand["voice"], "error": str(e)[:200]})
+                continue
+            voice_arg = speaker or voice_arg
         lines = [{**ln, "id": f"c{ci + 1}-{ln['id']}"} for ln in keep_lines]
         plans = [_line_plan(job, ln, cand["engine"], voice_arg) for ln in lines]
+        for p in plans:
+            p["lora"] = lora if p["engine"] == "myvoice" else None
         order = {p["ln"]["id"]: i for i, p in enumerate(plans)}
 
         def out(p, i, k):
@@ -2234,6 +2289,11 @@ def run_train(job):
     job["train"] = json.load(open(os.path.join(jdir, "result.json")))
     if job["train"].get("sample"):
         job["results"].append({"id": "sample", "text": job["train"]["sample"]["text"], "duration": job["train"]["sample"]["duration"]})
+    # this person's model, under its train job (what the dashboard names it in later jobs, so no download here), and
+    # the default for jobs that don't name one
+    mine = os.path.join(C.MYVOICE_DIR, "models", job["id"])
+    shutil.rmtree(mine, ignore_errors=True)
+    shutil.copytree(os.path.join(jdir, "adapter"), mine)
     dst = os.path.join(C.MYVOICE_DIR, "adapter")
     shutil.rmtree(dst, ignore_errors=True)
     shutil.copytree(os.path.join(jdir, "adapter"), dst)
