@@ -162,6 +162,15 @@ export async function postsBetween(from: string, to: string) {
     { method: "orderAsc", attribute: "due_at" }, { method: "limit", values: [200] })}`)).rows;
 }
 
+/** Delete a workspace file: the stored file and its row (the R2 backup copy, if any, stays). */
+export async function deleteMediaRow(id: string, actor: { id?: string; name: string }) {
+  const m = await getMedia(id);
+  await aw(`/storage/buckets/${AW.bucket}/files/${encodeURIComponent(m.file_id)}`, { method: "DELETE" }).catch(() => {});
+  await aw(`${rows("media")}/${encodeURIComponent(id)}`, { method: "DELETE" });
+  await logActivity({ post_id: m.post_id, verb: "deleted", text: m.name }, actor);
+  return m;
+}
+
 export async function deletePost(id: string, actor: { id?: string; name: string }) {
   const p = await getPost(id);
   await aw(`${rows("posts")}/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -185,9 +194,20 @@ export async function addMediaFromUrl(url: string, opts: { name?: string; postId
   const r = await fetch(url, { cache: "no-store" });
   if (!r.ok) throw new Error(`could not fetch the file: ${r.status}`);
   const bytes = new Uint8Array(await r.arrayBuffer());
-  if (bytes.length > FETCH_MAX) throw new Error(`file is ${(bytes.length / 1e6).toFixed(0)} MB; upload files over ${FETCH_MAX / 1e6} MB from the Media page`);
   const mime = (r.headers.get("content-type") ?? "application/octet-stream").split(";")[0];
   const name = (opts.name || decodeURIComponent(new URL(url).pathname.split("/").pop() || "file")).slice(0, 255);
+  return addMediaBytes(bytes, mime, name, opts, actor);
+}
+
+const MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", mp4: "video/mp4",
+  mov: "video/quicktime", webm: "video/webm", mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", pdf: "application/pdf", txt: "text/plain",
+  md: "text/markdown", srt: "application/x-subrip", vtt: "text/vtt", json: "application/json", csv: "text/csv" };
+export const mimeFor = (name: string) => MIME[name.split(".").pop()?.toLowerCase() ?? ""] ?? "application/octet-stream";
+
+/** Store bytes in the workspace's media bucket (chunked like the web SDK), then token + R2 backup it. */
+export async function addMediaBytes(bytes: Uint8Array, mime: string, name: string, opts: { postId?: string | null; backup: boolean }, actor: { id?: string; name: string }) {
+  if (bytes.length > FETCH_MAX) throw new Error(`file is ${(bytes.length / 1e6).toFixed(0)} MB; upload files over ${FETCH_MAX / 1e6} MB from the Media page`);
+  if (mime === "application/octet-stream") mime = mimeFor(name);
   const fileId = crypto.randomUUID().replace(/-/g, "").slice(0, 20);
   for (let start = 0; start < Math.max(bytes.length, 1); start += CHUNK) {
     const end = Math.min(bytes.length, start + CHUNK);

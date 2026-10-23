@@ -744,3 +744,31 @@ textarea.doc.short { min-height: 110px; }
 .steps-list { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: 13.5px; color: var(--ink2); }
 .steps-list code, .read-card code { font: 12.5px var(--mono); background: var(--raised2); padding: 1px 5px; border-radius: 5px; }
 input[type=checkbox], input[type=radio] { accent-color: var(--ink); width: auto; }
+
+/* ── Content spaces: platform sidebar + list / board per space */
+.spaces { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 26px; align-items: start; }
+.spaces-side { position: sticky; top: 18px; display: flex; flex-direction: column; gap: 2px; }
+.sp-group { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; }
+.sp-net { font: 600 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); padding: 0 10px 4px; }
+.sp-link { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 7px 10px; border-radius: 9px;
+  border: 0; background: transparent; color: var(--ink2); font: 500 13.5px var(--sans); }
+.sp-link:hover { background: var(--hover); opacity: 1; }
+.sp-link.on { background: var(--ink); color: var(--on-ink); }
+.sp-link.on .faint { color: inherit; opacity: .7; }
+.content-table td { vertical-align: middle; }
+.content-table tr.on td { background: var(--hover); }
+.content-table select, .content-table input { font-size: 12.5px; padding: 5px 8px; }
+.linkish { border: 0; background: none; padding: 0; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.linkish:hover { text-decoration: underline; opacity: 1; }
+button.pc-tag { cursor: pointer; border: 0; }
+.target-row { display: grid; grid-template-columns: minmax(110px, 1fr) auto auto minmax(120px, 1.2fr) auto; gap: 6px; align-items: center; }
+.target-row select, .target-row input { font-size: 12.5px; padding: 5px 8px; width: auto; }
+.card.flush { padding: 6px 10px; overflow-x: auto; }
+@media (max-width: 900px) {
+  .spaces { grid-template-columns: 1fr; gap: 14px; }
+  .spaces-side { position: static; flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 4px; }
+  .sp-group { flex-direction: row; margin-top: 0; gap: 6px; }
+  .sp-net { display: none; }
+  .sp-link { white-space: nowrap; width: auto; border: 1px solid var(--line2); }
+  .target-row { grid-template-columns: 1fr 1fr; }
+}

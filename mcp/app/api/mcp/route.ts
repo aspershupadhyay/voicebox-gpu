@@ -11,8 +11,9 @@ import { describeProfile, profileFor, withProfile } from "@/lib/profiles";
 import { listDataset } from "@/lib/datasets";
 import { listModels } from "@/lib/voicemodel";
 import {
-  addComment, addMediaFromUrl, createPost, deletePost, getPost, hasKey, linkJob, listActivity, listComments, listMedia, listMembers, listPosts, postsBetween, updatePost,
-} from "@/lib/appwrite";
+  addComment, addMediaFromUrl, createPost, deletePost, getPost, hasKey, linkJob, listActivity, listComments, listMedia, listMembers, listPosts, postsBetween, updatePost, addMediaBytes, deleteMediaRow, mimeFor } from "@/lib/appwrite";
+import { SPACE_IDS, spaceName, targetsOf, type TargetMap } from "@/lib/spaces";
+import { dropTargets, getTargets, setTargets } from "@/lib/spacestore";
 import { fileUrl, PLATFORMS as POST_PLATFORMS, STATUSES, type Post } from "@/lib/workspace";
 import { isCustomVoice, listMyVoices, refSync } from "@/lib/voices";
 import { SCOPE, verify } from "@/lib/oauth";
@@ -592,8 +593,9 @@ const handler = createMcpHandler(
 
     // ── shared workspace (Appwrite): the same posts, calendar, comments and media the two of you see on the dashboard
 
-    const brief = (p: Post) => ({
-      id: p.$id, title: p.title, status: p.status, platforms: p.platforms, due_at: p.due_at, owner: p.owner_name, assignee: p.assignee_name,
+    const brief = (p: Post, tmap?: TargetMap) => ({
+      id: p.$id, title: p.title, status: p.status, platforms: p.platforms,
+      ...(tmap ? { goes_to: targetsOf(p, tmap).map((t) => ({ space: t.space, name: spaceName(t.space), status: t.status, due_at: t.due_at ?? null, link: t.link ?? null })) } : {}), due_at: p.due_at, owner: p.owner_name, assignee: p.assignee_name,
       voiceovers: p.jobs?.length ?? 0, script_words: p.script?.trim() ? p.script.trim().split(/\s+/).length : 0, updated: p.$updatedAt,
       link: `/workspace?post=${p.$id}`,
     });
@@ -617,23 +619,37 @@ const handler = createMcpHandler(
       due_at: z.string().datetime({ offset: true }).nullable().optional().describe("publish time, ISO 8601 with offset; null clears it"),
       link: z.string().url().nullable().optional().describe("the live post URL once it's out"),
       assignee: z.string().nullable().optional().describe("who owns it: a member's name, first name or email (see workspace_members); null = nobody"),
+      targets: z.array(z.object({
+        space: z.enum(SPACE_IDS).describe("yt_video, yt_short, yt_post (YouTube Videos/Shorts/Posts), ig_reel, ig_post, ig_story (Instagram), x_post, x_thread (X), tt_video (TikTok), li_post (LinkedIn), pod_episode (Podcast)"),
+        status: z.enum(POST_STATUS).optional(), due_at: z.string().datetime({ offset: true }).nullable().optional(), link: z.string().url().nullable().optional(),
+      })).max(20).optional().describe("where the post goes (cross-posting: several spaces), each with its own stage, publish time and live link; platforms/status/due_at of the post follow"),
+    };
+    const applyTargets = async (postId: string, given: { space: string; status?: string; due_at?: string | null; link?: string | null }[] | undefined, mode: "replace" | "merge", fallback: Post) => {
+      if (!given) return;
+      const cur = targetsOf(fallback, await getTargets());
+      const fill = (t: (typeof given)[number]) => ({ status: fallback.status === "posted" ? "draft" : fallback.status, due_at: fallback.due_at, link: null, ...t });
+      const next = mode === "replace" ? given.map(fill) : [...cur.map((c) => { const g = given.find((x) => x.space === c.space); return g ? { ...c, ...g } : c; }), ...given.filter((g) => !cur.some((c) => c.space === g.space)).map(fill)];
+      await setTargets(postId, next, CLAUDE);
     };
 
     server.registerTool(
       "workspace_board",
       {
         title: "The shared board",
-        description: "Posts the two creators are working on, newest first, with status (idea -> draft -> review -> scheduled -> posted), platforms, due date, owner and how many voiceovers each has. Filter by status, platform or text. Use get_post for the full script, caption, comments and media.",
+        description: "Posts the two creators are working on, newest first, with status (idea -> draft -> review -> scheduled -> posted), where each goes (goes_to: content spaces like Instagram Reels or YouTube Shorts, each with its own stage), due date, owner and how many voiceovers each has. Filter by status, platform, space or text. Use get_post for the full script, caption, comments and media.",
         inputSchema: z.object({
           status: z.enum(POST_STATUS).optional(), platform: z.enum(POST_PLAT).optional(),
+          space: z.enum(SPACE_IDS).optional().describe("only posts going to this content space (e.g. ig_reel, yt_short, x_post)"),
           search: z.string().max(200).optional().describe("matches title, script and caption"), limit: z.number().int().min(1).max(200).optional(),
         }),
       },
-      async ({ status, platform, search, limit }) => ws(async () => {
-        let posts = await listPosts({ status, limit: search || platform ? 200 : limit ?? 50 });
+      async ({ status, platform, space, search, limit }) => ws(async () => {
+        const [all, tmap] = await Promise.all([listPosts({ status, limit: search || platform || space ? 200 : limit ?? 50 }), getTargets()]);
+        let posts = all;
         if (platform) posts = posts.filter((p) => p.platforms.includes(platform));
+        if (space) posts = posts.filter((p) => targetsOf(p, tmap).some((t) => t.space === space));
         if (search) posts = posts.filter((p) => `${p.title} ${p.script ?? ""} ${p.caption ?? ""}`.toLowerCase().includes(search.toLowerCase()));
-        return posts.slice(0, limit ?? 50).map(brief);
+        return posts.slice(0, limit ?? 50).map((p) => brief(p, tmap));
       }),
     );
 
@@ -645,9 +661,9 @@ const handler = createMcpHandler(
         inputSchema: z.object({ post_id: POST_ID }),
       },
       async ({ post_id }) => ws(async () => {
-        const [p, comments, media, activity] = await Promise.all([getPost(post_id), listComments(post_id), listMedia(post_id), listActivity(15, post_id)]);
+        const [p, comments, media, activity, tmap] = await Promise.all([getPost(post_id), listComments(post_id), listMedia(post_id), listActivity(15, post_id), getTargets()]);
         return {
-          ...brief(p), script: p.script, caption: p.caption, notes: p.notes, posted_at: p.posted_at, live_link: p.link, voiceover_jobs: p.jobs,
+          ...brief(p, tmap), script: p.script, caption: p.caption, notes: p.notes, posted_at: p.posted_at, live_link: p.link, voiceover_jobs: p.jobs,
           comments: comments.map((c) => ({ by: c.author_name, at: c.$createdAt, text: c.body })),
           media: media.map((m) => ({ id: m.$id, name: m.name, kind: m.kind, mb: m.size ? +(m.size / 1e6).toFixed(1) : null, url: m.token ? fileUrl(m) : null, backed_up: !!m.r2_key })),
           activity: activity.map((a) => `${a.$createdAt.slice(0, 16)} ${a.actor_name ?? "someone"} ${a.verb} ${a.text ?? ""}`.trim()),
@@ -659,10 +675,14 @@ const handler = createMcpHandler(
       "create_post",
       {
         title: "Create a post",
-        description: "Add a post to the shared board (it appears live on both creators' screens). Good for turning an idea into a planned piece: give it a title, platforms, a draft script and caption, and a due_at to put it on the calendar. Write scripts as the creator would say them, one line per beat.",
+        description: "Add a post to the shared board (it appears live on both creators' screens). Good for turning an idea into a planned piece: give it a title, where it goes (targets: content spaces such as ig_reel + yt_short + tt_video to cross-post), a draft script and caption, and a due_at to put it on the calendar. Write scripts as the creator would say them, one line per beat.",
         inputSchema: z.object({ ...postFields, title: z.string().min(1).max(200) }),
       },
-      async ({ assignee, ...data }) => ws(async () => brief(await createPost({ ...data, ...(assignee !== undefined ? await resolveMember(assignee) : {}) } as Partial<Post>, CLAUDE))),
+      async ({ assignee, targets, ...data }) => ws(async () => {
+        const p = await createPost({ ...data, ...(assignee !== undefined ? await resolveMember(assignee) : {}) } as Partial<Post>, CLAUDE);
+        await applyTargets(p.$id, targets, "replace", p);
+        return brief(targets ? await getPost(p.$id) : p, await getTargets());
+      }),
     );
 
     server.registerTool(
@@ -670,12 +690,16 @@ const handler = createMcpHandler(
       {
         title: "Edit a post",
         description: "Change any field of a post: move it along (status), rewrite or append to the script, set the caption, schedule it (due_at), assign it, add the live link. Only the fields you send change. script_mode append adds to the end of the existing script.",
-        inputSchema: z.object({ post_id: POST_ID, ...postFields, script_mode: z.enum(["replace", "append"]).optional().describe("default replace") }),
+        inputSchema: z.object({ post_id: POST_ID, ...postFields, script_mode: z.enum(["replace", "append"]).optional().describe("default replace"),
+          targets_mode: z.enum(["merge", "replace"]).optional().describe("merge (default): update the spaces you name and add new ones (cross-post), keep the rest; replace: exactly these spaces") }),
       },
-      async ({ post_id, assignee, script_mode, ...data }) => ws(async () => {
+      async ({ post_id, assignee, script_mode, targets, targets_mode, ...data }) => ws(async () => {
         if (script_mode === "append" && data.script) data.script = `${((await getPost(post_id)).script ?? "").trimEnd()}\n${data.script}`.trim();
         if (data.status === "posted") (data as Partial<Post>).posted_at ??= new Date().toISOString();
-        return brief(await updatePost(post_id, { ...data, ...(assignee !== undefined ? await resolveMember(assignee) : {}) } as Partial<Post>, CLAUDE));
+        const fields = { ...data, ...(assignee !== undefined ? await resolveMember(assignee) : {}) } as Partial<Post>;
+        let p = Object.keys(fields).length ? await updatePost(post_id, fields, CLAUDE) : await getPost(post_id);
+        if (targets) { await applyTargets(post_id, targets, targets_mode ?? "merge", p); p = await getPost(post_id); }
+        return brief(p, await getTargets());
       }),
     );
 
@@ -686,7 +710,7 @@ const handler = createMcpHandler(
         description: "Permanently delete a post from the board (its media files stay in the Media library). Only when the user explicitly asks.",
         inputSchema: z.object({ post_id: POST_ID }),
       },
-      async ({ post_id }) => ws(async () => { await deletePost(post_id, CLAUDE); return { deleted: post_id }; }),
+      async ({ post_id }) => ws(async () => { await deletePost(post_id, CLAUDE); await dropTargets(post_id); return { deleted: post_id }; }),
     );
 
     server.registerTool(
@@ -711,8 +735,8 @@ const handler = createMcpHandler(
       async ({ from, to }) => ws(async () => {
         const start = from ?? new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
         const end = to ?? new Date(Date.parse(start) + 14 * 864e5).toISOString();
-        const [scheduled, all] = await Promise.all([postsBetween(start, end), listPosts({ limit: 200 })]);
-        return { from: start, to: end, scheduled: scheduled.map(brief), unscheduled: all.filter((p) => !p.due_at && p.status !== "posted").map(brief) };
+        const [scheduled, all, tmap] = await Promise.all([postsBetween(start, end), listPosts({ limit: 200 }), getTargets()]);
+        return { from: start, to: end, scheduled: scheduled.map((p) => brief(p, tmap)), unscheduled: all.filter((p) => !p.due_at && p.status !== "posted").map((p) => brief(p, tmap)) };
       }),
     );
 
@@ -740,6 +764,34 @@ const handler = createMcpHandler(
         const { media, backup } = await addMediaFromUrl(url, { name, postId: post_id, backup: (await getSettings()).backup_media }, CLAUDE);
         return { id: media.$id, name: media.name, kind: media.kind, url: fileUrl(media), r2_backup: media.r2_key ? "saved" : backup ?? "off" };
       }),
+    );
+
+    server.registerTool(
+      "upload_media",
+      {
+        title: "Upload a file to the workspace",
+        description: "Upload a file's bytes (base64) into the shared Media library, optionally attached to a post: a thumbnail, a script PDF, a short clip, subtitles. Up to ~3 MB this way (the server takes 4.5 MB requests); for bigger files use add_media with a link (up to 150 MB), or the Media page (2 GB).",
+        inputSchema: z.object({
+          name: z.string().min(1).max(200).describe("file name with extension, e.g. thumb.png"),
+          content_base64: z.string().min(4).max(4_400_000), mime: z.string().max(100).optional().describe("default: from the file extension"),
+          post_id: POST_ID.optional(),
+        }),
+      },
+      async ({ name, content_base64, mime, post_id }) => ws(async () => {
+        const bytes = new Uint8Array(Buffer.from(content_base64.replace(/^data:[^,]*,/, ""), "base64"));
+        const { media, backup } = await addMediaBytes(bytes, mime || mimeFor(name), name, { postId: post_id ?? null, backup: (await getSettings()).backup_media }, CLAUDE);
+        return { id: media.$id, name: media.name, kind: media.kind, mb: +(bytes.length / 1e6).toFixed(2), url: fileUrl(media), r2_backup: media.r2_key ? "saved" : backup ?? "off" };
+      }),
+    );
+
+    server.registerTool(
+      "delete_media",
+      {
+        title: "Delete a workspace file",
+        description: "Permanently delete a file from the shared Media library (workspace_media lists ids). Only when the user explicitly asks.",
+        inputSchema: z.object({ media_id: POST_ID }),
+      },
+      async ({ media_id }) => ws(async () => { const m = await deleteMediaRow(media_id, CLAUDE); return { deleted: media_id, name: m.name }; }),
     );
 
     server.registerTool(
@@ -782,6 +834,7 @@ const handler = createMcpHandler(
       "4) A recording from a bad mic: clean_audio. A rough take the user performed: revoice into their clean voice. Subtitles for any file: transcribe. Stills and thumbnails: imagine, then add_media to put one on the post.",
       "5) Long jobs return a job id: poll get_job (each call waits up to 45 s). Results are archived to the dashboard library; links expire after 6 h.",
       "6) The user's own voice model: voice_dataset to see or grow the training data, then the training notebook; once trained it is engine myvoice with voice = that person's name (my_voices lists both people's). benchmark_voices compares it with their clones on held-out sentences.",
+      "Content spaces: each post goes to one or more spaces (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast), each with its own stage and publish time; cross-post by adding targets (update_post targets, merge). Files: upload_media (bytes) or add_media (a link); delete_media / delete_post only when asked.",
       "7) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",
       "Scores: match = how closely Whisper heard the script (>=0.95 good); similarity = voice match vs the recording (>=0.86 same speaker).",
     ].join("\n"),

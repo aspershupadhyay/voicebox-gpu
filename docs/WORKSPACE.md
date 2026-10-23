@@ -8,8 +8,9 @@ organization). Voiceovers and voices stay in **R2**, which is also the backup fo
 
 | Page | What it's for |
 |---|---|
+| **Content** | Every post by where it goes. The sidebar has a space per format: YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast, with open/total counts. Each space has a List (stage, publish time, where else it goes, delete) and a Board by stage. **New** starts a post already in that space. |
 | **Board** | Posts by stage: Ideas → In production → Review → Scheduled → Posted. Drag cards between stages, press **N** for a new post, filter by platform or "Mine". Click a card for the full post. |
-| **Post** (drawer) | Title, stage, platforms, publish time, owner, script (with **Voiceover** → opens the voice page with the script loaded; the result is attached back to the post), caption with per-platform character counts, media, notes, discussion. Edits save as you type. |
+| **Post** (drawer) | Title, stage, **Publish to** (one row per space, each with its own stage, publish time and live link; *Cross-post to…* adds another; the post's stage is its furthest-behind target, so it's Posted only when every target is), publish time, owner, script (with **Voiceover** → opens the voice page with the script loaded; the result is attached back to the post), caption with per-platform character counts, media, notes, discussion. Edits save as you type. |
 | **Calendar** | Month view. Drag a post onto a day to schedule it; double-click a day to start one there. |
 | **Media** | Every file either of you added: images, videos (up to 2 GB each), audio, docs. Drop files anywhere on the page. |
 
@@ -57,6 +58,8 @@ for `voiceboxstudio.vercel.app`, `mcp-eta-tawny.vercel.app` and `localhost`; add
 ## From Claude (MCP)
 
 The MCP server covers the workspace too: `workspace_board`, `get_post`, `create_post`, `update_post`, `comment_on_post`,
-`content_calendar`, `workspace_media`, `add_media`, `attach_voiceover`, `workspace_activity`, `workspace_members`, and
-`voice_lines` with `post_id` to voice a post's script. Ask things like "plan three Shorts for next week about Git and
+`content_calendar`, `workspace_media`, `add_media` (from a link), `upload_media` (file bytes), `delete_media`, `attach_voiceover`, `workspace_activity`, `workspace_members`, and
+`voice_lines` with `post_id` to voice a post's script. Posts take `targets` (spaces such as `ig_reel`, `yt_short`, `x_post`) to cross-post, and `workspace_board` filters by `space`.
+Where each post goes is stored in R2 (`workspace/spaces.json`) next to the Appwrite post, whose `platforms` follow it.
+Ask things like "plan three Shorts for next week about Git and
 write the scripts", "voice the Docker post in my voice", or "what did Ravi change today?".
