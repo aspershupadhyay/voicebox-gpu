@@ -13,7 +13,7 @@ import { useStatus } from "./Shell";
 import { aw, logActivity } from "./aw";
 import { AW, type Post } from "@/lib/workspace";
 
-type Param = { type: "number" | "integer" | "string"; default: number | string; min?: number; max?: number; about?: string };
+type Param = { type: "number" | "integer" | "string" | "boolean"; default: number | string | boolean; min?: number; max?: number; about?: string };
 type Engine = { kind: string; about: string; voices: string[]; presets: Record<string, string>; params: Record<string, Param>; state: string; seconds_per_char?: number };
 type Style = { label: string; about: string; params: Record<string, Record<string, number>>; post: { tempo?: number }; post_by_engine?: Record<string, { tempo?: number }>; voices: Record<string, string[]> };
 type Platform = { label: string; about: string; lufs: number | null; tp: number | null; captions: string };
@@ -68,7 +68,7 @@ export default function Generate() {
   const [engine, setEngine] = useState<string>("orpheus");
   const [lang, setLang] = useState("en");
   const [voice, setVoice] = useState("female");
-  const [params, setParams] = useState<Record<string, number | string>>({});
+  const [params, setParams] = useState<Record<string, number | string | boolean>>({});
   const [style, setStyle] = useState("tech");
   const [tempo, setTempo] = useState<number | null>(null);
   const [subtitles, setSubtitles] = useState(true);
@@ -373,6 +373,11 @@ export default function Generate() {
             </div>
             {eng && Object.entries(eng.params).filter(([k]) => !((engine === "chatterbox" || engine === "qwen") && k === "language") && !(engine === "kokoro" && k === "lang")).map(([k, p]) => {
               const v = params[k] ?? styleParams[k] ?? p.default;
+              if (p.type === "boolean") return (
+                <div className="field" key={k}>
+                  <label className="row small" style={{ gap: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={Boolean(v)} onChange={(e) => setParams({ ...params, [k]: e.target.checked })} />{k.replace(/_/g, " ")}</label>
+                  {p.about && <div className="dim tiny" style={{ marginTop: 4 }}>{p.about}</div>}</div>
+              );
               if (p.min === undefined) return (
                 <div className="field" key={k}><label className="f">{k}</label>
                   <input type={p.type === "string" ? "text" : "number"} value={String(v)} onChange={(e) => setParams({ ...params, [k]: p.type === "string" ? e.target.value : +e.target.value })} />

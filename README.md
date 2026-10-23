@@ -31,7 +31,8 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
   is still there for final renders.
 - **Your own model:** collect 30-60 minutes on the *Your model* page (read-along or uploads; the worker cleans, cuts and
   filters clips), press **Train my voice** to fine-tune Orpheus 3B on the GPU worker (saved to R2, no Hugging Face), use
-  it as the `myvoice` engine, and benchmark it against your clones on unseen sentences.
+  it as the `myvoice` engine, and benchmark it against your clones on unseen sentences. It's trained for **flow**: each
+  sentence is voiced with the one before it as context, so a whole script sounds like one take, not a list of sentences.
 - **Learns each voice:** every reviewed voiceover records how each setting scored for that voice and style; once there's
   enough evidence, the best temperature becomes that voice's default and its usual voice-match becomes the bar.
 - **Says tech right:** SQL, GPU, JSON, 16GB, v2.1, URLs and markdown are read the way a presenter would; add your own
@@ -83,7 +84,8 @@ and `OWNER_GITHUB=<your login>` to `.secrets.local` and rerun `scripts/deploy-mc
 
 ## Every session
 
-In Colab, set **Runtime → L4 → Run all**. Within about a minute `worker_status` reports online.
+In Colab, set **Runtime → L4 → Run all**. Or run the worker always-on on any GPU host with `worker/Dockerfile`
+([docs/HOSTING.md](docs/HOSTING.md)), so there's no notebook to start. Within about a minute `worker_status` reports online.
 The first job on an engine installs and loads it, which takes a few minutes; jobs after that take seconds.
 Stop the runtime when you're done.
 

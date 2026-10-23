@@ -92,7 +92,8 @@ ENGINES = {
         "gpu_gb": 11.5,
         "chunk_chars": 260,
         "packages": "vllm snac soundfile peft",  # orpheus + peft (the transformers fallback merges your LoRA adapter)
-        "about": "Your own voice model: Orpheus 3B fine-tuned on 30-60 min of your recordings (Your model page: collect, then Train).",
+        "about": "Your own voice model: Orpheus 3B fine-tuned on 30-60 min of your recordings (Your model page: collect, then Train). "
+                 "Same tags as Orpheus; with flow, a long script is voiced as one continuous take.",
         "voices": ["me"],
         "presets": {"female": "me", "male": "me"},
         "params": {
@@ -101,6 +102,9 @@ ENGINES = {
             "top_p": {"type": "number", "default": 0.95, "min": 0.1, "max": 1.0},
             "repetition_penalty": {"type": "number", "default": 1.1, "min": 1.0, "max": 2.0},
             "seed": {"type": "integer", "default": 7, "about": "change it to get a different take of the same line"},
+            "flow": {"type": "boolean", "default": True,
+                     "about": "carry your delivery from one sentence into the next, so a script sounds like one take (needs a "
+                              "model trained with flow; slower on long scripts because sentences are voiced in order)"},
         },
     },
     "whisper": {

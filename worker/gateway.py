@@ -1291,8 +1291,22 @@ def _prepare(job, name):
     ENG.ensure(name)
 
 
-def _join_chunks(paths, out_path, gaps=None):
-    """Join chunk WAVs with a natural 0.2 s pause, or the gap a [pause] marker asked for (gaps[i] follows chunk i)."""
+# The pause after a chunk when the script doesn't ask for one: what a presenter leaves after that punctuation.
+NATURAL_GAP = ((re.compile(r"\?[\"')\]]*$"), 0.42), (re.compile(r"!+[\"')\]]*$"), 0.36), (re.compile(r"[.…][\"')\]]*$"), 0.34),
+               (re.compile(r"[,;:–—-][\"')\]]*$"), 0.16))
+
+
+def natural_gap(text):
+    for pat, gap in NATURAL_GAP:
+        if pat.search((text or "").strip()):
+            return gap
+    return 0.22
+
+
+def _join_chunks(paths, out_path, gaps=None, texts=None):
+    """Join chunk WAVs with the pause their punctuation calls for (a question gets a longer one than a comma), or the
+    gap a [pause] marker asked for (gaps[i] follows chunk i). Each chunk is trimmed to its speech and gets a few ms of
+    fade at both ends, so the joins don't click."""
     import numpy as np
     import soundfile as sf
     parts, sr = [], None
@@ -1304,10 +1318,17 @@ def _join_chunks(paths, out_path, gaps=None):
         if len(paths) > 1:
             idx = np.where(np.abs(a) > 10 ** (-45 / 20))[0]
             if len(idx):
-                a = a[max(0, idx[0] - int(0.04 * sr)): idx[-1] + int(0.06 * sr)]
+                a = a[max(0, idx[0] - int(0.04 * sr)): idx[-1] + int(0.06 * sr)].copy()
+            f = min(len(a) // 4, int(0.008 * sr))
+            if f > 1:
+                ramp = np.linspace(0.0, 1.0, f, dtype="float32")
+                a[:f] *= ramp
+                a[-f:] *= ramp[::-1]
         parts.append(a)
-        gap = (gaps[i] if gaps and i < len(gaps) else None)
-        parts.append(np.zeros(int((0.2 if gap is None else gap) * sr), dtype="float32"))
+        gap = gaps[i] if gaps and i < len(gaps) else None
+        if gap is None:
+            gap = natural_gap(texts[i]) if texts and i < len(texts) else 0.2
+        parts.append(np.zeros(int(gap * sr), dtype="float32"))
     sf.write(out_path, np.concatenate(parts[:-1]) if parts else np.zeros(1, "float32"), sr)
 
 
@@ -1330,7 +1351,8 @@ def _line_plan(job, ln, engine, voice_arg):
     params = C.resolve_params(eng, params)
     english = _is_english(eng, voice_arg if eng == engine else None, params, job)
     chunks = []
-    for seg, gap in segments(ln["text"]):
+    text = re.sub(r"\s*\n\s*\n\s*", " [pause 0.7] ", ln["text"].strip())  # a new paragraph is a longer breath
+    for seg, gap in segments(text):
         parts = split_text(seg, C.ENGINES[eng].get("chunk_chars", 0))
         for k, part in enumerate(parts):
             said = speakable(part, job.get("pronounce"), tech=english and job.get("lexicon", True)) or part
@@ -1357,6 +1379,7 @@ def run_tts(job):
     takes = job.get("takes", 1)
 
     plans = [_line_plan(job, ln, engine, voice_arg) for ln in job["lines"]]
+    _chain(plans)
     order = {p["ln"]["id"]: i for i, p in enumerate(plans)}
     if any(len(p["chunks"]) > 1 for p in plans):
         job["warnings"].append(f"long lines split into {sum(len(p['chunks']) for p in plans)} chunks (sentences and [pause] markers) and re-joined")
@@ -1414,6 +1437,20 @@ def _take_params(p, k):
     return params
 
 
+def _chain(plans):
+    """Script order for flow: each line's first chunk follows the previous line's last one (see _flow)."""
+    for a, b in zip(plans, plans[1:]):
+        b["after"] = f"{a['ln']['id']}/{len(a['chunks']) - 1}"
+
+
+def _flow(job, p, i, k):
+    """Names for one chunk take: its own key, and the keys of the chunk before it (same take first, else the first
+    take), so an engine that keeps flow (your trained voice) can carry the delivery on from the audio it just made."""
+    base = f"{job['id']}/"
+    before = f"{p['ln']['id']}/{i - 1}" if i else p.get("after")
+    return {"key": f"{base}{p['ln']['id']}/{i}/{k}", "ctx": [f"{base}{before}/{k}", f"{base}{before}/0"] if before else []}
+
+
 def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
     """Synthesise (plan, chunk, take, params) items: per engine, batched up to 8 on batch engines (vLLM / Qwen)."""
     for eng in dict.fromkeys(w[0]["engine"] for w in wanted):
@@ -1424,7 +1461,7 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
         for b in range(0, len(mine), size):
             group = mine[b:b + size]
             items = [{"text": p["chunks"][i][1], "voice": p["voice_arg"], "params": params, "ref_path": ref_path,
-                      "ref_text": ref_text, "out_path": out(p, i, k)} for p, i, k, params in group]
+                      "ref_text": ref_text, "out_path": out(p, i, k), **_flow(job, p, i, k)} for p, i, k, params in group]
             chars = sum(len(it["text"]) for it in items)
             lo, hi = order[group[0][0]["ln"]["id"]] + 1, order[group[-1][0]["ln"]["id"]] + 1
             label = (f"line {lo} of {n_lines}" if lo == hi else f"lines {lo}–{hi} of {n_lines} together")
@@ -1446,7 +1483,7 @@ def _assemble(job, jdir, p, paths, pick=None):
     """Chunks -> one line WAV: join with the asked-for gaps, then trim, pace, resample and master."""
     ln = p["ln"]
     raw = os.path.join(jdir, f"{ln['id']}.raw.wav")
-    _join_chunks(paths, raw, [c[2] for c in p["chunks"]])
+    _join_chunks(paths, raw, [c[2] for c in p["chunks"]], [c[1] for c in p["chunks"]])
     for x in paths:
         if os.path.exists(x):
             os.remove(x)
@@ -2146,10 +2183,11 @@ def make_train_job(body):
     job = _base_job("train", body)
     job.update({"voice": str(body.get("name") or "me")[:64], "lines": [], "engine": "myvoice", "parts": parts,
                 "speaker": "me", "epochs": body.get("epochs"), "learning_rate": body.get("learning_rate")})
-    # T4 (fp16, no bf16): ~10 s per optimizer step of 4 clips; ~8 clips a minute of audio; 3 epochs under 40 min, else 2
-    clips = max(30, minutes * 8)
-    epochs = job["epochs"] or (3 if minutes < 40 else 2)
-    job["est_total"] = 300 + clips * 0.4 + clips / 4 * epochs * TRAIN_STEP_S + 120 + (0 if os.path.exists(_train_python()) else C.TRAIN_INSTALL_S)
+    # T4 (fp16, no bf16): ~10 s per optimizer step of 4 clips; ~6 clips a minute of audio; 4 epochs under 40 min, else 3
+    # (train.py keeps the best epoch); flow clips are about twice as long, so steps cost ~1.4x on average
+    clips = max(30, minutes * 6)
+    epochs = job["epochs"] or (4 if minutes < 40 else 3)
+    job["est_total"] = 300 + clips * 0.4 + clips / 4 * epochs * TRAIN_STEP_S * 1.4 + 120 + (0 if os.path.exists(_train_python()) else C.TRAIN_INSTALL_S)
     return _enqueue(job)
 
 

@@ -4,14 +4,23 @@ Runs on vLLM when available: every chunk of a job is generated in one continuous
 several times faster than token-by-token transformers. Falls back to transformers if vLLM can't start.
 The token budget is sized from the text (Orpheus emits ~86 codec tokens per second of speech), so
 there's no fixed length cap; the gateway also splits long text into sentence chunks.
+
+Flow (your trained voice only, when its adapter was trained for it: adapter/voicebox.json "context"): a chunk is
+generated with the chunk before it (its text and the audio just made for it) as the previous turn, so pitch, pace and
+energy carry on from one sentence into the next instead of resetting at every chunk. Chunks of one line then run in
+waves (first chunks of every line together, then the second ones...), still batched across lines.
 """
 import json, os
+from collections import OrderedDict
 import torch
 
 MODEL = os.environ.get("ORPHEUS_MODEL", "unsloth/orpheus-3b-0.1-ft")  # ungated mirror of canopylabs/orpheus-3b-0.1-ft
 LORA = os.environ.get("ORPHEUS_LORA")  # a LoRA adapter dir on top of MODEL (your trained voice, see engines/myvoice.py)
 START, END_TEXT, END_HUMAN, START_AUDIO, END_AUDIO, CODE_OFFSET = 128259, 128009, 128260, 128257, 128258, 128266
 TOKENS_PER_SEC = 86
+START_AI = 128261
+END_AI = 128262
+CTX_MAX = 1800  # longest previous chunk (codec tokens, ~20 s) used as context; train.py trains with the same bound
 
 
 def token_budget(text, params):
@@ -55,18 +64,44 @@ class Engine:
                 from peft import PeftModel
                 self.model = PeftModel.from_pretrained(self.model, LORA).merge_and_unload()
             self.model.train(False)
+        self.context = False  # set by engines/myvoice.py when the adapter was trained with flow
+        self.recent = OrderedDict()  # chunk key -> (spoken text, codec tokens): the context for the chunk after it
         print(f"[orpheus] backend: {self.mode}", flush=True)
 
     def _prompt(self, text, voice):
         ids = self.tok(f"{voice or 'tara'}: {text}").input_ids
         return [START, *ids, END_TEXT, END_HUMAN]
 
-    def _decode(self, gen):
+    def _context(self, item):
+        """The previous turn for this item, as prompt tokens, or [] (flow off, first chunk, or not in memory)."""
+        p = item.get("params") or {}
+        if not self.context or p.get("flow") is False:
+            return []
+        for key in item.get("ctx") or []:
+            hit = self.recent.get(key)
+            if hit and len(hit[1]) <= CTX_MAX:
+                return self._prompt(hit[0], item.get("voice")) + [START_AI, START_AUDIO, *hit[1], END_AUDIO, END_AI]
+        return []
+
+    def _remember(self, item, gen):
+        if not item.get("key"):
+            return
+        self.recent[item["key"]] = (item["text"], self._codes(gen))
+        self.recent.move_to_end(item["key"])
+        while len(self.recent) > 256:
+            self.recent.popitem(last=False)
+
+    @staticmethod
+    def _codes(gen):
         gen = list(gen)
         if START_AUDIO in gen:
             gen = gen[len(gen) - gen[::-1].index(START_AUDIO):]
         gen = [t for t in gen if t != END_AUDIO and t >= CODE_OFFSET]
-        n = (len(gen) // 7) * 7
+        return gen[: (len(gen) // 7) * 7]
+
+    def _decode(self, gen):
+        gen = self._codes(gen)
+        n = len(gen)
         if n == 0:
             raise RuntimeError("Orpheus produced no audio tokens")
         c = [t - CODE_OFFSET for t in gen[:n]]
@@ -92,21 +127,32 @@ class Engine:
                     outs.append(e)
             return outs
         from vllm import SamplingParams
-        prompts, sps = [], []
-        for it in items:
-            p = it.get("params") or {}
-            prompts.append({"prompt_token_ids": self._prompt(it["text"], it.get("voice"))})
-            sps.append(SamplingParams(temperature=float(p.get("temperature", 0.6)), top_p=float(p.get("top_p", 0.95)),
-                                      repetition_penalty=float(p.get("repetition_penalty", 1.1)),
-                                      max_tokens=token_budget(it["text"], p), stop_token_ids=[END_AUDIO],
-                                      seed=int(p.get("seed", 7))))
-        results = self.llm.generate(prompts, sps, use_tqdm=False, lora_request=getattr(self, "lora_req", None))
-        outs = []
-        for r in results:
-            try:
-                outs.append(self._decode(r.outputs[0].token_ids))
-            except Exception as e:  # noqa: BLE001
-                outs.append(e)
+        outs = [None] * len(items)
+        made = {it.get("key") for it in items if it.get("key")}
+        todo = list(range(len(items)))
+        while todo:
+            # a chunk waits while the chunk it follows is still to be made in this batch; everything else goes now
+            done_keys = {items[j].get("key") for j in range(len(items)) if outs[j] is not None}
+            wave = [j for j in todo if not (self.context and any(k in made and k not in done_keys for k in (items[j].get("ctx") or [])[:1]))]
+            wave = wave or todo
+            prompts, sps = [], []
+            for j in wave:
+                it = items[j]
+                p = it.get("params") or {}
+                prompts.append({"prompt_token_ids": self._context(it) + self._prompt(it["text"], it.get("voice"))})
+                sps.append(SamplingParams(temperature=float(p.get("temperature", 0.6)), top_p=float(p.get("top_p", 0.95)),
+                                          repetition_penalty=float(p.get("repetition_penalty", 1.1)),
+                                          max_tokens=token_budget(it["text"], p), stop_token_ids=[END_AUDIO],
+                                          seed=int(p.get("seed", 7))))
+            results = self.llm.generate(prompts, sps, use_tqdm=False, lora_request=getattr(self, "lora_req", None))
+            for j, r in zip(wave, results):
+                gen = r.outputs[0].token_ids
+                try:
+                    outs[j] = self._decode(gen)
+                    self._remember(items[j], gen)
+                except Exception as e:  # noqa: BLE001
+                    outs[j] = e
+            todo = [j for j in todo if j not in wave]
         return outs
 
     def synth(self, text, voice, params, ref_path=None, ref_text=None):
