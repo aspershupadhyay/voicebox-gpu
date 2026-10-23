@@ -22,7 +22,13 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "22" }
       - name: Check the token
-        run: '[ -n "$VERCEL_TOKEN" ] || { echo "::error::Add the VERCEL_TOKEN repository secret (see the top of this file)"; exit 1; }'
+        run: |
+          [ -n "$VERCEL_TOKEN" ] || { echo "::error::Add the VERCEL_TOKEN repository secret (see the top of this file)"; exit 1; }
+          t=$(printf %s "$VERCEL_TOKEN" | tr -d '[:space:]')
+          echo "token length: ${#t} (a Vercel token is ~24 characters)"
+          for path in /v2/user "/v2/teams/$VERCEL_SCOPE" "/v9/projects/$VERCEL_PROJECT?slug=$VERCEL_SCOPE"; do
+            echo "$path -> $(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $t" "https://api.vercel.com$path")"
+          done
       - name: Worker bundle (what Colab pulls from /api/bundle)
         run: python3 notebook/build_notebook.py
       - name: Deploy
