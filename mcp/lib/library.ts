@@ -22,6 +22,7 @@ export type LibJob = {
     source?: boolean; quality?: string; aspect?: string; count?: number; refs?: number; transparent?: boolean; width?: number; height?: number };
   images?: LibImage[];
   scenes?: LibScene[];
+  benchmark?: { target: string | null; candidates: { label: string; engine: string; voice: string; match?: number | null; similarity?: number | null; mos?: number | null; rtf?: number; score?: number | null; lines?: string[]; error?: string }[] } | null;
 };
 export type LibScene = { id: string; text: string; start: number; seconds: number; voice_start?: number; prompt?: string | null; match?: number | null; animated?: boolean };
 
@@ -45,14 +46,14 @@ type WorkerJob = {
   id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; created?: number; status: string;
   subs?: LibJob["subs"]; match?: number | null; subs_urls?: Record<string, string>; platform?: string; scenes?: LibScene[]; similarity?: number | null; mode?: string; attach_to?: string; zip_url?: string;
-  trials?: Trial[] | null;
+  trials?: Trial[] | null; benchmark?: LibJob["benchmark"];
   gen?: LibJob["gen"] & Record<string, unknown>; video?: { width: number; height: number; duration: number; size: number; has_audio?: boolean; fps?: number; frames?: number } | null;
   results: (WorkerResult & { poster_url?: string; file?: string; thumb?: string; width?: number; height?: number; transparent?: boolean; thumb_url?: string })[];
 };
 
 /** Copy a finished worker job (audio + subtitles via signed worker URLs) into the library. Idempotent. */
 export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
-  if (job.status !== "done") return null;
+  if (job.status !== "done" || (job.kind as string) === "dataset") return null; // datasets live in datasets/, not the library
   if (job.attach_to) return attachSubtitles(job);
   const existing = await getLibJob(job.id);
   if (existing) return existing;
@@ -85,6 +86,7 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
     id: job.id, kind: job.kind ?? "tts", engine: job.engine, voice: job.voice, label: job.label, language: job.language,
     params: job.params, style: job.style, created: Math.round((job.created ?? Date.now() / 1000) * 1000), archived: Date.now(), source: "worker",
     subs: job.subs ?? null, match: job.match ?? null, platform: job.platform, similarity: job.similarity ?? null, mode: job.mode,
+    ...(job.benchmark ? { benchmark: job.benchmark } : {}),
     results: job.results.map(({ url, srt_url, vtt_url, json_url, ...r }) => r),
   };
   await putLibJob(lib);

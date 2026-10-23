@@ -109,6 +109,7 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 | `kokoro` | voice | 0 GB | 0.4 GB | `af_heart` / `am_michael` | Kokoro-82M. Fast, clean, flat delivery. Best for drafts and timing. |
 | `chatterbox` | voice | 4 GB | 4 GB | `female` / `male` | Chatterbox 0.5B (Resemble AI, MIT). Emotion dial + zero-shot cloning; 23 languages incl. Hindi. |
 | `orpheus` | voice | 11.5 GB | 7 GB | `tara` / `dan` | Orpheus 3B on vLLM. Most human-sounding; inline tags <laugh> <chuckle> <sigh> <cough> <sniffle> <groan> <yawn> <gasp>. |
+| `myvoice` | voice | 11.5 GB | 7 GB | `me` / `me` | Your own voice model: Orpheus 3B fine-tuned on 30-60 min of your recordings (Your model page). Needs MY_VOICE_MODEL. |
 | `whisper` | voice | 6 GB | 3.2 GB | n/a (subtitles) | Whisper large-v3 (OpenAI). Best open subtitle model: word-level timestamps, 99 languages. |
 | `enhance` | voice | 3 GB | 0.7 GB | n/a (clean-up) | Resemble Enhance (MIT). Studio clean-up: removes noise and room echo, restores the detail a cheap mic or phone loses (to 44.1 kHz). |
 | `qwen` | voice | 6 GB | 4.6 GB | `female` / `male` | Qwen3-TTS 1.7B Base (Alibaba, Apache-2.0). Best voice cloning: a 10-20 s recording of you becomes your voice. 10 languages (no Hindi: use Chatterbox). |
@@ -143,6 +144,15 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 | `temperature` | `0.6` | 0.1 – 1.5 | lower = steadier and more literal, higher = more expressive but riskier |
 | `top_p` | `0.95` | 0.1 – 1 |  |
 | `repetition_penalty` | `1.1` | 1 – 2 | >= 1.1 needed for stable output; raise if words repeat |
+| `seed` | `7` |  | change it to get a different take of the same line |
+
+#### `myvoice` params
+
+| Param | Default | Range | Notes |
+|---|---|---|---|
+| `temperature` | `0.6` | 0.1 – 1.5 | lower = steadier and more literal, higher = more expressive but riskier |
+| `top_p` | `0.95` | 0.1 – 1 |  |
+| `repetition_penalty` | `1.1` | 1 – 2 |  |
 | `seed` | `7` |  | change it to get a different take of the same line |
 
 #### `whisper` params

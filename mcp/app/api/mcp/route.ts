@@ -7,7 +7,8 @@ import { loadWorker, STALE_MS } from "@/lib/registry";
 import { call, safeEqual, WorkerOffline } from "@/lib/worker";
 import { archiveWorkerJob, listLibrary, presignPath } from "@/lib/library";
 import { getSettings, updateSettings, withDefaults } from "@/lib/settings";
-import { describeProfile, withProfile } from "@/lib/profiles";
+import { describeProfile, profileFor, withProfile } from "@/lib/profiles";
+import { listDataset } from "@/lib/datasets";
 import {
   addComment, addMediaFromUrl, createPost, deletePost, getPost, hasKey, linkJob, listActivity, listComments, listMedia, listMembers, listPosts, postsBetween, updatePost,
 } from "@/lib/appwrite";
@@ -17,8 +18,8 @@ import { isCustomVoice, listMyVoices, refSync } from "@/lib/voices";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen"] as const;
-const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "whisper", "enhance", "zimage", "qwenimage"] as const;
+const ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "myvoice"] as const;
+const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "myvoice", "whisper", "enhance", "zimage", "qwenimage"] as const;
 const POST_STATUS = STATUSES.map((s) => s.id) as [Post["status"], ...Post["status"][]];
 const POST_PLAT = POST_PLATFORMS.map((p) => p.id) as [Post["platforms"][number], ...Post["platforms"][number][]];
 const CLAUDE = { name: "Claude (MCP)" }; // shows up in the activity feed as the author of MCP changes
@@ -115,7 +116,7 @@ const handler = createMcpHandler(
           "takes: 2-4 = best-of-N: every sentence is voiced N times and the take Whisper hears most accurately (and, for a cloned voice, that sounds most like the recording) wins. Costs N x the time; worth it for final renders.",
           "Script markup: [pause], [pause 0.8], [pause 500ms], [beat], [breath] insert real silence. Tech terms are said right automatically (SQL -> sequel, GPU -> G P U, JSON -> jay-son, 16GB -> 16 gigabytes, markdown and URLs cleaned); pronounce: {word: 'how to say it'} adds your own, lexicon: false turns it off. The script itself is untouched for subtitles.",
           "With a recorded voice on qwen, lines in Devanagari (Hindi) are voiced by Chatterbox in the same voice automatically. With subtitles on and a cloned voice, each line also gets similarity (voice match vs the recording; 0.86+ = same speaker).",
-          "Engines: kokoro (fast drafts, many languages), chatterbox (emotion dial + cloning, 23 languages incl. Hindi), orpheus (most human, English; tags like <laugh> <sigh>), qwen (best cloning of the user's recorded voice; 10 languages, no Hindi; params.language takes names like English).",
+          "Engines: kokoro (fast drafts, many languages), chatterbox (emotion dial + cloning, 23 languages incl. Hindi), orpheus (most human, English; tags like <laugh> <sigh>), qwen (best cloning of the user's recorded voice; 10 languages, no Hindi; params.language takes names like English), myvoice (the user's own fine-tuned Orpheus model, once trained: English, voice 'me').",
           "No length limit: long text is split at sentences, voiced in one batch and re-joined.",
           "subtitles: true adds Whisper large-v3 word-timed SRT/VTT per line and for the whole timeline (uses each line's start when given), plus a match score vs the script.",
           "voice: 'female' / 'male' presets, an engine voice (e.g. tara, dan, af_heart), or the name of a recorded voice from my_voices (qwen or chatterbox).",
@@ -327,6 +328,66 @@ const handler = createMcpHandler(
       async ({ engine, voice, style }) => {
         try {
           return text((await describeProfile(engine, voice, style)) ?? { engine, voice, style: style ?? "tech", jobs: 0, note: "no reviewed voiceovers yet" });
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "voice_dataset",
+      {
+        title: "Your voice dataset",
+        description: "Training data collected for the user's own voice model (Your model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-12 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. Training runs in notebook/train_my_voice.ipynb (free Colab T4); then MY_VOICE_MODEL makes it the myvoice engine.",
+        inputSchema: z.object({
+          name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/).optional().describe("dataset name, default me"),
+          add_urls: z.array(z.string().url()).max(20).optional().describe("recordings to add"),
+          wait_seconds: z.number().min(0).max(MAX_WAIT).optional(),
+        }),
+      },
+      async ({ name, add_urls, wait_seconds }) => {
+        try {
+          const ds = name ?? "me";
+          if (add_urls?.length) {
+            const job = await call<Job>("/jobs", { body: { kind: "dataset", name: ds, sources: add_urls.map((url, i) => ({ url, name: `recording ${i + 1}` })), label: `Dataset · ${ds}` } });
+            const j = await waitFor(job.id, wait_seconds ?? 10);
+            if (j.status === "done") {
+              const { archiveDataset } = await import("@/lib/datasets");
+              await archiveDataset(j as unknown as Parameters<typeof archiveDataset>[0]);
+            }
+            return text({ job: withHint(j), dataset: await listDataset(ds) });
+          }
+          return text(await listDataset(ds));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "benchmark_voices",
+      {
+        title: "Benchmark voices",
+        description: "Voice the same held-out sentences with several engines/voices (e.g. the user's trained model 'myvoice', their Qwen and Chatterbox clones, an Orpheus preset) and score each the same way: script accuracy, voice match vs the user's real recording (target_voice), naturalness (UTMOS), speed. Each candidate runs at its learned settings. Returns a ranked table; audio for every line lands in the library for A/B listening. Takes minutes: poll get_job.",
+        inputSchema: z.object({
+          lines: z.array(z.string().min(3).max(500)).min(1).max(20).describe("sentences the trained model never heard"),
+          candidates: z.array(z.object({ engine: z.enum(ENGINES), voice: z.string().max(64).optional(), label: z.string().max(60).optional() })).min(1).max(6),
+          target_voice: z.string().max(64).optional().describe("the user's recorded voice to measure similarity against (my_voices name)"),
+          style: z.enum(["tech", "hype", "narrator", "neutral"]).optional(),
+          wait_seconds: z.number().min(0).max(MAX_WAIT).optional(),
+        }),
+      },
+      async ({ lines, candidates, target_voice, style, wait_seconds }) => {
+        try {
+          const names = new Set([...candidates.map((c) => c.voice ?? ""), target_voice ?? ""].filter((v) => isCustomVoice(v)));
+          const refs = Object.fromEntries((await Promise.all([...names].map(async (v) => [v, await refSync(v)] as const))).filter(([, r]) => r));
+          const cands = await Promise.all(candidates.map(async (c) => {
+            const prof = await profileFor(c.engine, c.voice, style ?? "tech").catch(() => null);
+            return { ...c, params: prof?.params ?? {} };
+          }));
+          const job = await call<Job>("/jobs", { body: { kind: "benchmark", lines, candidates: cands, target_voice, target_ref: target_voice ? refs[target_voice] : undefined, refs, style: style ?? "tech", platform: "youtube", label: "Benchmark" } });
+          const j = await waitFor(job.id, wait_seconds ?? 10);
+          return text(j.status === "done" ? { benchmark: (j as Record<string, unknown>).benchmark, library: (j as Record<string, unknown>).library } : withHint(j));
         } catch (e) {
           return fail(e);
         }
@@ -716,7 +777,8 @@ const handler = createMcpHandler(
       "3) Before a long or term-heavy script, preview_pronunciation and add fixes via pronounce.",
       "4) A recording from a bad mic: clean_audio. A rough take the user performed: revoice into their clean voice. Subtitles for any file: transcribe. Stills and thumbnails: imagine, then add_media to put one on the post.",
       "5) Long jobs return a job id: poll get_job (each call waits up to 45 s). Results are archived to the dashboard library; links expire after 6 h.",
-      "6) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",
+      "6) The user's own voice model: voice_dataset to see or grow the training data, then the training notebook; once trained it is engine myvoice. benchmark_voices compares it with their clones on held-out sentences.",
+      "7) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",
       "Scores: match = how closely Whisper heard the script (>=0.95 good); similarity = voice match vs the recording (>=0.86 same speaker).",
     ].join("\n"),
   },

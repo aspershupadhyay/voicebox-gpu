@@ -4,7 +4,8 @@ import { call, WorkerOffline } from "@/lib/worker";
 import { loadWorker, STALE_MS } from "@/lib/registry";
 import { archiveWorkerJob, deleteLibJob, FILE_RE, getLibJob, listLibrary, presignPath, presignPuts, putFile, putLibJob, signer, withUrls, type LibJob } from "@/lib/library";
 import { getSettings, updateSettings, withDefaults } from "@/lib/settings";
-import { describeProfile, withProfile } from "@/lib/profiles";
+import { describeProfile, profileFor, withProfile } from "@/lib/profiles";
+import { archiveDataset, datasetManifest, deleteDatasetPart, listDataset } from "@/lib/datasets";
 import { deleteMyVoice, getMyVoice, getSamples, isCustomVoice, listMyVoices, putMyVoice, recordSample, refSync, samplePutUrl, VOICE_RE, voicePutUrl } from "@/lib/voices";
 
 type RefJob = { id: string; kind: string; status: string; voice: string; label?: string; version?: string; warnings?: string[];
@@ -60,11 +61,16 @@ export async function GET(req: Request, ctx: Ctx) {
       const style = new URL(req.url).searchParams.get("style") ?? "tech";
       return Response.json(await describeProfile(b, c, style) ?? { engine: b, voice: c, style, jobs: 0 });
     }
+    if (a === "datasets" && b && VOICE_RE.test(b)) return Response.json(c === "manifest" ? await datasetManifest(b) : await listDataset(b));
     if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
     if (a === "jobs" && !b) return Response.json(await call("/jobs"));
     if (a === "jobs" && b) {
       const job = await call<Parameters<typeof archiveWorkerJob>[0]>(`/jobs/${b}`);
       if (new URL(req.url).searchParams.has("raw")) return Response.json(job); // status only, no archiving (sample script)
+      if (job.kind === ("dataset" as string)) {
+        const part = job.status === "done" ? await archiveDataset(job as unknown as Parameters<typeof archiveDataset>[0]) : null;
+        return Response.json({ ...job, part });
+      }
       if (job.kind === ("reference" as string)) {
         const myvoice = job.status === "done" ? await archiveReference(job as unknown as RefJob) : null;
         return Response.json({ ...job, myvoice });
@@ -180,6 +186,26 @@ export async function POST(req: Request, ctx: Ctx) {
         }
         delete body.source_key; delete body.source_from;
       }
+      if (body.kind === "dataset") {
+        // recordings for your own voice model: uploads -> short-lived links
+        const name = String(body.name ?? "");
+        if (!VOICE_RE.test(name)) throw new Error("name: lowercase letters, digits, - or _");
+        body.sources = await Promise.all((body.sources ?? []).slice(0, 20).map(async (s: { key?: string; name?: string }) => {
+          if (!/^uploads\/[A-Za-z0-9._-]+$/.test(String(s.key))) throw new Error("bad upload key");
+          return { name: s.name, url: await presignPath(String(s.key), 6 * 3600) };
+        }));
+      }
+      if (body.kind === "benchmark") {
+        // every recorded voice in the line-up (and the target you're measured against) travels as a signed link
+        const names = new Set<string>([...(body.candidates ?? []).map((c: { voice?: string }) => String(c.voice ?? "")), String(body.target_voice ?? "")].filter((v) => isCustomVoice(v)));
+        body.refs = Object.fromEntries((await Promise.all([...names].map(async (v) => [v, await refSync(v)] as const))).filter(([, r]) => r));
+        if (body.target_voice && body.refs[body.target_voice]) body.target_ref = body.refs[body.target_voice];
+        // each candidate at its own learned settings: a fair fight
+        body.candidates = await Promise.all((body.candidates ?? []).map(async (cand: { engine?: string; voice?: string; params?: Record<string, number> }) => {
+          const prof = await profileFor(cand.engine, cand.voice, body.style ?? "tech").catch(() => null);
+          return { ...cand, params: { ...(prof?.params ?? {}), ...(cand.params ?? {}) } };
+        }));
+      }
       if ((!body.kind || body.kind === "revoice" || body.kind === "story") && typeof body.voice === "string" && isCustomVoice(body.voice)) {
         // a recorded voice: hand the worker a link to it (its disk is wiped whenever Colab recycles the runtime)
         const ref = await refSync(body.voice);
@@ -239,6 +265,10 @@ export async function DELETE(req: Request, ctx: Ctx) {
   const g = await guard(req, ctx);
   if (g.deny) return g.deny;
   const [a, b] = g.path;
+  if (a === "datasets" && b && VOICE_RE.test(b) && ID.test(String(g.path[2] ?? ""))) {
+    await deleteDatasetPart(b, String(g.path[2]));
+    return Response.json({ ok: true });
+  }
   if (a === "myvoices" && b) {
     if (!isCustomVoice(b)) return Response.json({ error: "bad voice" }, { status: 400 });
     await deleteMyVoice(b);

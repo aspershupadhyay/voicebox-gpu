@@ -19,6 +19,7 @@ import config as C  # noqa: E402
 from lexicon import is_devanagari, segments, speakable  # noqa: E402
 import story  # noqa: E402
 import cleanup  # noqa: E402
+import dataset  # noqa: E402
 import quality  # noqa: E402
 
 SECRET = os.environ.get("WORKER_SECRET", "")
@@ -689,6 +690,10 @@ def make_job(body):
         return make_clean_job(body)
     if body.get("kind") == "story":
         return make_story_job(body)
+    if body.get("kind") == "dataset":
+        return make_dataset_job(body)
+    if body.get("kind") == "benchmark":
+        return make_benchmark_job(body)
     job = _base_job("tts", body)
     _voice_setup(job, body, body.get("lines") or [])
     return _enqueue(job)
@@ -1305,7 +1310,7 @@ def _join_chunks(paths, out_path, gaps=None):
 
 
 def _is_english(engine, voice, params, job):
-    if engine == "orpheus":
+    if engine in ("orpheus", "myvoice"):
         return True
     if engine == "kokoro":
         return (voice or "a")[0] in "ab"
@@ -1333,6 +1338,8 @@ def _line_plan(job, ln, engine, voice_arg):
 
 
 def run_tts(job):
+    if job.get("mode") == "benchmark":
+        return run_benchmark(job)
     if job.get("mode") == "revoice":
         return run_revoice(job)
     if job.get("mode") == "clean":
@@ -1344,7 +1351,7 @@ def run_tts(job):
         job["stage"] = "reference"
         ref_path, ref_text = get_ref(voice, job.get("ref"))
     job["ref_path"] = ref_path
-    voice_arg = voice if engine in ("kokoro", "orpheus") else None
+    voice_arg = voice if engine in ("kokoro", "orpheus", "myvoice") else None
     takes = job.get("takes", 1)
 
     plans = [_line_plan(job, ln, engine, voice_arg) for ln in job["lines"]]
@@ -1939,10 +1946,196 @@ def run_reference(job):
                        "level_db": round(rms_db, 1), "peak": round(peak, 3), "enhanced": job["enhanced"], "cleanup": job.get("cleanup")}]
 
 
+# --------------------------------------------------------------------------------------- your own voice model
+MAX_DATASET_S = 3 * 3600
+
+
+def make_dataset_job(body):
+    """Long recordings of you -> training clips (see dataset.py). sources: [{url, name?}]; name: the dataset (voice)."""
+    name = str(body.get("name") or "")
+    if not ID_RE.match(name):
+        raise ValueError("name: the dataset to add to (letters, digits, - and _)")
+    sources = body.get("sources") or []
+    if not sources or len(sources) > 20:
+        raise ValueError("sources: 1-20 recordings [{url, name?}]")
+    lines = []
+    for i, src in enumerate(sources):
+        lines.append({"id": f"s{i + 1:02d}", "url": _http_url(src.get("url"), f"source {i + 1} url"), "name": str(src.get("name") or f"recording {i + 1}")[:80],
+                      "text": str(src.get("text") or "")[:20000]})
+    job = _base_job("dataset", body)
+    job.update({"voice": name, "lines": lines, "engine": "whisper"})
+    job["est_total"] = 120.0 * len(lines)
+    return _enqueue(job)
+
+
+def run_dataset(job):
+    """Each recording: clean (noise only: the model should learn your real tone), Whisper word timestamps, cut into
+    2-12 s clips at sentence ends / breath pauses, check each clip, write 24 kHz WAVs + metadata.csv, zip."""
+    import numpy as np
+    import soundfile as sf
+    jdir = os.path.join(JOBS_DIR, job["id"])
+    wavs = os.path.join(jdir, "wavs")
+    os.makedirs(wavs, exist_ok=True)
+    meta, dropped, total_in, kept_s = [], {}, 0.0, 0.0
+    for n, src in enumerate(job["lines"]):
+        job["stage"] = "downloading"
+        raw = os.path.join(jdir, f"{src['id']}.in")
+        _download(src["url"], raw, 1024 * 1024 * 1024)
+        prep = os.path.join(jdir, f"{src['id']}.prep.wav")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", raw, "-vn", "-ac", "1", "-ar", "48000", "-af", "highpass=f=60", prep], check=True)
+        os.remove(raw)
+        dur = sf.info(prep).duration
+        total_in += dur
+        if total_in > MAX_DATASET_S:
+            raise ValueError("a dataset job takes up to 3 hours of audio; split it over several")
+        job["est_total"] = max(job["est_total"], (RATES["whisper"] + 0.1) * total_in * len(job["lines"]) / (n + 1) + 20)
+        clean = os.path.join(jdir, f"{src['id']}.clean.wav")
+        job["stage"] = "cleaning"
+        rep = smart_clean(job, prep, clean, prefer="denoise")
+        os.remove(prep)
+        _prepare(job, "whisper")
+        job["stage"] = "transcribing"
+        t0 = time.time()
+        o = _run_unit(job, RATES["whisper"] * dur + 2, lambda: ENG.transcribe([clean], job.get("language"))[0], f"{src['name']}: writing down every word")
+        learn_rate("whisper", time.time() - t0, max(dur, 1))
+        a, sr = sf.read(clean, dtype="float32", always_2d=False)
+        from math import gcd
+        from scipy.signal import resample_poly
+        g = gcd(24000, sr)
+        kept = 0
+        for i, (s0, e0, text) in enumerate(dataset.segment(o["words"], len(a) / sr)):
+            clip = a[int(s0 * sr): int(e0 * sr)]
+            if not len(clip):
+                continue
+            clip = resample_poly(clip, 24000 // g, sr // g).astype("float32")
+            peak = float(np.max(np.abs(clip)))
+            if peak > 0:
+                clip = clip * min(10 ** (-1 / 20) / peak, 10 ** (12 / 20))  # peak -1 dBFS, at most +12 dB
+            fname = f"{src['id']}_{i:04d}.wav"
+            path = os.path.join(wavs, fname)
+            sf.write(path, clip, 24000, subtype="PCM_16")
+            why = dataset.keep(text, len(clip) / 24000, quality.analyze(path))
+            if why:
+                dropped[why] = dropped.get(why, 0) + 1
+                os.remove(path)
+                continue
+            meta.append(f"wavs/{fname}|{text}")
+            kept += 1
+            kept_s += len(clip) / 24000
+        os.remove(clean)
+        job["results"].append({"id": src["id"], "name": src["name"], "duration": round(dur, 1), "clips": kept,
+                               "cleanup": _cleanup_summary(rep)})
+    if not meta:
+        raise ValueError("no usable clips: record in a quieter room, speak in full sentences, and keep the level out of the red")
+    job["stage"] = "packaging"
+    summary = {"name": job["voice"], "clips": len(meta), "minutes": round(kept_s / 60, 2), "input_minutes": round(total_in / 60, 2),
+               "dropped": dropped, "sample_rate": 24000, "format": "ljspeech (metadata.csv: file|text)"}
+    with zipfile.ZipFile(os.path.join(jdir, "dataset.zip"), "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("metadata.csv", "\n".join(meta) + "\n")
+        z.writestr("summary.json", json.dumps(summary, indent=2))
+        for f in sorted(os.listdir(wavs)):
+            z.write(os.path.join(wavs, f), f"wavs/{f}")
+    shutil.rmtree(wavs)
+    job["dataset"] = summary
+    log(f"job {job['id']} dataset {job['voice']}: {summary['clips']} clips, {summary['minutes']} min (dropped {dropped})")
+
+
+MAX_BENCH = 6
+
+
+def make_benchmark_job(body):
+    """The same held-out sentences in every candidate voice, scored the same way. candidates: [{engine, voice, params?,
+    label?}]; target_ref: the recording to measure voice match against (your real voice); refs: {voice: ref} for
+    recorded voices used by cloners."""
+    cands = body.get("candidates") or []
+    if not 1 <= len(cands) <= MAX_BENCH:
+        raise ValueError(f"candidates: 1-{MAX_BENCH} of {{engine, voice}}")
+    lines = body.get("lines") or []
+    if not 1 <= len(lines) <= 20:
+        raise ValueError("lines: 1-20 test sentences (ones the model did not train on)")
+    clean = []
+    for c in cands:
+        if c.get("engine") not in C.TTS_ENGINES:
+            raise ValueError(f"candidate engine must be one of {C.TTS_ENGINES}")
+        clean.append({"engine": c["engine"], "voice": resolve_voice(c["engine"], c.get("voice")), "params": c.get("params") or {},
+                      "label": str(c.get("label") or f"{c['engine']} · {c.get('voice') or 'default'}")[:60]})
+    job = _base_job("tts", body)
+    _voice_setup(job, {**body, "engine": clean[0]["engine"], "voice": clean[0]["voice"], "review": False, "takes": 1, "subtitles": False},
+                 [{"id": f"{i + 1:02d}", "text": str(t.get("text") if isinstance(t, dict) else t)} for i, t in enumerate(lines)])
+    job.update({"mode": "benchmark", "candidates": clean, "refs": body.get("refs") if isinstance(body.get("refs"), dict) else {},
+                "target_ref": body.get("target_ref") if isinstance(body.get("target_ref"), dict) else None,
+                "target_voice": str(body.get("target_voice") or "")})
+    chars = sum(len(l["text"]) for l in job["lines"])
+    job["est_total"] = sum(RATES[c["engine"]] * chars + LOAD_PRIORS_S.get(c["engine"], 60) for c in clean) + RATES["whisper"] * chars / 14 * len(clean) + 30
+    return _enqueue(job)
+
+
+LOAD_PRIORS_S = C.LOAD_PRIORS
+
+
+def run_benchmark(job):
+    """Voice every test sentence with every candidate (one take, no review: we're measuring the model, not the
+    retry loop), master them the same way, then score each: script accuracy, voice match vs your real recording,
+    naturalness (UTMOS), speed. Ranked by the same blend the review uses."""
+    jdir = os.path.join(JOBS_DIR, job["id"])
+    keep_lines = list(job["lines"])
+    target = None
+    if job.get("target_voice"):
+        job["stage"] = "reference"
+        target, _ = get_ref(job["target_voice"], job.get("target_ref"))
+    board, keep = [], {k: job[k] for k in ("engine", "voice", "params")}
+    for ci, cand in enumerate(job["candidates"]):
+        sp, _ = C.style_settings(job["style"], cand["engine"])
+        job.update({"engine": cand["engine"], "voice": cand["voice"], "params": {**sp, **cand["params"]}})
+        ref_path = ref_text = None
+        if C.ENGINES[cand["engine"]].get("clone") or (cand["engine"] == "chatterbox" and cand["voice"] != "default"):
+            job["stage"] = "reference"
+            ref_path, ref_text = get_ref(cand["voice"], (job.get("refs") or {}).get(cand["voice"]))
+        voice_arg = cand["voice"] if cand["engine"] in ("kokoro", "orpheus", "myvoice") else None
+        lines = [{**ln, "id": f"c{ci + 1}-{ln['id']}"} for ln in keep_lines]
+        plans = [_line_plan(job, ln, cand["engine"], voice_arg) for ln in lines]
+        order = {p["ln"]["id"]: i for i, p in enumerate(plans)}
+
+        def out(p, i, k):
+            return os.path.join(jdir, f"{p['ln']['id']}.c{i}.t{k}.wav")
+        t0, first = time.time(), len(job["results"])
+        try:
+            _generate(job, [(p, i, 0, p["params"]) for p in plans for i in range(len(p["chunks"]))], out, ref_path, ref_text, order, len(plans))
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001  one candidate failing (e.g. no model yet) shouldn't sink the others
+            job["warnings"].append(f"{cand['label']}: {type(e).__name__}: {str(e)[:160]}")
+            board.append({"label": cand["label"], "engine": cand["engine"], "voice": cand["voice"], "error": str(e)[:200]})
+            continue
+        gen_s = time.time() - t0
+        for p in plans:
+            _assemble(job, jdir, p, [out(p, i, 0) for i in range(len(p["chunks"]))])
+        mine = job["results"][first:]
+        job["stage"] = "choosing"
+        stats = _listen(job, [os.path.join(jdir, f"{r['id']}.wav") for r in mine], target)
+        audio_s = sum(r["duration"] for r in mine)
+        rows = []
+        for r, st in zip(mine, stats):
+            t = quality.score_text(r["text"], st["heard"], r.get("spoken"))
+            r.update({"match": t["score"], "similarity": st["sim"], "mos": st["mos"], "heard": st["heard"], "candidate": cand["label"]})
+            if t["missed"] or t["added"]:
+                r["diff"] = {"missed": t["missed"], "added": t["added"]}
+            rows.append(quality.take_score(t["score"], st["sim"], None, st["mos"], None, None, st["clip"]))
+        avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None  # noqa: E731
+        board.append({"label": cand["label"], "engine": cand["engine"], "voice": cand["voice"],
+                      "match": avg([r["match"] for r in mine if r["match"] is not None]),
+                      "similarity": avg([r["similarity"] for r in mine if r["similarity"] is not None]),
+                      "mos": avg([r["mos"] for r in mine if r["mos"] is not None]),
+                      "rtf": round(gen_s / max(audio_s, 0.1), 3), "score": avg(rows), "lines": [r["id"] for r in mine]})
+    job.update(keep)
+    ranked = sorted([b for b in board if "error" not in b], key=lambda b: -(b["score"] or 0)) + [b for b in board if "error" in b]
+    job["benchmark"] = {"target": job.get("target_voice") or None, "candidates": ranked}
+
+
 def package(job):
     job["stage"] = "packaging"
-    if job["kind"] in ("video", "reference", "image"):
-        return  # single files, served directly; no zip copy of a large video
+    if job["kind"] in ("video", "reference", "image", "dataset"):
+        return  # single files, served directly; no zip copy of a large video (a dataset packs its own zip)
     jdir = os.path.join(JOBS_DIR, job["id"])
     with zipfile.ZipFile(os.path.join(JOBS_DIR, f"{job['id']}.zip"), "w") as z:
         for f in sorted(os.listdir(jdir)):
@@ -1952,7 +2145,7 @@ def package(job):
 
 
 PUSH_TYPES = {".wav": "audio/wav", ".srt": "application/x-subrip", ".vtt": "text/vtt", ".json": "application/json",
-              ".mp4": "video/mp4", ".jpg": "image/jpeg", ".png": "image/png"}
+              ".mp4": "video/mp4", ".jpg": "image/jpeg", ".png": "image/png", ".zip": "application/zip"}
 
 
 def push_files(job_id, targets, headers):
@@ -1998,7 +2191,7 @@ def worker_loop():
         job["status"], job["started"] = "running", time.time()
         try:
             {"transcribe": run_transcribe, "video": run_video, "reference": run_reference,
-             "image": run_image}.get(job["kind"], run_tts)(job)
+             "image": run_image, "dataset": run_dataset}.get(job["kind"], run_tts)(job)
             package(job)
             job["status"], job["stage"] = "done", "done"
         except Cancelled:
@@ -2097,7 +2290,8 @@ def _progress(job):
 
 def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
-                                 "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup")}
+                                 "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup",
+                                 "dataset", "benchmark")}
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
     if job["kind"] == "tts":
@@ -2130,7 +2324,7 @@ def job_view(job, urls=True):
                 r["json_url"] = sign(f"/files/{job['id']}/{r['id']}.subs.json")
         res.append(r)
     v["results"] = res
-    if urls and job["status"] == "done" and job["kind"] not in ("video", "reference"):
+    if urls and job["status"] == "done" and job["kind"] not in ("video", "reference", "dataset"):
         v["zip_url"] = sign(f"/files/{job['id']}.zip")
         if job.get("subs"):
             v["subs_urls"] = {ext: sign(f"/files/{job['id']}/subtitles.{ext}") for ext in ("srt", "vtt", "json")}

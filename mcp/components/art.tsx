@@ -52,6 +52,7 @@ export function VoiceGlyph({ name, size = 40, active = false }: { name: string; 
  *  Qwen = your voice mirrored into its clone; Wan = a subject in motion over a timeline; LTX = film strip + its soundtrack; Whisper = captions. */
 export function EngineArt({ engine, live = false }: { engine: string; live?: boolean }) {
   const cls = `eart ${live ? "live" : ""}`;
+  if (engine === "myvoice") return <VoiceGlyph name="myvoice" size={64} active={live} />;
   if (engine === "orpheus") return (
     <svg viewBox="0 0 120 84" className={cls} aria-hidden>
       <path d="M38 70c-12-6-18-20-14-34 3-10 10-15 16-15 5 0 8 4 6 9" className="ink" />

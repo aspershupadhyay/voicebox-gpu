@@ -38,7 +38,7 @@ export async function updateSettings(patch: Record<string, unknown>): Promise<Se
     if (typeof v === "string" && v.length <= 64 && (!ok || ok.includes(v))) (next as Record<string, unknown>)[k] = v;
   };
   const bool = (k: keyof Settings) => { if (typeof patch[k] === "boolean") (next as Record<string, unknown>)[k] = patch[k]; };
-  str("engine", ["qwen", "orpheus", "chatterbox", "kokoro"]); str("voice"); str("style", ["tech", "hype", "narrator", "neutral"]);
+  str("engine", ["qwen", "myvoice", "orpheus", "chatterbox", "kokoro"]); str("voice"); str("style", ["tech", "hype", "narrator", "neutral"]);
   str("platform", PLATFORMS); str("visuals", ["images", "clips"]); str("visual_style", VISUAL_STYLES);
   str("captions_look", ["auto", "bold", "clean", "none"]); str("transition", ["fade", "cut"]);
   for (const k of ["subtitles", "lexicon", "enhance_recordings", "enhance_input", "enhance_output", "backup_media", "review"] as const) bool(k);

@@ -730,3 +730,17 @@ textarea.doc.short { min-height: 110px; }
 .note-strip { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin-bottom: 18px; font-size: 13.5px; }
 .report { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--bg2); margin-bottom: 10px; }
 .report .table td, .report .table th { padding: 6px 4px; }
+
+/* ───────────── your model */
+.read-card.big { font: 500 24px/1.45 var(--display); letter-spacing: -.015em; min-height: 130px; display: flex; align-items: center; padding: 22px 26px; margin: 4px 0 14px; transition: border-color .2s, box-shadow .2s; }
+.read-card.big::before { content: none; }
+.read-card.big.live { border-color: color-mix(in srgb, var(--signal) 45%, transparent); box-shadow: 0 0 0 4px var(--signal-soft); }
+.rec-live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--signal); animation: breathe 1s infinite; }
+.meter { position: relative; height: 8px; border-radius: 99px; background: var(--raised2); margin: 14px 0 6px; }
+.meter > i { position: absolute; inset: 0 auto 0 0; border-radius: 99px; background: var(--ink); transition: width .6s var(--ease); }
+.meter > span { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--line3); }
+.meter > span em { position: absolute; top: 18px; transform: translateX(-50%); white-space: nowrap; font: 500 11px var(--sans); color: var(--dim); font-style: normal; }
+.meter > span:last-child em { transform: translateX(-100%); }
+.steps-list { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: 13.5px; color: var(--ink2); }
+.steps-list code, .read-card code { font: 12.5px var(--mono); background: var(--raised2); padding: 1px 5px; border-radius: 5px; }
+input[type=checkbox], input[type=radio] { accent-color: var(--ink); width: auto; }

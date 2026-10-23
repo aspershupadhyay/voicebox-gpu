@@ -84,6 +84,25 @@ ENGINES = {
             "seed": {"type": "integer", "default": 7, "about": "change it to get a different take of the same line"},
         },
     },
+    "myvoice": {
+        "group": "voice",
+        "disk_gb": 7.0,
+        "kind": "tts",
+        "port": 8108,
+        "gpu_gb": 11.5,
+        "chunk_chars": 260,
+        "packages": "vllm snac soundfile",  # same as orpheus: shares its venv
+        "about": "Your own voice model: Orpheus 3B fine-tuned on 30-60 min of your recordings (Your model page). Needs MY_VOICE_MODEL.",
+        "voices": ["me"],
+        "presets": {"female": "me", "male": "me"},
+        "params": {
+            "temperature": {"type": "number", "default": 0.6, "min": 0.1, "max": 1.5,
+                            "about": "lower = steadier and more literal, higher = more expressive but riskier"},
+            "top_p": {"type": "number", "default": 0.95, "min": 0.1, "max": 1.0},
+            "repetition_penalty": {"type": "number", "default": 1.1, "min": 1.0, "max": 2.0},
+            "seed": {"type": "integer", "default": 7, "about": "change it to get a different take of the same line"},
+        },
+    },
     "whisper": {
         "group": "voice",
         "disk_gb": 3.2,  # model weights downloaded on first use
@@ -320,17 +339,18 @@ def style_settings(style, engine):
     if style not in STYLES:
         raise ValueError(f"style must be one of {list(STYLES)}")
     st = STYLES[style]
-    return dict(st["params"].get(engine, {})), {**st["post"], **st.get("post_by_engine", {}).get(engine, {})}
+    like = "orpheus" if engine == "myvoice" else engine  # your fine-tuned Orpheus takes Orpheus's style settings
+    return dict(st["params"].get(like, {})), {**st["post"], **st.get("post_by_engine", {}).get(like, {})}
 
 # Speed priors (seconds of compute per character / per second of audio), refined live by the gateway.
-RATE_PRIORS = {"kokoro": 0.004, "chatterbox": 0.06, "orpheus": 0.03, "whisper": 0.06, "qwen": 0.05,
+RATE_PRIORS = {"kokoro": 0.004, "chatterbox": 0.06, "orpheus": 0.03, "myvoice": 0.03, "whisper": 0.06, "qwen": 0.05,
                "revoice": 0.25, "enhance": 0.4,  # per second of audio  # Chatterbox VC: seconds per second of performance
                # video: seconds per (step x frame x megapixel), x2 when CFG doubles the passes
                "wan": 0.3, "ltx": 0.35, "wan14": 1.2,
                # image: seconds per (step x megapixel x image); animate: per (step x frame x megapixel)
                "zimage": 0.08, "qwenimage": 0.1, "animate": 1.5}
-INSTALL_PRIORS = {"enhance": 150, "kokoro": 40, "chatterbox": 150, "orpheus": 240, "whisper": 120, "qwen": 150, "wan": 300, "ltx": 600, "wan14": 300, "zimage": 120, "qwenimage": 120, "animate": 300}  # first install, seconds
-LOAD_PRIORS = {"enhance": 40, "kokoro": 5, "chatterbox": 45, "orpheus": 120, "whisper": 40, "qwen": 60, "wan": 240, "ltx": 480, "wan14": 600, "zimage": 150, "qwenimage": 240, "animate": 600}  # first load includes the weight download
+INSTALL_PRIORS = {"enhance": 150, "kokoro": 40, "chatterbox": 150, "orpheus": 240, "myvoice": 240, "whisper": 120, "qwen": 150, "wan": 300, "ltx": 600, "wan14": 300, "zimage": 120, "qwenimage": 120, "animate": 300}  # first install, seconds
+LOAD_PRIORS = {"enhance": 40, "kokoro": 5, "chatterbox": 45, "orpheus": 120, "myvoice": 120, "whisper": 40, "qwen": 60, "wan": 240, "ltx": 480, "wan14": 600, "zimage": 150, "qwenimage": 240, "animate": 600}  # first load includes the weight download
 
 SUBTITLE_STYLE = {"max_chars": 42, "max_seconds": 3.5, "min_gap": 0.08}
 CAPTION_STYLES = {

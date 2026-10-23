@@ -20,8 +20,8 @@ type Platform = { label: string; about: string; lufs: number | null; tp: number 
 type Catalogue = { engines: Record<string, Engine>; references: string[]; styles?: Record<string, Style>; default_style?: string; platforms?: Record<string, Platform>; max_takes?: number };
 type ParsedLine = { id: string; text: string; window?: number; start?: number; params?: Record<string, number> };
 
-const TTS = ["orpheus", "qwen", "chatterbox", "kokoro"] as const;
-const BLURB: Record<string, string> = { orpheus: "Most human · English", qwen: "Your voice · best cloning", chatterbox: "Emotion · cloning · 23 langs", kokoro: "Instant drafts · CPU" };
+const TTS = ["qwen", "myvoice", "orpheus", "chatterbox", "kokoro"] as const;
+const BLURB: Record<string, string> = { myvoice: "Your trained model", orpheus: "Most human · English", qwen: "Your voice · best cloning", chatterbox: "Emotion · cloning · 23 langs", kokoro: "Instant drafts · CPU" };
 const CLONERS = ["qwen", "chatterbox"];
 const STYLE_ORDER = ["tech", "hype", "narrator", "neutral"];
 const TAGS = ["<laugh>", "<chuckle>", "<sigh>", "<gasp>", "<groan>", "<yawn>", "<sniffle>", "<cough>"];
@@ -263,7 +263,7 @@ export default function Generate() {
               {TTS.map((n) => (
                 <button key={n} className={`pick engine-tile ${engine === n ? "on" : ""}`} onClick={() => { setEngine(n); setParams({}); }}>
                   <span className="art"><EngineArt engine={n} live={engine === n} /></span>
-                  <span className="row between" style={{ marginTop: 10 }}><span className="t1" style={{ textTransform: "capitalize", font: "400 21px var(--display)" }}>{n}</span>
+                  <span className="row between" style={{ marginTop: 10 }}><span className="t1" style={{ font: "600 17px var(--display)", letterSpacing: "-.02em" }}>{n === "myvoice" ? "Your model" : n[0].toUpperCase() + n.slice(1)}</span>
                     <span className={`dot ${status?.engines?.[n] === "ready" ? "ok" : status?.engines?.[n] === "loading" || status?.engines?.[n] === "installing" ? "warn" : "off"}`} title={status?.engines?.[n] ?? ""} /></span>
                   <span className="t2" style={{ display: "block" }}>{BLURB[n]}</span>
                 </button>

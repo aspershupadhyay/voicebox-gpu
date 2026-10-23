@@ -46,14 +46,24 @@ Recorded the voiceover yourself on a cheap mic? **Clean-up** (or the `clean_audi
 sound studio-grade and masters it for the platform, at the same length so it stays in sync with your video.
 *Denoise only* keeps your exact tone; *Studio* also restores detail.
 
-## 5 · Going further: train on your voice
+## 5 · Your own model (beyond cloning)
 
-Zero-shot cloning from 20 seconds has a ceiling. For the best quality, record **30–60 minutes** of yourself reading
-tech scripts (same mic and room, varied sentences) and fine-tune a model on it:
+Zero-shot cloning copies about 20 seconds of you. A trained model learns how you actually talk, from 30-60 minutes of it.
+Everything below runs on free compute.
 
-- **Orpheus 3B** (most human, keeps `<laugh>` / `<sigh>` tags): LoRA fine-tuning with Unsloth's Orpheus notebook
-  runs on a free/L4 Colab GPU in about an hour. The result loads into the `orpheus` engine as a new voice.
-- **Qwen3-TTS:** check the upstream repo for single-speaker fine-tuning support before you record for it.
+1. **Collect** (dashboard → **Your model**). *Read along* shows one line at a time from a script written like a tech
+   video (hooks, explanations, numbers, questions, asides) plus tongue-twisters that cover every English sound; press
+   space for the next line and record 5-15 minutes per session. Or *Upload* long recordings of only you talking. The
+   worker removes noise (never "restores" the tone, so the model learns your real voice), Whisper cuts 2-12 s clips at
+   sentence ends, and noisy, clipped or mis-timed clips are dropped. The meter shows minutes collected: 15 works, 30 is
+   good, 60 is best. Same mic and room every session.
+2. **Train.** Open `notebook/train_my_voice.ipynb` in Colab (free T4) or download it from the page. Add `DASHBOARD_URL`,
+   `MCP_TOKEN` and a write `HF_TOKEN` in its Secrets, set your Hugging Face repo, Run all. It fine-tunes Orpheus 3B with a
+   LoRA adapter (Unsloth), plays two test lines, and pushes the merged model to your private repo. About 1-2 hours.
+3. **Use it.** Set `MY_VOICE_MODEL` (the repo) and `MY_VOICE_SPEAKER` (default `me`) on Vercel and restart the worker.
+   The model is the **myvoice** engine everywhere: Voiceover, Settings, and MCP (`engine: "myvoice"`).
+4. **Benchmark** (same page, or the `benchmark_voices` MCP tool). The same unseen sentences in your model, your Qwen
+   and Chatterbox clones, and optionally an Orpheus preset, scored identically: script accuracy, voice match against
+   your real recording, naturalness (UTMOS) and speed. Listen side by side, then make the winner your default.
 
-This isn't automated here yet. The recordings you make for it are worth keeping anyway: they also make better
-references.
+The review keeps learning per voice as you use it, so whichever engine wins also gets its best settings over time.

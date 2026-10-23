@@ -1,7 +1,7 @@
 "use client";
 import {
   ArrowsClockwise, Books, CalendarBlank, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, HardDrives, ImageSquare, Kanban, MagicWand, MagnifyingGlass,
-  Microphone, Moon, Power, SignOut, SquaresFour, Sun, UserSound, Waveform, Images,
+  Microphone, Moon, Power, Brain, SignOut, SquaresFour, Sun, UserSound, Waveform, Images,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -21,6 +21,7 @@ const NAV = [
   { href: "/media", name: "Media", Icon: Images, sec: "Workspace" },
   { href: "/generate", name: "Voiceover", Icon: Microphone, sec: "Create" },
   { href: "/voices", name: "Voices", Icon: UserSound, sec: "Create" },
+  { href: "/model", name: "Your model", Icon: Brain, sec: "Create" },
   { href: "/studio", name: "Clean-up", Icon: MagicWand, sec: "Create" },
   { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning, sec: "Create" },
   { href: "/image", name: "Images", Icon: ImageSquare, sec: "Create" },
@@ -46,8 +47,8 @@ function useTheme() {
 }
 
 async function leave() { await signOut(); location.href = "/login"; }
-const ENGINE_ORDER = ["orpheus", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "zimage", "qwenimage"];
-const ALL_ENGINES = ["orpheus", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "zimage", "qwenimage"];
+const ENGINE_ORDER = ["orpheus", "myvoice", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "zimage", "qwenimage"];
+const ALL_ENGINES = ["orpheus", "myvoice", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "zimage", "qwenimage"];
 const MODE: Record<string, string> = { voice: "Voice mode", visual: "Image mode", idle: "Idle · GPU free", mixed: "Switching" };
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 const stateClass = (s?: string) => (s === "ready" ? "ready" : s === "loading" || s === "installing" || s === "busy" ? "busy" : s === "error" ? "err" : "");

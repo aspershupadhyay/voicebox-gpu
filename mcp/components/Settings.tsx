@@ -55,7 +55,7 @@ export default function Settings() {
     }
   }
 
-  const voices: [string, string][] = s.engine === "orpheus" ? ["tara", "leah", "jess", "mia", "zoe", "leo", "dan", "zac"].map((v) => [v, v])
+  const voices: [string, string][] = s.engine === "myvoice" ? [["me", "you (trained)"]] : s.engine === "orpheus" ? ["tara", "leah", "jess", "mia", "zoe", "leo", "dan", "zac"].map((v) => [v, v])
     : s.engine === "kokoro" ? ["af_heart", "af_bella", "am_fenrir", "am_michael", "am_puck"].map((v) => [v, v])
     : [...mine.map((m) => [m.name, `${m.label} (your voice)`] as [string, string]), ["female", "female preset"], ["male", "male preset"]];
 
@@ -76,8 +76,8 @@ export default function Settings() {
             <div className="card-head"><h2>Voice</h2></div>
             <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div className="field" style={{ margin: 0 }}><label className="f">Engine</label>
-                <select value={s.engine} onChange={(e) => setS({ ...s, engine: e.target.value, voice: e.target.value === "orpheus" ? "tara" : e.target.value === "kokoro" ? "af_heart" : mine[0]?.name ?? "female" })}>
-                  {opt([["qwen", "Qwen · your voice"], ["orpheus", "Orpheus · most human"], ["chatterbox", "Chatterbox · emotion"], ["kokoro", "Kokoro · instant"]])}
+                <select value={s.engine} onChange={(e) => setS({ ...s, engine: e.target.value, voice: e.target.value === "myvoice" ? "me" : e.target.value === "orpheus" ? "tara" : e.target.value === "kokoro" ? "af_heart" : mine[0]?.name ?? "female" })}>
+                  {opt([["qwen", "Qwen · your voice"], ["myvoice", "Your trained model"], ["orpheus", "Orpheus · most human"], ["chatterbox", "Chatterbox · emotion"], ["kokoro", "Kokoro · instant"]])}
                 </select></div>
               <div className="field" style={{ margin: 0 }}><label className="f">Voice</label>
                 <select value={s.voice} onChange={(e) => set("voice", e.target.value)}>{opt(voices)}</select></div>
