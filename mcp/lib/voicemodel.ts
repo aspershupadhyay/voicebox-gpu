@@ -106,18 +106,19 @@ export async function withModels<T extends Record<string, unknown>>(body: T): Pr
   if (kv(body.engine, body.voice) || cands.some((c) => kv(c?.engine, c?.voice))) {
     const { kvoiceLinks } = await import("./kvoices");
     const kvoices = await kvoiceLinks().catch(() => ({}));
-    if (Object.keys(kvoices).length) out = { ...out, kvoices };
+    if (Object.keys(kvoices).length) out = { ...out, kvoices: { ...kvoices, ...((body.kvoices as object) ?? {}) } };
   }
   // fine-tuned Qwen voices (ft_<name>): their models travel as signed links too
   const ft = (e?: unknown, v?: unknown) => e === "qwen" && String(v ?? "").startsWith("ft_");
   if (ft(body.engine, body.voice) || cands.some((c) => ft(c?.engine, c?.voice))) {
     const { qwenModelLinks } = await import("./qwenmodels");
     const qmodels = await qwenModelLinks().catch(() => ({}));
-    if (Object.keys(qmodels).length) out = { ...out, qmodels };
+    if (Object.keys(qmodels).length) out = { ...out, qmodels: { ...qmodels, ...((body.qmodels as object) ?? {}) } };
   }
   if (body.engine !== "myvoice" && !cands.some((c) => c?.engine === "myvoice")) return out;
   const models = await modelLinks().catch(() => ({}));
-  return Object.keys(models).length ? { ...out, models } : out;
+  // links the caller already set win (the model check adds <name>--new, a model that isn't live yet)
+  return Object.keys(models).length ? { ...out, models: { ...models, ...((body.models as object) ?? {}) } } : out;
 }
 
 /** For the worker at start-up: a 7-day link to the newest adapter (the longest an S3 signature lasts). */

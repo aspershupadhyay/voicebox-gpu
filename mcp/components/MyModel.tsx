@@ -623,7 +623,7 @@ function Coach({ name, trained, onRecord, onSwitched }: { name: string; trained:
           {g.note && !comparing && <span className="tiny dim">{g.note}</span>}
           {(g.stage === "kept" || g.stage === "error") && (
             <div className="row" style={{ gap: 8 }}>
-              {g.stage === "error" && <button className="ghost sm" onClick={() => gate("compare", g.job)}>Compare again</button>}
+              {(g.stage === "error" || g.new == null) && <button className="ghost sm" onClick={() => gate("compare", g.job)}>Compare again</button>}
               <button className="ghost sm" onClick={() => gate("use", g.job)}>Use the new model anyway</button>
             </div>
           )}
