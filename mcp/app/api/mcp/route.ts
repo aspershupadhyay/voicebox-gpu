@@ -43,6 +43,13 @@ async function waitFor(id: string, seconds: number): Promise<Job> {
     await sleep(Math.min(4000, Math.max(0, until - Date.now())));
     job = await call<Job>(`/jobs/${id}`);
   }
+  if (job.status === "done" && (job.kind as string) === "dataset") {
+    // a finished dataset batch only counts once it's stored (and, if asked, training has been started)
+    const { archiveDataset, autoTrain } = await import("@/lib/datasets");
+    const dj = job as unknown as Parameters<typeof archiveDataset>[0];
+    const part = await archiveDataset(dj);
+    return { ...job, part: part ? await autoTrain(dj, part) : null } as Job;
+  }
   if (job.status === "done") {
     try {
       const lib = await archiveWorkerJob(job as unknown as Parameters<typeof archiveWorkerJob>[0]);
@@ -357,12 +364,6 @@ const handler = createMcpHandler(
           if (add_urls?.length) {
             const job = await call<Job>("/jobs", { body: { kind: "dataset", name: ds, sources: add_urls.map((url, i) => ({ url, name: `recording ${i + 1}` })), label: `Dataset · ${ds}`, auto_train } });
             const j = await waitFor(job.id, wait_seconds ?? 10);
-            if (j.status === "done") {
-              const { archiveDataset, autoTrain } = await import("@/lib/datasets");
-              const dj = j as unknown as Parameters<typeof archiveDataset>[0];
-              const part = await archiveDataset(dj);
-              if (part) await autoTrain(dj, part);
-            }
             return text({ job: withHint(j), dataset: await listDataset(ds) });
           }
           return text(await listDataset(ds));
@@ -454,7 +455,7 @@ const handler = createMcpHandler(
       "get_job",
       {
         title: "Get job",
-        description: "Status and results of any job (voice, clean-up, re-voice, subtitles, images). Waits up to wait_seconds for it to finish.",
+        description: "Status and results of any job (voice, clean-up, re-voice, subtitles, images, dataset batches). Waits up to wait_seconds for it to finish. A finished dataset batch is stored in the dataset here (and starts training if it was sent with auto_train).",
         inputSchema: z.object({
           job_id: z.string().regex(/^[a-f0-9]{12}$/),
           wait_seconds: z.number().min(0).max(MAX_WAIT).optional(),
