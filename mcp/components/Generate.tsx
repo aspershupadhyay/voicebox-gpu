@@ -90,6 +90,7 @@ export default function Generate() {
   const [mineLoaded, setMineLoaded] = useState(false);
   const [models, setModels] = useState<{ name: string; sample_url?: string | null }[] | null>(null); // trained voices, everyone's
   const [kvoices, setKvoices] = useState<{ voice: string; name: string; sample_url?: string | null }[]>([]); // your voices found in Kokoro
+  const [qmodels, setQmodels] = useState<{ voice: string; name: string; sample_url?: string | null }[]>([]); // fine-tuned Qwen voices
   const samples = useSamples();
   const ta = useRef<HTMLTextAreaElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -108,6 +109,7 @@ export default function Generate() {
     api<{ voices: MyVoice[] }>("myvoices").then((r) => setMine(r.voices)).catch(() => {}).finally(() => setMineLoaded(true));
     api<{ models: { name: string; sample_url?: string | null }[] }>("models").then((r) => setModels(r.models)).catch(() => setModels([]));
     api<{ voices: { voice: string; name: string; sample_url?: string | null }[] }>("kvoices").then((r) => setKvoices(r.voices)).catch(() => {});
+    api<{ models: { voice: string; name: string; sample_url?: string | null }[] }>("qmodels").then((r) => setQmodels(r.models)).catch(() => {});
     // from a workspace post: /generate?post=<id> loads its script; the finished voiceover is attached back to the post
     const pid = q.get("post");
     if (pid) aw().tables.getRow<Post>({ databaseId: AW.db, tableId: "posts", rowId: pid }).then((p) => {
@@ -146,8 +148,9 @@ export default function Generate() {
     if (engine === "orpheus") return eng?.voices ?? [];
     if (engine === "myvoice") return models?.length ? models.map((m) => m.name) : ["me"];
     const base = ["female", "male", ...(eng?.voices ?? []).filter((v) => !v.startsWith("<") && v !== "female" && v !== "male")];
-    return CLONERS.includes(engine) ? [...mine.map((m) => m.name), ...base.filter((b) => !mine.some((m) => m.name === b))] : base;
-  }, [eng, engine, lang, mine, models, kvoices]);
+    const tuned = engine === "qwen" ? qmodels.map((q) => q.voice) : [];
+    return CLONERS.includes(engine) ? [...tuned, ...mine.map((m) => m.name), ...base.filter((b) => !mine.some((m) => m.name === b))] : base;
+  }, [eng, engine, lang, mine, models, kvoices, qmodels]);
   const myVoice = (v: string) => mine.find((m) => m.name === v);
 
   useEffect(() => {
@@ -358,7 +361,7 @@ export default function Generate() {
                   const real = eng?.presets[v] && eng.presets[v] !== v ? eng.presets[v] : v;
                   const mv = myVoice(v);
                   const trained = engine === "myvoice" ? models?.find((m) => m.name === v) : undefined;
-                  const kv = engine === "kokoro" ? kvoices.find((k) => k.voice === v) : undefined;
+                  const kv = engine === "kokoro" ? kvoices.find((k) => k.voice === v) : engine === "qwen" ? qmodels.find((q) => q.voice === v) : undefined;
                   const sample = trained ? trained.sample_url ?? undefined : kv ? kv.sample_url ?? undefined : mv ? mv.url : samples?.voices[engine]?.[v]?.url;
                   return (
                     <button key={v} className={`pick voice-pick ${voice === v ? "on" : ""} ${mv ? "mine" : ""}`} onClick={() => setVoice(v)}>
@@ -366,7 +369,7 @@ export default function Generate() {
                       <span className="vplay"><SampleButton id={`gen/${engine}/${v}`} url={sample} size={24} label={mv?.label ?? v} /></span>
                       <VoiceGlyph name={CLONERS.includes(engine) && !mv ? (v === "male" ? "dan" : "tara") : real} size={46} active={voice === v} />
                       <span className="vn">{mv?.label ?? v}</span>
-                      <span className="vs">{engine === "myvoice" ? "trained model" : kv ? `${kv.name} in Kokoro` : mv ? "your voice" : real !== v ? real : engine === "kokoro" ? KOKORO_LANG[v[0]] ?? "" : engine}</span>
+                      <span className="vs">{engine === "myvoice" ? "trained model" : kv ? (engine === "qwen" ? `${kv.name} · fine-tuned` : `${kv.name} in Kokoro`) : mv ? "your voice" : real !== v ? real : engine === "kokoro" ? KOKORO_LANG[v[0]] ?? "" : engine}</span>
                     </button>
                   );
                 })}

@@ -385,6 +385,8 @@ def resolve_params(engine, given):
 TRAIN_PACKAGES = "unsloth snac soundfile librosa"
 TRAIN_INSTALL_S = 420  # first run: installing unsloth + torch into the train venv
 MYVOICE_DIR = os.path.join(HOME, "myvoice")  # the trained LoRA adapter the myvoice engine loads (adapter/)
+QWENFT_DIR = os.path.join(HOME, "qwenft")  # fine-tuned Qwen3-TTS voices (models/<train job>/), voice ft_<name> on qwen
+QWENFT_PACKAGES = "accelerate librosa"  # on top of the qwen engine's venv, for train_qwen.py
 
 
 def vllm_pool_gb(total_gb):

@@ -57,7 +57,8 @@ function usePoll(onDone?: (j: Polled) => void) {
 
 /** Jobs for this person that were started anywhere (MCP, another device, auto-train): show them here, live. Checks the
  * worker's job list now and every 20 s while nothing is being followed; a finished dataset batch is stored on the way. */
-function useWorkerJobs(kind: "dataset" | "train", name: string, following: boolean, start: (j: Polled) => void, onStored?: () => void) {
+function useWorkerJobs(kind: "dataset" | "train", name: string, following: boolean, start: (j: Polled) => void, onStored?: () => void,
+  only?: (j: Job & { train_engine?: string }) => boolean) {
   const seen = useRef(new Set<string>());
   const fns = useRef({ start, onStored });
   fns.current = { start, onStored };
@@ -67,7 +68,7 @@ function useWorkerJobs(kind: "dataset" | "train", name: string, following: boole
     const look = async () => {
       const r = await api<{ jobs: (Job & { voice?: string })[] }>("jobs").catch(() => null);
       if (!live || !r) return;
-      const mine = r.jobs.filter((j) => (j.kind as string) === kind && j.voice === name);
+      const mine = r.jobs.filter((j) => (j.kind as string) === kind && j.voice === name && (!only || only(j)));
       const busy = mine.find((j) => ["queued", "running"].includes(j.status));
       if (busy) { fns.current.start(await api<Polled>(`jobs/${busy.id}`)); return; }
       // done on the worker but maybe never stored (started elsewhere, nobody waited for it): store it now, quietly
@@ -81,7 +82,7 @@ function useWorkerJobs(kind: "dataset" | "train", name: string, following: boole
     look();
     const t = setInterval(look, 20_000);
     return () => { live = false; clearInterval(t); };
-  }, [kind, name, following]);
+  }, [kind, name, following]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 type Pending = { file: File; forget?: () => void; take?: string };
@@ -270,30 +271,36 @@ const TRAIN_STAGES: Record<string, string> = { queued: "Waiting for the GPU", in
   downloading: "Fetching your recordings", encoding: "Turning your clips into tokens", loading: "Loading Orpheus 3B",
   training: "Learning your voice", listening: "Listening to every epoch, keeping the best", saving: "Saving your model", testing: "Voicing a test line", done: "Done" };
 
-function Train({ name, minutes, follow, head, onTrained }: { name: string; minutes: number; follow?: string; head: React.ReactNode; onTrained: () => void }) {
+function Train({ name, minutes, follow, head, engine, onTrained }: { name: string; minutes: number; follow?: string; head: React.ReactNode;
+  engine: "orpheus" | "qwen"; onTrained: () => void }) {
+  const qwen = engine === "qwen";
   const { status } = useStatus();
   const { confirm, toast } = useDialog();
   const [model, setModel] = useState<Model | null>(null);
   const [err, setErr] = useState("");
   const loadModel = useCallback(() => {
     setModel(null);
-    api<{ model: Model | null }>(`model?name=${encodeURIComponent(name)}`).then((r) => setModel(r.model?.name === name ? r.model : null)).catch(() => {});
-  }, [name]);
+    if (qwen) api<{ models: Model[] }>("qmodels").then((r) => setModel(r.models.find((m) => m.name === name) ?? null)).catch(() => {});
+    else api<{ model: Model | null }>(`model?name=${encodeURIComponent(name)}`).then((r) => setModel(r.model?.name === name ? r.model : null)).catch(() => {});
+  }, [name, qwen]);
   useEffect(loadModel, [loadModel]);
-  const { job, start } = usePoll((j) => { toast(`${name} is trained. Pick "${name}" under Your model in Voiceover.`, "ok"); if (j.model) { loadModel(); onTrained(); } });
+  const { job, start } = usePoll((j) => {
+    toast(qwen ? `${name} is fine-tuned. Pick "ft_${name}" on Qwen3-TTS in Voiceover.` : `${name} is trained. Pick "${name}" under Your model in Voiceover.`, "ok");
+    if (j.model) { loadModel(); onTrained(); }
+  });
   const busy = !!job && ["queued", "running"].includes(job.status);
   const p = job?.progress;
   useResumeJob<Polled>(["train"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
-  useWorkerJobs("train", name, busy, start);
+  useWorkerJobs("train", name, busy, start, undefined, (j) => (j.train_engine === "qwen") === qwen);
   // a train job the server started after an upload (auto-train): show its progress here
   useEffect(() => { if (follow) api<Polled>(`jobs/${follow}`).then(start).catch(() => {}); }, [follow]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function train() {
     setErr("");
     if (minutes < 15 && !(await confirm({ title: `Train on ${minutes.toFixed(1)} minutes?`, body: `It will train, but under 15 minutes the model sounds only roughly like ${name}. 30 minutes is good, 60 is best. Add more any time and train again.`, confirm: "Train anyway" }))) return;
-    if (model && !(await confirm({ title: `Train ${name} again?`, body: `It replaces ${name}'s model (other people's models stay). Voice and video jobs wait while the GPU trains (about 1-2 hours on a free T4).`, confirm: "Train" }))) return;
+    if (model && !(await confirm({ title: `Train ${name} again?`, body: `It replaces ${name}'s ${qwen ? "fine-tuned Qwen voice" : "model"} (other people's stay). Voice and video jobs wait while the GPU trains.`, confirm: "Train" }))) return;
     try {
-      start(await api<Job>("jobs", { body: { kind: "train", name } }));
+      start(await api<Job>("jobs", { body: { kind: "train", name, engine } }));
     } catch (e) {
       setErr((e as Error).message);
     }
@@ -302,13 +309,21 @@ function Train({ name, minutes, follow, head, onTrained }: { name: string; minut
   return (
     <div className="card">
       {head}
-      <p className="dim small" style={{ marginTop: 0 }}>
-        Learns <b>{name}</b> from every clip: pace, emphasis, how sentences flow. The most natural long English reads. About 1-2 h on the GPU
-        (other jobs wait); then pick <b>{name}</b> under <b>Your model</b> in Voiceover. Keep Colab open until it finishes.
-      </p>
+      {qwen ? (
+        <p className="dim small" style={{ marginTop: 0 }}>
+          Fine-tunes Qwen3-TTS 1.7B on every clip of <b>{name}</b> (Qwen&apos;s own recipe): a voice that holds up over long scripts in 10 languages,
+          beyond what a 20 s sample can carry. Needs an A100, L4 or A10 runtime (not the free T4); roughly 15-60 min. Then pick <b>ft_{name}</b> on
+          Qwen3-TTS in Voiceover. Keep Colab open until it finishes.
+        </p>
+      ) : (
+        <p className="dim small" style={{ marginTop: 0 }}>
+          Learns <b>{name}</b> from every clip: pace, emphasis, how sentences flow. The most natural long English reads. About 1-2 h on the GPU
+          (other jobs wait); then pick <b>{name}</b> under <b>Your model</b> in Voiceover. Keep Colab open until it finishes.
+        </p>
+      )}
       {model && !busy && (
         <div className="stack" style={{ gap: 8, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
-          <div className="row between small"><b>Current model · {model.name}</b>
+          <div className="row between small"><b>Current {qwen ? "Qwen voice" : "model"} · {qwen ? `ft_${model.name}` : model.name}</b>
             <span className="dim">{model.minutes.toFixed(1)} min · {model.clips} clips · {model.best_epoch ? `best of ${model.epochs} epochs: ${model.best_epoch}` : `${model.epochs} epochs`} · loss {model.loss.toFixed(3)}{model.flow_clips ? " · flow" : ""} · {new Date(model.created).toLocaleDateString()}</span></div>
           {model.sample_url && <><span className="dim tiny">“{model.sample?.text}”</span><Player src={model.sample_url} compact /></>}
           {!!model.listening?.length && (
@@ -340,7 +355,7 @@ function Train({ name, minutes, follow, head, onTrained }: { name: string; minut
           : <span className="tiny dim">{minutes.toFixed(1)} minutes to learn from{minutes < 15 ? " · 15+ sounds right, 30 good, 60 best" : minutes < 30 ? " · 30 is good, 60 best" : ""}.</span>}
         <span className="row" style={{ gap: 6 }}>
           <button className="sm" onClick={train} disabled={busy || !minutes || !status?.online} title={!status?.online ? "Start the GPU worker first" : undefined}>
-            {busy ? "Training…" : model ? "Train again" : "Train my voice"} <ArrowRight size={13} />
+            {busy ? "Training…" : model ? "Train again" : qwen ? "Fine-tune Qwen3-TTS" : "Train my voice"} <ArrowRight size={13} />
           </button>
         </span>
       </div>
@@ -558,12 +573,13 @@ export default function MyModel() {
   // the recordings card only shows when it's needed: a new (empty) voice, or after "Add recordings"; switching voices resets it
   const [adding, setAdding] = useState(false);
   useEffect(() => setAdding(false), [name]);
-  const [make, setMake] = useState<"orpheus" | "clone">("orpheus");
+  const [make, setMake] = useState<"orpheus" | "qwen" | "clone">("orpheus");
   const voices = [...new Set([...people.map((p) => p.name), ...models.map((m) => m.name), ...(name ? [name] : [])])];
   const pickEngine = (
     <div className="card-head"><h2>Make the voice</h2>
-      <div className="seg"><button className={make === "orpheus" ? "on" : ""} onClick={() => setMake("orpheus")}>Train Orpheus · 1-2 h</button>
-        <button className={make === "clone" ? "on" : ""} onClick={() => setMake("clone")}>Qwen3-TTS + Chatterbox · 1 min</button></div>
+      <div className="seg"><button className={make === "orpheus" ? "on" : ""} onClick={() => setMake("orpheus")}>Train Orpheus</button>
+        <button className={make === "qwen" ? "on" : ""} onClick={() => setMake("qwen")}>Fine-tune Qwen3-TTS</button>
+        <button className={make === "clone" ? "on" : ""} onClick={() => setMake("clone")}>Instant clone · 1 min</button></div>
     </div>
   );
 
@@ -617,9 +633,9 @@ export default function MyModel() {
       {name && (
         <div className="stack" style={{ gap: 16 }}>
           <Collect name={name} open={!minutes || adding} onClose={() => setAdding(false)} onAdded={(t) => { refresh(); if (t) setFollow(t); }} />
-          {make === "orpheus"
-            ? <Train name={name} minutes={minutes} follow={follow} head={pickEngine} onTrained={loadModels} />
-            : <EveryEngine name={name} minutes={minutes} mine={mine} head={pickEngine} onMade={loadMine} />}
+          {make === "clone"
+            ? <EveryEngine name={name} minutes={minutes} mine={mine} head={pickEngine} onMade={loadMine} />
+            : <Train key={make} name={name} minutes={minutes} follow={make === "orpheus" ? follow : undefined} head={pickEngine} engine={make} onTrained={loadModels} />}
           <details className="card"><summary><b>More tools</b> <span className="dim small">· compare engines (Benchmark) · find the voice in Kokoro</span></summary>
             <div className="stack" style={{ gap: 16, marginTop: 14 }}>
               <Benchmark mine={mine} name={name} />

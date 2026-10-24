@@ -35,6 +35,7 @@ export async function archiveModel(job: TrainJob): Promise<VoiceModel | null> {
   if (m.sample && !stored.has("sample.wav")) targets["sample.wav"] = await presign(`${dir(m)}sample.wav`, "PUT", 3600);
   if (Object.keys(targets).length) {
     const res = await call<{ failed: Record<string, string> }>(`/jobs/${job.id}/push`, { body: { targets, headers: {} }, timeoutMs: 55_000 });
+    if (res.failed["adapter.zip"] === "in progress") return null; // an earlier poll's upload is still running
     if (res.failed["adapter.zip"]) throw new Error(`could not store your model: ${res.failed["adapter.zip"]}`);
   }
   await putJson(meta, m);
@@ -85,6 +86,13 @@ export async function withModels<T extends Record<string, unknown>>(body: T): Pr
     const { kvoiceLinks } = await import("./kvoices");
     const kvoices = await kvoiceLinks().catch(() => ({}));
     if (Object.keys(kvoices).length) out = { ...out, kvoices };
+  }
+  // fine-tuned Qwen voices (ft_<name>): their models travel as signed links too
+  const ft = (e?: unknown, v?: unknown) => e === "qwen" && String(v ?? "").startsWith("ft_");
+  if (ft(body.engine, body.voice) || cands.some((c) => ft(c?.engine, c?.voice))) {
+    const { qwenModelLinks } = await import("./qwenmodels");
+    const qmodels = await qwenModelLinks().catch(() => ({}));
+    if (Object.keys(qmodels).length) out = { ...out, qmodels };
   }
   if (body.engine !== "myvoice" && !cands.some((c) => c?.engine === "myvoice")) return out;
   const models = await modelLinks().catch(() => ({}));

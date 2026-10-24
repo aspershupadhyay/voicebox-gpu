@@ -68,6 +68,7 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "datasets" && b && VOICE_RE.test(b)) return Response.json(c === "manifest" ? await datasetManifest(b) : await listDataset(b));
     if (a === "model" && !b) return Response.json({ model: await currentModel(new URL(req.url).searchParams.get("name") ?? undefined) });
     if (a === "models" && !b) return Response.json({ models: await listModelsWithSamples() });
+    if (a === "qmodels" && !b) return Response.json({ models: await (await import("@/lib/qwenmodels")).listQwenModelsWithSamples() });
     if (a === "kvoices" && !b) return Response.json({ voices: await listKVoices() });
     if (a === "spaces" && !b) return Response.json(await getSpaces());
     if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
@@ -86,7 +87,10 @@ export async function GET(req: Request, ctx: Ctx) {
         return Response.json({ ...job, kvoice_saved: kvoice });
       }
       if (job.kind === ("train" as string)) {
-        const model = job.status === "done" ? await archiveModel(job as unknown as Parameters<typeof archiveModel>[0]) : null;
+        const qwen = (job as unknown as { train_engine?: string }).train_engine === "qwen";
+        const model = job.status !== "done" ? null : qwen
+          ? await (await import("@/lib/qwenmodels")).archiveQwenModel(job as unknown as Parameters<typeof import("@/lib/qwenmodels").archiveQwenModel>[0])
+          : await archiveModel(job as unknown as Parameters<typeof archiveModel>[0]);
         const log = job.status === "error" ? await call<{ text: string }>("/logs/train?n=60").then((r) => r.text.slice(-6000)).catch(() => null) : null;
         return Response.json({ ...job, model, log });
       }
@@ -227,7 +231,7 @@ export async function POST(req: Request, ctx: Ctx) {
         // train your own voice on the worker: every collected session travels as a signed link
         const name = String(body.name ?? "");
         if (!VOICE_RE.test(name)) throw new Error("name: lowercase letters, digits, - or _");
-        body = { ...body, ...(await trainJobBody(name, body.label)) };
+        body = { ...body, ...(await trainJobBody(name, body.label, body.engine === "qwen" ? "qwen" : "orpheus")) };
       }
       if (body.kind === "voicewalk") {
         // find your voice in Kokoro: the recording to match travels as a signed link
