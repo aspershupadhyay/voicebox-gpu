@@ -327,7 +327,11 @@ function Train({ name, minutes, follow, onTrained }: { name: string; minutes: nu
         </div>
       )}
       <div className="row between" style={{ marginTop: 12 }}>
-        <span className="tiny dim">{minutes < 15 ? `Collect at least 15 minutes first (you have ${minutes.toFixed(1)}).` : `${minutes.toFixed(1)} minutes ready to train.`}</span>
+        {/* why the button is off, in plain words: the usual reasons are too few minutes or the worker being offline */}
+        {!busy && (!status?.online || minutes < 15)
+          ? <span className="small" style={{ color: "var(--warn)" }}>{!status?.online ? "Train is off: start the Colab GPU worker first."
+            : `Train is off: ${name} has ${minutes.toFixed(1)} of 15 minutes. Add ${(15 - minutes).toFixed(1)} more in step 1, or pick a voice with 15+ minutes above.`}</span>
+          : <span className="tiny dim">{minutes.toFixed(1)} minutes ready to train.</span>}
         <span className="row" style={{ gap: 6 }}>
           <button className="sm" onClick={train} disabled={busy || minutes < 15 || !status?.online} title={!status?.online ? "Start the GPU worker first" : undefined}>
             {busy ? "Training…" : model ? "Train again" : "Train my voice"} <ArrowRight size={13} />
@@ -519,6 +523,7 @@ export default function MyModel() {
   const [models, setModels] = useState<Model[]>([]);
   const [ds, setDs] = useState<Dataset | null>(null);
   const [follow, setFollow] = useState<string>();
+  const [fresh, setFresh] = useState("");
   const load = useCallback(() => { if (name) api<Dataset>(`datasets/${name}`).then(setDs).catch(() => setDs(null)); }, [name]);
   const loadModels = useCallback(() => { api<{ models: Model[] }>("models").then((r) => setModels(r.models)).catch(() => {}); }, []);
   const loadMine = useCallback(() => { api<{ voices: MyVoice[] }>("myvoices").then((r) => setMine(r.voices)).catch(() => {}); }, []);
@@ -548,15 +553,14 @@ export default function MyModel() {
           <h1>A voice model that is <em>only you.</em></h1>
           <p className="sub">Cloning copies 20 seconds of you. A trained model learns how you actually talk from 30-60 minutes of it: your pace, your emphasis, the way you land a joke. Collect, train for free, then let the numbers decide. Each of you gets your own: pick your name.</p>
         </div>
-        <div className="field" style={{ margin: 0, minWidth: 180 }}><label className="f">Whose voice (dataset)</label>
+        <div className="field" style={{ margin: 0, minWidth: 180 }}><label className="f">Voice you&apos;re working on</label>
           <input list="vb-people" value={name} placeholder="your name" onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))} />
           <datalist id="vb-people">{people.map((p) => <option key={p.name} value={p.name}>{p.minutes.toFixed(1)} min</option>)}</datalist></div>
       </div>
-      {(people.length > 0 || models.length > 0) && (
-        <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-head"><h2>Everyone&apos;s voices</h2><span className="dim tiny">pick one to work on it · trained models are shared: use them in Voiceover under Your model</span></div>
           <div className="stack" style={{ gap: 8 }}>
-            {[...new Set([...people.map((p) => p.name), ...models.map((m) => m.name)])].map((n) => {
+            {[...new Set([...people.map((p) => p.name), ...models.map((m) => m.name), ...(name ? [name] : [])])].map((n) => {
               const m = models.find((x) => x.name === n);
               const p = people.find((x) => x.name === n);
               return (
@@ -567,9 +571,16 @@ export default function MyModel() {
                 </div>
               );
             })}
+            <div className="row small" style={{ padding: "8px 0 0", borderTop: "1px solid var(--line)", gap: 8, flexWrap: "wrap" }}>
+              <b>+ New voice</b>
+              <input value={fresh} placeholder="name, e.g. sparsh" style={{ width: 180 }}
+                onChange={(e) => setFresh(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
+                onKeyDown={(e) => { if (e.key === "Enter" && fresh) { setName(fresh); setFresh(""); } }} />
+              <button className="sm" disabled={!fresh} onClick={() => { setName(fresh); setFresh(""); }}>Start collecting <ArrowRight size={13} /></button>
+              <span className="tiny dim">each voice gets its own recordings, model and settings</span>
+            </div>
           </div>
         </div>
-      )}
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="row between"><b>{name || "…"} · {minutes.toFixed(1)} min collected</b><span className="dim small">{ds?.clips ?? 0} clips · {ds?.parts.length ?? 0} sessions</span></div>
         <div className="meter"><i style={{ width: `${Math.min(100, (minutes / 60) * 100)}%` }} />{MILESTONES.map(([m, l]) => <span key={m} style={{ left: `${(m / 60) * 100}%` }}><em>{m} min · {l}</em></span>)}</div>
