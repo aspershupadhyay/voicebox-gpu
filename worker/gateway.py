@@ -2193,7 +2193,11 @@ def _dataset_clips(clean, words, src, wavs):
     kept, dropped = [], {}
     # the room's noise floor, measured once on the whole recording (its pauses): a short clip of continuous talking
     # has no silence of its own, so its own estimate mistakes quiet syllables for noise and reads 15 dB on a clean take
-    floor = quality.analyze(clean).get("noise_db")
+    rec = quality.analyze(clean)
+    floor = rec.get("noise_db")
+    # same for the room's echo: one room per recording, and a few seconds hold too few word endings to measure it
+    # (a dry take's clips spread 0.34-0.51 s and the tail crossed the limit), so a clip can't read much roomier than the recording
+    room = rec.get("reverb_s")
     for i, (s0, e0, text) in enumerate(dataset.segment(words, len(a) / sr)):
         clip = a[int(s0 * sr): int(e0 * sr)]
         if not len(clip):
@@ -2205,6 +2209,8 @@ def _dataset_clips(clean, words, src, wavs):
         m = quality.analyze(path)
         if floor is not None and m.get("level_db") is not None:
             m["snr_db"] = max(m.get("snr_db") or -99.0, m["level_db"] - floor)
+        if room is not None and m.get("reverb_s") is not None:
+            m["reverb_s"] = min(m["reverb_s"], room + 0.08)
         why = dataset.keep(text, len(clip) / 24000, m)
         if why:
             dropped[why] = dropped.get(why, 0) + 1
