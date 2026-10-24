@@ -84,7 +84,7 @@ export type Review = { retried: number; fixed: number; issues: { chunk: number; 
 type Measure = { snr_db: number | null; bandwidth_hz: number | null; reverb_s: number | null; clipped: number | null };
 export type Cleanup = { steps: string[]; why: string; identity: number | null; before: Measure; after: Measure };
 export type Job = {
-  id: string; kind: "tts" | "transcribe" | "video" | "reference" | "image"; engine: string; voice: string; status: string; error?: string; label?: string;
+  id: string; kind: "tts" | "transcribe" | "video" | "reference" | "image" | "dataset" | "train" | "benchmark"; engine: string; voice: string; status: string; error?: string; label?: string;
   progress: { done: number; total: number; fraction: number; eta_s: number; stage: string; detail: string; elapsed_s: number; fetch?: Fetch | null };
   queue_position?: number; results: JobResult[]; warnings?: string[]; subs?: { cues: number; timeline: string } | null;
   match?: number | null; library?: { id: string } | null; subtitles?: boolean; gen?: Gen; video?: VideoInfo | null;

@@ -97,10 +97,10 @@ ENGINES = {
         "voices": ["me"],
         "presets": {"female": "me", "male": "me"},
         "params": {
-            "temperature": {"type": "number", "default": 0.6, "min": 0.1, "max": 1.5,
-                            "about": "lower = steadier and more literal, higher = more expressive but riskier"},
+            "temperature": {"type": "number", "default": 0.5, "min": 0.1, "max": 1.5,
+                            "about": "lower = clearer and steadier (0.45-0.55 for a crisp explainer), higher = more expressive but riskier"},
             "top_p": {"type": "number", "default": 0.95, "min": 0.1, "max": 1.0},
-            "repetition_penalty": {"type": "number", "default": 1.1, "min": 1.0, "max": 2.0},
+            "repetition_penalty": {"type": "number", "default": 1.12, "min": 1.0, "max": 2.0},
             "seed": {"type": "integer", "default": 7, "about": "change it to get a different take of the same line"},
             "flow": {"type": "boolean", "default": True,
                      "about": "carry your delivery from one sentence into the next, so a script sounds like one take (needs a "
@@ -109,12 +109,12 @@ ENGINES = {
     },
     "whisper": {
         "group": "voice",
-        "disk_gb": 3.2,  # model weights downloaded on first use
+        "disk_gb": 2.2,  # model weights downloaded on first use
         "kind": "asr",
         "port": 8105,
-        "gpu_gb": 6.0,  # large-v3 fp16 weights + batch-4 activations
+        "gpu_gb": 4.0,  # large-v3-turbo fp16 weights (1.6 GB) + batched 30 s windows, voice match and naturalness models
         "packages": "torch transformers accelerate soundfile scipy",
-        "about": "Whisper large-v3 (OpenAI). Best open subtitle model: word-level timestamps, 99 languages.",
+        "about": "Whisper large-v3-turbo (OpenAI). Large-v3 accuracy with a 4-layer decoder: several times faster subtitles, review and dataset cuts. Word-level timestamps, 99 languages.",
         "voices": [],
         "presets": {},
         "params": {},
@@ -307,7 +307,8 @@ STYLES = {
         "label": "Tech explainer", "about": "Bright, quick, confident. YouTube-tech pace (~185 wpm).",
         "params": {"orpheus": {"temperature": 0.65, "top_p": 0.95, "repetition_penalty": 1.1},
                    "chatterbox": {"exaggeration": 0.9, "cfg_weight": 0.3, "temperature": 0.8},
-                   "kokoro": {"speed": 1.1}, "qwen": {"temperature": 0.85}},
+                   "kokoro": {"speed": 1.1}, "qwen": {"temperature": 0.85},
+                   "myvoice": {"temperature": 0.5, "top_p": 0.95, "repetition_penalty": 1.12}},
         "post": {"tempo": 1.05},
         "post_by_engine": {"kokoro": {"tempo": 1.0}},  # kokoro's own speed already sets the pace
         "voices": {"orpheus": ["mia", "leo", "tara"], "chatterbox": ["female", "male"], "kokoro": ["am_fenrir", "af_bella", "am_puck"]},
@@ -316,7 +317,8 @@ STYLES = {
         "label": "Launch / hype", "about": "Maximum energy for promos and hooks (~200 wpm). Best with mia or leo.",
         "params": {"orpheus": {"temperature": 0.7, "top_p": 0.95, "repetition_penalty": 1.1},
                    "chatterbox": {"exaggeration": 1.05, "cfg_weight": 0.3, "temperature": 0.85},
-                   "kokoro": {"speed": 1.2}, "qwen": {"temperature": 0.9}},
+                   "kokoro": {"speed": 1.2}, "qwen": {"temperature": 0.9},
+                   "myvoice": {"temperature": 0.6, "top_p": 0.95, "repetition_penalty": 1.12}},
         "post": {"tempo": 1.08},
         "post_by_engine": {"kokoro": {"tempo": 1.0}},
         "voices": {"orpheus": ["mia", "leo"], "chatterbox": ["female", "male"], "kokoro": ["am_fenrir", "af_bella"]},
@@ -325,7 +327,8 @@ STYLES = {
         "label": "Calm narrator", "about": "Measured documentary read with room to breathe (~165 wpm).",
         "params": {"orpheus": {"temperature": 0.6, "top_p": 0.95, "repetition_penalty": 1.1},
                    "chatterbox": {"exaggeration": 0.4, "cfg_weight": 0.5, "temperature": 0.8},
-                   "kokoro": {"speed": 0.95}, "qwen": {"temperature": 0.7}},
+                   "kokoro": {"speed": 0.95}, "qwen": {"temperature": 0.7},
+                   "myvoice": {"temperature": 0.45, "top_p": 0.95, "repetition_penalty": 1.12}},
         "post": {"tempo": 0.95},
         "post_by_engine": {"kokoro": {"tempo": 1.0}},
         "voices": {"orpheus": ["tara", "leah", "dan"], "chatterbox": ["female", "male"], "kokoro": ["af_heart", "bm_george", "af_nicole"]},
@@ -343,8 +346,9 @@ def style_settings(style, engine):
     if style not in STYLES:
         raise ValueError(f"style must be one of {list(STYLES)}")
     st = STYLES[style]
-    like = "orpheus" if engine == "myvoice" else engine  # your fine-tuned Orpheus takes Orpheus's style settings
-    return dict(st["params"].get(like, {})), {**st["post"], **st.get("post_by_engine", {}).get(like, {})}
+    like = "orpheus" if engine == "myvoice" else engine  # your fine-tuned Orpheus takes Orpheus's style settings...
+    params = st["params"].get(engine) or st["params"].get(like, {})  # ...unless the style tunes it (lower temperature: clearer)
+    return dict(params), {**st["post"], **st.get("post_by_engine", {}).get(like, {})}
 
 # Speed priors (seconds of compute per character / per second of audio), refined live by the gateway.
 RATE_PRIORS = {"kokoro": 0.004, "chatterbox": 0.06, "orpheus": 0.03, "myvoice": 0.03, "whisper": 0.06, "qwen": 0.05,
@@ -381,6 +385,18 @@ def resolve_params(engine, given):
 TRAIN_PACKAGES = "unsloth snac soundfile librosa"
 TRAIN_INSTALL_S = 420  # first run: installing unsloth + torch into the train venv
 MYVOICE_DIR = os.path.join(HOME, "myvoice")  # the trained LoRA adapter the myvoice engine loads (adapter/)
+
+
+def vllm_pool_gb(total_gb):
+    """GPU memory for the vLLM engines (weights ~6.5 GB + KV cache). More cache = more sentences generated at once, so
+    bigger cards get more, but always leave room for Whisper (review) next to it: a 24 GB L4 keeps both loaded."""
+    if total_gb >= 70:
+        return 30.0
+    if total_gb >= 38:
+        return 18.0
+    if total_gb >= 20:
+        return 12.0
+    return 9.0
 
 
 def python_for(engine):

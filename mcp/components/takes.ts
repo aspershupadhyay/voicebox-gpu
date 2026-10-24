@@ -82,7 +82,7 @@ export async function dropTake(id: string) {
 /** Unsent takes for one page, kept current. A take still being recorded in this tab is left out. */
 export function useTakes(scope: string, live?: string | null) {
   const [takes, setTakes] = useState<Take[]>([]);
-  const load = useCallback(() => { listTakes(scope).then((t) => setTakes(t.filter((x) => x.id !== live && x.secs > 0.5))); }, [scope, live]);
+  const load = useCallback(() => { listTakes(scope).then((t) => setTakes(t.filter((x) => !(live ?? "").split(",").includes(x.id) && x.secs > 0.5))); }, [scope, live]);
   useEffect(() => { load(); changed.add(load); return () => { changed.delete(load); }; }, [load]);
   return takes;
 }

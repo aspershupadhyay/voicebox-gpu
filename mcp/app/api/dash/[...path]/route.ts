@@ -7,6 +7,7 @@ import { getSettings, settingsFor, updateSettings, withDefaults } from "@/lib/se
 import { describeProfile, profileFor, withProfile } from "@/lib/profiles";
 import { archiveDataset, datasetManifest, deleteDatasetPart, listDataset, listDatasets } from "@/lib/datasets";
 import { archiveModel, currentModel, listModelsWithSamples } from "@/lib/voicemodel";
+import { archiveKVoice, listKVoices } from "@/lib/kvoices";
 import { dropTargets, getSpaces, setGoals, setTargets } from "@/lib/spacestore";
 import { deleteMyVoice, getMyVoice, getSamples, isCustomVoice, listMyVoices, putMyVoice, recordSample, refSync, samplePutUrl, VOICE_RE, voicePutUrl } from "@/lib/voices";
 
@@ -67,6 +68,7 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "datasets" && b && VOICE_RE.test(b)) return Response.json(c === "manifest" ? await datasetManifest(b) : await listDataset(b));
     if (a === "model" && !b) return Response.json({ model: await currentModel(new URL(req.url).searchParams.get("name") ?? undefined) });
     if (a === "models" && !b) return Response.json({ models: await listModelsWithSamples() });
+    if (a === "kvoices" && !b) return Response.json({ voices: await listKVoices() });
     if (a === "spaces" && !b) return Response.json(await getSpaces());
     if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
     if (a === "jobs" && !b) return Response.json(await call("/jobs"));
@@ -76,6 +78,10 @@ export async function GET(req: Request, ctx: Ctx) {
       if (job.kind === ("dataset" as string)) {
         const part = job.status === "done" ? await archiveDataset(job as unknown as Parameters<typeof archiveDataset>[0]) : null;
         return Response.json({ ...job, part });
+      }
+      if (job.kind === ("voicewalk" as string)) {
+        const kvoice = job.status === "done" ? await archiveKVoice(job as unknown as Parameters<typeof archiveKVoice>[0]) : null;
+        return Response.json({ ...job, kvoice_saved: kvoice });
       }
       if (job.kind === ("train" as string)) {
         const model = job.status === "done" ? await archiveModel(job as unknown as Parameters<typeof archiveModel>[0]) : null;
@@ -223,6 +229,15 @@ export async function POST(req: Request, ctx: Ctx) {
         body.parts = d.parts.map((p) => ({ url: p.url }));
         body.minutes = d.minutes;
         body.label = body.label ?? `Train your voice · ${name}`;
+      }
+      if (body.kind === "voicewalk") {
+        // find your voice in Kokoro: the recording to match travels as a signed link
+        const name = String(body.name ?? "");
+        if (!VOICE_RE.test(name)) throw new Error("name: lowercase letters, digits, - or _");
+        const ref = isCustomVoice(String(body.voice ?? "")) ? await refSync(String(body.voice)) : null;
+        if (!ref) throw new Error("voice: record your voice on the Voices page first, then pick it here");
+        body.ref = ref;
+        body.label = body.label ?? `Your voice in Kokoro · ${name}`;
       }
       if (body.kind === "benchmark") {
         // every recorded voice in the line-up (and the target you're measured against) travels as a signed link
