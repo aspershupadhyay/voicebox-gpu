@@ -64,6 +64,7 @@ export async function GET(req: Request, ctx: Ctx) {
       const style = new URL(req.url).searchParams.get("style") ?? "tech";
       return Response.json(await describeProfile(b, c, style) ?? { engine: b, voice: c, style, jobs: 0 });
     }
+    if (a === "coach" && b && VOICE_RE.test(b)) return Response.json(await (await import("@/lib/coach")).report(b));
     if (a === "datasets" && !b) return Response.json({ datasets: await listDatasets() });
     if (a === "datasets" && b && VOICE_RE.test(b)) return Response.json(c === "manifest" ? await datasetManifest(b) : await listDataset(b));
     if (a === "model" && !b) return Response.json({ model: await currentModel(new URL(req.url).searchParams.get("name") ?? undefined) });
@@ -126,6 +127,16 @@ export async function POST(req: Request, ctx: Ctx) {
       return Response.json(settingsFor(await updateSettings(body, who), who));
     }
     if (a === "speakable") return Response.json(await call("/speakable", { body }));
+    if (a === "coach") {
+      // the voice coach: rate a line, get the next recording script, or act on a model comparison
+      const coach = await import("@/lib/coach");
+      if (b === "rate") return Response.json(await coach.rate({ engine: String(body.engine ?? ""), voice: String(body.voice ?? ""), job: String(body.job ?? ""),
+        line: String(body.line ?? ""), rating: Number(body.rating) || 0, text: body.text ? String(body.text) : undefined, duration: Number(body.duration) || 0 }));
+      if (b && VOICE_RE.test(b) && c === "script") return Response.json(await coach.nextScript(b, Number(body.minutes) || 8));
+      if (b && VOICE_RE.test(b) && c === "gate" && (body.action === "use" || body.action === "compare") && ID.test(String(body.job ?? "")))
+        return Response.json(await coach.gateAction(b, body.action, String(body.job)));
+      return Response.json({ error: "not found" }, { status: 404 });
+    }
     if (a === "spaces" && b === "goals") return Response.json({ goals: await setGoals(body.goals) });
     if (a === "spaces" && b && ID.test(b)) {
       // a post's targets (where it goes, cross-posting); the post's platforms / stage / publish time follow

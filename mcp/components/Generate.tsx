@@ -8,7 +8,7 @@ import { EngineArt, StyleGlyph, VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
 import { GUIDES, KOKORO_LANG, LANGUAGES, QWEN_LANG } from "./guides";
 import JobProgress from "./JobProgress";
-import LineRow from "./LineRow";
+import LineRow, { coached } from "./LineRow";
 import { SampleButton, useSamples } from "./Sample";
 import { useStatus } from "./Shell";
 import { aw, logActivity } from "./aw";
@@ -451,7 +451,8 @@ export default function Generate() {
                 )}
               </div>
               {job.results.map((r) => (
-                <LineRow key={r.id} jobId={job.id} line={job.library ? r : { ...r, subs: false }} audio={libAudio(r.id) ?? r.url} slug={slug} scale={r.duration / Math.max(...job.results.map((x) => x.duration), 0.1)} />
+                <LineRow key={r.id} jobId={job.id} line={job.library ? r : { ...r, subs: false }} audio={libAudio(r.id) ?? r.url} slug={slug} scale={r.duration / Math.max(...job.results.map((x) => x.duration), 0.1)}
+                  rate={!job.mode && coached(job.engine, job.voice) ? { engine: job.engine, voice: job.voice } : null} />
               ))}
             </div>
           )}

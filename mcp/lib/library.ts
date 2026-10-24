@@ -54,6 +54,8 @@ type WorkerJob = {
 /** Copy a finished worker job (audio + subtitles via signed worker URLs) into the library. Idempotent. */
 export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   if (job.status !== "done" || (job.kind as string) === "dataset") return null; // datasets live in datasets/, not the library
+  // a model check after a retrain (coach.ts): decide whether the new model goes live
+  if (job.mode === "benchmark") await import("./coach").then((c) => c.resolveGate(job as Parameters<typeof c.resolveGate>[0])).catch(() => null);
   if (job.attach_to) return attachSubtitles(job);
   const existing = await getLibJob(job.id);
   if (existing) return existing;
@@ -91,6 +93,7 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   };
   await putLibJob(lib);
   await learnFromJob(job).catch(() => null); // this voice's scores feed its learned defaults
+  await import("./coach").then((c) => c.recordJob(job as Parameters<typeof c.recordJob>[0])).catch(() => null); // and the voice coach
   return lib;
 }
 

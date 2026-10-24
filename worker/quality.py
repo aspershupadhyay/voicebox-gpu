@@ -228,6 +228,49 @@ def analyze(path):
             "clipped": round(clipped, 5), "speech_s": round(float(speech.sum() * hop / sr), 2), "sr": sr}
 
 
+def delivery(path):
+    """How a voiced line is delivered, for the voice coach: pitch_st (spread of the voice's pitch in semitones, 10th to
+    90th percentile of voiced frames: lively speech ~5-12, under ~2.5 sounds flat), pause_s (the longest silence between
+    words) and speech_s. Plain numpy: normalised autocorrelation per 40 ms frame, 60-400 Hz."""
+    import numpy as np
+    import soundfile as sf
+    a, sr = sf.read(path, dtype="float32", always_2d=False)
+    if a.ndim > 1:
+        a = a.mean(axis=1)
+    while sr > 24000:  # halve the rate (pairwise mean = a crude low-pass): pitch lives far below 6 kHz
+        a, sr = (a[: len(a) // 2 * 2].reshape(-1, 2).mean(axis=1)), sr // 2
+    hop, win = int(0.01 * sr), int(0.04 * sr)
+    if len(a) < win * 10:
+        return {"pitch_st": None, "pause_s": 0.0, "speech_s": round(len(a) / sr, 2)}
+    n = 1 + (len(a) - win) // hop
+    frames = np.lib.stride_tricks.as_strided(a, (n, win), (a.strides[0] * hop, a.strides[0]))
+    e = 10 * np.log10(np.mean(frames ** 2, axis=1) + 1e-12)
+    peak = np.percentile(e, 95)
+    speech = e > peak - 35
+    idx = np.where(speech)[0]
+    pause, run = 0, 0
+    for s in speech[idx[0]: idx[-1] + 1] if len(idx) else []:
+        run = 0 if s else run + 1
+        pause = max(pause, run)
+    voiced = np.where(e > peak - 25)[0]
+    f0 = []
+    if len(voiced):
+        x = frames[voiced] - frames[voiced].mean(axis=1, keepdims=True)
+        spec = np.fft.rfft(x * np.hanning(win), n=2 * win, axis=1)
+        ac = np.fft.irfft(np.abs(spec) ** 2, axis=1)[:, :win]
+        ac /= ac[:, :1] + 1e-12
+        lo, hi = int(sr / 400), min(win - 1, int(sr / 60))
+        lag = lo + np.argmax(ac[:, lo:hi], axis=1)
+        good = ac[np.arange(len(lag)), lag] > 0.45
+        f0 = sr / lag[good]
+    pitch = None
+    if len(f0) >= 20:
+        f0 = np.convolve(f0, np.ones(5) / 5, mode="valid")  # smooth out single-frame octave slips
+        p10, p90 = np.percentile(f0, [10, 90])
+        pitch = round(float(12 * np.log2(p90 / max(p10, 1.0))), 2)
+    return {"pitch_st": pitch, "pause_s": round(pause * hop / sr, 2), "speech_s": round(float(speech.sum()) * hop / sr, 2)}
+
+
 def cleanup_plan(m, prefer=None):
     """Choose clean-up steps from measurements (see analyze), most transparent first:
        none     - already clean: just the voice chain and mastering (keeps your exact tone)

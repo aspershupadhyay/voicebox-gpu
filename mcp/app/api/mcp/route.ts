@@ -55,6 +55,14 @@ async function waitFor(id: string, seconds: number): Promise<Job> {
     const part = await archiveDataset(dj);
     return { ...job, part: part ? await autoTrain(dj, part) : null } as Job;
   }
+  if (job.status === "done" && (job.kind as string) === "train") {
+    // a trained model counts once it's stored (a retrain then gets compared with the model in use: voice_coach)
+    const tj = job as unknown as { train_engine?: string };
+    const model = tj.train_engine === "qwen"
+      ? await (await import("@/lib/qwenmodels")).archiveQwenModel(job as unknown as Parameters<typeof import("@/lib/qwenmodels").archiveQwenModel>[0]).catch((e: Error) => ({ error: e.message }))
+      : await (await import("@/lib/voicemodel")).archiveModel(job as unknown as Parameters<typeof import("@/lib/voicemodel").archiveModel>[0]).catch((e: Error) => ({ error: e.message }));
+    return { ...job, model: model ?? { saved: false, note: "still uploading the model; call get_job again in a minute" } } as Job;
+  }
   if (job.status === "done") {
     try {
       const lib = await archiveWorkerJob(job as unknown as Parameters<typeof archiveWorkerJob>[0]);
@@ -342,6 +350,39 @@ const handler = createMcpHandler(
     );
 
     server.registerTool(
+      "voice_coach",
+      {
+        title: "How a trained voice is improving",
+        description: "The voice coach for one person's trained voice (myvoice <name> or qwen ft_<name>). Every voiceover it reads is scored line by line (words heard, voice match, naturalness, pitch spread, pace, pauses) and people can rate lines. action report (default): weak spots (e.g. flat questions, rushed long sentences), words it keeps missing (fix with pronounce in update_settings), recent scores, and the last model comparisons. action script: the next recording session (~minutes long) written around those weak spots; record it and add it with voice_dataset (auto_train: true) — 5+ new minutes retrain the voice, and the retrain goes live only if it beats the current model. action rate: thumbs up (1) / down (-1) / clear (0) on one line of a finished job (job_id + line id).",
+        inputSchema: z.object({
+          name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/).describe("whose voice (the dataset / model name)"),
+          action: z.enum(["report", "script", "rate"]).optional(),
+          minutes: z.number().min(2).max(20).optional().describe("script: session length (default 8)"),
+          job_id: z.string().optional().describe("rate: the voiceover job"),
+          line: z.string().optional().describe("rate: the line id"),
+          rating: z.number().int().min(-1).max(1).optional().describe("rate: 1 good, -1 bad, 0 clear"),
+        }),
+      },
+      async ({ name, action, minutes, job_id, line, rating }) => {
+        try {
+          const coach = await import("@/lib/coach");
+          if (action === "script") return text(await coach.nextScript(name, minutes ?? 8));
+          if (action === "rate") {
+            if (!job_id || !line || rating == null) throw new Error("rate needs job_id, line and rating");
+            const { getLibJob } = await import("@/lib/library");
+            const lib = await getLibJob(job_id);
+            if (!lib) throw new Error("that job isn't in the library (yet)");
+            const r = lib.results.find((x) => x.id === line);
+            return text(await coach.rate({ engine: lib.engine, voice: lib.voice, job: job_id, line, rating, text: r?.text, duration: r?.duration }));
+          }
+          return text(await coach.report(name));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
       "voice_profile",
       {
         title: "What a voice has learned",
@@ -361,7 +402,7 @@ const handler = createMcpHandler(
       "voice_dataset",
       {
         title: "Your voice dataset",
-        description: "Training data collected for the user's own voice model (Your model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-20 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. One dataset per person (name = that person's model name). Training: auto_train starts it as soon as the batch is stored (once 15+ minutes are collected), else train_voice (or the Your model page's Train button) runs it on the GPU worker (about 1-2 h); the result is engine myvoice, voice = the dataset name.",
+        description: "Training data collected for the user's own voice model (Your model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-20 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. One dataset per person (name = that person's model name). Training: auto_train starts it as soon as the batch is stored (once 15+ minutes are collected; a voice that already has a model retrains once 5+ new minutes are in), else train_voice (or the Your model page's Train button) runs it on the GPU worker (about 1-2 h); the result is engine myvoice, voice = the dataset name.",
         inputSchema: z.object({
           name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/).optional().describe("dataset name = whose voice (each person has their own, e.g. their first name); default me"),
           add_urls: z.array(z.string().url()).max(20).optional().describe("recordings to add"),
@@ -388,7 +429,7 @@ const handler = createMcpHandler(
       "train_voice",
       {
         title: "Train a voice model",
-        description: "Train a voice on everything collected in a dataset (voice_dataset), on the GPU worker; other jobs wait. engine orpheus (default): an Orpheus 3B LoRA, about 1-2 h, voice = the name on engine myvoice. engine qwen: a full Qwen3-TTS 1.7B fine-tune (needs an A100/L4/A10 runtime), voice ft_<name> on engine qwen. Any amount trains; 15+ minutes kept sounds right, 30 good, 60 best. Replaces that dataset's current model; the result is engine myvoice, voice = the dataset name. Follow it with get_job.",
+        description: "Train a voice on everything collected in a dataset (voice_dataset), on the GPU worker; other jobs wait. engine orpheus (default): an Orpheus 3B LoRA, about 1-2 h, voice = the name on engine myvoice. engine qwen: a full Qwen3-TTS 1.7B fine-tune (needs an A100/L4/A10 runtime), voice ft_<name> on engine qwen. Any amount trains; 15+ minutes kept sounds right, 30 good, 60 best. A first model goes live as soon as it's stored; a retrain is first compared with the model in use on held-out sentences and replaces it only if it scores at least as well (voice_coach shows the result). Follow it with get_job.",
         inputSchema: z.object({
           name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/).describe("the dataset to train on (whose voice)"),
           engine: z.enum(["orpheus", "qwen"]).optional().describe("which model learns the voice (default orpheus)"),
@@ -874,7 +915,7 @@ const handler = createMcpHandler(
       "3) Before a long or term-heavy script, preview_pronunciation and add fixes via pronounce.",
       "4) A recording from a bad mic: clean_audio. A rough take the user performed: revoice into their clean voice. Subtitles for any file: transcribe. Stills and thumbnails: imagine, then add_media to put one on the post.",
       "5) Long jobs return a job id: poll get_job (each call waits up to 45 s). Results are archived to the dashboard library; links expire after 6 h.",
-      "6) The user's own voice model: voice_dataset to see or grow the training data, then the training notebook; once trained it is engine myvoice with voice = that person's name (my_voices lists both people's). benchmark_voices compares it with their clones on held-out sentences.",
+      "6) The user's own voice model: voice_dataset to see or grow the training data, then the training notebook; once trained it is engine myvoice with voice = that person's name (my_voices lists both people's). benchmark_voices compares it with their clones on held-out sentences. voice_coach shows how a trained voice is doing and writes the next recording script around its weak spots; recording it makes the voice more natural (retrains only go live when they beat the current model).",
       "Content spaces: each post goes to one or more spaces (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast), each with its own stage and publish time; cross-post by adding targets (update_post targets, merge). Files: upload_media (bytes) or add_media (a link); delete_media / delete_post only when asked.",
       "7) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",
       "Scores: match = how closely Whisper heard the script (>=0.95 good); similarity = voice match vs the recording (>=0.86 same speaker).",
