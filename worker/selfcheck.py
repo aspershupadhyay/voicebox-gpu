@@ -57,7 +57,10 @@ def main():
             except Exception:  # noqa: BLE001
                 pass
 
-    h = req("/health")
+    try:
+        h = req("/health")
+    except Exception as e:  # noqa: BLE001
+        sys.exit(f"can't reach the worker at {a.base} ({e}). Is Colab running, and is --base its current public link?")
     gpu = h.get("gpu") or {}
     print(f"worker {h.get('version')} · {gpu.get('name')} · {gpu.get('used_gb')}/{gpu.get('total_gb')} GB used · errors: {h.get('engine_errors') or 'none'}\n")
 
