@@ -87,7 +87,8 @@ export async function GET(req: Request, ctx: Ctx) {
       }
       if (job.kind === ("train" as string)) {
         const model = job.status === "done" ? await archiveModel(job as unknown as Parameters<typeof archiveModel>[0]) : null;
-        return Response.json({ ...job, model });
+        const log = job.status === "error" ? await call<{ text: string }>("/logs/train?n=60").then((r) => r.text.slice(-6000)).catch(() => null) : null;
+        return Response.json({ ...job, model, log });
       }
       if (job.kind === ("reference" as string)) {
         const myvoice = job.status === "done" ? await archiveReference(job as unknown as RefJob) : null;

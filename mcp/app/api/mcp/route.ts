@@ -43,6 +43,11 @@ async function waitFor(id: string, seconds: number): Promise<Job> {
     await sleep(Math.min(4000, Math.max(0, until - Date.now())));
     job = await call<Job>(`/jobs/${id}`);
   }
+  if (job.status === "error" && (job.kind as string) === "train") {
+    // "exit 1" says nothing: the end of the train log is the actual reason
+    const log = await call<{ text: string }>("/logs/train?n=60").then((r) => r.text.slice(-6000)).catch(() => null);
+    return { ...job, log } as Job;
+  }
   if (job.status === "done" && (job.kind as string) === "dataset") {
     // a finished dataset batch only counts once it's stored (and, if asked, training has been started)
     const { archiveDataset, autoTrain } = await import("@/lib/datasets");
