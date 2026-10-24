@@ -1,11 +1,3 @@
-# From Sand to Silicon (Bunty cut)
-
-6963 characters, about 7 minutes. From Chapters one and two of *From Sand to Superintelligence*, with a standalone ending.
-
-Settings: voice **Bunty**, stability 45%, similarity 80%, style 25%, speed 1.0. Paste each part separately, then join the downloads in order.
-
-## Part 1 of 3 (2422 chars)
-
 Every story about computers is really a story about one tiny thing: a switch.
 
 On or off. One or zero. That's all a computer ever really knows. Your photos, your messages, every video you've ever watched, every AI model ever trained, all of it, at the very bottom, is just an unimaginable number of switches flipping on and off.
@@ -28,7 +20,7 @@ The first commercial microprocessor, Intel's four-oh-oh-four, released in ninete
 
 Sit with that for a second. Two thousand, to two hundred billion. In one lifetime.
 
-## Part 2 of 3 (2464 chars)
+---
 
 To get there, transistors had to shrink to sizes that are honestly hard to picture. Modern chip features are measured in nanometers. A nanometer is a billionth of a meter. A human hair is somewhere around eighty thousand nanometers wide. The smallest structures on a cutting-edge chip are just a few dozen atoms across.
 
@@ -46,7 +38,7 @@ Enter extreme ultraviolet lithography. E U V.
 
 E U V light has a wavelength of thirteen and a half nanometers. That's more than ten times shorter than the deep ultraviolet light that came before. But it's a nightmare to produce. It's absorbed by almost everything, including air and glass. So the entire process has to happen in a vacuum, and instead of lenses, it uses mirrors. Not normal mirrors. Mirrors so flat that if you scaled one up to the size of a country, the biggest bump on it would be about a millimeter tall.
 
-## Part 3 of 3 (2099 chars)
+---
 
 And how do you make the light in the first place? This part sounds like science fiction. The machine fires tiny droplets of molten tin into a chamber, tens of thousands of times every second. A powerful laser hits each droplet. Actually it hits it twice. The first pulse flattens the droplet into a little pancake. The second pulse blasts it into a plasma hotter than the surface of the sun. And that plasma glows with extreme ultraviolet light, which gets collected, bounced off a chain of those perfect mirrors, and focused onto the wafer.
 
@@ -61,4 +53,3 @@ So think about the supply chain behind the phone in your pocket. Sand from the g
 It's honestly one of the greatest achievements of human civilization. And most people never think about it.
 
 From a grain of sand to a chip with billions of switches. That's the foundation every AI on Earth is built on. Follow for more.
-
