@@ -1,6 +1,7 @@
 "use client";
+import { ThumbsDown, ThumbsUp } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { fileUrl, matchClass, pct, simClass, type Cleanup, type Review, type Word } from "./api";
+import { api, fileUrl, matchClass, pct, simClass, type Cleanup, type Review, type Word } from "./api";
 import Player from "./Player";
 
 export type Line = {
@@ -12,10 +13,32 @@ export type Line = {
 
 const issueText = (r: Review) => r.issues.map((i) => `sentence ${i.chunk}: ${[i.missed.length ? `missed “${i.missed.join(" ")}”` : "", i.added.length ? `added “${i.added.join(" ")}”` : "", i.similarity != null && !i.missed.length && !i.added.length ? `voice ${pct(i.similarity)}` : ""].filter(Boolean).join(", ")}`).join("\n");
 
+/** A trained voice (Your model, or a fine-tuned ft_ voice on Qwen3-TTS): its lines can be rated for the voice coach. */
+export const coached = (engine?: string, voice?: string) => engine === "myvoice" || (engine === "qwen" && !!voice?.startsWith("ft_"));
+
+/** Thumbs up / down for the voice coach: what you like and don't like steers what it asks you to record next. */
+function Rate({ jobId, line, voice }: { jobId: string; line: Line; voice: { engine: string; voice: string } }) {
+  const key = `vb-rate-${jobId}-${line.id}`;
+  const [r, setR] = useState(0);
+  useEffect(() => { try { setR(Number(localStorage.getItem(key)) || 0); } catch {} }, [key]);
+  const send = (v: number) => {
+    const next = r === v ? 0 : v;
+    setR(next);
+    try { localStorage.setItem(key, String(next)); } catch {}
+    api("coach/rate", { body: { ...voice, job: jobId, line: line.id, rating: next, text: line.text, duration: line.duration } }).catch(() => setR(r));
+  };
+  return (
+    <span className="row" style={{ gap: 2 }} title="Rate this line: the voice coach learns what to fix">
+      <button className={`icon-btn ${r === 1 ? "on" : ""}`} aria-label="Sounds good" onClick={() => send(1)}><ThumbsUp size={14} weight={r === 1 ? "fill" : "regular"} /></button>
+      <button className={`icon-btn ${r === -1 ? "on" : ""}`} aria-label="Sounds off" onClick={() => send(-1)}><ThumbsDown size={14} weight={r === -1 ? "fill" : "regular"} /></button>
+    </span>
+  );
+}
+
 /** One voice line: player (+ karaoke words when subtitled), fit/match badges, downloads. */
-export default function LineRow({ jobId, line, audio, slug, onEnded, playRef, words: given, scale }: {
+export default function LineRow({ jobId, line, audio, slug, onEnded, playRef, words: given, scale, rate }: {
   jobId: string; line: Line; audio?: string | null; slug: string; onEnded?: () => void;
-  playRef?: (fn: () => void) => void; words?: Word[] | null; scale?: number;
+  playRef?: (fn: () => void) => void; words?: Word[] | null; scale?: number; rate?: { engine: string; voice: string } | null;
 }) {
   const [words, setWords] = useState<Word[] | null>(given ?? null);
   const [showHeard, setShowHeard] = useState(false);
@@ -50,6 +73,7 @@ export default function LineRow({ jobId, line, audio, slug, onEnded, playRef, wo
           {line.match != null && <button className={`pill ${matchClass(line.match)}`} style={{ cursor: "pointer" }} onClick={() => setShowHeard(!showHeard)} title="How closely the subtitles match your script (click to see what was heard)">match {pct(line.match)}</button>}
         </div>
         <div className="dl">
+          {rate && audio && <Rate jobId={jobId} line={line} voice={rate} />}
           {audio && <a href={fileUrl(jobId, `${line.id}.wav`, `${slug}-${line.id}.wav`)} title="Download WAV">wav</a>}
           {line.subs && <><a href={fileUrl(jobId, `${line.id}.subs.srt`, `${slug}-${line.id}.srt`)} title="Download SRT">srt</a><a href={fileUrl(jobId, `${line.id}.subs.vtt`, `${slug}-${line.id}.vtt`)} title="Download VTT">vtt</a></>}
         </div>

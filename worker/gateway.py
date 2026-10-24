@@ -1645,8 +1645,12 @@ def _assemble(job, jdir, p, paths, pick=None):
     if any(c[0] != c[1] for c in p["chunks"]):
         r["spoken"] = " ".join(c[1] for c in p["chunks"])
     if pick:
-        r["takes"] = {"n": job["takes"], "picked": [k + 1 for k in pick["take"]], "match": pick["match"], "similarity": pick["similarity"]}
+        r["takes"] = {"n": job["takes"], "picked": [k + 1 for k in pick["take"]], "match": pick["match"], "similarity": pick["similarity"], "mos": pick.get("mos")}
         r["review"] = pick.get("review")
+    try:  # pitch spread and pauses: the voice coach's "flat" / "odd pause" checks
+        r["delivery"] = quality.delivery(os.path.join(jdir, f"{ln['id']}.wav"))
+    except Exception:  # noqa: BLE001  a measurement, never worth failing a voiceover over
+        pass
     job["results"].append(r)
 
 
@@ -1741,7 +1745,7 @@ def _review(job, plans, out, ref_path, ref_text, order):
 
     picks, trials = {}, []
     for p in plans:
-        chosen, texts, sims, issues = [], [], [], []
+        chosen, texts, sims, moss, issues = [], [], [], [], []
         for i in range(len(p["chunks"])):
             key = (p["ln"]["id"], i)
             k, _ = best(key)
@@ -1750,6 +1754,8 @@ def _review(job, plans, out, ref_path, ref_text, order):
             texts.append(v["text"] or 0)
             if v["sim"] is not None:
                 sims.append(v["sim"])
+            if v["mos"] is not None:
+                moss.append(v["mos"])
             if quality.failed(v["text"], v["sim"], base, gate):
                 issues.append({"chunk": i + 1, "missed": v["missed"], "added": v["added"], "match": v["text"], "similarity": v["sim"]})
             for kk, vv in cands[key].items():
@@ -1757,7 +1763,7 @@ def _review(job, plans, out, ref_path, ref_text, order):
                                "mos": vv["mos"], "picked": kk == k})
         n_retried = sum(1 for i in range(len(p["chunks"])) if (p["ln"]["id"], i) in retried)
         picks[p["ln"]["id"]] = {"take": chosen, "match": round(sum(texts) / len(texts), 3), "similarity": round(sum(sims) / len(sims), 3) if sims else None,
-                                "review": {"retried": n_retried, "fixed": n_retried - len(issues) if n_retried else 0, "issues": issues}}
+                                "mos": round(sum(moss) / len(moss), 2) if moss else None, "review": {"retried": n_retried, "fixed": n_retried - len(issues) if n_retried else 0, "issues": issues}}
     job["trials"] = trials[:2000]
     fixed = sum(x["review"]["fixed"] for x in picks.values())
     still = sum(len(x["review"]["issues"]) for x in picks.values())

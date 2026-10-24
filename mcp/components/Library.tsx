@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api, fileUrl, fmtS, matchClass, pct, type Gen, type GenImage } from "./api";
 import { CassetteArt, VoiceGlyph } from "./art";
-import LineRow, { type Line } from "./LineRow";
+import LineRow, { coached, type Line } from "./LineRow";
 import { useStatus } from "./Shell";
 import { useDialog } from "./Dialog";
 
@@ -14,7 +14,7 @@ type LibJob = {
   id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; created: number; source?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; subs?: { cues: number; timeline: string } | null; match?: number | null; results: (Line & { audio?: string | null })[];
   video?: { width: number; height: number; duration: number; size: number; voice_job?: string; has_audio?: boolean }; video_url?: string; poster_url?: string | null;
-  gen?: Gen; images?: GenImage[]; scenes?: { id: string; text: string; start: number; seconds: number }[];
+  gen?: Gen; images?: GenImage[]; mode?: string; scenes?: { id: string; text: string; start: number; seconds: number }[];
 };
 type CardProps = { j: LibJob; open: boolean; selected: boolean; onSelect: (shift: boolean) => void; onDelete: () => void };
 
@@ -157,7 +157,8 @@ function JobCard({ j, open, selected, onSelect, onDelete, onSubtitle }: CardProp
         <div className="lc-body">
           {j.results.map((r, i) => (
             <LineRow key={r.id} jobId={j.id} line={r} audio={r.audio} slug={slug} scale={r.duration / longest}
-              playRef={(fn) => { players.current[i] = fn; }} onEnded={playing === i ? () => playFrom(i + 1) : undefined} />
+              playRef={(fn) => { players.current[i] = fn; }} onEnded={playing === i ? () => playFrom(i + 1) : undefined}
+              rate={!j.mode && coached(j.engine, j.voice) ? { engine: j.engine, voice: j.voice } : null} />
           ))}
           {j.params && Object.keys(j.params).length > 0 && <p className="faint tiny mono" style={{ margin: "10px 0 0" }}>{Object.entries(j.params).map(([k, v]) => `${k} ${v}`).join("  ·  ")}</p>}
         </div>

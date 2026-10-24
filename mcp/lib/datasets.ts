@@ -56,19 +56,31 @@ export async function trainJobBody(name: string, label?: string, engine: "orpheu
     label: label ?? (engine === "qwen" ? `Fine-tune Qwen3-TTS · ${name}` : `Train your voice · ${name}`) };
 }
 
-/** A stored batch sent with auto_train: start training on the whole dataset once, if there's enough and none is running. */
+/** A stored batch sent with auto_train: start training on the whole dataset once, if there's enough and none is running.
+ *  A voice with no model trains Orpheus at TRAIN_MIN_MINUTES; a voice that has one retrains on the same engine once
+ *  RETRAIN_MINUTES of new recordings are in, and the retrained model goes live only if it beats the old one (coach.ts). */
 export async function autoTrain(job: DatasetJob, part: DatasetPart): Promise<DatasetPart> {
   if (!job.auto_train || part.auto_train) return part;
   const d = await listDataset(job.voice);
+  const { listModels } = await import("./voicemodel");
+  const { listQwenModels } = await import("./qwenmodels");
+  const { RETRAIN_MINUTES } = await import("./coach");
+  const [orpheus, qwen] = await Promise.all([listModels().catch(() => []), listQwenModels().catch(() => [])]);
+  const last = [...orpheus.filter((m) => m.name === job.voice).map((m) => ({ ...m, engine: "orpheus" as const })),
+    ...qwen.filter((m) => m.name === job.voice).map((m) => ({ ...m, engine: "qwen" as const }))].sort((a, b) => b.created - a.created)[0];
+  const fresh = last ? Math.round((d.minutes - last.minutes) * 10) / 10 : d.minutes;
   let result: NonNullable<DatasetPart["auto_train"]>;
-  if (d.minutes < TRAIN_MIN_MINUTES) {
+  if (!last && d.minutes < TRAIN_MIN_MINUTES) {
     result = { skipped: `${d.minutes} of ${TRAIN_MIN_MINUTES} minutes collected` };
+  } else if (last && fresh < RETRAIN_MINUTES) {
+    result = { skipped: `${fresh} new minutes since the current model; it retrains at ${RETRAIN_MINUTES}` };
   } else {
     const { jobs } = await call<{ jobs: { kind: string; voice: string; status: string }[] }>("/jobs");
     if (jobs.some((j) => j.kind === "train" && j.voice === job.voice && ["queued", "running"].includes(j.status))) {
       result = { skipped: "already training" };
     } else {
-      const t = await call<{ id: string }>("/jobs", { body: await trainJobBody(job.voice, `Auto-train · ${job.voice}`) });
+      const engine = last?.engine ?? "orpheus";
+      const t = await call<{ id: string }>("/jobs", { body: await trainJobBody(job.voice, `${last ? "Retrain" : "Auto-train"} · ${job.voice}`, engine) });
       result = { job: t.id };
     }
   }

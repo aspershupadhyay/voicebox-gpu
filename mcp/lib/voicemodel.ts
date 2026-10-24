@@ -12,7 +12,7 @@ import { call } from "./worker";
 export type VoiceModel = {
   name: string; job: string; created: number; clips: number; minutes: number; epochs: number; steps: number; loss: number;
   speaker: string; base: string; sample: { text: string; duration: number } | null;
-  best_epoch?: number; eval_loss?: number[]; listening?: { epoch: number; match: number | null; similarity: number | null; score: number | null }[]; flow_clips?: number; held_out?: number;
+  gate?: string; best_epoch?: number; eval_loss?: number[]; listening?: { epoch: number; match: number | null; similarity: number | null; score: number | null }[]; flow_clips?: number; held_out?: number;
 };
 type TrainJob = { id: string; voice: string; status: string; train?: Omit<VoiceModel, "name" | "job" | "created"> };
 
@@ -39,9 +39,30 @@ export async function archiveModel(job: TrainJob): Promise<VoiceModel | null> {
     if (res.failed["adapter.zip"]) throw new Error(`could not store your model: ${res.failed["adapter.zip"]}`);
   }
   await putJson(meta, m);
-  await putJson(`${LIVE}${m.name}.json`, m);
-  await putJson(CURRENT, m);
+  // a retrain only replaces the model in use once it has been compared with it (coach.ts); a first model goes live now
+  const prev = await getJson<VoiceModel>(`${LIVE}${m.name}.json`).catch(() => null);
+  if (prev && prev.job !== m.job) {
+    const { startGate } = await import("./coach");
+    await startGate(m.name, "orpheus", m.job, prev.job, await gateLink(m.name, m.job));
+    return { ...m, gate: "comparing" } as VoiceModel;
+  }
+  await promoteModel(m.name, m.job);
   return m;
+}
+
+/** Make one of <name>'s trained models the one in use. */
+export async function promoteModel(name: string, job: string) {
+  const m = await getJson<VoiceModel>(`${dir({ name, job })}model.json`);
+  if (!m) throw new Error(`no stored model ${name}/${job}`);
+  await putJson(`${LIVE}${name}.json`, m);
+  await putJson(CURRENT, m);
+}
+
+/** A signed link to one stored model, for a job that voices it before it's live (the comparison). */
+export async function gateLink(name: string, job: string) {
+  const m = await getJson<VoiceModel>(`${dir({ name, job })}model.json`);
+  if (!m) throw new Error(`no stored model ${name}/${job}`);
+  return { job, url: await presign(`${dir(m)}adapter.zip`, "GET", 24 * 3600), speaker: m.speaker };
 }
 
 /** Every person's model, newest first. */

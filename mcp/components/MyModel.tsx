@@ -2,7 +2,7 @@
 // Your own voice model, end to end: collect 30-60 minutes of you (read along or upload), train it on the GPU worker
 // with one click, then benchmark it against your cloned voices. One dataset and one model per person: each of you picks
 // your own name, and both models stay available to everyone (the myvoice engine, voice = the name).
-import { ArrowRight, CaretLeft, CaretRight, Microphone, Stop, TrashSimple, UploadSimple } from "@phosphor-icons/react";
+import { ArrowRight, CaretLeft, CaretRight, Copy, DownloadSimple, Microphone, Stop, TrashSimple, UploadSimple } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { READ_ALONG } from "@/lib/readalong";
 import { api, fmtS, pct, simClass, matchClass, uploadFile, type Job, type MyVoice } from "./api";
@@ -87,7 +87,11 @@ function useWorkerJobs(kind: "dataset" | "train", name: string, following: boole
 
 type Pending = { file: File; forget?: () => void; take?: string };
 
-function Collect({ name, open, onClose, onAdded }: { name: string; open: boolean; onClose: () => void; onAdded: (trainJob?: string) => void }) {
+function Collect({ name, open, onClose, onAdded, script }: { name: string; open: boolean; onClose: () => void; onAdded: (trainJob?: string) => void;
+  script?: string[] | null }) {
+  // the voice coach's script for this voice when there is one, else the general read-along
+  const LINES = script?.length ? script : READ_ALONG;
+  const at = `vb-read-${name}${script?.length ? "-coach" : ""}`;
   const { status } = useStatus();
   const { toast } = useDialog();
   const [tab, setTab] = useState<"read" | "upload">("read");
@@ -119,8 +123,9 @@ function Collect({ name, open, onClose, onAdded }: { name: string; open: boolean
     }
   }, [job]);
 
-  useEffect(() => { try { setI(Number(localStorage.getItem(`vb-read-${name}`)) || 0); } catch {} }, [name]);
-  useEffect(() => { try { localStorage.setItem(`vb-read-${name}`, String(i)); } catch {} }, [i, name]);
+  useEffect(() => { try { setI(Math.min(Number(localStorage.getItem(at)) || 0, LINES.length - 1)); } catch {} }, [at, LINES.length]);
+  useEffect(() => { try { localStorage.setItem(at, String(i)); } catch {} }, [i, at]);
+  useEffect(() => { if (script?.length) setTab("read"); }, [script]);
   useEffect(() => {
     if (!rec) return;
     const t = setInterval(() => setSecs(rec.elapsed()), 250);
@@ -131,7 +136,7 @@ function Collect({ name, open, onClose, onAdded }: { name: string; open: boolean
     if (!rec) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest?.("input, textarea, select")) return;
-      if ((e.key === " " || e.key === "ArrowRight") && !rec.paused) { e.preventDefault(); setI((x) => (x + 1) % READ_ALONG.length); }
+      if ((e.key === " " || e.key === "ArrowRight") && !rec.paused) { e.preventDefault(); setI((x) => (x + 1) % LINES.length); }
       if (e.key.toLowerCase() === "p") { e.preventDefault(); if (rec.paused) { rec.resume(); setPaused(false); } else { rec.pause(); setPaused(true); } }
     };
     window.addEventListener("keydown", onKey);
@@ -197,12 +202,13 @@ function Collect({ name, open, onClose, onAdded }: { name: string; open: boolean
         <>
           <p className="dim small" style={{ marginTop: 0 }}>Record a session of 5-15 minutes at your natural YouTube pace. <kbd>space</kbd> moves to the next line,
             <kbd>P</kbd> pauses and resumes (take a sip of water, the take waits). Stop when you&apos;re done: you listen first, nothing is sent until you add it.</p>
-          <div className={`read-card big ${rec && !paused ? "live" : ""}`}>{READ_ALONG[i]}</div>
+          {!!script?.length && <p className="tiny" style={{ margin: "0 0 8px", color: "var(--ok)" }}>Reading the coach&apos;s script for {name}: aimed at what the voice is weakest at.</p>}
+          <div className={`read-card big ${rec && !paused ? "live" : ""}`}>{LINES[i]}</div>
           <div className="row between" style={{ flexWrap: "wrap", gap: 10 }}>
             <div className="row" style={{ gap: 4 }}>
-              <button className="icon-btn" aria-label="Previous line" onClick={() => setI((x) => (x - 1 + READ_ALONG.length) % READ_ALONG.length)}><CaretLeft size={16} /></button>
-              <span className="mono tiny dim">{i + 1} / {READ_ALONG.length}</span>
-              <button className="icon-btn" aria-label="Next line" onClick={() => setI((x) => (x + 1) % READ_ALONG.length)}><CaretRight size={16} /></button>
+              <button className="icon-btn" aria-label="Previous line" onClick={() => setI((x) => (x - 1 + LINES.length) % LINES.length)}><CaretLeft size={16} /></button>
+              <span className="mono tiny dim">{i + 1} / {LINES.length}</span>
+              <button className="icon-btn" aria-label="Next line" onClick={() => setI((x) => (x + 1) % LINES.length)}><CaretRight size={16} /></button>
             </div>
             {rec ? (
               <div className="row" style={{ gap: 10 }}>
@@ -220,8 +226,8 @@ function Collect({ name, open, onClose, onAdded }: { name: string; open: boolean
       ) : (
         <>
           <p className="dim small" style={{ marginTop: 0 }}>Long recordings of just you talking work great: raw voiceovers, podcast tracks, a video&apos;s audio. Pick as many as you like
-            (up to 20 per batch, 3 hours in all). With <b>Train automatically</b> on, the Orpheus model trains by itself once {name} has
-            15+ minutes (you can close the tab; keep Colab running).</p>
+            (up to 20 per batch, 3 hours in all). With <b>Train automatically</b> on, {name} trains by itself once it has
+            15+ minutes, then retrains with every 5 new minutes (a retrain replaces the model only if it&apos;s better; you can close the tab, keep Colab running).</p>
           <label className="drop slim" style={{ cursor: "pointer" }}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files).filter((f) => /^(audio|video)\//.test(f.type)); setPending((p) => [...p, ...fs.map((file) => ({ file }))]); }}>
@@ -237,7 +243,7 @@ function Collect({ name, open, onClose, onAdded }: { name: string; open: boolean
           {pending.map((x, k) => <FilePreview key={`${x.file.name}-${k}`} file={x.file} onRemove={() => drop(k)} />)}
           {pending.length > 20 && <span className="tiny dim">The first 20 go in this batch; add the rest after.</span>}
           <div className="row" style={{ gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-            <label className="row small" style={{ gap: 8, marginRight: "auto" }} title={`Starts once ${name} has 15+ minutes; replaces ${name}'s current model`}>
+            <label className="row small" style={{ gap: 8, marginRight: "auto" }} title={`First training at 15+ minutes, then a retrain every 5 new minutes; a retrain only replaces the current model if it scores better`}>
               <input type="checkbox" style={{ width: "auto" }} checked={auto} onChange={(e) => { setAuto(e.target.checked); try { localStorage.setItem("vb-autotrain", e.target.checked ? "1" : "0"); } catch {} }} />
               Train automatically when added</label>
             <button className="ghost sm" onClick={() => setPending((p) => { p.forEach((x) => x.forget?.()); return []; })}>Discard all</button>
@@ -285,7 +291,8 @@ function Train({ name, minutes, follow, head, engine, onTrained }: { name: strin
   }, [name, qwen]);
   useEffect(loadModel, [loadModel]);
   const { job, start } = usePoll((j) => {
-    toast(qwen ? `${name} is fine-tuned. Pick "ft_${name}" on Qwen3-TTS in Voiceover.` : `${name} is trained. Pick "${name}" under Your model in Voiceover.`, "ok");
+    toast((j.model as Model & { gate?: string })?.gate === "comparing" ? `${name}'s new ${qwen ? "Qwen voice" : "model"} is trained. Now it's compared with the current one (Getting better card) and switches only if it's better.`
+      : qwen ? `${name} is fine-tuned. Pick "ft_${name}" on Qwen3-TTS in Voiceover.` : `${name} is trained. Pick "${name}" under Your model in Voiceover.`, "ok");
     if (j.model) { loadModel(); onTrained(); }
   });
   const busy = !!job && ["queued", "running"].includes(job.status);
@@ -293,12 +300,14 @@ function Train({ name, minutes, follow, head, engine, onTrained }: { name: strin
   useResumeJob<Polled>(["train"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
   useWorkerJobs("train", name, busy, start, undefined, (j) => (j.train_engine === "qwen") === qwen);
   // a train job the server started after an upload (auto-train): show its progress here
-  useEffect(() => { if (follow) api<Polled>(`jobs/${follow}`).then(start).catch(() => {}); }, [follow]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (follow) api<Polled & { train_engine?: string }>(`jobs/${follow}`).then((j) => { if ((j.train_engine === "qwen") === qwen) start(j); }).catch(() => {});
+  }, [follow]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function train() {
     setErr("");
     if (minutes < 15 && !(await confirm({ title: `Train on ${minutes.toFixed(1)} minutes?`, body: `It will train, but under 15 minutes the model sounds only roughly like ${name}. 30 minutes is good, 60 is best. Add more any time and train again.`, confirm: "Train anyway" }))) return;
-    if (model && !(await confirm({ title: `Train ${name} again?`, body: `It replaces ${name}'s ${qwen ? "fine-tuned Qwen voice" : "model"} (other people's stay). Voice and video jobs wait while the GPU trains.`, confirm: "Train" }))) return;
+    if (model && !(await confirm({ title: `Train ${name} again?`, body: `When it's done it's compared with ${name}'s current ${qwen ? "fine-tuned Qwen voice" : "model"} on test sentences, and replaces it only if it scores at least as well. Voice and video jobs wait while the GPU trains.`, confirm: "Train" }))) return;
     try {
       start(await api<Job>("jobs", { body: { kind: "train", name, engine } }));
     } catch (e) {
@@ -538,6 +547,157 @@ function EveryEngine({ name, minutes, mine, head, onMade }: { name: string; minu
   );
 }
 
+type Gate = { engine: "orpheus" | "qwen"; job: string; stage: "comparing" | "promoted" | "kept" | "error"; at: number; old?: number | null; new?: number | null; note?: string };
+type Spot = { cat: string; label: string; lines: number; problem_rate: number; issues: { flag: string; label: string; lines: number }[] };
+type CoachReport = { name: string; lines: number; rated_up: number; rated_down: number; enough: boolean; problem_rate: number; retrain_minutes: number;
+  recent: { lines: number; words: number | null; like_you: number | null; natural: number | null; pitch_spread: number | null };
+  weak_spots: Spot[]; everywhere: { flag: string; label: string; lines: number }[]; missed_words: { word: string; times: number }[]; gates: Gate[] };
+type Script = { minutes: number; focus: { cat: string; label: string; tip: string }[]; words_to_practise: string[]; lines: { text: string; cat: string }[] };
+
+const GATE_TEXT: Record<Gate["stage"], string> = { comparing: "Comparing the new model with the current one…", promoted: "New model in use",
+  kept: "Kept the current model", error: "Comparison didn't finish" };
+
+/** The voice coach: every line a trained voice reads is checked, weak spots become the next recording script, and a
+ *  retrained model only replaces the current one when it scores at least as well. */
+function Coach({ name, trained, onRecord, onSwitched }: { name: string; trained: boolean; onRecord: (lines: string[]) => void; onSwitched: () => void }) {
+  const { toast } = useDialog();
+  const [rep, setRep] = useState<CoachReport | null>(null);
+  const [script, setScript] = useState<Script | null>(null);
+  const [mins, setMins] = useState(8);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [spell, setSpell] = useState<Record<string, string>>({});
+  const load = useCallback(() => { api<CoachReport>(`coach/${name}`).then(setRep).catch(() => {}); }, [name]);
+  useEffect(() => { setRep(null); setScript(null); load(); }, [load]);
+  const comparing = rep?.gates[0]?.stage === "comparing";
+  const was = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    // while a comparison runs, look again every 20 s; when it settles, say what happened
+    const g = rep?.gates[0];
+    if (was.current === "comparing" && g && g.stage !== "comparing") { toast(g.note ?? GATE_TEXT[g.stage], g.stage === "promoted" ? "ok" : undefined); onSwitched(); }
+    was.current = g?.stage;
+    if (!comparing) return;
+    const t = setTimeout(load, 20_000);
+    return () => clearTimeout(t);
+  }, [rep]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function write() {
+    setErr(""); setBusy(true);
+    try { setScript(await api<Script>(`coach/${name}/script`, { body: { minutes: mins } })); } catch (e) { setErr((e as Error).message); }
+    setBusy(false);
+  }
+  async function gate(action: "use" | "compare", job: string) {
+    setErr("");
+    try { await api(`coach/${name}/gate`, { body: { action, job } }); load(); if (action === "use") { toast("Switched to the new model", "ok"); onSwitched(); } }
+    catch (e) { setErr((e as Error).message); }
+  }
+  async function fix(word: string) {
+    const say = spell[word]?.trim();
+    if (!say) return;
+    try {
+      const s = await api<{ pronounce: Record<string, string> }>("settings");
+      await api("settings", { body: { pronounce: { ...s.pronounce, [word]: say } } });
+      toast(`“${word}” will be read as “${say}” from now on`, "ok");
+      setSpell((x) => { const { [word]: _, ...rest } = x; return rest; });
+    } catch (e) { setErr((e as Error).message); }
+  }
+  const text = script ? script.lines.map((l) => l.text).join("\n") : "";
+  const g = rep?.gates[0];
+
+  return (
+    <div className="card">
+      <div className="card-head"><h2>Getting better</h2><span className="dim tiny">the more {name}&apos;s voice is used, the more it knows what to fix</span></div>
+      <p className="dim small" style={{ marginTop: 0 }}>
+        Every line {trained ? <b>{name}</b> : "a trained voice"} reads is checked: the words (Whisper), how much it sounds like you, how natural it sounds, and the
+        delivery (flat pitch, rushing, odd pauses). Rate lines with 👍 / 👎 in Voiceover and the Library too. The weak spots become your next recording script;
+        with <b>Train automatically</b> on, {rep?.retrain_minutes ?? 5} new minutes retrain the voice, and the new model only replaces the current one if it scores at least as well.
+      </p>
+      {!trained && <p className="small" style={{ color: "var(--warn)", margin: 0 }}>Train {name} first (above): the coach listens to a trained voice.</p>}
+      {g && (
+        <div className="stack" style={{ gap: 6, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
+          <div className="row between small" style={{ flexWrap: "wrap", gap: 8 }}>
+            <b>{GATE_TEXT[g.stage]} · {g.engine === "qwen" ? `ft_${name}` : name}</b>
+            <span className="dim">{g.old != null && g.new != null ? `current ${g.old.toFixed(3)} · new ${g.new.toFixed(3)} · ` : ""}{new Date(g.at).toLocaleString()}</span>
+          </div>
+          {comparing && <div className="bar live"><i style={{ width: "40%" }} /></div>}
+          {g.note && !comparing && <span className="tiny dim">{g.note}</span>}
+          {(g.stage === "kept" || g.stage === "error") && (
+            <div className="row" style={{ gap: 8 }}>
+              {g.stage === "error" && <button className="ghost sm" onClick={() => gate("compare", g.job)}>Compare again</button>}
+              <button className="ghost sm" onClick={() => gate("use", g.job)}>Use the new model anyway</button>
+            </div>
+          )}
+        </div>
+      )}
+      {rep && rep.lines > 0 && (
+        <div className="stack" style={{ gap: 10, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
+          <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+            <span className="pill">{rep.lines} lines heard</span>
+            {rep.recent.words != null && <span className={`pill ${matchClass(rep.recent.words)}`} title="Script accuracy, last 60 lines">words {pct(rep.recent.words)}</span>}
+            {rep.recent.like_you != null && <span className={`pill ${simClass(rep.recent.like_you)}`} title="Voice match vs your recording">like you {pct(rep.recent.like_you)}</span>}
+            {rep.recent.natural != null && <span className="pill" title="Predicted naturalness (MOS, 1-5)">natural {rep.recent.natural.toFixed(2)}</span>}
+            {rep.recent.pitch_spread != null && <span className={`pill ${rep.recent.pitch_spread < 3 ? "warn" : ""}`} title="How much the pitch moves (semitones); lively speech is about 5-12">expression {rep.recent.pitch_spread.toFixed(1)} st</span>}
+            {(rep.rated_up > 0 || rep.rated_down > 0) && <span className="pill">👍 {rep.rated_up} · 👎 {rep.rated_down}</span>}
+          </div>
+          {!rep.enough ? <span className="tiny dim">A few more voiceovers and the coach can tell you where {name} is weak.</span> : (
+            <>
+              {rep.weak_spots.length === 0 && rep.everywhere.length === 0
+                ? <span className="small">No clear weak spot right now: {Math.round((1 - rep.problem_rate) * 100)}% of lines pass every check. More varied recordings still help.</span>
+                : <div className="stack" style={{ gap: 4 }}>
+                  {rep.weak_spots.map((w) => (
+                    <div key={w.cat} className="small"><b>{w.label[0].toUpperCase() + w.label.slice(1)}</b>
+                      <span className="dim"> · {Math.round(w.problem_rate * 100)}% of {w.lines} lines have a problem{w.issues[0] ? `, mostly ${w.issues.slice(0, 2).map((x) => x.label).join(" and ")}` : ""}</span></div>
+                  ))}
+                  {rep.everywhere.map((x) => <div key={x.flag} className="small"><b>{x.label[0].toUpperCase() + x.label.slice(1)}</b><span className="dim"> · {x.lines} of {rep.lines} lines</span></div>)}
+                </div>}
+            </>
+          )}
+          {rep.missed_words.length > 0 && (
+            <div className="stack" style={{ gap: 6 }}>
+              <span className="small"><b>Words it keeps missing</b> <span className="dim tiny">type how to say it (e.g. “koo-ber-net-eez”) and it&apos;s fixed for every voice now</span></span>
+              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                {rep.missed_words.map((w) => (
+                  <span key={w.word} className="row" style={{ gap: 4 }}>
+                    <span className="pill warn">{w.word} ×{w.times}</span>
+                    <input value={spell[w.word] ?? ""} placeholder="say it as…" style={{ width: 120 }} onChange={(e) => setSpell({ ...spell, [w.word]: e.target.value })}
+                      onKeyDown={(e) => { if (e.key === "Enter") fix(w.word); }} />
+                    {spell[w.word] && <button className="ghost xs" onClick={() => fix(w.word)}>Save</button>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      <div className="row between" style={{ marginTop: 12, flexWrap: "wrap", gap: 8 }}>
+        <span className="tiny dim">Your next recording session, written around what {name} is weakest at.</span>
+        <span className="row" style={{ gap: 6 }}>
+          <select value={mins} onChange={(e) => setMins(Number(e.target.value))} style={{ width: "auto" }}>
+            {[5, 8, 12, 15].map((m) => <option key={m} value={m}>{m} min</option>)}</select>
+          <button className="sm" onClick={write} disabled={busy}>{script ? "Write another" : "Write my next script"} <ArrowRight size={13} /></button>
+        </span>
+      </div>
+      {script && (
+        <div className="stack" style={{ gap: 8, marginTop: 12, padding: 12, border: "1px solid var(--line)", borderRadius: 12 }}>
+          <div className="row between small" style={{ flexWrap: "wrap", gap: 8 }}>
+            <b>About {script.minutes} min · {script.lines.length} lines{script.focus.length ? ` · focus: ${script.focus.map((f) => f.label).join(", ")}` : " · a bit of everything"}</b>
+            <span className="row" style={{ gap: 6 }}>
+              <button className="icon-btn" aria-label="Copy the script" title="Copy" onClick={() => navigator.clipboard.writeText(text).then(() => toast("Copied", "ok")).catch(() => {})}><Copy size={15} /></button>
+              <a className="icon-btn btn" aria-label="Download the script" title="Download .txt" href={`data:text/plain;charset=utf-8,${encodeURIComponent(text)}`} download={`${name}-script.txt`}><DownloadSimple size={15} /></a>
+              <button className="sm" onClick={() => onRecord(script.lines.map((l) => l.text))}><Microphone size={13} weight="fill" /> Record it now</button>
+            </span>
+          </div>
+          {script.focus.map((f) => <span key={f.cat} className="tiny dim">• {f.tip}</span>)}
+          <ol className="small" style={{ margin: 0, paddingLeft: 22, maxHeight: 260, overflow: "auto" }}>
+            {script.lines.map((l, k) => <li key={k} style={{ padding: "2px 0" }}>{l.text}</li>)}
+          </ol>
+        </div>
+      )}
+      {err && <p className="err" style={{ margin: "8px 0 0" }}>{err}</p>}
+    </div>
+  );
+}
+
 type Person = { name: string; minutes: number; clips: number };
 
 export default function MyModel() {
@@ -572,7 +732,8 @@ export default function MyModel() {
 
   // the recordings card only shows when it's needed: a new (empty) voice, or after "Add recordings"; switching voices resets it
   const [adding, setAdding] = useState(false);
-  useEffect(() => setAdding(false), [name]);
+  const [script, setScript] = useState<string[] | null>(null);
+  useEffect(() => { setAdding(false); setScript(null); }, [name]);
   const [make, setMake] = useState<"orpheus" | "qwen" | "clone">("orpheus");
   const voices = [...new Set([...people.map((p) => p.name), ...models.map((m) => m.name), ...(name ? [name] : [])])];
   const pickEngine = (
@@ -632,10 +793,12 @@ export default function MyModel() {
       </div>
       {name && (
         <div className="stack" style={{ gap: 16 }}>
-          <Collect name={name} open={!minutes || adding} onClose={() => setAdding(false)} onAdded={(t) => { refresh(); if (t) setFollow(t); }} />
+          <Collect name={name} open={!minutes || adding} onClose={() => { setAdding(false); setScript(null); }} onAdded={(t) => { refresh(); if (t) setFollow(t); }} script={script} />
           {make === "clone"
             ? <EveryEngine name={name} minutes={minutes} mine={mine} head={pickEngine} onMade={loadMine} />
-            : <Train key={make} name={name} minutes={minutes} follow={make === "orpheus" ? follow : undefined} head={pickEngine} engine={make} onTrained={loadModels} />}
+            : <Train key={make} name={name} minutes={minutes} follow={follow} head={pickEngine} engine={make} onTrained={loadModels} />}
+          <Coach name={name} trained={models.some((m) => m.name === name)} onSwitched={loadModels}
+            onRecord={(lines) => { setScript(lines); setAdding(true); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
           <details className="card"><summary><b>More tools</b> <span className="dim small">· compare engines (Benchmark) · find the voice in Kokoro</span></summary>
             <div className="stack" style={{ gap: 16, marginTop: 14 }}>
               <Benchmark mine={mine} name={name} />

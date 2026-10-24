@@ -8,7 +8,7 @@ import { getJson, listObjs, presign, putJson } from "./store";
 import { call } from "./worker";
 
 export type QwenModel = { name: string; job: string; created: number; clips: number; minutes: number; epochs: number; steps: number;
-  loss: number; speaker: string; base: string; sample: { text: string; duration: number } | null; engine: "qwen" };
+  loss: number; speaker: string; base: string; sample: { text: string; duration: number } | null; engine: "qwen"; gate?: string };
 type TrainJob = { id: string; voice: string; status: string; train?: Omit<QwenModel, "name" | "job" | "created"> };
 
 const dir = (m: { name: string; job: string }) => `qmodels/${m.name}/${m.job}/`;
@@ -35,8 +35,27 @@ export async function archiveQwenModel(job: TrainJob): Promise<QwenModel | null>
     if (f) throw new Error(`could not store the Qwen voice: ${f}`);
   }
   await putJson(meta, m);
-  await putJson(`${LIVE}${m.name}.json`, m);
+  // a retrain only replaces the voice in use once it has been compared with it (coach.ts); a first one goes live now
+  const prev = await getJson<QwenModel>(`${LIVE}${m.name}.json`).catch(() => null);
+  if (prev && prev.job !== m.job) {
+    const { startGate } = await import("./coach");
+    await startGate(m.name, "qwen", m.job, prev.job, await gateLink(m.name, m.job));
+    return { ...m, gate: "comparing" };
+  }
+  await promoteQwenModel(m.name, m.job);
   return m;
+}
+
+/** Make one of <name>'s fine-tuned voices the one in use (ft_<name>). */
+export async function promoteQwenModel(name: string, job: string) {
+  const m = await getJson<QwenModel>(`${dir({ name, job })}model.json`);
+  if (!m) throw new Error(`no stored Qwen voice ${name}/${job}`);
+  await putJson(`${LIVE}${name}.json`, m);
+}
+
+/** A signed link to one stored fine-tune, for a job that voices it before it's live (the comparison). */
+export async function gateLink(name: string, job: string) {
+  return { job, url: await presign(`${dir({ name, job })}qmodel.zip`, "GET", 24 * 3600) };
 }
 
 export async function listQwenModels(): Promise<QwenModel[]> {
