@@ -97,7 +97,11 @@ const handler = createMcpHandler(
         const age = Math.round((Date.now() - rec.last_seen) / 1000);
         if (age * 1000 > STALE_MS) return text({ online: false, last_seen_s_ago: age, hint: "Colab runtime stopped? Re-run the notebook." });
         try {
-          return text({ online: true, last_seen_s_ago: age, ...(await call<Record<string, unknown>>("/health")) });
+          const h = await call<Record<string, unknown> & { engine_errors?: Record<string, string> }>("/health");
+          // "exited while loading" says nothing: the end of each failing engine's log is the reason
+          const logs = Object.fromEntries(await Promise.all(Object.keys(h.engine_errors ?? {}).map(async (n) =>
+            [n, await call<{ text: string }>(`/logs/${n}?n=40`).then((r) => r.text.slice(-4000)).catch(() => null)] as const)));
+          return text({ online: true, last_seen_s_ago: age, ...h, ...(Object.keys(logs).length ? { engine_logs: logs } : {}) });
         } catch (e) {
           return text({ online: false, last_seen_s_ago: age, registered: rec, error: (e as Error).message });
         }
