@@ -37,6 +37,7 @@ const load = async (name: string): Promise<Coach> =>
   (await getJson<Coach>(key(name)).catch(() => null)) ?? { name, lines: [], given: [], gates: [], updated: 0 };
 const save = (c: Coach) => putJson(key(c.name), { ...c, updated: Date.now() });
 const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
+const STOP = new Set("that this with have from they them then than what when your just like into over also very".split(" "));
 const countWords = (s: string) => (s.match(/[A-Za-z0-9']+/g) ?? []).length;
 
 /** Whose trained voice a job used: myvoice <name> (or "me" = the newest model), or qwen ft_<name>. Others aren't coached. */
@@ -153,7 +154,8 @@ function analyse(c: Coach) {
   // problems that show up everywhere, whatever the sentence
   const everywhere = lines.length < MIN_LINES ? [] : tally(lines.map((_, i) => i)).filter((x) => x.lines >= 3 && x.lines / lines.length >= 0.15);
   const missed = new Map<string, number>();
-  lines.forEach((l) => l.missed?.forEach((w) => missed.set(w.toLowerCase(), (missed.get(w.toLowerCase()) ?? 0) + 1)));
+  // little words ("a", "and") drop out of fast speech and Whisper alike: not a pronunciation problem
+  lines.forEach((l) => l.missed?.forEach((w) => { const k = w.toLowerCase(); if (k.length > 3 && !STOP.has(k)) missed.set(k, (missed.get(k) ?? 0) + 1); }));
   const words = [...missed.entries()].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([word, times]) => ({ word, times }));
   return { simBase, overall, spots: spots.map(({ excess: _, ...s }) => s), weak, everywhere, words };
 }
