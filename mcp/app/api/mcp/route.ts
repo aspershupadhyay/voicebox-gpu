@@ -350,7 +350,7 @@ const handler = createMcpHandler(
       "voice_dataset",
       {
         title: "Your voice dataset",
-        description: "Training data collected for the user's own voice model (Your model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-20 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. One dataset per person (name = that person's model name). Training: auto_train starts it as soon as the batch is stored (once 15+ minutes are collected), else the Your model page's Train button runs it on the GPU worker (about 1-2 h); the result is engine myvoice, voice = the dataset name.",
+        description: "Training data collected for the user's own voice model (Your model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-20 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. One dataset per person (name = that person's model name). Training: auto_train starts it as soon as the batch is stored (once 15+ minutes are collected), else train_voice (or the Your model page's Train button) runs it on the GPU worker (about 1-2 h); the result is engine myvoice, voice = the dataset name.",
         inputSchema: z.object({
           name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/).optional().describe("dataset name = whose voice (each person has their own, e.g. their first name); default me"),
           add_urls: z.array(z.string().url()).max(20).optional().describe("recordings to add"),
@@ -367,6 +367,30 @@ const handler = createMcpHandler(
             return text({ job: withHint(j), dataset: await listDataset(ds) });
           }
           return text(await listDataset(ds));
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "train_voice",
+      {
+        title: "Train a voice model",
+        description: "Fine-tune Orpheus 3B on everything collected in a dataset (voice_dataset), on the GPU worker: about 1-2 h, other jobs wait. Needs 15+ minutes kept. Replaces that dataset's current model; the result is engine myvoice, voice = the dataset name. Follow it with get_job.",
+        inputSchema: z.object({
+          name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/).describe("the dataset to train on (whose voice)"),
+        }),
+      },
+      async ({ name }) => {
+        try {
+          const { listDataset, trainJobBody, TRAIN_MIN_MINUTES } = await import("@/lib/datasets");
+          const d = await listDataset(name);
+          if (d.minutes < TRAIN_MIN_MINUTES) throw new Error(`${name} has ${d.minutes} of ${TRAIN_MIN_MINUTES} minutes: add recordings with voice_dataset first`);
+          const running = (await call<{ jobs: { kind: string; voice: string; status: string; id: string }[] }>("/jobs")).jobs
+            .find((j) => j.kind === "train" && j.voice === name && ["queued", "running"].includes(j.status));
+          if (running) return text({ already_training: running.id, next: `Call get_job with job_id "${running.id}" to follow it.` });
+          return text(withHint(await call<Job>("/jobs", { body: await trainJobBody(name) })));
         } catch (e) {
           return fail(e);
         }
