@@ -323,6 +323,10 @@ function Train({ name, minutes, follow, onTrained }: { name: string; minutes: nu
           </div>
           {busy && <div className="bar live"><i style={{ width: `${Math.round((p?.fraction ?? 0) * 100)}%` }} /></div>}
           {job.error && <p className="err" style={{ margin: 0 }}>{job.error}</p>}
+          {job.status === "error" && (job as Polled & { log?: string }).log && (
+            <details><summary className="tiny dim">What the trainer said</summary>
+              <pre className="mono tiny" style={{ whiteSpace: "pre-wrap", maxHeight: 240, overflow: "auto" }}>{(job as Polled & { log?: string }).log!.split("\n").slice(-25).join("\n")}</pre></details>
+          )}
           {busy && <button className="ghost sm" style={{ alignSelf: "flex-start" }} onClick={() => api(`jobs/${job.id}/cancel`, { method: "POST" }).catch(() => {})}>Cancel training</button>}
         </div>
       )}
