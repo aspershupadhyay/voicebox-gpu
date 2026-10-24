@@ -11,7 +11,7 @@ export type DatasetPart = {
 };
 type DatasetJob = { id: string; voice: string; status: string; auto_train?: boolean; dataset?: Omit<DatasetPart, "job" | "created" | "sources">; results: DatasetPart["sources"] };
 
-export const TRAIN_MIN_MINUTES = 15;
+export const TRAIN_MIN_MINUTES = 15; // auto-train waits for this much; a manual run takes any amount
 
 const dir = (name: string) => `datasets/${name}/`;
 
@@ -51,7 +51,7 @@ export async function datasetManifest(name: string) {
 /** The worker body for a train job on everything collected for name: every session travels as a signed link. */
 export async function trainJobBody(name: string, label?: string) {
   const d = await datasetManifest(name);
-  if (d.minutes < 5) throw new Error(`collect at least ${TRAIN_MIN_MINUTES} minutes first (you have ${d.minutes})`);
+  if (!d.clips) throw new Error(`${name} has no clips yet: add recordings first`);  // any amount trains; 15+ min sounds right
   return { kind: "train", name, parts: d.parts.map((p) => ({ url: p.url })), minutes: d.minutes, label: label ?? `Train your voice · ${name}` };
 }
 

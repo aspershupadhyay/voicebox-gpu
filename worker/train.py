@@ -177,7 +177,8 @@ def main():
 
     # ── train: clips of similar length share a batch (little padding), as many per batch as the card holds
     from transformers import Trainer, TrainingArguments, TrainerCallback
-    epochs = cfg.get("epochs") or (4 if minutes < 40 else 3)  # one more than strictly needed: the best epoch is kept
+    # one more than strictly needed (the best epoch is kept); a small dataset needs more passes to learn the voice
+    epochs = cfg.get("epochs") or (10 if minutes < 5 else 6 if minutes < 15 else 4 if minutes < 40 else 3)
     vram = torch.cuda.get_device_properties(0).total_memory / 2**30
     bs = 4 if vram >= 38 else 2 if vram >= 20 else 1
     accum = max(1, 4 // bs)  # an effective batch of 4 clips everywhere, so the learning rate means the same thing
@@ -197,12 +198,27 @@ def main():
 
     ckpts = os.path.join(work, "outputs")
     pick = {"eval_strategy": "epoch", "save_strategy": "epoch", "save_only_model": True, "per_device_eval_batch_size": bs} if eval_ds else {"save_strategy": "no"}
-    trainer = Trainer(model=model, train_dataset=ds, eval_dataset=eval_ds, callbacks=[Progress()], data_collator=collate, args=TrainingArguments(
-        per_device_train_batch_size=bs, gradient_accumulation_steps=accum, group_by_length=bs > 1, length_column_name="length",
-        warmup_ratio=0.05, num_train_epochs=epochs, remove_unused_columns=False, dataloader_num_workers=2,
-        learning_rate=float(cfg.get("learning_rate") or 2e-4), logging_steps=5, optim="adamw_8bit", weight_decay=0.01,
-        lr_scheduler_type="cosine", seed=3407, output_dir=ckpts, report_to="none",
-        fp16=not is_bfloat16_supported(), bf16=is_bfloat16_supported(), **pick))
+    # Transformers 5 dropped group_by_length and warmup_ratio (the train venv installs the latest): use them where they
+    # exist, else group lengths with our own sampler and give the warmup as steps, so both versions train the same way
+    import inspect
+    from transformers.trainer_pt_utils import LengthGroupedSampler
+    known = inspect.signature(TrainingArguments.__init__).parameters
+    steps = -(-len(ds) // (bs * accum)) * epochs
+    opts = {"group_by_length": bs > 1, "length_column_name": "length"} if "group_by_length" in known else {}
+    opts.update({"warmup_ratio": 0.05} if "warmup_ratio" in known else {"warmup_steps": max(1, round(0.05 * steps))})
+    lengths = list(ds["length"])
+
+    class Grouped(Trainer):
+        def _get_train_sampler(self, *a, **k):  # clips of similar length together: less padding, more clips per step
+            if "group_by_length" in known or bs == 1:
+                return super()._get_train_sampler(*a, **k)
+            return LengthGroupedSampler(bs * accum, lengths=lengths)
+
+    trainer = Grouped(model=model, train_dataset=ds, eval_dataset=eval_ds, callbacks=[Progress()], data_collator=collate, args=TrainingArguments(
+        per_device_train_batch_size=bs, gradient_accumulation_steps=accum, num_train_epochs=epochs, remove_unused_columns=False,
+        dataloader_num_workers=2, learning_rate=float(cfg.get("learning_rate") or 2e-4), logging_steps=5, optim="adamw_8bit",
+        weight_decay=0.01, lr_scheduler_type="cosine", seed=3407, output_dir=ckpts, report_to="none",
+        fp16=not is_bfloat16_supported(), bf16=is_bfloat16_supported(), **opts, **pick))
     stats = trainer.train()
     evals = [round(h["eval_loss"], 4) for h in trainer.state.log_history if "eval_loss" in h]
     trainer = None  # the optimizer's memory back for listening

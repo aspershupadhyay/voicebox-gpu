@@ -86,7 +86,7 @@ function useWorkerJobs(kind: "dataset" | "train", name: string, following: boole
 
 type Pending = { file: File; forget?: () => void; take?: string };
 
-function Collect({ name, onAdded }: { name: string; onAdded: (trainJob?: string) => void }) {
+function Collect({ name, open, onClose, onAdded }: { name: string; open: boolean; onClose: () => void; onAdded: (trainJob?: string) => void }) {
   const { status } = useStatus();
   const { toast } = useDialog();
   const [tab, setTab] = useState<"read" | "upload">("read");
@@ -184,11 +184,13 @@ function Collect({ name, onAdded }: { name: string; onAdded: (trainJob?: string)
   const busy = !!job && ["queued", "running"].includes(job.status);
   useResumeJob<Polled>(["dataset"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
   useWorkerJobs("dataset", name, busy, start, () => onAdded());
-  
+  // a voice that already has recordings doesn't need this card: it opens from "Add recordings" (and stays while working)
+  if (!open && !busy && up === null && !pending.length && !rec && job?.status !== "error") return null;
+
   return (
     <div className="card">
-      <div className="card-head"><h2>1 · Collect</h2>
-        <div className="seg"><button className={tab === "read" ? "on" : ""} onClick={() => setTab("read")}>Read along</button><button className={tab === "upload" ? "on" : ""} onClick={() => setTab("upload")}>Upload</button></div>
+      <div className="card-head"><h2>Add recordings</h2>
+        <div className="row" style={{ gap: 8 }}>{open && <button className="ghost xs" onClick={onClose}>Close</button>}<div className="seg"><button className={tab === "read" ? "on" : ""} onClick={() => setTab("read")}>Read along</button><button className={tab === "upload" ? "on" : ""} onClick={() => setTab("upload")}>Upload</button></div></div>
       </div>
       {tab === "read" ? (
         <>
@@ -217,8 +219,8 @@ function Collect({ name, onAdded }: { name: string; onAdded: (trainJob?: string)
       ) : (
         <>
           <p className="dim small" style={{ marginTop: 0 }}>Long recordings of just you talking work great: raw voiceovers, podcast tracks, a video&apos;s audio. Pick as many as you like
-            (up to 20 per batch, 3 hours in all); they add to the list below. With <b>Train automatically</b> on, training starts by itself
-            once the batch is in and {name} has 15+ minutes (you can close the tab; keep the Colab worker running).</p>
+            (up to 20 per batch, 3 hours in all). With <b>Train automatically</b> on, the Orpheus model trains by itself once {name} has
+            15+ minutes (you can close the tab; keep Colab running).</p>
           <label className="drop slim" style={{ cursor: "pointer" }}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files).filter((f) => /^(audio|video)\//.test(f.type)); setPending((p) => [...p, ...fs.map((file) => ({ file }))]); }}>
@@ -268,7 +270,7 @@ const TRAIN_STAGES: Record<string, string> = { queued: "Waiting for the GPU", in
   downloading: "Fetching your recordings", encoding: "Turning your clips into tokens", loading: "Loading Orpheus 3B",
   training: "Learning your voice", listening: "Listening to every epoch, keeping the best", saving: "Saving your model", testing: "Voicing a test line", done: "Done" };
 
-function Train({ name, minutes, follow, onTrained }: { name: string; minutes: number; follow?: string; onTrained: () => void }) {
+function Train({ name, minutes, follow, head, onTrained }: { name: string; minutes: number; follow?: string; head: React.ReactNode; onTrained: () => void }) {
   const { status } = useStatus();
   const { confirm, toast } = useDialog();
   const [model, setModel] = useState<Model | null>(null);
@@ -288,6 +290,7 @@ function Train({ name, minutes, follow, onTrained }: { name: string; minutes: nu
 
   async function train() {
     setErr("");
+    if (minutes < 15 && !(await confirm({ title: `Train on ${minutes.toFixed(1)} minutes?`, body: `It will train, but under 15 minutes the model sounds only roughly like ${name}. 30 minutes is good, 60 is best. Add more any time and train again.`, confirm: "Train anyway" }))) return;
     if (model && !(await confirm({ title: `Train ${name} again?`, body: `It replaces ${name}'s model (other people's models stay). Voice and video jobs wait while the GPU trains (about 1-2 hours on a free T4).`, confirm: "Train" }))) return;
     try {
       start(await api<Job>("jobs", { body: { kind: "train", name } }));
@@ -298,10 +301,10 @@ function Train({ name, minutes, follow, onTrained }: { name: string; minutes: nu
 
   return (
     <div className="card">
-      <div className="card-head"><h2>2 · Train</h2><span className="dim tiny">on your GPU worker · about 1-2 h on a free T4</span></div>
+      {head}
       <p className="dim small" style={{ marginTop: 0 }}>
-        Fine-tunes Orpheus 3B on every clip in <b>{name}</b>. The worker pauses other jobs while it trains, then the model is
-        saved to your storage as <b>{name}</b> under <b>Your model</b> in Voiceover, for both of you. Keep the Colab tab open until it finishes.
+        Learns <b>{name}</b> from every clip: pace, emphasis, how sentences flow. The most natural long English reads. About 1-2 h on the GPU
+        (other jobs wait); then pick <b>{name}</b> under <b>Your model</b> in Voiceover. Keep Colab open until it finishes.
       </p>
       {model && !busy && (
         <div className="stack" style={{ gap: 8, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
@@ -332,12 +335,11 @@ function Train({ name, minutes, follow, onTrained }: { name: string; minutes: nu
       )}
       <div className="row between" style={{ marginTop: 12 }}>
         {/* why the button is off, in plain words: the usual reasons are too few minutes or the worker being offline */}
-        {!busy && (!status?.online || minutes < 15)
-          ? <span className="small" style={{ color: "var(--warn)" }}>{!status?.online ? "Train is off: start the Colab GPU worker first."
-            : `Train is off: ${name} has ${minutes.toFixed(1)} of 15 minutes. Add ${(15 - minutes).toFixed(1)} more in step 1, or pick a voice with 15+ minutes above.`}</span>
-          : <span className="tiny dim">{minutes.toFixed(1)} minutes ready to train.</span>}
+        {!busy && !status?.online ? <span className="small" style={{ color: "var(--warn)" }}>Start the Colab GPU worker to train.</span>
+          : !busy && !minutes ? <span className="small" style={{ color: "var(--warn)" }}>Add recordings first.</span>
+          : <span className="tiny dim">{minutes.toFixed(1)} minutes to learn from{minutes < 15 ? " · 15+ sounds right, 30 good, 60 best" : minutes < 30 ? " · 30 is good, 60 best" : ""}.</span>}
         <span className="row" style={{ gap: 6 }}>
-          <button className="sm" onClick={train} disabled={busy || minutes < 15 || !status?.online} title={!status?.online ? "Start the GPU worker first" : undefined}>
+          <button className="sm" onClick={train} disabled={busy || !minutes || !status?.online} title={!status?.online ? "Start the GPU worker first" : undefined}>
             {busy ? "Training…" : model ? "Train again" : "Train my voice"} <ArrowRight size={13} />
           </button>
         </span>
@@ -377,13 +379,13 @@ function Benchmark({ mine, name }: { mine: MyVoice[]; name: string }) {
 
   return (
     <div className="card">
-      <div className="card-head"><h2>4 · Benchmark</h2><span className="dim tiny">same sentences, same scoring, every voice</span></div>
+      <div className="card-head"><h2>Benchmark</h2><span className="dim tiny">same sentences, same scoring, every voice</span></div>
       <p className="dim small" style={{ marginTop: 0 }}>Use sentences you never recorded. Voice match is measured against your real recording; naturalness is a predicted MOS (1-5); speed is seconds of compute per second of audio.</p>
       <div className="grid" style={{ gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)", gap: 14 }}>
         <textarea className="doc short" value={lines} onChange={(e) => setLines(e.target.value)} style={{ minHeight: 170, marginTop: 0 }} />
         <div className="stack" style={{ gap: 10 }}>
           <div><label className="f">Your real voice (the target)</label>
-            <select value={voice} onChange={(e) => setVoice(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Make one in step 3, or record on Voices</option>}</select></div>
+            <select value={voice} onChange={(e) => setVoice(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Make it with Qwen3-TTS + Chatterbox above</option>}</select></div>
           {([["myvoice", "Your trained model"], ["qwen", "Qwen clone"], ["chatterbox", "Chatterbox clone"], ["orpheus", "Orpheus preset"]] as const).map(([k, l]) => (
             <label key={k} className="row small" style={{ gap: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={picks[k]} onChange={(e) => setPicks({ ...picks, [k]: e.target.checked })} />{l}</label>
           ))}
@@ -445,7 +447,7 @@ function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
 
   return (
     <div className="card">
-      <div className="card-head"><h2>5 · Your voice in Kokoro</h2><span className="dim tiny">af_heart clarity · instant · runs on the CPU</span></div>
+      <div className="card-head"><h2>Find it in Kokoro</h2><span className="dim tiny">af_heart clarity · instant · runs on the CPU</span></div>
       <p className="dim small" style={{ marginTop: 0 }}>
         Kokoro is the tiny engine behind af_heart: crisp, steady and instant. This searches Kokoro&apos;s voice space for the mix of its voices that
         sounds most like your recording (scored by the same voice match as the review), then checks it still speaks every word clearly.
@@ -461,7 +463,7 @@ function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
       )}
       <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
         <div className="field" style={{ margin: 0, flex: "1 1 200px" }}><label className="f">Match this recording of you</label>
-          <select value={target} onChange={(e) => setTarget(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Make one in step 3, or record on Voices</option>}</select></div>
+          <select value={target} onChange={(e) => setTarget(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Make it with Qwen3-TTS + Chatterbox above</option>}</select></div>
         <div className="field" style={{ margin: 0, width: 150 }}><label className="f">Search</label>
           <select value={rounds} onChange={(e) => setRounds(Number(e.target.value))}>
             <option value={12}>Quick (12 rounds)</option><option value={24}>Normal (24)</option><option value={48}>Thorough (48)</option></select></div>
@@ -475,10 +477,11 @@ function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
 
 /** Any dataset as a cloning voice: ~15-20 s of its cleanest clips become a recorded voice named after it, so Qwen3-TTS,
  *  Chatterbox, Kokoro (step 5) and the benchmark can all use it, not just the trained Orpheus model. */
-function EveryEngine({ name, minutes, mine, onMade }: { name: string; minutes: number; mine: MyVoice[]; onMade: () => void }) {
+function EveryEngine({ name, minutes, mine, head, onMade }: { name: string; minutes: number; mine: MyVoice[]; head: React.ReactNode; onMade: () => void }) {
   const { status } = useStatus();
   const { toast } = useDialog();
   const [err, setErr] = useState("");
+  const [cap, setCap] = useState(20);
   const have = mine.find((m) => m.name === name);
   const { job, start } = usePoll(() => { toast(`${name} is a voice now: pick it in Voiceover on Qwen3-TTS or Chatterbox`, "ok"); onMade(); });
   useResumeJob<Polled>(["reference"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
@@ -487,18 +490,21 @@ function EveryEngine({ name, minutes, mine, onMade }: { name: string; minutes: n
   async function make() {
     setErr("");
     try {
-      start(await api<Job>("myvoices", { body: { name, dataset: name, label: name } }));
+      start(await api<Job>("myvoices", { body: { name, dataset: name, label: name, max_seconds: cap } }));
     } catch (e) { setErr((e as Error).message); }
   }
 
   return (
     <div className="card">
-      <div className="card-head"><h2>3 · Use it in every engine</h2><span className="dim tiny">Qwen3-TTS · Chatterbox · Kokoro · about a minute</span></div>
+      {head}
       <p className="dim small" style={{ marginTop: 0 }}>
-        Training (step 2) makes an Orpheus model. This turns <b>{name}</b>&apos;s clips into a voice the cloning engines can use right away:
-        it picks about 15-20 s of the cleanest consecutive clips and saves them as the voice <b>{name}</b>. Then choose <b>{name}</b> in Voiceover
-        on Qwen3-TTS (best cloning) or Chatterbox (emotion, 23 languages), compare them in Benchmark, or find it in Kokoro.
+        Ready in about a minute: picks the cleanest stretch of <b>{name}</b>&apos;s clips and saves it as the voice <b>{name}</b>. Then choose it in
+        Voiceover on Qwen3-TTS (best cloning, 10 languages) or Chatterbox (emotion, 23 languages, Hindi).
       </p>
+      <label className="row small" style={{ gap: 8 }}>Sample length
+        <select value={cap} onChange={(e) => setCap(Number(e.target.value))} style={{ width: "auto" }}>
+          {[20, 30, 45, 60].map((v) => <option key={v} value={v}>{v} s{v === 20 ? " (best for cloning)" : ""}</option>)}</select>
+        <span className="tiny dim">longer can catch more of the voice; Chatterbox listens to about the first 10 s</span></label>
       {have && !busy && (
         <div className="stack" style={{ gap: 6, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
           <div className="row between small"><b>Voice · {have.name}</b><span className="dim">{have.duration.toFixed(1)} s · {new Date(have.created).toLocaleDateString()}</span></div>
@@ -549,66 +555,77 @@ export default function MyModel() {
   const minutes = ds?.minutes ?? 0;
   const refresh = () => { load(); api<{ datasets: Person[] }>("datasets").then((d) => setPeople(d.datasets)).catch(() => {}); };
 
+  // the recordings card only shows when it's needed: a new (empty) voice, or after "Add recordings"; switching voices resets it
+  const [adding, setAdding] = useState(false);
+  useEffect(() => setAdding(false), [name]);
+  const [make, setMake] = useState<"orpheus" | "clone">("orpheus");
+  const voices = [...new Set([...people.map((p) => p.name), ...models.map((m) => m.name), ...(name ? [name] : [])])];
+  const pickEngine = (
+    <div className="card-head"><h2>Make the voice</h2>
+      <div className="seg"><button className={make === "orpheus" ? "on" : ""} onClick={() => setMake("orpheus")}>Train Orpheus · 1-2 h</button>
+        <button className={make === "clone" ? "on" : ""} onClick={() => setMake("clone")}>Qwen3-TTS + Chatterbox · 1 min</button></div>
+    </div>
+  );
+
   return (
     <>
       <div className="head">
         <div>
           <div className="eyebrow">Your model</div>
-          <h1>A voice model that is <em>only you.</em></h1>
-          <p className="sub">Cloning copies 20 seconds of you. A trained model learns how you actually talk from 30-60 minutes of it: your pace, your emphasis, the way you land a joke. Collect, train for free, then let the numbers decide. Each of you gets your own: pick your name.</p>
+          <h1>A voice that is <em>only you.</em></h1>
+          <p className="sub">Pick a voice, add recordings of it, make the voice. That&apos;s it.</p>
         </div>
-        <div className="field" style={{ margin: 0, minWidth: 180 }}><label className="f">Voice you&apos;re working on</label>
-          <input list="vb-people" value={name} placeholder="your name" onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))} />
-          <datalist id="vb-people">{people.map((p) => <option key={p.name} value={p.name}>{p.minutes.toFixed(1)} min</option>)}</datalist></div>
       </div>
       <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-head"><h2>Everyone&apos;s voices</h2><span className="dim tiny">pick one to work on it · trained models are shared: use them in Voiceover under Your model</span></div>
-          <div className="stack" style={{ gap: 8 }}>
-            {[...new Set([...people.map((p) => p.name), ...models.map((m) => m.name), ...(name ? [name] : [])])].map((n) => {
-              const m = models.find((x) => x.name === n);
-              const p = people.find((x) => x.name === n);
-              return (
-                <div key={n} className="row between small" style={{ padding: "6px 0", borderTop: "1px solid var(--line)", gap: 12 }}>
-                  <button className={`quiet xs ${n === name ? "on" : ""}`} onClick={() => setName(n)}><b>{n}</b></button>
-                  <span className="dim">{p ? `${p.minutes.toFixed(1)} min collected` : ""}{m ? ` · trained ${new Date(m.created).toLocaleDateString()}` : " · not trained yet"}</span>
-                  {m?.sample_url ? <span style={{ minWidth: 0, flex: "0 1 260px" }}><Player src={m.sample_url} compact /></span> : <span />}
-                </div>
-              );
-            })}
-            <div className="row small" style={{ padding: "8px 0 0", borderTop: "1px solid var(--line)", gap: 8, flexWrap: "wrap" }}>
-              <b>+ New voice</b>
-              <input value={fresh} placeholder="name, e.g. sparsh" style={{ width: 180 }}
-                onChange={(e) => setFresh(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
-                onKeyDown={(e) => { if (e.key === "Enter" && fresh) { setName(fresh); setFresh(""); } }} />
-              <button className="sm" disabled={!fresh} onClick={() => { setName(fresh); setFresh(""); }}>Start collecting <ArrowRight size={13} /></button>
-              <span className="tiny dim">each voice gets its own recordings, model and settings</span>
-            </div>
-          </div>
+        <div className="card-head"><h2>Voice</h2><span className="dim tiny">each voice has its own recordings and model; everyone can use every voice</span></div>
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          {voices.map((n) => {
+            const p = people.find((x) => x.name === n);
+            const m = models.find((x) => x.name === n);
+            return <button key={n} className={`quiet sm ${n === name ? "on" : ""}`} onClick={() => setName(n)}>
+              <b>{n}</b>&nbsp;<span className="dim tiny">{(p?.minutes ?? 0).toFixed(1)} min{m ? " · trained" : ""}</span></button>;
+          })}
+          <span className="row" style={{ gap: 6 }}>
+            <input value={fresh} placeholder="+ new voice name" style={{ width: 160 }}
+              onChange={(e) => setFresh(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
+              onKeyDown={(e) => { if (e.key === "Enter" && fresh) { setName(fresh); setFresh(""); } }} />
+            {fresh && <button className="sm" onClick={() => { setName(fresh); setFresh(""); }}>Add <ArrowRight size={13} /></button>}
+          </span>
         </div>
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="row between"><b>{name || "…"} · {minutes.toFixed(1)} min collected</b><span className="dim small">{ds?.clips ?? 0} clips · {ds?.parts.length ?? 0} sessions</span></div>
-        <div className="meter"><i style={{ width: `${Math.min(100, (minutes / 60) * 100)}%` }} />{MILESTONES.map(([m, l]) => <span key={m} style={{ left: `${(m / 60) * 100}%` }}><em>{m} min · {l}</em></span>)}</div>
-        {ds && ds.parts.length > 0 && (
-          <div className="stack" style={{ gap: 4, marginTop: 30 }}>
-            {ds.parts.slice().reverse().map((p) => (
-              <div key={p.job} className="row between small" style={{ padding: "6px 0", borderTop: "1px solid var(--line)" }}>
-                <span>{p.sources.map((s) => s.name).join(", ")}</span>
-                <span className="row" style={{ gap: 10 }}>
-                  <span className="dim">{p.minutes.toFixed(1)} of {p.input_minutes.toFixed(1)} min kept{Object.keys(p.dropped).length ? ` · dropped ${Object.entries(p.dropped).map(([k, v]) => `${v} ${k}`).join(", ")}` : ""}</span>
-                  <button className="icon-btn danger-h" aria-label="Remove session" onClick={async () => { if (await confirm({ title: "Remove this session from the dataset?", confirm: "Remove", danger: true })) { await api(`datasets/${name}/${p.job}`, { method: "DELETE" }); refresh(); } }}><TrashSimple size={14} /></button>
-                </span>
+        <div style={{ marginTop: 16 }}>
+          <div className="row between"><b>{name || "…"} · {minutes.toFixed(1)} min of clean clips</b>
+            <span className="row" style={{ gap: 10 }}><span className="dim small">{ds?.clips ?? 0} clips · {ds?.parts.length ?? 0} sessions</span>
+              {minutes > 0 && !adding && <button className="sm" onClick={() => setAdding(true)}><UploadSimple size={13} /> Add recordings</button>}</span></div>
+          <div className="meter"><i style={{ width: `${Math.min(100, (minutes / 60) * 100)}%` }} />{MILESTONES.map(([m, l]) => <span key={m} style={{ left: `${(m / 60) * 100}%` }}><em>{m} min · {l}</em></span>)}</div>
+          {ds && ds.parts.length > 0 && (
+            <details style={{ marginTop: 30 }}><summary className="small dim">Sessions</summary>
+              <div className="stack" style={{ gap: 4, marginTop: 6 }}>
+                {ds.parts.slice().reverse().map((p) => (
+                  <div key={p.job} className="row between small" style={{ padding: "6px 0", borderTop: "1px solid var(--line)" }}>
+                    <span>{p.sources.map((s) => s.name).join(", ")}</span>
+                    <span className="row" style={{ gap: 10 }}>
+                      <span className="dim">{p.minutes.toFixed(1)} of {p.input_minutes.toFixed(1)} min kept{Object.keys(p.dropped).length ? ` · dropped ${Object.entries(p.dropped).map(([k, v]) => `${v} ${k}`).join(", ")}` : ""}</span>
+                      <button className="icon-btn danger-h" aria-label="Remove session" onClick={async () => { if (await confirm({ title: "Remove this session from the dataset?", confirm: "Remove", danger: true })) { await api(`datasets/${name}/${p.job}`, { method: "DELETE" }); refresh(); } }}><TrashSimple size={14} /></button>
+                    </span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
+            </details>
+          )}
+        </div>
       </div>
       {name && (
         <div className="stack" style={{ gap: 16 }}>
-          <Collect name={name} onAdded={(t) => { refresh(); if (t) setFollow(t); }} />
-          <Train name={name} minutes={minutes} follow={follow} onTrained={loadModels} />
-          <EveryEngine name={name} minutes={minutes} mine={mine} onMade={loadMine} />
-          <Benchmark mine={mine} name={name} />
-          <KokoroVoice mine={mine} name={name} />
+          <Collect name={name} open={!minutes || adding} onClose={() => setAdding(false)} onAdded={(t) => { refresh(); if (t) setFollow(t); }} />
+          {make === "orpheus"
+            ? <Train name={name} minutes={minutes} follow={follow} head={pickEngine} onTrained={loadModels} />
+            : <EveryEngine name={name} minutes={minutes} mine={mine} head={pickEngine} onMade={loadMine} />}
+          <details className="card"><summary><b>More tools</b> <span className="dim small">· compare engines (Benchmark) · find the voice in Kokoro</span></summary>
+            <div className="stack" style={{ gap: 16, marginTop: 14 }}>
+              <Benchmark mine={mine} name={name} />
+              <KokoroVoice mine={mine} name={name} />
+            </div>
+          </details>
         </div>
       )}
       <div style={{ height: 30 }} />
