@@ -53,7 +53,7 @@ All routes need `Authorization: Bearer $WORKER_SECRET`, except `/files/*`, which
 |---|---|
 | `GET /health` | GPU, VRAM budget, engine states, queue |
 | `GET /voices` | catalogue (same as `list_voices`) |
-| `POST /jobs` · `GET /jobs` · `GET /jobs/{id}` · `POST /jobs/{id}/cancel` | job queue (FIFO, one job at a time). `kind`: `tts` (default), `transcribe`, `video`, `image`, `animate`, `reference` (`enhance`), `revoice` (`enhance`), `clean`, `story` |
+| `POST /jobs` · `GET /jobs` · `GET /jobs/{id}` · `POST /jobs/{id}/cancel` | job queue (FIFO, one job at a time). `kind`: `tts` (default), `transcribe`, `video`, `image`, `animate`, `reference` (`enhance`), `revoice` (`enhance`), `clean`, `story`, `dataset`, `train`, `benchmark`, `voicewalk` |
 | `POST /speakable` | `{lines, pronounce?, lexicon?}` → per line, the spoken parts and pauses (pronunciation dry run) |
 | `POST /jobs/{id}/push` | `{targets: {file: presigned PUT url}}`: the worker uploads results straight to R2 |
 | `POST /refs` | `{name, audio_b64 \| url, transcript?}` (raw; the dashboard uses `kind: reference` jobs, which clean + transcribe) |
@@ -84,6 +84,13 @@ voice lines → scene timeline (0.25 s lead-in, 0.3 s between scenes, 0.8 s tail
 still per scene (all stills first, then Wan clips if `visuals: clips`, so models switch once) → Ken Burns segments
 (1080×1920 / 1920×1080, 30 fps) → 0.35 s cross-fades → ASS captions (Anton, word-by-word highlight for vertical; Inter
 subtitles for wide) → voice + music (levelled, sidechain-ducked) mastered to the platform → H.264/AAC MP4, faststart.
+**Voicewalk job** `{kind: "voicewalk", name, voice, ref, rounds?}`: finds the Kokoro style vector closest to a
+recording of you (`voice`, synced from `ref`): every English Kokoro voice is auditioned against it (WavLM voice match),
+the closest few are blended, then a hill-climb over the mix of voices (10-80 rounds, default 24) keeps every step that
+sounds more like you. The result is checked with Whisper on a sentence it was never tuned on (stepping back to a clearer
+state if it mumbles) and saved as `voice.npy` + `sample.wav`. Kokoro jobs then speak it as voice `kv_<name>`, with
+`kvoices: {kv_<name>: {job, url}}` (the dashboard attaches the links).
+
 **Reference job** `{kind: "reference", name, url, version}`: ffmpeg cleans the recording (high-pass, low-pass, FFT
 denoise, trim, −3 dBFS), Whisper transcribes it, takes over ~24 s are cut to ≤ 20 s at a word boundary.
 
@@ -110,7 +117,7 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 | `chatterbox` | voice | 4 GB | 4 GB | `female` / `male` | Chatterbox 0.5B (Resemble AI, MIT). Emotion dial + zero-shot cloning; 23 languages incl. Hindi. |
 | `orpheus` | voice | 11.5 GB | 7 GB | `tara` / `dan` | Orpheus 3B on vLLM. Most human-sounding; inline tags <laugh> <chuckle> <sigh> <cough> <sniffle> <groan> <yawn> <gasp>. |
 | `myvoice` | voice | 11.5 GB | 7 GB | `me` / `me` | Your own voice model: Orpheus 3B fine-tuned on 30-60 min of your recordings (Your model page: collect, then Train). Same tags as Orpheus; with flow, a long script is voiced as one continuous take. |
-| `whisper` | voice | 6 GB | 3.2 GB | n/a (subtitles) | Whisper large-v3 (OpenAI). Best open subtitle model: word-level timestamps, 99 languages. |
+| `whisper` | voice | 4 GB | 2.2 GB | n/a (subtitles) | Whisper large-v3-turbo (OpenAI). Large-v3 accuracy with a 4-layer decoder: several times faster subtitles, review and dataset cuts. Word-level timestamps, 99 languages. |
 | `enhance` | voice | 3 GB | 0.7 GB | n/a (clean-up) | Resemble Enhance (MIT). Studio clean-up: removes noise and room echo, restores the detail a cheap mic or phone loses (to 44.1 kHz). |
 | `qwen` | voice | 6 GB | 4.6 GB | `female` / `male` | Qwen3-TTS 1.7B Base (Alibaba, Apache-2.0). Best voice cloning: a 10-20 s recording of you becomes your voice. 10 languages (no Hindi: use Chatterbox). |
 | `wan` | visual | 20 GB | 23 GB | n/a (video) | Wan 2.2 TI2V 5B (Alibaba, Apache-2.0). Sharp 720p, strong motion and prompt following. Turbo: 4 steps. |
@@ -150,9 +157,9 @@ Generated from `worker/config.py` by `python3 scripts/gen-docs.py`; don't edit b
 
 | Param | Default | Range | Notes |
 |---|---|---|---|
-| `temperature` | `0.6` | 0.1 – 1.5 | lower = steadier and more literal, higher = more expressive but riskier |
+| `temperature` | `0.5` | 0.1 – 1.5 | lower = clearer and steadier (0.45-0.55 for a crisp explainer), higher = more expressive but riskier |
 | `top_p` | `0.95` | 0.1 – 1 |  |
-| `repetition_penalty` | `1.1` | 1 – 2 |  |
+| `repetition_penalty` | `1.12` | 1 – 2 |  |
 | `seed` | `7` |  | change it to get a different take of the same line |
 | `flow` | `True` |  | carry your delivery from one sentence into the next, so a script sounds like one take (needs a model trained with flow; slower on long scripts because sentences are voiced in order) |
 

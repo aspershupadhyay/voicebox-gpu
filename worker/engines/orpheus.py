@@ -41,6 +41,13 @@ def has_bf16():
     return torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] >= 8
 
 
+def fp8_ok():
+    """ORPHEUS_FP8=1 on a GPU with fp8 tensor cores (L4, RTX 40xx, H100: compute 8.9+). Off by default: 8-bit weights
+    are faster but can cost a little clarity, so turn it on, run benchmark_voices, and keep it if the scores hold."""
+    return (os.environ.get("ORPHEUS_FP8", "0") == "1" and torch.cuda.is_available()
+            and torch.cuda.get_device_capability(0) >= (8, 9))
+
+
 class Engine:
     def __init__(self):
         from snac import SNAC
@@ -58,8 +65,18 @@ class Engine:
                 if LORA or MULTI_LORA:
                     rank = int(json.load(open(os.path.join(LORA, "adapter_config.json"))).get("r", LORA_RANK)) if LORA else LORA_RANK
                     lora = {"enable_lora": True, "max_lora_rank": max(16, rank, LORA_RANK if MULTI_LORA else 0), "max_loras": 2 if MULTI_LORA else 1}
-                self.llm = LLM(model=MODEL, dtype="bfloat16" if has_bf16() else "float16", gpu_memory_utilization=util,
-                               max_model_len=8192, enable_prefix_caching=True, **lora)
+                kw = dict(model=MODEL, dtype="bfloat16" if has_bf16() else "float16", gpu_memory_utilization=util,
+                          max_model_len=8192, enable_prefix_caching=True, max_num_seqs=64, **lora)
+                if fp8_ok():  # Ada / Hopper: 8-bit weights, half the memory traffic, ~1.5x the tokens a second
+                    try:
+                        self.llm = LLM(quantization="fp8", **kw)
+                        print("[orpheus] fp8 weights", flush=True)
+                    except Exception as e:  # noqa: BLE001  e.g. this vLLM can't mix fp8 with LoRA: plain weights then
+                        print(f"[orpheus] fp8 unavailable ({type(e).__name__}: {e}); 16-bit weights", flush=True)
+                        torch.cuda.empty_cache()
+                        self.llm = LLM(**kw)
+                else:
+                    self.llm = LLM(**kw)
                 if LORA:
                     from vllm.lora.request import LoRARequest
                     self.lora_req = LoRARequest("myvoice", 1, LORA)

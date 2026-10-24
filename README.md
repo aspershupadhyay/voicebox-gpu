@@ -11,7 +11,7 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
 ```
 
 - **Voice engines:** Orpheus 3B on vLLM (most human, English), Qwen3-TTS 1.7B (best cloning of *your* recorded voice, 10 languages),
-  Chatterbox (emotion dial, cloning, 23 languages incl. Hindi), Kokoro (instant drafts). Each has `female` and `male` presets; all
+  Chatterbox (emotion dial, cloning, 23 languages incl. Hindi), Kokoro (instant drafts, and your own voice found inside Kokoro: `kv_<name>`). Each has `female` and `male` presets; all
   parameters are in [docs/API.md](docs/API.md). No length limits: long text is split at sentences and re-joined.
 - **Your voice:** record 20 s in the browser (Voices page); the worker cleans it and Whisper transcribes it; it's kept in R2.
   [docs/YOUR_VOICE.md](docs/YOUR_VOICE.md) has the recording and settings guide for a pro tech-explainer sound.

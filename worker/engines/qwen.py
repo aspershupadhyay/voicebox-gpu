@@ -14,9 +14,16 @@ class Engine:
     def __init__(self):
         from qwen_tts import Qwen3TTSModel
         dev = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self.model = Qwen3TTSModel.from_pretrained(MODEL, device_map=dev,
-                                                   dtype=torch.bfloat16 if dev != "cpu" else torch.float32,
-                                                   attn_implementation="sdpa")
+        bf16 = dev != "cpu" and torch.cuda.get_device_capability(0)[0] >= 8
+        attn = "sdpa"
+        if bf16:
+            try:  # FlashAttention-2 on Ampere+ when it's installed: faster batches, less memory per take
+                import flash_attn  # noqa: F401
+                attn = "flash_attention_2"
+            except ImportError:
+                pass
+        dtype = torch.bfloat16 if dev != "cpu" else torch.float32
+        self.model = Qwen3TTSModel.from_pretrained(MODEL, device_map=dev, dtype=dtype, attn_implementation=attn)
         self.prompts = {}  # (ref_path, mtime, has_text) -> clone prompt
 
     def _prompt(self, ref_path, ref_text):

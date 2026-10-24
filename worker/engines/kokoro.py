@@ -35,12 +35,24 @@ class Engine:
         voices = os.environ.get("KOKORO_VOICES") or _fetch("voices-v1.0.bin", folder)
         self.k = Kokoro(model, voices)
         self.ja = None
+        self.styles = {}
+
+    def _style(self, path):
+        """A voice found for someone (voicewalk.py): its style tensor, read once per file."""
+        import numpy as np
+        key = (path, os.path.getmtime(path))
+        if key not in self.styles:
+            self.styles = {k: v for k, v in self.styles.items() if k[0] != path}
+            self.styles[key] = np.load(path).astype("float32")
+        return self.styles[key]
 
     def synth(self, text, voice, params, ref_path=None, ref_text=None):
         voice = voice or "af_heart"
         # the voice's first letter is its language: a=US English, b=UK English, e=Spanish, f=French, h=Hindi,
-        # i=Italian, j=Japanese, p=Brazilian Portuguese, z=Mandarin
+        # i=Italian, j=Japanese, p=Brazilian Portuguese, z=Mandarin. A found voice (kv_*, ref_path = its .npy) is English.
         lang = params.get("lang") or LANG_BY_PREFIX.get(voice[0], "en-us")
+        if ref_path and ref_path.endswith(".npy"):
+            voice = self._style(ref_path)
         speed = float(params.get("speed", 1.0))
         if lang == "ja":
             self.ja = self.ja or _ja_g2p()

@@ -12,7 +12,7 @@ import { call } from "./worker";
 export type VoiceModel = {
   name: string; job: string; created: number; clips: number; minutes: number; epochs: number; steps: number; loss: number;
   speaker: string; base: string; sample: { text: string; duration: number } | null;
-  best_epoch?: number; eval_loss?: number[]; flow_clips?: number; held_out?: number;
+  best_epoch?: number; eval_loss?: number[]; listening?: { epoch: number; match: number | null; similarity: number | null; score: number | null }[]; flow_clips?: number; held_out?: number;
 };
 type TrainJob = { id: string; voice: string; status: string; train?: Omit<VoiceModel, "name" | "job" | "created"> };
 
@@ -77,10 +77,18 @@ export async function modelLinks() {
 /** Attach the trained models to a worker job that voices anything with myvoice (a voiceover, a benchmark candidate, a
  *  story). Other jobs pass through untouched. */
 export async function withModels<T extends Record<string, unknown>>(body: T): Promise<T> {
-  const cands = Array.isArray(body.candidates) ? (body.candidates as { engine?: string }[]) : [];
-  if (body.engine !== "myvoice" && !cands.some((c) => c?.engine === "myvoice")) return body;
+  const cands = Array.isArray(body.candidates) ? (body.candidates as { engine?: string; voice?: string }[]) : [];
+  let out = body;
+  // your voice found in Kokoro (kv_<name>): the style vector travels as a signed link too
+  const kv = (e?: unknown, v?: unknown) => e === "kokoro" && String(v ?? "").startsWith("kv_");
+  if (kv(body.engine, body.voice) || cands.some((c) => kv(c?.engine, c?.voice))) {
+    const { kvoiceLinks } = await import("./kvoices");
+    const kvoices = await kvoiceLinks().catch(() => ({}));
+    if (Object.keys(kvoices).length) out = { ...out, kvoices };
+  }
+  if (body.engine !== "myvoice" && !cands.some((c) => c?.engine === "myvoice")) return out;
   const models = await modelLinks().catch(() => ({}));
-  return Object.keys(models).length ? { ...body, models } : body;
+  return Object.keys(models).length ? { ...out, models } : out;
 }
 
 /** For the worker at start-up: a 7-day link to the newest adapter (the longest an S3 signature lasts). */
