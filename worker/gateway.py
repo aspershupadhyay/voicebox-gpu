@@ -1344,7 +1344,9 @@ def make_reference_job(body):
     job = _base_job("reference", body)
     job.update({"engine": "whisper", "voice": name, "lines": [{"id": "reference", "url": url}], "params": {}, "post": {},
                 "transcript": str(body.get("transcript") or "").strip() or None, "version": str(body.get("version") or "")[:40],
-                "enhance": body.get("enhance", True) is not False})
+                "enhance": body.get("enhance", True) is not False, "from_dataset": bool(body.get("from_dataset"))})
+    if job["from_dataset"]:  # url is a dataset zip: its clips are already clean and transcribed
+        job["enhance"] = False
     job["est_total"] = 25.0 + (10.0 if job["enhance"] else 0)
     return _enqueue(job)
 
@@ -2042,6 +2044,38 @@ def run_video(job):
     job["results"] = [{"id": "video", "text": g["prompt"], "duration": info["duration"]}]
 
 
+def _reference_from_dataset(url, jdir, out):
+    """A cloning reference from a dataset zip (Your model): a run of consecutive 3-12 s clips from the middle of the
+    session, ~14-20 s in all, joined with short pauses. Writes out (WAV) and returns the words said."""
+    import io
+    import numpy as np
+    import soundfile as sf
+    zpath = os.path.join(jdir, "dataset.zip")
+    _download(url, zpath, 2 * 1024 * 1024 * 1024)
+    with zipfile.ZipFile(zpath) as z:
+        rows = [ln.split("|", 1) for ln in z.read("metadata.csv").decode("utf-8").splitlines() if "|" in ln]
+        lens = {f: sf.info(io.BytesIO(z.read(f))).duration for f, _ in rows}
+        ok = [3.0 <= lens[f] <= 12.0 for f, _ in rows]
+        best, mid = None, len(rows) // 2
+        for i in sorted(range(len(rows)), key=lambda k: abs(k - mid)):  # start near the middle: past the intro, warmed up
+            total, j = 0.0, i
+            while j < len(rows) and ok[j] and total < 14.0:
+                total += lens[rows[j][0]]
+                j += 1
+            if 14.0 <= total <= 22.0:
+                best = (i, j)
+                break
+        if not best:
+            raise ValueError("no run of clean 3-12 s clips adds up to 14-20 s in this dataset: add a longer session")
+        parts, sr = [], 24000
+        for f, _ in rows[best[0]:best[1]]:
+            a, sr = sf.read(io.BytesIO(z.read(f)), dtype="float32")
+            parts += [a if a.ndim == 1 else a.mean(axis=1), np.zeros(int(0.3 * sr), dtype="float32")]
+    os.remove(zpath)
+    sf.write(out, np.concatenate(parts[:-1]), sr, subtype="PCM_16", format="WAV")
+    return " ".join(t.strip() for _, t in rows[best[0]:best[1]])
+
+
 def run_reference(job):
     """Turn a raw recording into a clean cloning reference: mono, rumble + hiss removed, silence trimmed,
     level normalised, cut to <= ~20 s at a word boundary, transcribed by Whisper (cloners need the words)."""
@@ -2050,7 +2084,10 @@ def run_reference(job):
     jdir = os.path.join(JOBS_DIR, job["id"])
     job["stage"] = "downloading"
     raw = os.path.join(jdir, "recording.in")
-    _download(job["lines"][0]["url"], raw, 60 * 1024 * 1024)
+    if job.get("from_dataset"):
+        job["transcript"] = _reference_from_dataset(job["lines"][0]["url"], jdir, raw)
+    else:
+        _download(job["lines"][0]["url"], raw, 60 * 1024 * 1024)
     job["stage"] = "cleaning"
     clean = os.path.join(jdir, "clean.wav")
     prep = os.path.join(jdir, "prep.wav")

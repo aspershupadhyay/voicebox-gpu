@@ -259,6 +259,16 @@ export async function POST(req: Request, ctx: Ctx) {
       // POST {name, label?, key}: clean + transcribe an uploaded recording on the worker, then keep it in R2
       const name = String(body.name ?? "").toLowerCase();
       if (!VOICE_RE.test(name) || !isCustomVoice(name)) return Response.json({ error: "name: lowercase letters, digits, - or _ (not female/male/default)" }, { status: 400 });
+      if (body.dataset) {
+        // a voice from a Your model dataset: the worker picks ~15-20 s of its clean clips (any engine can then clone it)
+        const ds = String(body.dataset);
+        if (!VOICE_RE.test(ds)) return Response.json({ error: "dataset: lowercase letters, digits, - or _" }, { status: 400 });
+        const parts = (await datasetManifest(ds)).parts.sort((x, y) => y.clips - x.clips);
+        if (!parts.length) return Response.json({ error: `the ${ds} dataset is empty: collect first` }, { status: 400 });
+        const job = await call("/jobs", { body: { kind: "reference", name, url: parts[0].url, from_dataset: true, label: String(body.label ?? name).slice(0, 60),
+          version: Date.now().toString(36) } });
+        return Response.json(job, { status: 202 });
+      }
       if (!/^uploads\/[A-Za-z0-9._-]+$/.test(String(body.key ?? ""))) return Response.json({ error: "upload the recording first" }, { status: 400 });
       const job = await call("/jobs", { body: { kind: "reference", name, url: await presignPath(String(body.key), 3600), label: String(body.label ?? name).slice(0, 60),
         version: Date.now().toString(36), language: body.language || undefined, enhance: body.enhance ?? (await getSettings()).enhance_recordings } });
