@@ -42,10 +42,11 @@ def has_bf16():
 
 
 def fp8_ok():
-    """ORPHEUS_FP8=1 on a GPU with fp8 tensor cores (L4, RTX 40xx, H100: compute 8.9+). Off by default: 8-bit weights
-    are faster but can cost a little clarity, so turn it on, run benchmark_voices, and keep it if the scores hold."""
-    return (os.environ.get("ORPHEUS_FP8", "0") == "1" and torch.cuda.is_available()
-            and torch.cuda.get_device_capability(0) >= (8, 9))
+    """8-bit weights: half the memory traffic per generated token, which is what bounds Orpheus's speed. On by default
+    on Ampere and newer (A100, L4, A10, H100: vLLM runs fp8 natively from compute 8.9, weight-only on 8.0-8.6); ORPHEUS_FP8=0
+    turns it off. If this vLLM can't start fp8 (e.g. with LoRA adapters) the engine falls back to 16-bit by itself."""
+    return (os.environ.get("ORPHEUS_FP8", "1") == "1" and torch.cuda.is_available()
+            and torch.cuda.get_device_capability(0) >= (8, 0))
 
 
 class Engine:

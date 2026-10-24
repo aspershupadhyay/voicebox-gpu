@@ -64,6 +64,13 @@ export async function GET(req: Request, ctx: Ctx) {
       const style = new URL(req.url).searchParams.get("style") ?? "tech";
       return Response.json(await describeProfile(b, c, style) ?? { engine: b, voice: c, style, jobs: 0 });
     }
+    if (a === "health" && !b) {
+      // the Health page: what's working, what isn't (job notes in R2) + the worker's own state and self-check
+      const { healthSummary } = await import("@/lib/telemetry");
+      const { WORKER_VERSION } = await import("@/lib/bundle");
+      const worker = await call<Record<string, unknown>>("/health", { timeoutMs: 8000 }).catch((e: Error) => ({ offline: e.message }));
+      return Response.json({ ...(await healthSummary()), worker, latest_version: WORKER_VERSION });
+    }
     if (a === "coach" && b && VOICE_RE.test(b)) return Response.json(await (await import("@/lib/coach")).report(b));
     if (a === "datasets" && !b) return Response.json({ datasets: await listDatasets() });
     if (a === "datasets" && b && VOICE_RE.test(b)) return Response.json(c === "manifest" ? await datasetManifest(b) : await listDataset(b));
@@ -77,6 +84,7 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "jobs" && b) {
       const job = await call<Parameters<typeof archiveWorkerJob>[0]>(`/jobs/${b}`);
       if (new URL(req.url).searchParams.has("raw")) return Response.json(job); // status only, no archiving (sample script)
+      await (await import("@/lib/telemetry")).noteJob(job as unknown as Parameters<typeof import("@/lib/telemetry").noteJob>[0]).catch(() => null); // Health page
       if (job.kind === ("dataset" as string)) {
         const dj = job as unknown as Parameters<typeof archiveDataset>[0];
         const stored = job.status === "done" ? await archiveDataset(dj) : null;
@@ -133,6 +141,12 @@ export async function POST(req: Request, ctx: Ctx) {
       if (b === "rate") return Response.json(await coach.rate({ engine: String(body.engine ?? ""), voice: String(body.voice ?? ""), job: String(body.job ?? ""),
         line: String(body.line ?? ""), rating: Number(body.rating) || 0, text: body.text ? String(body.text) : undefined, duration: Number(body.duration) || 0 }));
       if (b && VOICE_RE.test(b) && c === "script") return Response.json(await coach.nextScript(b, Number(body.minutes) || 8));
+      if (b && VOICE_RE.test(b) && (c === "polish" || c === "practice")) {
+        // RLHF: polish the model in use on preference pairs, or voice practice takes to collect more pairs
+        const pairs = await import("@/lib/pairs");
+        const job = await call("/jobs", { body: c === "polish" ? await pairs.dpoJobBody(b) : await withProfile(await pairs.practiceJobBody(b, Number(body.count) || 40)) });
+        return Response.json(job, { status: 202 });
+      }
       if (b && VOICE_RE.test(b) && c === "gate" && (body.action === "use" || body.action === "compare") && ID.test(String(body.job ?? "")))
         return Response.json(await coach.gateAction(b, body.action, String(body.job)));
       return Response.json({ error: "not found" }, { status: 404 });
@@ -307,6 +321,11 @@ export async function POST(req: Request, ctx: Ctx) {
       if (!ID.test(b) || !files.length || !files.every((f) => FILE_RE.test(f))) return Response.json({ error: "bad job id or file names" }, { status: 400 });
       return Response.json(await presignPuts(b, files));
     }
+    if (a === "worker" && b === "update") {
+      // the worker fetches the newest code from this dashboard and restarts itself (no Colab restart needed)
+      return Response.json(await call("/admin/update", { body: { url: `${new URL(req.url).origin}/api/bundle` }, timeoutMs: 55_000 }));
+    }
+    if (a === "worker" && b === "selfcheck") return Response.json(await call("/selfcheck", { body: {} }));
     if (a === "refs") return Response.json(await call("/refs", { body, timeoutMs: 55_000 }));
     return Response.json({ error: "not found" }, { status: 404 });
   } catch (e) {

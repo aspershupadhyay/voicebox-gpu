@@ -28,6 +28,7 @@ def main():
     ap.add_argument("--base", default="http://127.0.0.1:8000")
     ap.add_argument("--secret", default=os.environ.get("WORKER_SECRET", ""))
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--json", help="also write the results here (the worker's own check after start / training)")
     a = ap.parse_args()
     if not a.secret:
         sys.exit("WORKER_SECRET isn't set here: pass --secret (it's in the notebook's first cell output / your .secrets.local)")
@@ -49,7 +50,7 @@ def main():
     results = []
 
     def report(name, ok, detail, engine=None):
-        results.append((name, ok))
+        results.append((name, ok, detail))
         print(f"{'PASS' if ok else 'FAIL'}  {name:<26} {detail}", flush=True)
         if not ok and engine:
             try:
@@ -88,8 +89,10 @@ def main():
             report("transcribe · Whisper", False, f"couldn't voice the test take: {j.get('error')}", "kokoro")
     h = req("/health")
     print(f"\nGPU after: {(h.get('gpu') or {}).get('used_gb')} GB used · engine errors: {h.get('engine_errors') or 'none'}")
-    bad = [n for n, ok in results if not ok]
+    bad = [n for n, ok, _ in results if not ok]
     print("ALL PASS" if not bad else f"{len(bad)} FAILED: {', '.join(bad)}")
+    if a.json:
+        json.dump({"ok": not bad, "quick": a.quick, "steps": [{"name": n, "ok": ok, "detail": str(d)[:300]} for n, ok, d in results]}, open(a.json, "w"))
     sys.exit(1 if bad else 0)
 
 

@@ -43,6 +43,7 @@ async function waitFor(id: string, seconds: number): Promise<Job> {
     await sleep(Math.min(4000, Math.max(0, until - Date.now())));
     job = await call<Job>(`/jobs/${id}`);
   }
+  await import("@/lib/telemetry").then((t) => t.noteJob(job as unknown as Parameters<typeof t.noteJob>[0])).catch(() => null); // Health page
   if (job.status === "error" && (job.kind as string) === "train") {
     // "exit 1" says nothing: the end of the train log is the actual reason
     const log = await call<{ text: string }>("/logs/train?n=60").then((r) => r.text.slice(-6000)).catch(() => null);
@@ -353,10 +354,10 @@ const handler = createMcpHandler(
       "voice_coach",
       {
         title: "How a trained voice is improving",
-        description: "The voice coach for one person's trained voice (myvoice <name> or qwen ft_<name>). Every voiceover it reads is scored line by line (words heard, voice match, naturalness, pitch spread, pace, pauses) and people can rate lines. action report (default): weak spots (e.g. flat questions, rushed long sentences), words it keeps missing (fix with pronounce in update_settings), recent scores, and the last model comparisons. action script: the next recording session (~minutes long) written around those weak spots; record it and add it with voice_dataset (auto_train: true) — 5+ new minutes retrain the voice, and the retrain goes live only if it beats the current model. action rate: thumbs up (1) / down (-1) / clear (0) on one line of a finished job (job_id + line id).",
+        description: "The voice coach for one person's trained voice (myvoice <name> or qwen ft_<name>). Every voiceover it reads is scored line by line (words heard, voice match, naturalness, pitch spread, pace, pauses) and people can rate lines. action report (default): weak spots (e.g. flat questions, rushed long sentences), words it keeps missing (fix with pronounce in update_settings), recent scores, and the last model comparisons. action script: the next recording session (~minutes long) written around those weak spots; record it and add it with voice_dataset (auto_train: true) — 15+ new minutes retrain the voice, and the retrain goes live only if it beats the current model. action rate: thumbs up (1) / down (-1) / clear (0) on one line of a finished job (job_id + line id). RLHF: report.feedback counts preference pairs (the review's kept take vs its worst take, ratings count double); action practice voices ~40 bank sentences 3 takes each to collect pairs (minutes of GPU); action polish (100+ pairs, 200 better) runs DPO on the Orpheus model in use (~15-30 min on an A100), then the model check decides whether it goes live.",
         inputSchema: z.object({
           name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/).describe("whose voice (the dataset / model name)"),
-          action: z.enum(["report", "script", "rate"]).optional(),
+          action: z.enum(["report", "script", "rate", "practice", "polish"]).optional(),
           minutes: z.number().min(2).max(20).optional().describe("script: session length (default 8)"),
           job_id: z.string().optional().describe("rate: the voiceover job"),
           line: z.string().optional().describe("rate: the line id"),
@@ -367,6 +368,12 @@ const handler = createMcpHandler(
         try {
           const coach = await import("@/lib/coach");
           if (action === "script") return text(await coach.nextScript(name, minutes ?? 8));
+          if (action === "practice" || action === "polish") {
+            const pairs = await import("@/lib/pairs");
+            const { withProfile } = await import("@/lib/profiles");
+            const job = await call<Job>("/jobs", { body: action === "polish" ? await pairs.dpoJobBody(name) : await withProfile(await pairs.practiceJobBody(name)) });
+            return text(withHint(job));
+          }
           if (action === "rate") {
             if (!job_id || !line || rating == null) throw new Error("rate needs job_id, line and rating");
             const { getLibJob } = await import("@/lib/library");
@@ -402,7 +409,7 @@ const handler = createMcpHandler(
       "voice_dataset",
       {
         title: "Your voice dataset",
-        description: "Training data collected for the user's own voice model (Your model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-20 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. One dataset per person (name = that person's model name). Training: auto_train starts it as soon as the batch is stored (once 15+ minutes are collected; a voice that already has a model retrains once 5+ new minutes are in), else train_voice (or the Your model page's Train button) runs it on the GPU worker (about 1-2 h); the result is engine myvoice, voice = the dataset name.",
+        description: "Training data collected for the user's own voice model (Your model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-20 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. One dataset per person (name = that person's model name). Training: auto_train starts it as soon as the batch is stored (once 15+ minutes are collected; a voice that already has a model retrains once 15+ new minutes are in), else train_voice (or the Your model page's Train button) runs it on the GPU worker (about 1-2 h); the result is engine myvoice, voice = the dataset name.",
         inputSchema: z.object({
           name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/).optional().describe("dataset name = whose voice (each person has their own, e.g. their first name); default me"),
           add_urls: z.array(z.string().url()).max(20).optional().describe("recordings to add"),
