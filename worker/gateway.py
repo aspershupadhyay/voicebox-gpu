@@ -2115,7 +2115,8 @@ def make_dataset_job(body):
         lines.append({"id": f"s{i + 1:02d}", "url": _http_url(src.get("url"), f"source {i + 1} url"), "name": str(src.get("name") or f"recording {i + 1}")[:80],
                       "text": str(src.get("text") or "")[:20000]})
     job = _base_job("dataset", body)
-    job.update({"voice": name, "lines": lines, "engine": "whisper"})
+    # auto_train: once this batch is stored, the dashboard starts training on the whole dataset (if it has enough)
+    job.update({"voice": name, "lines": lines, "engine": "whisper", "auto_train": bool(body.get("auto_train"))})
     job["est_total"] = 120.0 * len(lines)
     return _enqueue(job)
 
@@ -2742,7 +2743,7 @@ def _progress(job):
 def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
                                  "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup",
-                                 "dataset", "benchmark", "train", "kvoice", "walk")}
+                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train")}
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
     if job["kind"] == "tts":

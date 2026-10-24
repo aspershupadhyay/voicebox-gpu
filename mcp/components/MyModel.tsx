@@ -15,7 +15,7 @@ import { FilePreview, PauseButton, SavedTakes, startRecording, VoiceOrb, type Re
 import { useStatus } from "./Shell";
 
 type Part = { job: string; clips: number; minutes: number; input_minutes: number; dropped: Record<string, number>; created: number;
-  sources: { name: string; duration: number; clips: number }[] };
+  sources: { name: string; duration: number; clips: number }[]; auto_train?: { job?: string; skipped?: string } };
 type Dataset = { name: string; parts: Part[]; clips: number; minutes: number };
 type Model = { name: string; job: string; created: number; clips: number; minutes: number; epochs: number; loss: number;
   sample: { text: string; duration: number } | null; sample_url?: string | null; best_epoch?: number; flow_clips?: number;
@@ -56,7 +56,7 @@ function usePoll(onDone?: (j: Polled) => void) {
 
 type Pending = { file: File; forget?: () => void; take?: string };
 
-function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
+function Collect({ name, onAdded }: { name: string; onAdded: (trainJob?: string) => void }) {
   const { status } = useStatus();
   const { toast } = useDialog();
   const [tab, setTab] = useState<"read" | "upload">("read");
@@ -68,12 +68,16 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
   const [pending, setPending] = useState<Pending[]>([]);
   const [up, setUp] = useState<number | null>(null);
   const [err, setErr] = useState("");
+  // train on everything collected as soon as a batch is stored (the server starts it, so the tab can close)
+  const [auto, setAuto] = useState(true);
+  useEffect(() => { try { setAuto(localStorage.getItem("vb-autotrain") !== "0"); } catch {} }, []);
   const sent = useRef<Pending[]>([]); // in the worker's hands: dropped from this device once they're in the dataset
   const { job, start } = usePoll((j) => {
     const p = j.part;
-    toast(`Added ${p?.clips ?? 0} clips (${p?.minutes ?? 0} min) to ${name}`, "ok");
+    const at = p?.auto_train;
+    toast(`Added ${p?.clips ?? 0} clips (${p?.minutes ?? 0} min) to ${name}${at?.job ? ". Training started" : at?.skipped ? `. Not training yet: ${at.skipped}` : ""}`, "ok");
     sent.current.forEach((x) => x.forget?.()); sent.current = [];
-    onAdded();
+    onAdded(at?.job);
   });
   useEffect(() => {
     // a failed batch: give the recordings back, so nothing has to be recorded again
@@ -138,7 +142,7 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
         done += f.size;
       }
       setUp(null);
-      const j = await api<Job>("jobs", { body: { kind: "dataset", name, sources: keys, label: `Dataset · ${name}` } });
+      const j = await api<Job>("jobs", { body: { kind: "dataset", name, sources: keys, label: `Dataset · ${name}`, auto_train: auto } });
       sent.current = list;
       setPending((p) => p.slice(list.length));
       start(j);
@@ -182,7 +186,8 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
       ) : (
         <>
           <p className="dim small" style={{ marginTop: 0 }}>Long recordings of just you talking work great: raw voiceovers, podcast tracks, a video&apos;s audio. Pick as many as you like
-            (up to 20 per batch, 3 hours in all); they add to the list below.</p>
+            (up to 20 per batch, 3 hours in all); they add to the list below. With <b>Train automatically</b> on, training starts by itself
+            once the batch is in and {name} has 15+ minutes (you can close the tab; keep the Colab worker running).</p>
           <label className="drop slim" style={{ cursor: "pointer" }}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files).filter((f) => /^(audio|video)\//.test(f.type)); setPending((p) => [...p, ...fs.map((file) => ({ file }))]); }}>
@@ -197,7 +202,10 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
             <span className="tiny dim">listen, remove what you don&apos;t want</span></div>
           {pending.map((x, k) => <FilePreview key={`${x.file.name}-${k}`} file={x.file} onRemove={() => drop(k)} />)}
           {pending.length > 20 && <span className="tiny dim">The first 20 go in this batch; add the rest after.</span>}
-          <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+          <div className="row" style={{ gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <label className="row small" style={{ gap: 8, marginRight: "auto" }} title={`Starts once ${name} has 15+ minutes; replaces ${name}'s current model`}>
+              <input type="checkbox" style={{ width: "auto" }} checked={auto} onChange={(e) => { setAuto(e.target.checked); try { localStorage.setItem("vb-autotrain", e.target.checked ? "1" : "0"); } catch {} }} />
+              Train automatically when added</label>
             <button className="ghost sm" onClick={() => setPending((p) => { p.forEach((x) => x.forget?.()); return []; })}>Discard all</button>
             <button className="sm" onClick={send} disabled={busy || up !== null || !status?.online || !!rec}
               title={!status?.online ? "Start the GPU worker first (your takes stay saved here)" : undefined}>
@@ -229,7 +237,7 @@ const TRAIN_STAGES: Record<string, string> = { queued: "Waiting for the GPU", in
   downloading: "Fetching your recordings", encoding: "Turning your clips into tokens", loading: "Loading Orpheus 3B",
   training: "Learning your voice", listening: "Listening to every epoch, keeping the best", saving: "Saving your model", testing: "Voicing a test line", done: "Done" };
 
-function Train({ name, minutes, onTrained }: { name: string; minutes: number; onTrained: () => void }) {
+function Train({ name, minutes, follow, onTrained }: { name: string; minutes: number; follow?: string; onTrained: () => void }) {
   const { status } = useStatus();
   const { confirm, toast } = useDialog();
   const [model, setModel] = useState<Model | null>(null);
@@ -243,6 +251,8 @@ function Train({ name, minutes, onTrained }: { name: string; minutes: number; on
   const busy = !!job && ["queued", "running"].includes(job.status);
   const p = job?.progress;
   useResumeJob<Polled>(["train"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
+  // a train job the server started after an upload (auto-train): show its progress here
+  useEffect(() => { if (follow) api<Polled>(`jobs/${follow}`).then(start).catch(() => {}); }, [follow]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function train() {
     setErr("");
@@ -431,6 +441,7 @@ export default function MyModel() {
   const [people, setPeople] = useState<Person[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [ds, setDs] = useState<Dataset | null>(null);
+  const [follow, setFollow] = useState<string>();
   const load = useCallback(() => { if (name) api<Dataset>(`datasets/${name}`).then(setDs).catch(() => setDs(null)); }, [name]);
   const loadModels = useCallback(() => { api<{ models: Model[] }>("models").then((r) => setModels(r.models)).catch(() => {}); }, []);
   useEffect(() => { api<{ voices: MyVoice[] }>("myvoices").then((r) => setMine(r.voices)).catch(() => {}); }, []);
@@ -500,8 +511,8 @@ export default function MyModel() {
       </div>
       {name && (
         <div className="stack" style={{ gap: 16 }}>
-          <Collect name={name} onAdded={refresh} />
-          <Train name={name} minutes={minutes} onTrained={loadModels} />
+          <Collect name={name} onAdded={(t) => { refresh(); if (t) setFollow(t); }} />
+          <Train name={name} minutes={minutes} follow={follow} onTrained={loadModels} />
           <Benchmark mine={mine} name={name} />
           <KokoroVoice mine={mine} name={name} />
         </div>
