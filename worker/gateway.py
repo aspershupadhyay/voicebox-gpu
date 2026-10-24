@@ -289,7 +289,10 @@ class Engines:
                 env = {**os.environ, "VOICEBOX_HOME": HOME, "PATH": venv_bin + os.pathsep + os.environ.get("PATH", ""),
                        "HF_HOME": cache, "KOKORO_MODEL_DIR": cache, "HF_HUB_ENABLE_HF_TRANSFER": "0",
                        "VLLM_USE_FLASHINFER_SAMPLER": "0", "TOKENIZERS_PARALLELISM": "false",
-                       "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
+                       "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                       # Colab sets the notebook's inline plot backend, which an engine's own venv can't load: matplotlib
+                       # then refuses to import (Resemble Enhance imports pyplot and died loading). Engines never show plots.
+                       "MPLBACKEND": "Agg"}
                 p = subprocess.Popen([py, os.path.join(HERE, "engine_host.py"), "--engine", name,
                                       "--port", str(C.ENGINES[name]["port"])], stdout=logf, stderr=logf, env=env, cwd=HERE,
                                      start_new_session=True)  # own process group: stop() also kills vLLM's children
@@ -2127,6 +2130,11 @@ def run_reference(job):
         raise ValueError(f"only {dur:.1f} s of speech: record at least 6-10 seconds")
     words, heard = [], job.get("transcript")
     cap = job.get("max_seconds") or 20.0
+    if dur > cap + 4:  # only the first ~cap seconds are kept: don't make Whisper read a 7 min upload to find the cut
+        a, sr = sf.read(out, dtype="float32")
+        sf.write(out, a[: int((cap + 6) * sr)], sr, subtype="PCM_16")
+        dur = min(dur, cap + 6)
+        heard = None if not job.get("from_dataset") else heard
     if not heard or dur > cap + 4:
         _prepare(job, "whisper")
         job["stage"] = "transcribing"
@@ -2588,7 +2596,8 @@ def run_train(job):
                "work": os.path.join(jdir, "work"), "out": jdir, "progress": prog,
                "cache": os.path.join(C.MYVOICE_DIR, "codes")}, open(cfg, "w"))
     job["stage"] = "training"
-    env = {**os.environ, "HF_HOME": cache_dir("myvoice"), "TOKENIZERS_PARALLELISM": "false", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
+    env = {**os.environ, "HF_HOME": cache_dir("myvoice"), "TOKENIZERS_PARALLELISM": "false", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+           "MPLBACKEND": "Agg"}
     with open(os.path.join(LOGS_DIR, "train.log"), "a") as logf:
         p = subprocess.Popen([py, os.path.join(HERE, "train.py"), cfg], stdout=logf, stderr=logf, env=env, cwd=HERE, start_new_session=True)
         while p.poll() is None:

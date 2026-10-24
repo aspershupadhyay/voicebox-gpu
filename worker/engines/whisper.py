@@ -78,26 +78,34 @@ class Engine:
         return gen
 
     def _batch(self, seconds):
-        """How many 30 s windows to decode at once: word timestamps keep the cross-attention maps, ~0.6 GB a window
-        on turbo, so the batch follows the memory actually free right now (Orpheus may be sharing the card)."""
+        """How many 30 s windows to decode at once: word timestamps keep the cross-attention maps, ~3.5 GB a window
+        (measured: 14 windows of a 7 min file took 47 GB and ran an 80 GB card out), so the batch follows the memory
+        actually free right now (Orpheus / vLLM may be sharing the card), capped at 8."""
         if self.dev != "cuda" or seconds <= 30:
             return 1
         free = torch.cuda.mem_get_info()[0] / 2**30
-        return int(max(1, min(16, (free - 1.5) // 0.6, seconds // 30 + 1)))
+        return int(max(1, min(8, (free - 2.0) // 3.5, seconds // 30 + 1)))
 
     def transcribe_batch(self, paths, language=None):
         """One file at a time, its 30 s windows decoded in a batch sized to the free GPU memory."""
         out = []
         for p in paths:
             a = load_16k(p)
-            try:
-                with torch.inference_mode():
-                    o = self.pipe({"raw": a, "sampling_rate": 16000}, return_timestamps="word",
-                                  chunk_length_s=30, batch_size=self._batch(len(a) / 16000), generate_kwargs=self._gen(language))
-                out.append(self._words(o, len(a) / 16000, language))
-            finally:
-                if self.dev == "cuda":
-                    torch.cuda.empty_cache()
+            bs = self._batch(len(a) / 16000)
+            while True:
+                try:
+                    with torch.inference_mode():
+                        o = self.pipe({"raw": a, "sampling_rate": 16000}, return_timestamps="word",
+                                      chunk_length_s=30, batch_size=bs, generate_kwargs=self._gen(language))
+                    break
+                except torch.cuda.OutOfMemoryError:  # another engine took memory meanwhile: halve the batch, never fail
+                    if bs == 1:
+                        raise
+                    bs = max(1, bs // 2)
+                finally:
+                    if self.dev == "cuda":
+                        torch.cuda.empty_cache()
+            out.append(self._words(o, len(a) / 16000, language))
         return out
 
     def transcribe(self, path, language=None, prompt=None):
