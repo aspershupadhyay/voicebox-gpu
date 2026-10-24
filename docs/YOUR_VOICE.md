@@ -64,6 +64,10 @@ Everything below runs on free compute.
    A file that can't be read is skipped with a note instead of failing the batch, and if nothing at all is usable the
    error says why clips were dropped (your takes stay saved on the device to try again). The meter shows minutes collected: 15 works, 30 is
    good, 60 is best. Same mic and room every session.
+   **Train automatically when added** (on by default, next to *Add to dataset*) starts step 2 by itself as soon as a
+   batch is stored and the dataset has 15+ minutes, so you can upload and walk away. It trains on the whole dataset,
+   replaces that person's current model, and is skipped if a training run for that person is already going. MCP:
+   `voice_dataset` with `auto_train: true`.
 2. **Train** (same page, **Train my voice**). The GPU worker that's already running in Colab does it: it pauses other
    jobs, fine-tunes Orpheus 3B with a LoRA adapter (Unsloth), voices a test line you can play on the page, and saves the
    adapter (a few hundred MB) to your R2 bucket. What makes it sound like you talking rather than reading:

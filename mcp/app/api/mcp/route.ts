@@ -343,22 +343,25 @@ const handler = createMcpHandler(
       "voice_dataset",
       {
         title: "Your voice dataset",
-        description: "Training data collected for the user's own voice model (Your model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-20 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. One dataset per person (name = that person's model name). Training: the Your model page's Train button runs it on the GPU worker (about 1-2 h); the result is engine myvoice, voice = the dataset name.",
+        description: "Training data collected for the user's own voice model (Your model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-20 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. One dataset per person (name = that person's model name). Training: auto_train starts it as soon as the batch is stored (once 15+ minutes are collected), else the Your model page's Train button runs it on the GPU worker (about 1-2 h); the result is engine myvoice, voice = the dataset name.",
         inputSchema: z.object({
           name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/).optional().describe("dataset name = whose voice (each person has their own, e.g. their first name); default me"),
           add_urls: z.array(z.string().url()).max(20).optional().describe("recordings to add"),
+          auto_train: z.boolean().optional().describe("start training on the whole dataset once these are stored, if it has 15+ minutes"),
           wait_seconds: z.number().min(0).max(MAX_WAIT).optional(),
         }),
       },
-      async ({ name, add_urls, wait_seconds }) => {
+      async ({ name, add_urls, auto_train, wait_seconds }) => {
         try {
           const ds = name ?? "me";
           if (add_urls?.length) {
-            const job = await call<Job>("/jobs", { body: { kind: "dataset", name: ds, sources: add_urls.map((url, i) => ({ url, name: `recording ${i + 1}` })), label: `Dataset · ${ds}` } });
+            const job = await call<Job>("/jobs", { body: { kind: "dataset", name: ds, sources: add_urls.map((url, i) => ({ url, name: `recording ${i + 1}` })), label: `Dataset · ${ds}`, auto_train } });
             const j = await waitFor(job.id, wait_seconds ?? 10);
             if (j.status === "done") {
-              const { archiveDataset } = await import("@/lib/datasets");
-              await archiveDataset(j as unknown as Parameters<typeof archiveDataset>[0]);
+              const { archiveDataset, autoTrain } = await import("@/lib/datasets");
+              const dj = j as unknown as Parameters<typeof archiveDataset>[0];
+              const part = await archiveDataset(dj);
+              if (part) await autoTrain(dj, part);
             }
             return text({ job: withHint(j), dataset: await listDataset(ds) });
           }

@@ -5,7 +5,7 @@ import { loadWorker, STALE_MS } from "@/lib/registry";
 import { archiveWorkerJob, deleteLibJob, FILE_RE, getLibJob, listLibrary, presignPath, presignPuts, putFile, putLibJob, signer, withUrls, type LibJob } from "@/lib/library";
 import { getSettings, settingsFor, updateSettings, withDefaults } from "@/lib/settings";
 import { describeProfile, profileFor, withProfile } from "@/lib/profiles";
-import { archiveDataset, datasetManifest, deleteDatasetPart, listDataset, listDatasets } from "@/lib/datasets";
+import { archiveDataset, autoTrain, datasetManifest, deleteDatasetPart, listDataset, listDatasets, trainJobBody } from "@/lib/datasets";
 import { archiveModel, currentModel, listModelsWithSamples } from "@/lib/voicemodel";
 import { archiveKVoice, listKVoices } from "@/lib/kvoices";
 import { dropTargets, getSpaces, setGoals, setTargets } from "@/lib/spacestore";
@@ -76,7 +76,9 @@ export async function GET(req: Request, ctx: Ctx) {
       const job = await call<Parameters<typeof archiveWorkerJob>[0]>(`/jobs/${b}`);
       if (new URL(req.url).searchParams.has("raw")) return Response.json(job); // status only, no archiving (sample script)
       if (job.kind === ("dataset" as string)) {
-        const part = job.status === "done" ? await archiveDataset(job as unknown as Parameters<typeof archiveDataset>[0]) : null;
+        const dj = job as unknown as Parameters<typeof archiveDataset>[0];
+        const stored = job.status === "done" ? await archiveDataset(dj) : null;
+        const part = stored ? await autoTrain(dj, stored) : null;
         return Response.json({ ...job, part });
       }
       if (job.kind === ("voicewalk" as string)) {
@@ -224,11 +226,7 @@ export async function POST(req: Request, ctx: Ctx) {
         // train your own voice on the worker: every collected session travels as a signed link
         const name = String(body.name ?? "");
         if (!VOICE_RE.test(name)) throw new Error("name: lowercase letters, digits, - or _");
-        const d = await datasetManifest(name);
-        if (d.minutes < 5) throw new Error(`collect at least 15 minutes first (you have ${d.minutes})`);
-        body.parts = d.parts.map((p) => ({ url: p.url }));
-        body.minutes = d.minutes;
-        body.label = body.label ?? `Train your voice · ${name}`;
+        body = { ...body, ...(await trainJobBody(name, body.label)) };
       }
       if (body.kind === "voicewalk") {
         // find your voice in Kokoro: the recording to match travels as a signed link

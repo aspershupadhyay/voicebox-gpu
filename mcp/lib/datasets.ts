@@ -6,8 +6,12 @@ import { call } from "./worker";
 export type DatasetPart = {
   job: string; name: string; clips: number; minutes: number; input_minutes: number; dropped: Record<string, number>;
   created: number; sources: { name: string; duration: number; clips: number; cleanup?: unknown }[];
+  // set once for a batch sent with auto_train: the train job it started, or why it didn't
+  auto_train?: { job?: string; skipped?: string };
 };
-type DatasetJob = { id: string; voice: string; status: string; dataset?: Omit<DatasetPart, "job" | "created" | "sources">; results: DatasetPart["sources"] };
+type DatasetJob = { id: string; voice: string; status: string; auto_train?: boolean; dataset?: Omit<DatasetPart, "job" | "created" | "sources">; results: DatasetPart["sources"] };
+
+export const TRAIN_MIN_MINUTES = 15;
 
 const dir = (name: string) => `datasets/${name}/`;
 
@@ -42,6 +46,34 @@ export async function listDataset(name: string) {
 export async function datasetManifest(name: string) {
   const d = await listDataset(name);
   return { ...d, parts: await Promise.all(d.parts.map(async (p) => ({ job: p.job, clips: p.clips, minutes: p.minutes, url: await presign(`${dir(name)}${p.job}.zip`, "GET", 12 * 3600) }))) };
+}
+
+/** The worker body for a train job on everything collected for name: every session travels as a signed link. */
+export async function trainJobBody(name: string, label?: string) {
+  const d = await datasetManifest(name);
+  if (d.minutes < 5) throw new Error(`collect at least ${TRAIN_MIN_MINUTES} minutes first (you have ${d.minutes})`);
+  return { kind: "train", name, parts: d.parts.map((p) => ({ url: p.url })), minutes: d.minutes, label: label ?? `Train your voice · ${name}` };
+}
+
+/** A stored batch sent with auto_train: start training on the whole dataset once, if there's enough and none is running. */
+export async function autoTrain(job: DatasetJob, part: DatasetPart): Promise<DatasetPart> {
+  if (!job.auto_train || part.auto_train) return part;
+  const d = await listDataset(job.voice);
+  let result: NonNullable<DatasetPart["auto_train"]>;
+  if (d.minutes < TRAIN_MIN_MINUTES) {
+    result = { skipped: `${d.minutes} of ${TRAIN_MIN_MINUTES} minutes collected` };
+  } else {
+    const { jobs } = await call<{ jobs: { kind: string; voice: string; status: string }[] }>("/jobs");
+    if (jobs.some((j) => j.kind === "train" && j.voice === job.voice && ["queued", "running"].includes(j.status))) {
+      result = { skipped: "already training" };
+    } else {
+      const t = await call<{ id: string }>("/jobs", { body: await trainJobBody(job.voice, `Auto-train · ${job.voice}`) });
+      result = { job: t.id };
+    }
+  }
+  const next = { ...part, auto_train: result };
+  await putJson(`${dir(job.voice)}${job.id}.json`, next);
+  return next;
 }
 
 export async function deleteDatasetPart(name: string, job: string) {
