@@ -30,7 +30,7 @@ Version three point two cut cold starts from nine hundred milliseconds to about 
 So, should you rewrite everything in Rust? Probably not. Should you profile first? Always.
 Thanks for watching, and I'll see you in the next one.`;
 
-type Polled = Job & { part?: Part; benchmark?: Bench; model?: Model | null; kvoice_saved?: unknown };
+type Polled = Job & { part?: Part; benchmark?: Bench; model?: Model | null; kvoice_saved?: unknown; myvoice?: MyVoice | null };
 
 function usePoll(onDone?: (j: Polled) => void) {
   const [job, setJob] = useState<Polled | null>(null);
@@ -44,7 +44,8 @@ function usePoll(onDone?: (j: Polled) => void) {
       setJob(j);
       // done on the worker isn't done until the result is stored: the dataset part, the trained model, or the library entry
       const kind = j.kind as string;
-      const finished = j.status === "done" && (kind === "dataset" ? !!j.part : kind === "train" ? !!j.model : kind === "voicewalk" ? !!j.kvoice_saved : !!j.library);
+      const finished = j.status === "done" && (kind === "dataset" ? !!j.part : kind === "train" ? !!j.model : kind === "voicewalk" ? !!j.kvoice_saved
+        : kind === "reference" ? !!j.myvoice : !!j.library);
       if (["queued", "running"].includes(j.status) || (j.status === "done" && !finished)) timer.current = setTimeout(() => poll(id), 2000);
       else if (j.status === "done") done.current?.(j);
     } catch {
@@ -368,13 +369,13 @@ function Benchmark({ mine, name }: { mine: MyVoice[]; name: string }) {
 
   return (
     <div className="card">
-      <div className="card-head"><h2>3 · Benchmark</h2><span className="dim tiny">same sentences, same scoring, every voice</span></div>
+      <div className="card-head"><h2>4 · Benchmark</h2><span className="dim tiny">same sentences, same scoring, every voice</span></div>
       <p className="dim small" style={{ marginTop: 0 }}>Use sentences you never recorded. Voice match is measured against your real recording; naturalness is a predicted MOS (1-5); speed is seconds of compute per second of audio.</p>
       <div className="grid" style={{ gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)", gap: 14 }}>
         <textarea className="doc short" value={lines} onChange={(e) => setLines(e.target.value)} style={{ minHeight: 170, marginTop: 0 }} />
         <div className="stack" style={{ gap: 10 }}>
           <div><label className="f">Your real voice (the target)</label>
-            <select value={voice} onChange={(e) => setVoice(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Record a voice on the Voices page</option>}</select></div>
+            <select value={voice} onChange={(e) => setVoice(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Make one in step 3, or record on Voices</option>}</select></div>
           {([["myvoice", "Your trained model"], ["qwen", "Qwen clone"], ["chatterbox", "Chatterbox clone"], ["orpheus", "Orpheus preset"]] as const).map(([k, l]) => (
             <label key={k} className="row small" style={{ gap: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={picks[k]} onChange={(e) => setPicks({ ...picks, [k]: e.target.checked })} />{l}</label>
           ))}
@@ -413,7 +414,7 @@ type KVoice = { name: string; voice: string; job: string; created: number; targe
 function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
   const { status } = useStatus();
   const { toast } = useDialog();
-  const [target, setTarget] = useState(mine[0]?.name ?? "");
+  const [target, setTarget] = useState("");
   const [have, setHave] = useState<KVoice | null>(null);
   const [rounds, setRounds] = useState(24);
   const [err, setErr] = useState("");
@@ -421,7 +422,8 @@ function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
     api<{ voices: KVoice[] }>("kvoices").then((r) => setHave(r.voices.find((v) => v.name === name) ?? null)).catch(() => {});
   }, [name]);
   useEffect(load, [load]);
-  useEffect(() => { if (!target && mine[0]) setTarget(mine[0].name); }, [mine, target]);
+  // the voice made from this dataset (Use it in every engine) first, else your first recorded voice
+  useEffect(() => { if (!mine.some((m) => m.name === target) && mine[0]) setTarget((mine.find((m) => m.name === name) ?? mine[0]).name); }, [mine, target, name]);
   const { job, start } = usePoll((j) => { toast(`Found ${name}'s voice in Kokoro: use kv_${name} in Voiceover (Kokoro)`, "ok"); void j; load(); });
   useResumeJob<Polled>(["voicewalk"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
   const busy = !!job && ["queued", "running"].includes(job.status);
@@ -435,7 +437,7 @@ function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
 
   return (
     <div className="card">
-      <div className="card-head"><h2>4 · Your voice in Kokoro</h2><span className="dim tiny">af_heart clarity · instant · runs on the CPU</span></div>
+      <div className="card-head"><h2>5 · Your voice in Kokoro</h2><span className="dim tiny">af_heart clarity · instant · runs on the CPU</span></div>
       <p className="dim small" style={{ marginTop: 0 }}>
         Kokoro is the tiny engine behind af_heart: crisp, steady and instant. This searches Kokoro&apos;s voice space for the mix of its voices that
         sounds most like your recording (scored by the same voice match as the review), then checks it still speaks every word clearly.
@@ -451,7 +453,7 @@ function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
       )}
       <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
         <div className="field" style={{ margin: 0, flex: "1 1 200px" }}><label className="f">Match this recording of you</label>
-          <select value={target} onChange={(e) => setTarget(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Record a voice on the Voices page</option>}</select></div>
+          <select value={target} onChange={(e) => setTarget(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Make one in step 3, or record on Voices</option>}</select></div>
         <div className="field" style={{ margin: 0, width: 150 }}><label className="f">Search</label>
           <select value={rounds} onChange={(e) => setRounds(Number(e.target.value))}>
             <option value={12}>Quick (12 rounds)</option><option value={24}>Normal (24)</option><option value={48}>Thorough (48)</option></select></div>
@@ -459,6 +461,50 @@ function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
       </div>
       {err && <p className="err" style={{ margin: "8px 0 0" }}>{err}</p>}
       {job && (busy || job.status === "error") && <div style={{ marginTop: 14 }}><JobProgress job={job} kind="tts" /></div>}
+    </div>
+  );
+}
+
+/** Any dataset as a cloning voice: ~15-20 s of its cleanest clips become a recorded voice named after it, so Qwen3-TTS,
+ *  Chatterbox, Kokoro (step 5) and the benchmark can all use it, not just the trained Orpheus model. */
+function EveryEngine({ name, minutes, mine, onMade }: { name: string; minutes: number; mine: MyVoice[]; onMade: () => void }) {
+  const { status } = useStatus();
+  const { toast } = useDialog();
+  const [err, setErr] = useState("");
+  const have = mine.find((m) => m.name === name);
+  const { job, start } = usePoll(() => { toast(`${name} is a voice now: pick it in Voiceover on Qwen3-TTS or Chatterbox`, "ok"); onMade(); });
+  useResumeJob<Polled>(["reference"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
+  const busy = !!job && ["queued", "running"].includes(job.status);
+
+  async function make() {
+    setErr("");
+    try {
+      start(await api<Job>("myvoices", { body: { name, dataset: name, label: name } }));
+    } catch (e) { setErr((e as Error).message); }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-head"><h2>3 · Use it in every engine</h2><span className="dim tiny">Qwen3-TTS · Chatterbox · Kokoro · about a minute</span></div>
+      <p className="dim small" style={{ marginTop: 0 }}>
+        Training (step 2) makes an Orpheus model. This turns <b>{name}</b>&apos;s clips into a voice the cloning engines can use right away:
+        it picks about 15-20 s of the cleanest consecutive clips and saves them as the voice <b>{name}</b>. Then choose <b>{name}</b> in Voiceover
+        on Qwen3-TTS (best cloning) or Chatterbox (emotion, 23 languages), compare them in Benchmark, or find it in Kokoro.
+      </p>
+      {have && !busy && (
+        <div className="stack" style={{ gap: 6, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
+          <div className="row between small"><b>Voice · {have.name}</b><span className="dim">{have.duration.toFixed(1)} s · {new Date(have.created).toLocaleDateString()}</span></div>
+          <span className="dim tiny">“{have.transcript}”</span>
+          {have.url && <Player src={have.url} compact />}
+        </div>
+      )}
+      {job && (busy || job.status === "error") && <div style={{ marginTop: 10 }}><JobProgress job={job} kind="tts" /></div>}
+      <div className="row between" style={{ marginTop: 12 }}>
+        <span className="tiny dim">{minutes > 0 ? `${minutes.toFixed(1)} minutes to pick from.` : "Collect first."}</span>
+        <button className="sm" onClick={make} disabled={busy || minutes <= 0 || !status?.online} title={!status?.online ? "Start the GPU worker first" : undefined}>
+          {busy ? "Making…" : have ? "Pick fresh clips" : `Make ${name} a voice`} <ArrowRight size={13} /></button>
+      </div>
+      {err && <p className="err" style={{ margin: "8px 0 0" }}>{err}</p>}
     </div>
   );
 }
@@ -475,7 +521,8 @@ export default function MyModel() {
   const [follow, setFollow] = useState<string>();
   const load = useCallback(() => { if (name) api<Dataset>(`datasets/${name}`).then(setDs).catch(() => setDs(null)); }, [name]);
   const loadModels = useCallback(() => { api<{ models: Model[] }>("models").then((r) => setModels(r.models)).catch(() => {}); }, []);
-  useEffect(() => { api<{ voices: MyVoice[] }>("myvoices").then((r) => setMine(r.voices)).catch(() => {}); }, []);
+  const loadMine = useCallback(() => { api<{ voices: MyVoice[] }>("myvoices").then((r) => setMine(r.voices)).catch(() => {}); }, []);
+  useEffect(loadMine, [loadMine]);
   useEffect(loadModels, [loadModels]);
   useEffect(() => {
     // whose dataset to open: the one picked last on this device, else yours (from your sign-in name), else the first one
@@ -505,9 +552,9 @@ export default function MyModel() {
           <input list="vb-people" value={name} placeholder="your name" onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))} />
           <datalist id="vb-people">{people.map((p) => <option key={p.name} value={p.name}>{p.minutes.toFixed(1)} min</option>)}</datalist></div>
       </div>
-      {(people.length > 1 || models.length > 0) && (
+      {(people.length > 0 || models.length > 0) && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-head"><h2>Everyone&apos;s voices</h2><span className="dim tiny">trained models are shared: use them in Voiceover under Your model</span></div>
+          <div className="card-head"><h2>Everyone&apos;s voices</h2><span className="dim tiny">pick one to work on it · trained models are shared: use them in Voiceover under Your model</span></div>
           <div className="stack" style={{ gap: 8 }}>
             {[...new Set([...people.map((p) => p.name), ...models.map((m) => m.name)])].map((n) => {
               const m = models.find((x) => x.name === n);
@@ -544,6 +591,7 @@ export default function MyModel() {
         <div className="stack" style={{ gap: 16 }}>
           <Collect name={name} onAdded={(t) => { refresh(); if (t) setFollow(t); }} />
           <Train name={name} minutes={minutes} follow={follow} onTrained={loadModels} />
+          <EveryEngine name={name} minutes={minutes} mine={mine} onMade={loadMine} />
           <Benchmark mine={mine} name={name} />
           <KokoroVoice mine={mine} name={name} />
         </div>
