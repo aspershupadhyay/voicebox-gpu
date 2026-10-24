@@ -3,7 +3,7 @@
 // Clean-up, Subtitles). Raw capture (no echo cancellation, noise suppression or auto gain), so the worker gets the real
 // voice to work on. Every second of a take is saved to this browser as it's recorded (takes.ts), so a refresh or a crash
 // never loses it: SavedTakes offers it back.
-import { ArrowCounterClockwise, Microphone, Play, Stop, TrashSimple } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, Microphone, Pause, Play, Stop, TrashSimple } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { fmtS } from "./api";
 import Player from "./Player";
@@ -19,22 +19,30 @@ export async function startRecording(scope = "recording", note?: string) {
   const take = await newTake(scope, r.mimeType || mime || "audio/webm", note);
   const chunks: Blob[] = [];
   const t0 = performance.now();
+  let held = 0, pausedAt = 0; // time spent paused doesn't count toward the take's length
+  const elapsed = () => ((pausedAt || performance.now()) - t0 - held) / 1000;
   let seq = 0;
   r.ondataavailable = (e) => {
     if (!e.data.size) return;
     chunks.push(e.data);
-    addChunk(take, seq++, e.data, (performance.now() - t0) / 1000);
+    addChunk(take, seq++, e.data, elapsed());
   };
   r.start(1000);
   return {
     r, stream, take,
+    /** Seconds recorded so far, not counting pauses. */
+    elapsed,
+    get paused() { return r.state === "paused"; },
+    /** Hold the take: nothing is recorded (or sent) until resume(). The mic stays open so resuming is instant. */
+    pause() { if (r.state === "recording") { r.requestData(); r.pause(); pausedAt = performance.now(); } },
+    resume() { if (r.state === "paused") { held += performance.now() - pausedAt; pausedAt = 0; r.resume(); } },
     /** Stop and get the file. The take stays saved until forget() (call it once the file has been sent). */
     async stop() {
       const stopped = new Promise((ok) => (r.onstop = ok));
       if (r.state !== "inactive") r.stop();
       await stopped;
       stream.getTracks().forEach((t) => t.stop());
-      await finishTake(take, (performance.now() - t0) / 1000);
+      await finishTake(take, elapsed());
       const type = r.mimeType || "audio/webm";
       return new File(chunks, `${scope.replace(/[^a-z0-9-]/gi, "-")}-${Date.now()}.${type.includes("mp4") ? "m4a" : "webm"}`, { type });
     },
@@ -44,10 +52,12 @@ export async function startRecording(scope = "recording", note?: string) {
 
 /** An orb that breathes with your voice: its size follows the loudness, a ring of bars follows the spectrum, and an
  *  arc fills toward the target length. Drawn on a canvas from an AnalyserNode; children sit in the middle. */
-export function VoiceOrb({ stream, size = 220, target, secs = 0, children }: { stream: MediaStream | null; size?: number; target?: number; secs?: number; children?: React.ReactNode }) {
+export function VoiceOrb({ stream, size = 220, target, secs = 0, paused = false, children }: { stream: MediaStream | null; size?: number; target?: number; secs?: number; paused?: boolean; children?: React.ReactNode }) {
   const cv = useRef<HTMLCanvasElement>(null);
   const prog = useRef(0);
+  const hold = useRef(paused);
   prog.current = target ? Math.min(1, secs / target) : -1;
+  hold.current = paused;
   useEffect(() => {
     const c = cv.current;
     if (!c || !stream) return;
@@ -71,6 +81,7 @@ export function VoiceOrb({ stream, size = 220, target, secs = 0, children }: { s
       an.getFloatTimeDomainData(wave);
       let rms = 0;
       for (const x of wave) rms += x * x;
+      if (hold.current) { rms = 0; freq.fill(0); } // paused: the orb rests (the mic is open but nothing is kept)
       lvl = Math.max(Math.sqrt(rms / wave.length) * 3.2, lvl * 0.9);
       const cx = size / 2, base = size * 0.24, r = base * (1 + Math.min(0.45, lvl * 0.6));
       g.clearRect(0, 0, size, size);
@@ -96,7 +107,9 @@ export function VoiceOrb({ stream, size = 220, target, secs = 0, children }: { s
         if (prog.current > 0) { g.strokeStyle = sig; g.beginPath(); g.arc(cx, cx, rr, -Math.PI / 2, -Math.PI / 2 + prog.current * Math.PI * 2); g.stroke(); }
       }
       // core
+      g.globalAlpha = hold.current ? 0.35 : 1;
       g.fillStyle = sig; g.beginPath(); g.arc(cx, cx, r, 0, Math.PI * 2); g.fill();
+      g.globalAlpha = 1;
       raf = requestAnimationFrame(draw);
     };
     draw();
@@ -107,6 +120,79 @@ export function VoiceOrb({ stream, size = 220, target, secs = 0, children }: { s
       <canvas ref={cv} style={{ width: size, height: size }} />
       <div className="orb-mid">{children}</div>
     </div>
+  );
+}
+
+/** The start button, drawn as a voiceprint at rest: four strands (one per palette colour) wind around a circle as a
+ *  slow polar waveform, interfering like the harmonics of a held note. Hover or focus wakes them up (they swell and
+ *  speed up), as if the button were already listening. Static under prefers-reduced-motion. */
+export function VoiceSeed({ onClick, disabled, size = 184, label = "Start recording" }: { onClick: () => void; disabled?: boolean; size?: number; label?: string }) {
+  const cv = useRef<HTMLCanvasElement>(null);
+  const wake = useRef(0);
+  const [hot, setHot] = useState(false);
+  const hotRef = useRef(hot);
+  hotRef.current = hot && !disabled;
+  useEffect(() => {
+    const c = cv.current;
+    if (!c) return;
+    const g = c.getContext("2d")!;
+    const dpr = window.devicePixelRatio || 1;
+    c.width = size * dpr; c.height = size * dpr;
+    g.scale(dpr, dpr);
+    const css = getComputedStyle(c);
+    const tone = (n: string, d: string) => css.getPropertyValue(n).trim() || d;
+    const strands = [
+      { col: tone("--mint", "#34c38f"), k: 3, sp: 0.55, ph: 0 },
+      { col: tone("--iris", "#6b8cff"), k: 5, sp: -0.4, ph: 1.7 },
+      { col: tone("--rosy", "#e8798f"), k: 7, sp: 0.3, ph: 3.1 },
+      { col: tone("--ember", "#f06a3c"), k: 4, sp: -0.65, ph: 4.4 },
+    ];
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let raf = 0, t = 0, last = performance.now();
+    const cx = size / 2, R = size * 0.31;
+    const draw = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      wake.current += ((hotRef.current ? 1 : 0) - wake.current) * Math.min(1, dt * 5);
+      const w = wake.current;
+      t += dt * (1 + 1.6 * w);
+      g.clearRect(0, 0, size, size);
+      // a soft well the strands sit in
+      const well = g.createRadialGradient(cx, cx, R * 0.2, cx, cx, R * 1.6);
+      well.addColorStop(0, `${strands[0].col}${w > 0.5 ? "30" : "1c"}`); well.addColorStop(1, `${strands[0].col}00`);
+      g.fillStyle = well; g.beginPath(); g.arc(cx, cx, R * 1.6, 0, Math.PI * 2); g.fill();
+      // a slow dotted orbit: the "press me" cue, it tightens as the strands wake
+      g.save(); g.translate(cx, cx); g.rotate(t * 0.15);
+      g.setLineDash([1.5, 7]); g.lineCap = "round"; g.lineWidth = 1.5; g.strokeStyle = tone("--faint", "#5c5c58");
+      g.beginPath(); g.arc(0, 0, size * (0.47 - 0.03 * w), 0, Math.PI * 2); g.stroke();
+      g.restore(); g.setLineDash([]);
+      g.lineWidth = 1.9 + w * 0.6; g.lineJoin = "round";
+      for (const st of strands) {
+        const amp = R * (0.11 + 0.12 * w);
+        g.strokeStyle = st.col; g.globalAlpha = 0.78;
+        g.beginPath();
+        for (let i = 0; i <= 240; i++) {
+          const a = (i / 240) * Math.PI * 2;
+          const r = R + amp * Math.sin(st.k * a + st.ph + t * st.sp * 2) + amp * 0.45 * Math.sin((st.k + 2) * a - t * 1.3 + st.ph);
+          const x = cx + Math.cos(a) * r, y = cx + Math.sin(a) * r;
+          if (i) g.lineTo(x, y); else g.moveTo(x, y);
+        }
+        g.closePath(); g.stroke();
+      }
+      g.globalAlpha = 1;
+      // the seed: a small core that breathes, and grows when the strands wake
+      const core = size * (0.05 + 0.02 * Math.sin(t * 2) * (1 - w) + 0.03 * w);
+      g.fillStyle = tone("--ink", "#fff"); g.beginPath(); g.arc(cx, cx, core, 0, Math.PI * 2); g.fill();
+      if (!still) raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [size]);
+  return (
+    <button className="voice-seed" style={{ width: size, height: size }} onClick={onClick} disabled={disabled} aria-label={label}
+      onPointerEnter={() => setHot(true)} onPointerLeave={() => setHot(false)} onFocus={() => setHot(true)} onBlur={() => setHot(false)}>
+      <canvas ref={cv} style={{ width: size, height: size }} />
+    </button>
   );
 }
 
@@ -157,13 +243,20 @@ export function FilePreview({ file, onRemove }: { file: File; onRemove?: () => v
   );
 }
 
+/** Pause / resume a running take. Nothing is sent anywhere until the take is stopped and kept. */
+export function PauseButton({ rec, paused, onChange, className = "ghost sm" }: { rec: Recording; paused: boolean; onChange: (p: boolean) => void; className?: string }) {
+  return paused
+    ? <button className={className} onClick={() => { rec.resume(); onChange(false); }}><Microphone size={14} weight="fill" /> Resume</button>
+    : <button className={className} onClick={() => { rec.pause(); onChange(true); }}><Pause size={14} weight="fill" /> Pause</button>;
+}
+
 /** Record → listen → keep it (onReady) or retake. The kept take is deleted from this device by calling the
  *  returned forget once it's been sent (onReady gets it). */
 export default function Recorder({ onReady, scope = "recording", disabled, hint, target }: {
   onReady: (f: File | null, forget?: () => void) => void; scope?: string; disabled?: boolean; hint?: string; target?: number;
 }) {
   const [rec, setRec] = useState<Recording | null>(null);
-  const [t0, setT0] = useState(0);
+  const [paused, setPaused] = useState(false);
   const [secs, setSecs] = useState(0);
   const [take, setTake] = useState<File | null>(null);
   const [kept, setKept] = useState<string | null>(null); // the saved take shown above, so it isn't listed twice
@@ -173,15 +266,15 @@ export default function Recorder({ onReady, scope = "recording", disabled, hint,
   useEffect(() => () => { live.current?.stream.getTracks().forEach((t) => t.stop()); }, []);
   useEffect(() => {
     if (!rec) return;
-    const t = setInterval(() => setSecs((performance.now() - t0) / 1000), 200);
+    const t = setInterval(() => setSecs(rec.elapsed()), 200);
     return () => clearInterval(t);
-  }, [rec, t0]);
+  }, [rec]);
 
   async function begin() {
     setErr("");
     try {
       const r = await startRecording(scope);
-      setTake(null); onReady(null); setSecs(0); setT0(performance.now()); setRec(r);
+      setTake(null); onReady(null); setSecs(0); setPaused(false); setRec(r);
     } catch (e) {
       setErr((e as Error).name === "NotAllowedError" ? "Allow the microphone for this site, then try again." : (e as Error).message);
     }
@@ -200,10 +293,13 @@ export default function Recorder({ onReady, scope = "recording", disabled, hint,
     <div className="stack" style={{ gap: 10 }}>
       {rec ? (
         <div className="rec-inline">
-          <VoiceOrb stream={rec.stream} size={150} target={target} secs={secs}>
+          <VoiceOrb stream={rec.stream} size={150} target={target} secs={secs} paused={paused}>
             <button className="rec-btn on sm" onClick={finish} aria-label="Stop recording"><Stop size={20} weight="fill" /></button>
           </VoiceOrb>
-          <span className="mono">{fmtS(secs)}</span>
+          <div className="stack" style={{ gap: 8 }}>
+            <span className="mono">{fmtS(secs)}{paused ? " · paused" : ""}</span>
+            <PauseButton rec={rec} paused={paused} onChange={setPaused} />
+          </div>
         </div>
       ) : take ? (
         <>

@@ -15,7 +15,7 @@ import LineRow from "./LineRow";
 import Player from "./Player";
 import { SampleButton, useSamples } from "./Sample";
 import { useStatus } from "./Shell";
-import { SavedTakes, startRecording, VoiceOrb, type Recording } from "./Recorder";
+import { PauseButton, SavedTakes, startRecording, VoiceOrb, VoiceSeed, type Recording } from "./Recorder";
 
 const READS = [
   "Okay, so here's something wild. Your phone figures out exactly where you are by listening to clocks in space. Twenty thousand kilometres up, a few billionths of a second, and some very clever math. Let me show you how it works.",
@@ -81,6 +81,7 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
   const [read, setRead] = useState(0);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [secs, setSecs] = useState(0);
+  const [paused, setPaused] = useState(false);
   const [take, setTake] = useState<{ blob: Blob; url: string; name: string } | null>(null);
   const [label, setLabel] = useState("");
   const [job, setJob] = useState<Job | null>(null);
@@ -89,7 +90,6 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
   const rec = useRef<Recording | null>(null);
   const forget = useRef<(() => void) | null>(null); // drops the take from this device once it's saved as a voice
   const [kept, setKept] = useState<string | null>(null);
-  const t0 = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileIn = useRef<HTMLInputElement>(null);
   const level = useLevel(stream);
@@ -99,7 +99,7 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
   useEffect(() => () => { stream?.getTracks().forEach((t) => t.stop()); if (timer.current) clearTimeout(timer.current); }, [stream]);
   useEffect(() => {
     if (phase !== "recording") return;
-    const t = setInterval(() => setSecs((performance.now() - t0.current) / 1000), 100);
+    const t = setInterval(() => setSecs(rec.current?.elapsed() ?? 0), 100);
     return () => clearInterval(t);
   }, [phase]);
 
@@ -111,8 +111,8 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
       const r = await startRecording("voices", READS[read].slice(0, 24) + "…");
       rec.current = r;
       setStream(r.stream);
-      t0.current = performance.now();
       setSecs(0);
+      setPaused(false);
       setPhase("recording");
     } catch (e) {
       setPhase("idle");
@@ -173,7 +173,7 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
       <div className="rec-main">
         {phase === "idle" || phase === "asking" ? (
           <div className="rec-idle">
-            <button className="rec-btn" onClick={start} disabled={phase === "asking"} aria-label="Start recording"><Microphone size={28} weight="fill" /></button>
+            <VoiceSeed onClick={start} disabled={phase === "asking"} label="Start recording" />
             <b>{phase === "asking" ? "Allow the microphone…" : "Record your voice"}</b>
             <span className="dim small">Read the card on the right, about 20 seconds.{" "}
               <button className="linkish" onClick={() => fileIn.current?.click()}>Upload a file instead</button></span>
@@ -190,11 +190,12 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
           </div>
         ) : phase === "recording" ? (
           <div className="rec-live">
-            <div className="rec-clock"><span className="recdot"><i />REC</span><span className="num">{secs.toFixed(1)}<small>s</small></span></div>
-            <VoiceOrb stream={stream} size={232} target={20} secs={secs}>
+            <div className="rec-clock"><span className={`recdot ${paused ? "held" : ""}`}><i />{paused ? "PAUSED" : "REC"}</span><span className="num">{secs.toFixed(1)}<small>s</small></span></div>
+            <VoiceOrb stream={stream} size={232} target={20} secs={secs} paused={paused}>
               <button className="rec-btn on" onClick={stop} aria-label="Stop recording"><Stop size={26} weight="fill" /></button>
             </VoiceOrb>
-            <div className="dim small">{level > 0.95 ? "Too loud: back off a little" : level < 0.05 && secs > 1.5 ? "Very quiet: come closer" : secs < 10 ? "Keep going…" : secs < 20 ? "Good. Finish the card." : "Perfect. Stop whenever you like."}</div>
+            {rec.current && <div style={{ alignSelf: "center" }}><PauseButton rec={rec.current} paused={paused} onChange={setPaused} /></div>}
+            <div className="dim small">{paused ? "Paused. Nothing is recorded until you resume; stop when you're done." : level > 0.95 ? "Too loud: back off a little" : level < 0.05 && secs > 1.5 ? "Very quiet: come closer" : secs < 10 ? "Keep going…" : secs < 20 ? "Good. Finish the card." : "Perfect. Stop whenever you like."}</div>
           </div>
         ) : (
           <div className="rec-review">

@@ -43,6 +43,25 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
       under them; one-line stats; the week as a hairline timeline; neutral cards (logos · formats, title, two lines of
       words, stage dot, date); orange only for today and late
 
+## Clarity + GPU round (round 7)
+- [x] Recorder: pause / resume everywhere (`startRecording().pause()`; Your model also on **P**); time excludes pauses
+- [x] Your model → Collect: takes and uploads queue up (listen, remove) and go as one batch; multi-file pick and drop;
+      takes are dropped from the device only once the batch is stored, and come back if it fails
+- [x] Dataset job: per-file errors skip the file, not the batch; clips cut at long silences; every clip levelled to
+      -20 dB; stricter checks (SNR 28, echo, muffled) with SNR measured against the *recording's* noise floor (a clip of
+      continuous talking used to read as noisy, which emptied whole batches: "no usable clips"); the error says why
+- [x] Dataset job pipelined: download + denoise of the next file on a helper thread while the GPU transcribes, clip
+      cutting on a CPU pool
+- [x] Train: codec tokens cached per session; length-grouped batches sized to the card; best epoch by listening
+      (Whisper turbo + WavLM vs the real take of each held-out sentence), scores shown on the page
+- [x] Whisper large-v3-turbo by default, 30 s windows batched to the free VRAM
+- [x] vLLM pool sized to the card (`config.vllm_pool_gb`), whole job handed to vLLM at once (64), `ORPHEUS_FP8=1`
+      opt-in on Ada/Hopper; Qwen uses FlashAttention-2 when installed
+- [x] Sentences loudness-matched before joining; myvoice clarity defaults (temp 0.5, rep 1.12); auto studio polish for
+      myvoice kept only when it listens better
+- [x] Your voice in Kokoro: `voicewalk` job + `kv_<name>` Kokoro voices (R2 `kvoices/`), Your model card 4, Voiceover picker
+- [x] Voices page: the record button is a voiceprint (four palette strands that wake on hover), not a mic
+
 ## Notes for whoever picks this up
 - Spaces are defined once in `mcp/lib/spaces.ts` (add a space there and it shows everywhere: sidebar, drawer, MCP enum).
 - Platform logos, colours and format glyphs: `mcp/components/platform.tsx`. The Content page is `mcp/components/Content.tsx`; the drawer's "Publish to" editor is `TargetsEditor` in `Workspace.tsx`.
@@ -55,3 +74,6 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [ ] Per-target caption overrides (X 280 vs Instagram 2200)
 - [ ] Teach trained voices non-verbal tags (laughs, breaths) from the recordings
 - [ ] Streaming playback while a voiceover renders
+- [ ] Speech super-resolution model (beyond Resemble Enhance) as the polish step; A/B with benchmark_voices
+- [ ] Add newer open TTS engines as benchmark candidates (e.g. Higgs Audio, VoxCPM, IndexTTS2) and let the scores pick
+- [ ] Full Kokoro / StyleTTS2 fine-tune on your clips (beyond the voicewalk mix)

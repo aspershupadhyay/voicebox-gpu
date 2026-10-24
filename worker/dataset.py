@@ -13,6 +13,11 @@ import re
 MIN_S, MAX_S = 2.0, 20.0
 TARGETS = (4.0, 9.0, 15.0)  # each clip aims for the next of these in turn: a mix of short, medium and long
 END = re.compile(r"[.!?…]['\")\]]?$")
+HARD_GAP = 1.2   # a silence this long always ends a clip (moving to the next read-along line, a sip of water)
+LEVEL_DB = -20.0  # every clip is brought to this active-speech level, so the model hears one consistent loudness
+SNR_MIN = 28.0    # after denoising, a clean room sits well above this; below it the noise gets learnt with the voice
+REVERB_MAX = 0.55  # seconds of T60: past this the room's echo is part of every clip
+BANDWIDTH_MIN = 6000  # Hz: narrower than this is a phone line or a muffled mic
 
 
 def segment(words, total_s):
@@ -28,6 +33,10 @@ def segment(words, total_s):
             clips.append(part)
 
     for w in words:
+        if cur and w["s"] - cur[-1]["e"] >= HARD_GAP and cur[-1]["e"] - cur[0]["s"] >= 1.0:
+            flush(len(cur))  # a long silence is a clip boundary, never something to learn inside a clip
+        elif cur and w["s"] - cur[-1]["e"] >= HARD_GAP:
+            cur = []  # a stray word or two before a long pause: not worth a clip
         cur.append(w)
         dur = cur[-1]["e"] - cur[0]["s"]
         target = TARGETS[len(clips) % len(TARGETS)]
@@ -65,6 +74,29 @@ def keep(text, dur, m):
         return "timing"
     if (m.get("clipped") or 0) > 0.0015:
         return "clipped"
-    if m.get("snr_db") is not None and m["snr_db"] < 22:
+    if m.get("snr_db") is not None and m["snr_db"] < SNR_MIN:
         return "noisy"
+    if m.get("reverb_s") is not None and m["reverb_s"] > REVERB_MAX:
+        return "echo"
+    if m.get("bandwidth_hz") is not None and m["bandwidth_hz"] < BANDWIDTH_MIN:
+        return "muffled"
     return None
+
+
+def level_gain(m, peak):
+    """Linear gain that brings a clip's active speech to LEVEL_DB without its peak passing -1 dBFS (and never more
+    than +/-15 dB: a clip that far off is better dropped by the checks than rescued)."""
+    lvl = m.get("level_db")
+    if lvl is None or peak <= 0:
+        return 1.0
+    db = max(-15.0, min(15.0, LEVEL_DB - lvl))
+    return min(10 ** (db / 20), 10 ** (-1 / 20) / peak)
+
+
+WHY = {"short": "under 1.5 s", "long": "over 21 s", "no words": "no words heard", "timing": "words and audio out of step",
+       "clipped": "distorted (too loud)", "noisy": "background noise", "echo": "room echo", "muffled": "muffled sound"}
+
+
+def explain(dropped):
+    """'12 background noise, 3 room echo': why clips were dropped, biggest reason first."""
+    return ", ".join(f"{n} {WHY.get(k, k)}" for k, n in sorted(dropped.items(), key=lambda kv: -kv[1]))

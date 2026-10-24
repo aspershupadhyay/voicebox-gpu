@@ -11,14 +11,15 @@ import JobProgress from "./JobProgress";
 import { useResumeJob } from "./jobs";
 import LineRow from "./LineRow";
 import Player from "./Player";
-import { FilePreview, SavedTakes, startRecording, VoiceOrb, type Recording } from "./Recorder";
+import { FilePreview, PauseButton, SavedTakes, startRecording, VoiceOrb, type Recording } from "./Recorder";
 import { useStatus } from "./Shell";
 
 type Part = { job: string; clips: number; minutes: number; input_minutes: number; dropped: Record<string, number>; created: number;
   sources: { name: string; duration: number; clips: number }[] };
 type Dataset = { name: string; parts: Part[]; clips: number; minutes: number };
 type Model = { name: string; job: string; created: number; clips: number; minutes: number; epochs: number; loss: number;
-  sample: { text: string; duration: number } | null; sample_url?: string | null; best_epoch?: number; flow_clips?: number };
+  sample: { text: string; duration: number } | null; sample_url?: string | null; best_epoch?: number; flow_clips?: number;
+  listening?: { epoch: number; match: number | null; similarity: number | null; score: number | null }[] };
 type Bench = { target: string | null; candidates: { label: string; engine: string; voice: string; match?: number | null; similarity?: number | null; mos?: number | null; rtf?: number; score?: number | null; lines?: string[]; error?: string }[] };
 
 const MILESTONES = [[15, "works"], [30, "good"], [60, "best"]] as const;
@@ -29,7 +30,7 @@ Version three point two cut cold starts from nine hundred milliseconds to about 
 So, should you rewrite everything in Rust? Probably not. Should you profile first? Always.
 Thanks for watching, and I'll see you in the next one.`;
 
-type Polled = Job & { part?: Part; benchmark?: Bench; model?: Model | null };
+type Polled = Job & { part?: Part; benchmark?: Bench; model?: Model | null; kvoice_saved?: unknown };
 
 function usePoll(onDone?: (j: Polled) => void) {
   const [job, setJob] = useState<Polled | null>(null);
@@ -43,7 +44,7 @@ function usePoll(onDone?: (j: Polled) => void) {
       setJob(j);
       // done on the worker isn't done until the result is stored: the dataset part, the trained model, or the library entry
       const kind = j.kind as string;
-      const finished = j.status === "done" && (kind === "dataset" ? !!j.part : kind === "train" ? !!j.model : !!j.library);
+      const finished = j.status === "done" && (kind === "dataset" ? !!j.part : kind === "train" ? !!j.model : kind === "voicewalk" ? !!j.kvoice_saved : !!j.library);
       if (["queued", "running"].includes(j.status) || (j.status === "done" && !finished)) timer.current = setTimeout(() => poll(id), 2000);
       else if (j.status === "done") done.current?.(j);
     } catch {
@@ -53,68 +54,102 @@ function usePoll(onDone?: (j: Polled) => void) {
   return { job, start: (j: Job) => { setJob(j); timer.current = setTimeout(() => poll(j.id), 1200); } };
 }
 
+type Pending = { file: File; forget?: () => void; take?: string };
+
 function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
   const { status } = useStatus();
   const { toast } = useDialog();
   const [tab, setTab] = useState<"read" | "upload">("read");
   const [i, setI] = useState(0);
-  const [rec, setRec] = useState<(Recording & { t0: number }) | null>(null);
+  const [rec, setRec] = useState<Recording | null>(null);
+  const [paused, setPaused] = useState(false);
   const [secs, setSecs] = useState(0);
-  const [files, setFiles] = useState<File[]>([]);
-  const [take, setTake] = useState<File | null>(null); // a finished session, waiting for you to listen and keep it
+  // takes and files waiting for you to listen and keep them: nothing is sent until you press Add to dataset
+  const [pending, setPending] = useState<Pending[]>([]);
   const [up, setUp] = useState<number | null>(null);
-  const forget = useRef<(() => void)[]>([]); // drop the sent sessions from this device once the dataset job is queued
-  const [kept, setKept] = useState<string | null>(null);
-  const { job, start } = usePoll((j) => { toast(`Added ${j.part?.clips ?? 0} clips (${j.part?.minutes ?? 0} min) to ${name}`, "ok"); onAdded(); });
+  const [err, setErr] = useState("");
+  const sent = useRef<Pending[]>([]); // in the worker's hands: dropped from this device once they're in the dataset
+  const { job, start } = usePoll((j) => {
+    const p = j.part;
+    toast(`Added ${p?.clips ?? 0} clips (${p?.minutes ?? 0} min) to ${name}`, "ok");
+    sent.current.forEach((x) => x.forget?.()); sent.current = [];
+    onAdded();
+  });
+  useEffect(() => {
+    // a failed batch: give the recordings back, so nothing has to be recorded again
+    if (job && ["error", "cancelled"].includes(job.status) && sent.current.length) {
+      const back = sent.current;
+      sent.current = [];
+      setPending((p) => [...back, ...p]);
+    }
+  }, [job]);
 
   useEffect(() => { try { setI(Number(localStorage.getItem(`vb-read-${name}`)) || 0); } catch {} }, [name]);
   useEffect(() => { try { localStorage.setItem(`vb-read-${name}`, String(i)); } catch {} }, [i, name]);
   useEffect(() => {
     if (!rec) return;
-    const t = setInterval(() => setSecs((performance.now() - rec.t0) / 1000), 250);
+    const t = setInterval(() => setSecs(rec.elapsed()), 250);
     return () => clearInterval(t);
   }, [rec]);
+  useEffect(() => () => { rec?.stream.getTracks().forEach((t) => t.stop()); }, [rec]);
   useEffect(() => {
     if (!rec) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === " " || e.key === "ArrowRight") { e.preventDefault(); setI((x) => (x + 1) % READ_ALONG.length); } };
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.closest?.("input, textarea, select")) return;
+      if ((e.key === " " || e.key === "ArrowRight") && !rec.paused) { e.preventDefault(); setI((x) => (x + 1) % READ_ALONG.length); }
+      if (e.key.toLowerCase() === "p") { e.preventDefault(); if (rec.paused) { rec.resume(); setPaused(false); } else { rec.pause(); setPaused(true); } }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [rec]);
 
   async function begin() {
-    // saved to this device every second: a refresh mid-session keeps it (offered back below the card)
-    const r = await startRecording(`dataset:${name}`, `line ${i + 1}`);
-    setSecs(0);
-    setRec({ ...r, t0: performance.now() });
+    setErr("");
+    try {
+      // saved to this device every second: a refresh mid-session keeps it (offered back below the card)
+      const r = await startRecording(`dataset:${name}`, `line ${i + 1}`);
+      setSecs(0); setPaused(false); setRec(r);
+    } catch (e) {
+      setErr((e as Error).name === "NotAllowedError" ? "Allow the microphone for this site, then try again." : (e as Error).message);
+    }
   }
   async function finish() {
     if (!rec) return;
-    const f = await rec.stop();
-    forget.current = [rec.forget];
-    setKept(rec.take.id);
-    setRec(null);
-    setTake(f);
+    const r = rec;
+    setRec(null); setPaused(false);
+    const f = await r.stop();
+    if (r.elapsed() < 3) { r.forget(); toast("That take was under 3 seconds, so it wasn't kept", "bad"); return; }
+    setPending((p) => [...p, { file: f, forget: r.forget, take: r.take.id }]);
   }
-  async function send(list: File[]) {
+  function drop(k: number) {
+    setPending((p) => { p[k]?.forget?.(); return p.filter((_, j) => j !== k); });
+  }
+  async function send() {
+    const list = pending.slice(0, 20);
+    if (!list.length) return;
+    setErr("");
     try {
+      const total = list.reduce((a, x) => a + x.file.size, 0) || 1;
+      let done = 0;
       const keys: { key: string; name: string }[] = [];
-      for (const [n, f] of list.entries()) {
-        setUp(n / list.length);
-        keys.push({ key: await uploadFile(f, f.name.replace(/[^A-Za-z0-9._-]/g, "_"), (x) => setUp((n + x) / list.length)), name: f.name });
+      for (const x of list) {
+        const f = x.file;
+        keys.push({ key: await uploadFile(f, f.name.replace(/[^A-Za-z0-9._-]/g, "_"), (fr) => setUp((done + fr * f.size) / total)), name: f.name });
+        done += f.size;
       }
       setUp(null);
-      setFiles([]);
-      setTake(null);
-      start(await api<Job>("jobs", { body: { kind: "dataset", name, sources: keys, label: `Dataset · ${name}` } }));
-      forget.current.forEach((f) => f()); forget.current = []; setKept(null);
+      const j = await api<Job>("jobs", { body: { kind: "dataset", name, sources: keys, label: `Dataset · ${name}` } });
+      sent.current = list;
+      setPending((p) => p.slice(list.length));
+      start(j);
     } catch (e) {
       setUp(null);
-      toast((e as Error).message, "bad");
+      setErr((e as Error).message);
     }
   }
   const busy = !!job && ["queued", "running"].includes(job.status);
   useResumeJob<Polled>(["dataset"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
-
+  
   return (
     <div className="card">
       <div className="card-head"><h2>1 · Collect</h2>
@@ -122,62 +157,77 @@ function Collect({ name, onAdded }: { name: string; onAdded: () => void }) {
       </div>
       {tab === "read" ? (
         <>
-          <p className="dim small" style={{ marginTop: 0 }}>Record a session of 5-15 minutes, reading at your natural YouTube pace. Press <kbd>space</kbd> for the next line; pauses and
-            retakes are fine (the worker cuts clean clips and drops the bad ones). Same mic and room every session.</p>
-          <div className={`read-card big ${rec ? "live" : ""}`}>{READ_ALONG[i]}</div>
-          <div className="row between">
+          <p className="dim small" style={{ marginTop: 0 }}>Record a session of 5-15 minutes at your natural YouTube pace. <kbd>space</kbd> moves to the next line,
+            <kbd>P</kbd> pauses and resumes (take a sip of water, the take waits). Stop when you&apos;re done: you listen first, nothing is sent until you add it.</p>
+          <div className={`read-card big ${rec && !paused ? "live" : ""}`}>{READ_ALONG[i]}</div>
+          <div className="row between" style={{ flexWrap: "wrap", gap: 10 }}>
             <div className="row" style={{ gap: 4 }}>
               <button className="icon-btn" aria-label="Previous line" onClick={() => setI((x) => (x - 1 + READ_ALONG.length) % READ_ALONG.length)}><CaretLeft size={16} /></button>
               <span className="mono tiny dim">{i + 1} / {READ_ALONG.length}</span>
               <button className="icon-btn" aria-label="Next line" onClick={() => setI((x) => (x + 1) % READ_ALONG.length)}><CaretRight size={16} /></button>
             </div>
             {rec ? (
-              <div className="row" style={{ gap: 12 }}>
-                <VoiceOrb stream={rec.stream} size={64} /><span className="mono">{fmtS(secs)}</span>
+              <div className="row" style={{ gap: 10 }}>
+                <VoiceOrb stream={rec.stream} size={64} paused={paused} /><span className="mono">{fmtS(secs)}{paused ? " · paused" : ""}</span>
+                <PauseButton rec={rec} paused={paused} onChange={setPaused} />
                 <button onClick={finish}><Stop size={15} weight="fill" /> Stop</button>
               </div>
-            ) : !take && <button onClick={begin} disabled={busy || up !== null || !status?.online}><Microphone size={15} weight="fill" /> Start a session</button>}
+            ) : <button onClick={begin} disabled={up !== null}><Microphone size={15} weight="fill" /> {pending.length ? "Record another session" : "Start a session"}</button>}
           </div>
-          {!rec && !take && <div style={{ marginTop: 12 }}><SavedTakes scope={`dataset:${name}`} live={kept} useLabel="Review" onUse={(f, t) => {
-            forget.current = [() => import("./takes").then((m) => m.dropTake(t.id))]; setKept(t.id); setTake(f);
+          {!rec && <div style={{ marginTop: 12 }}><SavedTakes scope={`dataset:${name}`} live={pending.map((p) => p.take).filter(Boolean).join(",") || null} useLabel="Review" onUse={(f, t) => {
+            if (pending.some((p) => p.take === t.id)) return;
+            setPending((p) => [...p, { file: f, take: t.id, forget: () => import("./takes").then((m) => m.dropTake(t.id)) }]);
           }} /></div>}
-          {take && (
-            <div className="stack" style={{ gap: 8, marginTop: 12, padding: 12, border: "1px solid var(--line)", borderRadius: 12 }}>
-              <b className="small">Listen before it goes into {name}&apos;s dataset</b>
-              <FilePreview file={take} />
-              <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
-                <button className="ghost sm" onClick={() => { forget.current.forEach((f) => f()); forget.current = []; setKept(null); setTake(null); }}>Discard</button>
-                <button className="sm" onClick={() => send([take])} disabled={busy || up !== null || !status?.online}>Add to dataset <ArrowRight size={13} /></button>
-              </div>
-            </div>
-          )}
         </>
       ) : (
         <>
-          <p className="dim small" style={{ marginTop: 0 }}>Long recordings of just you talking work great: raw voiceovers, podcast tracks, a video&apos;s audio. Up to 3 hours per batch.</p>
-          <label className="drop slim" style={{ cursor: "pointer" }}>
-            <UploadSimple size={18} /><span className="small">{files.length ? files.map((f) => f.name).join(", ") : "Choose audio or video files"}</span>
-            <input type="file" hidden multiple accept="audio/*,video/*" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
+          <p className="dim small" style={{ marginTop: 0 }}>Long recordings of just you talking work great: raw voiceovers, podcast tracks, a video&apos;s audio. Pick as many as you like
+            (up to 20 per batch, 3 hours in all); they add to the list below.</p>
+          <label className="drop slim" style={{ cursor: "pointer" }}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files).filter((f) => /^(audio|video)\//.test(f.type)); setPending((p) => [...p, ...fs.map((file) => ({ file }))]); }}>
+            <UploadSimple size={18} /><span className="small">Choose or drop audio / video files</span>
+            <input type="file" hidden multiple accept="audio/*,video/*" onChange={(e) => { const fs = Array.from(e.target.files ?? []); e.target.value = ""; setPending((p) => [...p, ...fs.map((file) => ({ file }))]); }} />
           </label>
-          {files.length > 0 && (
-            <div className="stack" style={{ gap: 10, marginTop: 10 }}>
-              {files.map((f, k) => <FilePreview key={`${f.name}-${k}`} file={f} onRemove={() => setFiles(files.filter((_, j) => j !== k))} />)}
-            </div>
-          )}
-          <div className="row" style={{ justifyContent: "flex-end", marginTop: 10 }}>
-            <button onClick={() => send(files)} disabled={!files.length || busy || up !== null || !status?.online}>Add to dataset <ArrowRight size={14} /></button>
-          </div>
         </>
       )}
-      {!status?.online && status && <p className="tiny dim">The GPU worker is offline; start the Colab notebook to process recordings.</p>}
-      {(job || up !== null) && <div style={{ marginTop: 14 }}><JobProgress job={job} kind="reference" uploading={up !== null} uploadFrac={up ?? 0} /></div>}
+      {pending.length > 0 && (
+        <div className="stack" style={{ gap: 10, marginTop: 14, padding: 12, border: "1px solid var(--line)", borderRadius: 12 }}>
+          <div className="row between"><b className="small">Ready for {name}&apos;s dataset · {pending.length} {pending.length === 1 ? "recording" : "recordings"}</b>
+            <span className="tiny dim">listen, remove what you don&apos;t want</span></div>
+          {pending.map((x, k) => <FilePreview key={`${x.file.name}-${k}`} file={x.file} onRemove={() => drop(k)} />)}
+          {pending.length > 20 && <span className="tiny dim">The first 20 go in this batch; add the rest after.</span>}
+          <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+            <button className="ghost sm" onClick={() => setPending((p) => { p.forEach((x) => x.forget?.()); return []; })}>Discard all</button>
+            <button className="sm" onClick={send} disabled={busy || up !== null || !status?.online || !!rec}
+              title={!status?.online ? "Start the GPU worker first (your takes stay saved here)" : undefined}>
+              Add {Math.min(20, pending.length)} to dataset <ArrowRight size={13} /></button>
+          </div>
+        </div>
+      )}
+      {err && <p className="err" style={{ margin: "10px 0 0" }}>{err}</p>}
+      {!status?.online && status && <p className="tiny dim">The GPU worker is offline. You can still record and queue takes (they&apos;re saved on this device); start the Colab notebook to add them.</p>}
+      {(job || up !== null) && <div style={{ marginTop: 14 }}><JobProgress job={job} kind="dataset" uploading={up !== null} uploadFrac={up ?? 0} /></div>}
+      {job?.status === "error" && <DatasetError job={job} />}
+      {job?.status === "done" && job.part && job.part.clips === 0 && <p className="err small">No clips were kept from that batch.</p>}
     </div>
   );
 }
 
+/** Why a dataset batch failed, in words, with what to do next. */
+function DatasetError({ job }: { job: Polled }) {
+  const e = job.error ?? "";
+  const tip = /no usable clips/i.test(e) ? "Every clip was dropped by the quality checks. Record closer to the mic in a quiet room, read whole sentences, and keep pauses under a few seconds (use Pause for longer breaks)."
+    : /3 hours/i.test(e) ? "Split the files over two batches."
+    : /download|403|404|expired/i.test(e) ? "The upload link expired before the worker got to it. Add the recordings again."
+    : /ffmpeg|Invalid data|moov/i.test(e) ? "One file couldn't be read as audio. Remove it (or export it as WAV/MP3) and add the rest."
+    : "Your recordings are still saved on this device: fix the issue and add them again.";
+  return <p className="err small" style={{ margin: "8px 0 0" }}>{e || "The batch failed."} {tip}</p>;
+}
+
 const TRAIN_STAGES: Record<string, string> = { queued: "Waiting for the GPU", installing: "Installing the training tools", preparing: "Starting",
   downloading: "Fetching your recordings", encoding: "Turning your clips into tokens", loading: "Loading Orpheus 3B",
-  training: "Learning your voice", saving: "Saving your model", testing: "Voicing a test line", done: "Done" };
+  training: "Learning your voice", listening: "Listening to every epoch, keeping the best", saving: "Saving your model", testing: "Voicing a test line", done: "Done" };
 
 function Train({ name, minutes, onTrained }: { name: string; minutes: number; onTrained: () => void }) {
   const { status } = useStatus();
@@ -216,6 +266,11 @@ function Train({ name, minutes, onTrained }: { name: string; minutes: number; on
           <div className="row between small"><b>Current model · {model.name}</b>
             <span className="dim">{model.minutes.toFixed(1)} min · {model.clips} clips · {model.best_epoch ? `best of ${model.epochs} epochs: ${model.best_epoch}` : `${model.epochs} epochs`} · loss {model.loss.toFixed(3)}{model.flow_clips ? " · flow" : ""} · {new Date(model.created).toLocaleDateString()}</span></div>
           {model.sample_url && <><span className="dim tiny">“{model.sample?.text}”</span><Player src={model.sample_url} compact /></>}
+          {!!model.listening?.length && (
+            <div className="tiny dim">Picked by listening: {model.listening.map((e) => (
+              <span key={e.epoch} style={{ marginRight: 10, color: e.epoch === model.best_epoch ? "var(--ink)" : undefined }}>
+                epoch {e.epoch} · words {pct(e.match)} · like you {pct(e.similarity)}{e.epoch === model.best_epoch ? " ✓" : ""}</span>))}</div>
+          )}
         </div>
       )}
       {job && (busy || job.status === "error" || job.status === "cancelled") && (
@@ -310,6 +365,63 @@ function Benchmark({ mine, name }: { mine: MyVoice[]; name: string }) {
   );
 }
 
+type KVoice = { name: string; voice: string; job: string; created: number; target: string; similarity: number; match: number; start: number;
+  closest: { voice: string; similarity: number }[]; mix?: { voice: string; weight: number }[]; sample_url?: string | null };
+
+/** Your voice inside Kokoro: the clarity and speed of af_heart, as close to you as Kokoro's voice space allows. */
+function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
+  const { status } = useStatus();
+  const { toast } = useDialog();
+  const [target, setTarget] = useState(mine[0]?.name ?? "");
+  const [have, setHave] = useState<KVoice | null>(null);
+  const [rounds, setRounds] = useState(24);
+  const [err, setErr] = useState("");
+  const load = useCallback(() => {
+    api<{ voices: KVoice[] }>("kvoices").then((r) => setHave(r.voices.find((v) => v.name === name) ?? null)).catch(() => {});
+  }, [name]);
+  useEffect(load, [load]);
+  useEffect(() => { if (!target && mine[0]) setTarget(mine[0].name); }, [mine, target]);
+  const { job, start } = usePoll((j) => { toast(`Found ${name}'s voice in Kokoro: use kv_${name} in Voiceover (Kokoro)`, "ok"); void j; load(); });
+  useResumeJob<Polled>(["voicewalk"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
+  const busy = !!job && ["queued", "running"].includes(job.status);
+
+  async function run() {
+    setErr("");
+    try {
+      start(await api<Job>("jobs", { body: { kind: "voicewalk", name, voice: target, rounds, label: `Your voice in Kokoro · ${name}` } }));
+    } catch (e) { setErr((e as Error).message); }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-head"><h2>4 · Your voice in Kokoro</h2><span className="dim tiny">af_heart clarity · instant · runs on the CPU</span></div>
+      <p className="dim small" style={{ marginTop: 0 }}>
+        Kokoro is the tiny engine behind af_heart: crisp, steady and instant. This searches Kokoro&apos;s voice space for the mix of its voices that
+        sounds most like your recording (scored by the same voice match as the review), then checks it still speaks every word clearly.
+        It&apos;s the closest Kokoro can get to you, not a clone; your trained model copies you more exactly. About 10-15 minutes.
+      </p>
+      {have && !busy && (
+        <div className="stack" style={{ gap: 8, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
+          <div className="row between small" style={{ flexWrap: "wrap", gap: 8 }}><b>kv_{name}</b>
+            <span className="dim">like you {pct(have.similarity)} (closest built-in {have.closest[0]?.voice} {pct(have.closest[0]?.similarity)}) · words {pct(have.match)} · {new Date(have.created).toLocaleDateString()}</span></div>
+          {have.sample_url && <Player src={have.sample_url} compact />}
+          {!!have.mix?.length && <span className="tiny dim">Mix: {have.mix.slice(0, 5).map((m) => `${m.voice} ${Math.round(m.weight * 100)}%`).join(" · ")}</span>}
+        </div>
+      )}
+      <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div className="field" style={{ margin: 0, flex: "1 1 200px" }}><label className="f">Match this recording of you</label>
+          <select value={target} onChange={(e) => setTarget(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Record a voice on the Voices page</option>}</select></div>
+        <div className="field" style={{ margin: 0, width: 150 }}><label className="f">Search</label>
+          <select value={rounds} onChange={(e) => setRounds(Number(e.target.value))}>
+            <option value={12}>Quick (12 rounds)</option><option value={24}>Normal (24)</option><option value={48}>Thorough (48)</option></select></div>
+        <button onClick={run} disabled={busy || !target || !status?.online}>{have ? "Search again" : "Find my Kokoro voice"} <ArrowRight size={13} /></button>
+      </div>
+      {err && <p className="err" style={{ margin: "8px 0 0" }}>{err}</p>}
+      {job && (busy || job.status === "error") && <div style={{ marginTop: 14 }}><JobProgress job={job} kind="tts" /></div>}
+    </div>
+  );
+}
+
 type Person = { name: string; minutes: number; clips: number };
 
 export default function MyModel() {
@@ -391,6 +503,7 @@ export default function MyModel() {
           <Collect name={name} onAdded={refresh} />
           <Train name={name} minutes={minutes} onTrained={loadModels} />
           <Benchmark mine={mine} name={name} />
+          <KokoroVoice mine={mine} name={name} />
         </div>
       )}
       <div style={{ height: 30 }} />

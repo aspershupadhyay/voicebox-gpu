@@ -10,9 +10,9 @@ import { useDialog } from "./Dialog";
 import { forgetTracked, isLive, updateTracked, useTracked, type Tracked } from "./jobs";
 
 type Polled = { id: string; status: string; error?: string; label?: string; kind?: string; progress?: { fraction?: number; stage?: string; detail?: string };
-  library?: unknown; part?: unknown; model?: unknown; myvoice?: unknown };
+  library?: unknown; part?: unknown; model?: unknown; myvoice?: unknown; kvoice_saved?: unknown };
 
-const stored = (j: Polled) => !!(j.library || j.part || j.model || j.myvoice);
+const stored = (j: Polled) => !!(j.library || j.part || j.model || j.myvoice || j.kvoice_saved);
 
 export default function JobTray() {
   const list = useTracked();

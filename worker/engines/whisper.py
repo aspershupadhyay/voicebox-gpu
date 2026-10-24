@@ -1,9 +1,11 @@
-"""Whisper large-v3 (OpenAI) for subtitles: word-level timestamps, 99 languages, long files chunked at 30 s."""
+"""Whisper large-v3-turbo (OpenAI) for subtitles, review and dataset cuts: word-level timestamps, 99 languages, long
+files chunked at 30 s and the windows batched as wide as the free GPU memory allows. WHISPER_MODEL=openai/whisper-large-v3
+brings back the full decoder (slower, marginally better on hard accents)."""
 import os
 import numpy as np
 import torch
 
-MODEL = os.environ.get("WHISPER_MODEL", "openai/whisper-large-v3")
+MODEL = os.environ.get("WHISPER_MODEL", "openai/whisper-large-v3-turbo")
 # Speaker verification for the "sounds like you" score (and best-of-N takes). Small (~380 MB), loaded on first use.
 SV_MODEL = os.environ.get("VOICE_MATCH_MODEL", "microsoft/wavlm-base-plus-sv")
 # Naturalness (predicted MOS, 1-5): UTMOS22 "strong" via the SpeechMOS port (pure torch, ~400 MB, first use only).
@@ -75,16 +77,23 @@ class Engine:
             gen["language"] = language
         return gen
 
+    def _batch(self, seconds):
+        """How many 30 s windows to decode at once: word timestamps keep the cross-attention maps, ~0.6 GB a window
+        on turbo, so the batch follows the memory actually free right now (Orpheus may be sharing the card)."""
+        if self.dev != "cuda" or seconds <= 30:
+            return 1
+        free = torch.cuda.mem_get_info()[0] / 2**30
+        return int(max(1, min(16, (free - 1.5) // 0.6, seconds // 30 + 1)))
+
     def transcribe_batch(self, paths, language=None):
-        """One file at a time: word timestamps need the attention maps, which are large, so batching
-        windows would blow past the GPU memory left next to Orpheus. Long files are chunked at 30 s."""
+        """One file at a time, its 30 s windows decoded in a batch sized to the free GPU memory."""
         out = []
         for p in paths:
             a = load_16k(p)
             try:
                 with torch.inference_mode():
                     o = self.pipe({"raw": a, "sampling_rate": 16000}, return_timestamps="word",
-                                  chunk_length_s=30, batch_size=1, generate_kwargs=self._gen(language))
+                                  chunk_length_s=30, batch_size=self._batch(len(a) / 16000), generate_kwargs=self._gen(language))
                 out.append(self._words(o, len(a) / 16000, language))
             finally:
                 if self.dev == "cuda":
