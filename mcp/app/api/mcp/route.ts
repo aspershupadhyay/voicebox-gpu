@@ -135,7 +135,7 @@ const handler = createMcpHandler(
           "takes: 2-4 = best-of-N: every sentence is voiced N times and the take Whisper hears most accurately (and, for a cloned voice, that sounds most like the recording) wins. Costs N x the time; worth it for final renders.",
           "Script markup: [pause], [pause 0.8], [pause 500ms], [beat], [breath] insert real silence. Tech terms are said right automatically (SQL -> sequel, GPU -> G P U, JSON -> jay-son, 16GB -> 16 gigabytes, markdown and URLs cleaned); pronounce: {word: 'how to say it'} adds your own, lexicon: false turns it off. The script itself is untouched for subtitles.",
           "With a recorded voice on qwen, lines in Devanagari (Hindi) are voiced by Chatterbox in the same voice automatically. With subtitles on and a cloned voice, each line also gets similarity (voice match vs the recording; 0.86+ = same speaker).",
-          "Engines: kokoro (fast drafts, many languages), chatterbox (emotion dial + cloning, 23 languages incl. Hindi), orpheus (most human, English; tags like <laugh> <sigh>), qwen (best cloning of the user's recorded voice; 10 languages, no Hindi; params.language takes names like English), myvoice (a fine-tuned Orpheus model of one of the two creators, once trained: English; voice = the person's model name from my_voices.trained, 'me' = the newest; most human, carries delivery across sentences).",
+          "Engines: kokoro (fast drafts, many languages), chatterbox (emotion dial + cloning, 23 languages incl. Hindi), orpheus (most human, English; tags like <laugh> <sigh>), qwen (best cloning of the user's recorded voice, or a fine-tuned voice ft_<name> from my_voices.fine_tuned; 10 languages, no Hindi; params.language takes names like English), myvoice (a fine-tuned Orpheus model of one of the two creators, once trained: English; voice = the person's model name from my_voices.trained, 'me' = the newest; most human, carries delivery across sentences).",
           "No length limit: long text is split at sentences, voiced in one batch and re-joined.",
           "subtitles: true adds Whisper large-v3 word-timed SRT/VTT per line and for the whole timeline (uses each line's start when given), plus a match score vs the script.",
           "voice: 'female' / 'male' presets, an engine voice (e.g. tara, dan, af_heart), or the name of a recorded voice from my_voices (qwen or chatterbox).",
@@ -325,14 +325,16 @@ const handler = createMcpHandler(
       "my_voices",
       {
         title: "List the user's recorded voices",
-        description: "The studio's voices. recorded: voices recorded in the dashboard (Voices page); use a name as `voice` with engine qwen (best match) or chatterbox (Hindi, emotion dial). trained: each person's own trained model; use its name as `voice` with engine myvoice (the most natural English read).",
+        description: "The studio's voices. recorded: voices recorded in the dashboard (Voices page); use a name as `voice` with engine qwen (best match) or chatterbox (Hindi, emotion dial). trained: each person's own trained model; use its name as `voice` with engine myvoice (the most natural English read). fine_tuned: fine-tuned Qwen3-TTS voices; use ft_<name> as `voice` with engine qwen.",
         inputSchema: z.object({}),
       },
       async () => {
         try {
-          const [recorded, trained] = await Promise.all([listMyVoices(false), listModels().catch(() => [])]);
+          const { listQwenModels } = await import("@/lib/qwenmodels");
+          const [recorded, trained, tuned] = await Promise.all([listMyVoices(false), listModels().catch(() => []), listQwenModels().catch(() => [])]);
           return text({ recorded: recorded.map((v) => ({ name: v.name, label: v.label, seconds: v.duration, transcript: v.transcript })),
-            trained: trained.map((m) => ({ name: m.name, engine: "myvoice", minutes_trained_on: m.minutes, trained: new Date(m.created).toISOString().slice(0, 10) })) });
+            trained: trained.map((m) => ({ name: m.name, engine: "myvoice", minutes_trained_on: m.minutes, trained: new Date(m.created).toISOString().slice(0, 10) })),
+            fine_tuned: tuned.map((m) => ({ voice: `ft_${m.name}`, engine: "qwen", minutes_trained_on: m.minutes, trained: new Date(m.created).toISOString().slice(0, 10) })) });
         } catch (e) {
           return fail(e);
         }
@@ -386,21 +388,22 @@ const handler = createMcpHandler(
       "train_voice",
       {
         title: "Train a voice model",
-        description: "Fine-tune Orpheus 3B on everything collected in a dataset (voice_dataset), on the GPU worker: about 1-2 h, other jobs wait. Any amount trains; 15+ minutes kept sounds right, 30 good, 60 best. Replaces that dataset's current model; the result is engine myvoice, voice = the dataset name. Follow it with get_job.",
+        description: "Train a voice on everything collected in a dataset (voice_dataset), on the GPU worker; other jobs wait. engine orpheus (default): an Orpheus 3B LoRA, about 1-2 h, voice = the name on engine myvoice. engine qwen: a full Qwen3-TTS 1.7B fine-tune (needs an A100/L4/A10 runtime), voice ft_<name> on engine qwen. Any amount trains; 15+ minutes kept sounds right, 30 good, 60 best. Replaces that dataset's current model; the result is engine myvoice, voice = the dataset name. Follow it with get_job.",
         inputSchema: z.object({
           name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/).describe("the dataset to train on (whose voice)"),
+          engine: z.enum(["orpheus", "qwen"]).optional().describe("which model learns the voice (default orpheus)"),
         }),
       },
-      async ({ name }) => {
+      async ({ name, engine }) => {
         try {
           const { listDataset, trainJobBody, TRAIN_MIN_MINUTES } = await import("@/lib/datasets");
           const d = await listDataset(name);
           if (!d.clips) throw new Error(`${name} has no clips yet: add recordings with voice_dataset first`);
           const note = d.minutes < TRAIN_MIN_MINUTES ? `only ${d.minutes} min: it trains, but ${TRAIN_MIN_MINUTES}+ min sounds much more like the speaker` : undefined;
           const running = (await call<{ jobs: { kind: string; voice: string; status: string; id: string }[] }>("/jobs")).jobs
-            .find((j) => j.kind === "train" && j.voice === name && ["queued", "running"].includes(j.status));
+            .find((j) => j.kind === "train" && j.voice === name && ["queued", "running"].includes(j.status) && ((j as { train_engine?: string }).train_engine ?? "orpheus") === (engine ?? "orpheus"));
           if (running) return text({ already_training: running.id, next: `Call get_job with job_id "${running.id}" to follow it.` });
-          return text({ ...withHint(await call<Job>("/jobs", { body: await trainJobBody(name) })), note });
+          return text({ ...withHint(await call<Job>("/jobs", { body: await trainJobBody(name, undefined, engine ?? "orpheus") })), note });
         } catch (e) {
           return fail(e);
         }

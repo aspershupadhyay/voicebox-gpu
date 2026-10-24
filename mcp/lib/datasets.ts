@@ -49,10 +49,11 @@ export async function datasetManifest(name: string) {
 }
 
 /** The worker body for a train job on everything collected for name: every session travels as a signed link. */
-export async function trainJobBody(name: string, label?: string) {
+export async function trainJobBody(name: string, label?: string, engine: "orpheus" | "qwen" = "orpheus") {
   const d = await datasetManifest(name);
   if (!d.clips) throw new Error(`${name} has no clips yet: add recordings first`);  // any amount trains; 15+ min sounds right
-  return { kind: "train", name, parts: d.parts.map((p) => ({ url: p.url })), minutes: d.minutes, label: label ?? `Train your voice · ${name}` };
+  return { kind: "train", name, engine, parts: d.parts.map((p) => ({ url: p.url })), minutes: d.minutes,
+    label: label ?? (engine === "qwen" ? `Fine-tune Qwen3-TTS · ${name}` : `Train your voice · ${name}`) };
 }
 
 /** A stored batch sent with auto_train: start training on the whole dataset once, if there's enough and none is running. */

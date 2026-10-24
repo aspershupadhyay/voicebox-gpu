@@ -462,6 +462,30 @@ def get_kvoice(job, voice):
     return path
 
 
+def get_qwen_model(job, voice):
+    """A fine-tuned Qwen3-TTS voice (ft_<name>): its model, downloaded once per train job into qwenft/models/<job>/
+    (job["qmodels"] = {name: {job, url}} from the dashboard). Returns the path of its ref.wav: the qwen engine sees the
+    model next to it, and the voice match compares takes with that clip of the person."""
+    name = voice[3:]
+    m = (job.get("qmodels") or {}).get(name)
+    if not m:
+        raise ValueError(f"no fine-tuned Qwen voice called '{name}' yet: train one on the Your model page (Train Qwen3-TTS)")
+    path = os.path.join(C.QWENFT_DIR, "models", m["job"])
+    if not os.path.exists(os.path.join(path, "model.safetensors")):
+        job["stage"] = "fetching the voice model"
+        log(f"downloading fine-tuned Qwen voice '{name}' ({m['job']})")
+        tmp = path + ".part"
+        shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(tmp)
+        with urllib.request.urlopen(m["url"], timeout=1800) as r, open(tmp + ".zip", "wb") as f:
+            shutil.copyfileobj(r, f)
+        zipfile.ZipFile(tmp + ".zip").extractall(tmp)
+        os.remove(tmp + ".zip")
+        shutil.rmtree(path, ignore_errors=True)
+        os.replace(tmp, path)
+    return os.path.join(path, "ref.wav")
+
+
 def add_ref(name, audio_bytes, transcript=None):
     if not ID_RE.match(name):
         raise ValueError("reference name must be 1-64 chars of letters, digits, - or _")
@@ -1481,7 +1505,9 @@ def run_tts(job):
     engine, voice = job["engine"], job["voice"]
     jdir = os.path.join(JOBS_DIR, job["id"])
     ref_path = ref_text = None
-    if C.ENGINES[engine].get("clone") or (engine == "chatterbox" and voice != "default"):
+    if engine == "qwen" and str(voice).startswith("ft_"):
+        ref_path = get_qwen_model(job, voice)  # a fine-tuned voice: the engine loads the model sitting next to this clip
+    elif C.ENGINES[engine].get("clone") or (engine == "chatterbox" and voice != "default"):
         job["stage"] = "reference"
         ref_path, ref_text = get_ref(voice, job.get("ref"))
     if engine == "kokoro" and str(voice).startswith("kv_"):
@@ -2379,7 +2405,13 @@ def run_benchmark(job):
         sp, _ = C.style_settings(job["style"], cand["engine"])
         job.update({"engine": cand["engine"], "voice": cand["voice"], "params": {**sp, **cand["params"]}})
         ref_path = ref_text = None
-        if C.ENGINES[cand["engine"]].get("clone") or (cand["engine"] == "chatterbox" and cand["voice"] != "default"):
+        if cand["engine"] == "qwen" and str(cand["voice"]).startswith("ft_"):
+            try:
+                ref_path = get_qwen_model(job, cand["voice"])
+            except Exception as e:  # noqa: BLE001
+                board.append({"label": cand["label"], "engine": cand["engine"], "voice": cand["voice"], "error": str(e)[:200]})
+                continue
+        elif C.ENGINES[cand["engine"]].get("clone") or (cand["engine"] == "chatterbox" and cand["voice"] != "default"):
             job["stage"] = "reference"
             ref_path, ref_text = get_ref(cand["voice"], (job.get("refs") or {}).get(cand["voice"]))
         if cand["engine"] == "kokoro" and str(cand["voice"]).startswith("kv_"):
@@ -2558,8 +2590,16 @@ def make_train_job(body):
         raise ValueError("parts: the dataset has no recordings yet (Your model: collect first)")
     minutes = float(body.get("minutes") or 0)
     job = _base_job("train", body)
-    job.update({"voice": str(body.get("name") or "me")[:64], "lines": [], "engine": "myvoice", "parts": parts,
-                "speaker": "me", "epochs": body.get("epochs"), "learning_rate": body.get("learning_rate")})
+    ft = "qwen" if body.get("engine") == "qwen" else "orpheus"  # which model learns the voice
+    job.update({"voice": str(body.get("name") or "me")[:64], "lines": [], "engine": "qwen" if ft == "qwen" else "myvoice", "parts": parts,
+                "speaker": "me", "epochs": body.get("epochs"), "learning_rate": body.get("learning_rate"), "train_engine": ft})
+    if ft == "qwen":
+        if not ID_RE.match(job["voice"]):
+            raise ValueError("name: letters, digits, - or _")
+        # full fine-tune of 1.7B: ~2.5 s a step of 2 clips on an A100, one step per 2 clips per epoch, plus encode and test
+        epochs = job["epochs"] or (6 if minutes < 10 else 4 if minutes < 30 else 3)
+        job["est_total"] = 240 + minutes * 6 * 0.5 + minutes * 6 / 2 * epochs * 2.5 + 120
+        return _enqueue(job)
     # T4 (fp16, no bf16): ~10 s per optimizer step of 4 clips; ~6 clips a minute of audio; 4 epochs under 40 min, else 3
     # (train.py keeps the best epoch); flow clips are about twice as long, so steps cost ~1.4x on average
     clips = max(30, minutes * 6)
@@ -2573,9 +2613,63 @@ def _train_python():
     return os.environ.get("VOICEBOX_PY_TRAIN") or os.path.join(C.VENVS, f"train-{tag}", "bin", "python")
 
 
+def run_train_qwen(job):
+    """Fine-tune Qwen3-TTS on the dataset (train_qwen.py, in the qwen venv): the whole GPU, then the voice ft_<name> is
+    ready on this worker (the dashboard keeps a copy in R2 for the next runtime)."""
+    cap = subprocess.run(["nvidia-smi", "--query-gpu=name,compute_cap", "--format=csv,noheader"], capture_output=True, text=True).stdout.strip()
+    if cap and float(cap.split(",")[-1]) < 8:
+        raise RuntimeError(f"Qwen3-TTS fine-tuning needs a bf16 GPU (A100, L4, A10 or newer); this one is a {cap.split(',')[0]}. "
+                           "Train Orpheus instead, or switch the Colab runtime.")
+    jdir = os.path.join(JOBS_DIR, job["id"])
+    prog = os.path.join(jdir, "progress.json")
+    job["progress_file"] = prog
+    t0 = time.time()
+    job["cur"] = {"t0": t0, "est": job["est_total"], "label": ""}
+    for name in list(ENG.procs):
+        log(f"stopping {name}: fine-tuning Qwen needs the whole GPU")
+        ENG.stop(name)
+    job["stage"] = "installing"
+    py = ENG._install("qwen")
+    marker = os.path.join(os.path.dirname(os.path.dirname(py)), ".ft-" + hashlib.sha1(C.QWENFT_PACKAGES.encode()).hexdigest()[:8])
+    if not os.path.exists(marker):
+        with open(os.path.join(LOGS_DIR, "train-install.log"), "a") as logf:
+            subprocess.run(f"uv pip install --python {py} -q {C.QWENFT_PACKAGES}", shell=True, check=True, stdout=logf, stderr=logf)
+        open(marker, "w").close()
+    cfg = os.path.join(jdir, "train.json")
+    json.dump({"parts": job["parts"], "name": job["voice"], "epochs": job.get("epochs"), "learning_rate": job.get("learning_rate"),
+               "work": os.path.join(jdir, "work"), "out": jdir, "progress": prog}, open(cfg, "w"))
+    job["stage"] = "training"
+    env = {**os.environ, "HF_HOME": cache_dir("qwen"), "TOKENIZERS_PARALLELISM": "false", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+           "MPLBACKEND": "Agg", "PATH": os.path.dirname(py) + os.pathsep + os.environ.get("PATH", "")}
+    with open(os.path.join(LOGS_DIR, "train.log"), "a") as logf:
+        p = subprocess.Popen([py, os.path.join(HERE, "train_qwen.py"), cfg], stdout=logf, stderr=logf, env=env, cwd=HERE, start_new_session=True)
+        while p.poll() is None:
+            if job["cancel"]:
+                import signal
+                os.killpg(p.pid, signal.SIGKILL)
+                p.wait()
+                raise Cancelled()
+            time.sleep(2)
+    shutil.rmtree(os.path.join(jdir, "work"), ignore_errors=True)
+    if p.returncode != 0:
+        raise RuntimeError(f"fine-tuning stopped (exit {p.returncode}); the trainer's last lines are under the Train card")
+    job["train"] = json.load(open(os.path.join(jdir, "result.json")))
+    if job["train"].get("sample"):
+        job["results"].append({"id": "sample", "text": job["train"]["sample"]["text"], "duration": job["train"]["sample"]["duration"]})
+    mine = os.path.join(C.QWENFT_DIR, "models", job["id"])  # ready here at once; other runtimes download it (get_qwen_model)
+    shutil.rmtree(mine, ignore_errors=True)
+    os.makedirs(mine)
+    zipfile.ZipFile(os.path.join(jdir, "qmodel.zip")).extractall(mine)
+    job["cur"], job["est_done"] = None, time.time() - t0
+    job["est_total"] = job["est_done"]
+    log(f"job {job['id']} fine-tuned Qwen3-TTS as ft_{job['voice']}: {job['train']}")
+
+
 def run_train(job):
     """The whole GPU for training: stop every engine, install the train venv once, run train.py, then install the
     adapter for the myvoice engine on this worker (the dashboard also keeps a copy in R2 for the next runtime)."""
+    if job.get("train_engine") == "qwen":
+        return run_train_qwen(job)
     jdir = os.path.join(JOBS_DIR, job["id"])
     prog = os.path.join(jdir, "progress.json")
     job["progress_file"] = prog
@@ -2645,6 +2739,9 @@ PUSH_TYPES = {".wav": "audio/wav", ".srt": "application/x-subrip", ".vtt": "text
               ".npy": "application/octet-stream"}
 
 
+PUSHING, PUSHING_LOCK = set(), threading.Lock()  # (job, file) uploads in flight
+
+
 def push_files(job_id, targets, headers):
     """Upload job files straight to object storage via presigned PUT URLs (much faster than pulling
     them back through the tunnel). targets: {file name in the job dir: presigned url}."""
@@ -2656,20 +2753,30 @@ def push_files(job_id, targets, headers):
         path = os.path.join(jdir, os.path.basename(name))
         if not os.path.isfile(path) or not url.startswith("https://"):
             return name, "missing"
+        key = (job_id, os.path.basename(name))
+        with PUSHING_LOCK:  # a big file (a 3.5 GB Qwen voice) outlasts the request that asked for it, and the next poll
+            if key in PUSHING:  # asks again: one upload per file, the rest hear "in progress"
+                return name, "in progress"
+            PUSHING.add(key)
         ext = os.path.splitext(path)[1]
         ctype = PUSH_TYPES.get(ext, "application/octet-stream")
-        hdrs = {**{k: str(v) for k, v in headers.items() if k.lower().startswith("x-")}, "Content-Type": ctype}
-        for attempt in range(3):
-            try:
-                with open(path, "rb") as f:
-                    req = urllib.request.Request(url, data=f.read(), method="PUT", headers=hdrs)
-                with urllib.request.urlopen(req, timeout=600) as r:
-                    if r.status < 300:
-                        return name, None
-            except Exception as e:  # noqa: BLE001
-                err = f"{type(e).__name__}: {e}"
-                time.sleep(1 + attempt)
-        return name, err
+        hdrs = {**{k: str(v) for k, v in headers.items() if k.lower().startswith("x-")}, "Content-Type": ctype,
+                "Content-Length": str(os.path.getsize(path))}
+        try:
+            for attempt in range(3):
+                try:
+                    with open(path, "rb") as f:  # streamed from disk, never read into memory whole
+                        req = urllib.request.Request(url, data=f, method="PUT", headers=hdrs)
+                        with urllib.request.urlopen(req, timeout=1800) as r:
+                            if r.status < 300:
+                                return name, None
+                except Exception as e:  # noqa: BLE001
+                    err = f"{type(e).__name__}: {e}"
+                    time.sleep(1 + attempt)
+            return name, err
+        finally:
+            with PUSHING_LOCK:
+                PUSHING.discard(key)
 
     with ThreadPoolExecutor(8) as ex:
         results = list(ex.map(one, targets.items()))
@@ -2809,7 +2916,7 @@ def _progress(job):
 def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
                                  "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup",
-                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train")}
+                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine")}
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
     if job["kind"] == "tts":
