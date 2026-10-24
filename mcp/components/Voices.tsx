@@ -26,7 +26,7 @@ const TIPS = [
   ["Quiet room", "Soft furnishings, no music, fans or TV. The clone copies the room too."],
   ["15-20 cm away", "A hand's width from the mic, slightly to the side so p and b don't pop."],
   ["Read like the video", "Energy, pace and attitude carry over. Excited in, excited out."],
-  ["15-20 seconds", "Read the whole card. Longer takes are trimmed to the best ~20 s."],
+  ["15-20 seconds", "Read the whole card. Longer takes keep the first 20 s (or up to 60 s: pick it under the record button)."],
   ["Bad mic? Fine.", "The studio enhancer removes noise and echo and restores detail before cloning (Settings)."],
 ];
 const ENGINES = [
@@ -84,6 +84,7 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
   const [paused, setPaused] = useState(false);
   const [take, setTake] = useState<{ blob: Blob; url: string; name: string } | null>(null);
   const [label, setLabel] = useState("");
+  const [cap, setCap] = useState(20); // seconds of the take the clone engines get
   const [job, setJob] = useState<Job | null>(null);
   const [upFrac, setUpFrac] = useState<number | null>(null);
   const [err, setErr] = useState("");
@@ -153,7 +154,7 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
       setUpFrac(0);
       const key = await uploadFile(take.blob, take.name, setUpFrac);
       setUpFrac(null);
-      const j = await api<Job>("myvoices", { body: { name: slug, label: label || "My voice", key } });
+      const j = await api<Job>("myvoices", { body: { name: slug, label: label || "My voice", key, max_seconds: cap } });
       forget.current?.(); forget.current = null; setKept(null);
       setJob(j);
       timer.current = setTimeout(() => poll(j.id), 1000);
@@ -177,6 +178,9 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
             <b>{phase === "asking" ? "Allow the microphone…" : "Record your voice"}</b>
             <span className="dim small">Read the card on the right, about 20 seconds.{" "}
               <button className="linkish" onClick={() => fileIn.current?.click()}>Upload a file instead</button></span>
+            <label className="row tiny dim" style={{ gap: 6 }}>Keep up to
+              <select value={cap} onChange={(e) => setCap(Number(e.target.value))} style={{ width: "auto" }}>
+                {[20, 30, 45, 60].map((v) => <option key={v} value={v}>{v} s{v === 20 ? " (best for cloning)" : ""}</option>)}</select></label>
             <input ref={fileIn} type="file" accept="audio/*,video/*" hidden onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) { forget.current = null; setTake({ blob: f, url: URL.createObjectURL(f), name: f.name }); setLabel(f.name.replace(/\.[^.]+$/, "")); setPhase("review"); }

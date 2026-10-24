@@ -1344,7 +1344,9 @@ def make_reference_job(body):
     job = _base_job("reference", body)
     job.update({"engine": "whisper", "voice": name, "lines": [{"id": "reference", "url": url}], "params": {}, "post": {},
                 "transcript": str(body.get("transcript") or "").strip() or None, "version": str(body.get("version") or "")[:40],
-                "enhance": body.get("enhance", True) is not False, "from_dataset": bool(body.get("from_dataset"))})
+                "enhance": body.get("enhance", True) is not False, "from_dataset": bool(body.get("from_dataset")),
+                # how much of the recording the clone engines get: 20 s is the sweet spot, up to 60 s if you want more
+                "max_seconds": max(6.0, min(60.0, float(body.get("max_seconds") or 20)))})
     if job["from_dataset"]:  # url is a dataset zip: its clips are already clean and transcribed
         job["enhance"] = False
     job["est_total"] = 25.0 + (10.0 if job["enhance"] else 0)
@@ -2044,9 +2046,9 @@ def run_video(job):
     job["results"] = [{"id": "video", "text": g["prompt"], "duration": info["duration"]}]
 
 
-def _reference_from_dataset(url, jdir, out):
+def _reference_from_dataset(url, jdir, out, cap=20.0):
     """A cloning reference from a dataset zip (Your model): a run of consecutive 3-12 s clips from the middle of the
-    session, ~14-20 s in all, joined with short pauses. Writes out (WAV) and returns the words said."""
+    session, about cap seconds in all (70-100% of it), joined with short pauses. Writes out (WAV) and returns the words."""
     import io
     import numpy as np
     import soundfile as sf
@@ -2059,14 +2061,25 @@ def _reference_from_dataset(url, jdir, out):
         best, mid = None, len(rows) // 2
         for i in sorted(range(len(rows)), key=lambda k: abs(k - mid)):  # start near the middle: past the intro, warmed up
             total, j = 0.0, i
-            while j < len(rows) and ok[j] and total < 14.0:
+            while j < len(rows) and ok[j] and total < 0.7 * cap:
                 total += lens[rows[j][0]]
                 j += 1
-            if 14.0 <= total <= 22.0:
+            if 0.7 * cap <= total <= cap + 2:
                 best = (i, j)
                 break
         if not best:
-            raise ValueError("no run of clean 3-12 s clips adds up to 14-20 s in this dataset: add a longer session")
+            # a small dataset: take the longest run there is rather than nothing
+            starts = [i for i in range(len(rows)) if ok[i]]
+            if not starts:
+                raise ValueError("no clean 3-12 s clips in this dataset: add a longer session")
+            best, total = None, 0.0
+            for i in starts:
+                t, j = 0.0, i
+                while j < len(rows) and ok[j] and t + lens[rows[j][0]] <= cap + 2:
+                    t += lens[rows[j][0]]
+                    j += 1
+                if t > total:
+                    best, total = (i, j), t
         parts, sr = [], 24000
         for f, _ in rows[best[0]:best[1]]:
             a, sr = sf.read(io.BytesIO(z.read(f)), dtype="float32")
@@ -2085,7 +2098,7 @@ def run_reference(job):
     job["stage"] = "downloading"
     raw = os.path.join(jdir, "recording.in")
     if job.get("from_dataset"):
-        job["transcript"] = _reference_from_dataset(job["lines"][0]["url"], jdir, raw)
+        job["transcript"] = _reference_from_dataset(job["lines"][0]["url"], jdir, raw, job.get("max_seconds") or 20.0)
     else:
         _download(job["lines"][0]["url"], raw, 60 * 1024 * 1024)
     job["stage"] = "cleaning"
@@ -2113,14 +2126,15 @@ def run_reference(job):
     if dur < 4:
         raise ValueError(f"only {dur:.1f} s of speech: record at least 6-10 seconds")
     words, heard = [], job.get("transcript")
-    if not heard or dur > 24:
+    cap = job.get("max_seconds") or 20.0
+    if not heard or dur > cap + 4:
         _prepare(job, "whisper")
         job["stage"] = "transcribing"
         o = _run_unit(job, RATES["whisper"] * dur + 2, lambda: ENG.transcribe([out], job.get("language"))[0])
         words, heard = o["words"], heard or o["text"]
     cut = False
-    if dur > 24 and words:  # long takes: keep the first ~20 s, ending on a finished word
-        end = max((w["e"] for w in words if w["e"] <= 20.0), default=20.0)
+    if dur > cap + 4 and words:  # long takes: keep the first ~cap seconds, ending on a finished word
+        end = max((w["e"] for w in words if w["e"] <= cap), default=cap)
         a, sr = sf.read(out, dtype="float32")
         sf.write(out, a[: int((end + 0.15) * sr)], sr, subtype="PCM_16")
         heard = re.sub(r"\s+(?=[.,!?;:%\u2019])", "", " ".join(w["w"] for w in words if w["e"] <= end + 0.01))
@@ -2541,7 +2555,7 @@ def make_train_job(body):
     # T4 (fp16, no bf16): ~10 s per optimizer step of 4 clips; ~6 clips a minute of audio; 4 epochs under 40 min, else 3
     # (train.py keeps the best epoch); flow clips are about twice as long, so steps cost ~1.4x on average
     clips = max(30, minutes * 6)
-    epochs = job["epochs"] or (4 if minutes < 40 else 3)
+    epochs = job["epochs"] or (10 if minutes < 5 else 6 if minutes < 15 else 4 if minutes < 40 else 3)  # as train.py
     job["est_total"] = 300 + clips * 0.4 + clips / 4 * epochs * TRAIN_STEP_S * 1.4 + 120 + (0 if os.path.exists(_train_python()) else C.TRAIN_INSTALL_S)
     return _enqueue(job)
 

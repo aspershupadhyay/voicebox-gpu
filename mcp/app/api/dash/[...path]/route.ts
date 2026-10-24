@@ -267,12 +267,13 @@ export async function POST(req: Request, ctx: Ctx) {
         const parts = (await datasetManifest(ds)).parts.sort((x, y) => y.clips - x.clips);
         if (!parts.length) return Response.json({ error: `the ${ds} dataset is empty: collect first` }, { status: 400 });
         const job = await call("/jobs", { body: { kind: "reference", name, url: parts[0].url, from_dataset: true, label: String(body.label ?? name).slice(0, 60),
-          version: Date.now().toString(36) } });
+          version: Date.now().toString(36), max_seconds: body.max_seconds } });
         return Response.json(job, { status: 202 });
       }
       if (!/^uploads\/[A-Za-z0-9._-]+$/.test(String(body.key ?? ""))) return Response.json({ error: "upload the recording first" }, { status: 400 });
       const job = await call("/jobs", { body: { kind: "reference", name, url: await presignPath(String(body.key), 3600), label: String(body.label ?? name).slice(0, 60),
-        version: Date.now().toString(36), language: body.language || undefined, enhance: body.enhance ?? (await getSettings()).enhance_recordings } });
+        version: Date.now().toString(36), language: body.language || undefined, enhance: body.enhance ?? (await getSettings()).enhance_recordings,
+        max_seconds: body.max_seconds } });
       return Response.json(job, { status: 202 });
     }
     if (a === "samples" && b && c) {
