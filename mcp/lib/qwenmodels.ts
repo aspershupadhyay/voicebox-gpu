@@ -4,7 +4,7 @@
 //   qmodels/live/<name>.json          which job is <name>'s fine-tuned voice now (training again replaces it)
 // The voice is ft_<name> on the qwen engine. Jobs that use one carry signed links to them (qmodels), and the worker
 // downloads each model once.
-import { getJson, listObjs, presign, putJson } from "./store";
+import { delPrefix, getJson, listObjs, presign, putJson } from "./store";
 import { call } from "./worker";
 
 export type QwenModel = { name: string; job: string; created: number; clips: number; minutes: number; epochs: number; steps: number;
@@ -74,4 +74,18 @@ export async function qwenModelLinks() {
   const out: Record<string, { job: string; url: string }> = {};
   for (const m of await listQwenModels()) out[m.name] = { job: m.job, url: await presign(`${dir(m)}qmodel.zip`, "GET", 24 * 3600) };
   return out;
+}
+
+/** Storage clean-up for one person: keep the model in use and the 1 newest others (the one before it, a candidate
+ *  waiting on its model check); delete the rest. */
+export async function pruneModels(name: string) {
+  const live = await getJson<QwenModel>(`${LIVE}${name}.json`).catch(() => null);
+  if (!live) return [];
+  const objs = await listObjs(`qmodels/${name}/`);
+  const jobs = [...new Set(objs.map((o) => o.key.split("/")[2]).filter(Boolean))];
+  const newest = (j: string) => Math.max(...objs.filter((o) => o.key.split("/")[2] === j).map((o) => o.modified));
+  const others = jobs.filter((j) => j !== live.job).sort((a, b) => newest(b) - newest(a));
+  const drop = others.slice(1);
+  for (const j of drop) await delPrefix(`qmodels/${name}/${j}/`);
+  return drop;
 }

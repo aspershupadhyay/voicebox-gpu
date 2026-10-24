@@ -1394,14 +1394,27 @@ def _run_unit(job, est, fn, label=""):
         return fn()
     finally:
         spent = time.time() - job["cur"]["t0"]
+        _time(job, job.get("stage") or "", spent)
         job["est_total"] += spent - job["cur"]["est"]  # replace the guess with what it really took
         job["est_done"] += spent
         job["cur"] = None
 
 
+# where a job's time went, by step (shown on the Health page): stage names -> plain steps
+STEP = {"preparing": "loading", "generating": "generating", "fixing": "re-voicing", "choosing": "listening"}
+
+
+def _time(job, stage, secs):
+    step = STEP.get(stage.split(":", 1)[0], stage.split(":", 1)[0] or "other")
+    t = job.setdefault("timings", {})
+    t[step] = round(t.get(step, 0.0) + secs, 2)
+
+
 def _prepare(job, name):
     job["stage"] = "preparing:" + name
+    t0 = time.time()
     ENG.ensure(name)
+    _time(job, "preparing", time.time() - t0)
 
 
 # The pause after a chunk when the script doesn't ask for one: what a presenter leaves after that punctuation.
@@ -1551,6 +1564,9 @@ def run_tts(job):
             if re.search(r"\.c\d+\.t\d+\.wav$", x):
                 os.remove(os.path.join(jdir, x))
     job["results"].sort(key=lambda r: order[r["id"]])
+    for x in os.listdir(jdir):  # codec tokens of takes no review looked at
+        if x.endswith(".codes.json"):
+            os.remove(os.path.join(jdir, x))
 
     if job["subtitles"]:
         try:
@@ -1562,6 +1578,44 @@ def run_tts(job):
             job["warnings"].append(f"subtitles failed ({type(e).__name__}); audio is saved, run subtitles again from the Library")
             for r in job["results"]:
                 r.pop("words", None); r.pop("subs", None)
+
+
+def _save_pairs(job, plans, cands, best, out):
+    """A trained voice's takes as preference data (RLHF: train_dpo.py): per chunk, the codec tokens of the take the
+    review kept and of its worst take, with their scores, in pairs.json (the dashboard stores it per person). A chunk
+    with one take still records the kept one, so a thumbs-down on its line can pair it with a better take later."""
+    if job.get("engine") != "myvoice" or job.get("mode"):
+        return
+    jdir = os.path.dirname(out(plans[0], 0, 0))
+    chunks, n_pairs = [], 0
+    for p in plans:
+        if p["engine"] != "myvoice":
+            continue
+        for i in range(len(p["chunks"])):
+            c = cands.get((p["ln"]["id"], i)) or {}
+            if not c:
+                continue
+            k, _ = best((p["ln"]["id"], i))
+            med = sorted(v["dur"] for v in c.values())[len(c) // 2]
+            rank = {kk: quality.take_score(v["text"], v["sim"], None, v["mos"], v["dur"], med, v["clip"]) for kk, v in c.items()}
+            keep = [k] + ([min(rank, key=rank.get)] if len(c) > 1 else [])
+            takes = []
+            for kk in dict.fromkeys(keep):
+                f = out(p, i, kk)[:-4] + ".codes.json"
+                if not os.path.exists(f):
+                    continue
+                v = c[kk]
+                takes.append({"take": kk, "picked": kk == k, "score": round(rank[kk], 4), "text": v["text"], "sim": v["sim"],
+                              "missed": v["missed"], "codes": json.load(open(f))})
+            if takes:
+                n_pairs += len(takes) > 1
+                chunks.append({"line": p["ln"]["id"], "chunk": i, "said": p["chunks"][i][1], "takes": takes})
+    for f in os.listdir(jdir):
+        if f.endswith(".codes.json"):
+            os.remove(os.path.join(jdir, f))
+    if chunks:
+        json.dump({"voice": job["voice"], "speaker": plans[0].get("voice_arg"), "chunks": chunks}, open(os.path.join(jdir, "pairs.json"), "w"))
+        job["pairs"] = {"chunks": len(chunks), "pairs": n_pairs}
 
 
 # Retakes try the voice's settings a little either side as well as a new seed: that is how a voice's best settings are
@@ -1607,7 +1661,10 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
         for b in range(0, len(mine), size):
             group = mine[b:b + size]
             items = [{"text": p["chunks"][i][1], "voice": p["voice_arg"], "params": params, "ref_path": ref_path,
-                      "ref_text": ref_text, "out_path": out(p, i, k), "lora": p.get("lora"), **_flow(job, p, i, k)} for p, i, k, params in group]
+                      "ref_text": ref_text, "out_path": out(p, i, k), "lora": p.get("lora"), **_flow(job, p, i, k),
+                      # a trained voice's takes keep their codec tokens: the winner and loser become a preference pair
+                      **({"codes_path": out(p, i, k)[:-4] + ".codes.json"} if eng == "myvoice" and not job.get("mode") else {})}
+                     for p, i, k, params in group]
             chars = sum(len(it["text"]) for it in items)
             lo, hi = order[group[0][0]["ln"]["id"]] + 1, order[group[-1][0]["ln"]["id"]] + 1
             label = (f"line {lo} of {n_lines}" if lo == hi else f"lines {lo}–{hi} of {n_lines} together")
@@ -1628,6 +1685,7 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
 def _assemble(job, jdir, p, paths, pick=None):
     """Chunks -> one line WAV: join with the asked-for gaps, then trim, pace, resample and master."""
     ln = p["ln"]
+    t0 = time.time()
     raw = os.path.join(jdir, f"{ln['id']}.raw.wav")
     _join_chunks(paths, raw, [c[2] for c in p["chunks"]], [c[1] for c in p["chunks"]])
     for x in paths:
@@ -1651,6 +1709,7 @@ def _assemble(job, jdir, p, paths, pick=None):
         r["delivery"] = quality.delivery(os.path.join(jdir, f"{ln['id']}.wav"))
     except Exception:  # noqa: BLE001  a measurement, never worth failing a voiceover over
         pass
+    _time(job, "mastering", time.time() - t0)
     job["results"].append(r)
 
 
@@ -1699,6 +1758,8 @@ def _review(job, plans, out, ref_path, ref_text, order):
     settings. Returns per-line picks."""
     gate = {**quality.REVIEW, **(job.get("review_gate") or {})}
     base = (job.get("profile") or {}).get("sim_base")
+    if job.get("takes", 1) == 1:  # naturalness only breaks ties between takes: with one take each it can't change a pick
+        job["_no_mos"] = True
     cands = {}  # (line id, chunk) -> {take k: stats}
     by_key = {(p["ln"]["id"], i): p for p in plans for i in range(len(p["chunks"]))}
 
@@ -1765,6 +1826,10 @@ def _review(job, plans, out, ref_path, ref_text, order):
         picks[p["ln"]["id"]] = {"take": chosen, "match": round(sum(texts) / len(texts), 3), "similarity": round(sum(sims) / len(sims), 3) if sims else None,
                                 "mos": round(sum(moss) / len(moss), 2) if moss else None, "review": {"retried": n_retried, "fixed": n_retried - len(issues) if n_retried else 0, "issues": issues}}
     job["trials"] = trials[:2000]
+    try:
+        _save_pairs(job, plans, cands, best, out)
+    except Exception:  # noqa: BLE001  training data is a bonus, never worth failing a voiceover over
+        traceback.print_exc()
     fixed = sum(x["review"]["fixed"] for x in picks.values())
     still = sum(len(x["review"]["issues"]) for x in picks.values())
     if fixed:
@@ -2591,6 +2656,8 @@ TRAIN_STEP_S = 10.0  # prior for one optimizer step on a T4, replaced by the mea
 
 def make_train_job(body):
     """Fine-tune Orpheus on your dataset (train.py). parts: [{url}] (the dataset zips, signed by the dashboard)."""
+    if body.get("method") == "dpo":
+        return make_dpo_job(body)
     parts = [{"url": _http_url(p.get("url"), f"part {i + 1} url")} for i, p in enumerate(body.get("parts") or [])][:200]
     if not parts:
         raise ValueError("parts: the dataset has no recordings yet (Your model: collect first)")
@@ -2611,6 +2678,24 @@ def make_train_job(body):
     clips = max(30, minutes * 6)
     epochs = job["epochs"] or (10 if minutes < 5 else 6 if minutes < 15 else 4 if minutes < 40 else 3)  # as train.py
     job["est_total"] = 300 + clips * 0.4 + clips / 4 * epochs * TRAIN_STEP_S * 1.4 + 120 + (0 if os.path.exists(_train_python()) else C.TRAIN_INSTALL_S)
+    return _enqueue(job)
+
+
+def make_dpo_job(body):
+    """RLHF polish of a trained Orpheus voice (train_dpo.py): adapter {job, url} (the model in use), pairs_url (the
+    preference pairs the dashboard built from reviewed takes and ratings), pairs (how many), minutes (what the model was
+    trained on: a polish adds no recordings)."""
+    a = body.get("adapter") or {}
+    job = _base_job("train", body)
+    job.update({"voice": str(body.get("name") or "me")[:64], "lines": [], "engine": "myvoice", "train_engine": "orpheus", "method": "dpo",
+                "adapter": {"job": str(a.get("job") or ""), "url": _http_url(a.get("url"), "adapter url")},
+                "pairs_url": _http_url(body.get("pairs_url"), "pairs_url"), "n_pairs": int(body.get("pairs") or 0),
+                "minutes": float(body.get("minutes") or 0), "speaker": str(body.get("speaker") or "me")[:64],
+                "epochs": body.get("epochs"), "learning_rate": body.get("learning_rate")})
+    if not ID_RE.match(job["voice"]) or not ID_RE.match(job["adapter"]["job"]):
+        raise ValueError("name and adapter.job: letters, digits, - or _")
+    # ~0.6 s a pair (two forward passes + one backward) on an A100, 2 epochs, plus loading and a test line
+    job["est_total"] = 240 + job["n_pairs"] * 2 * 0.6 * int(job["epochs"] or 2) + (0 if os.path.exists(_train_python()) else C.TRAIN_INSTALL_S)
     return _enqueue(job)
 
 
@@ -2692,14 +2777,20 @@ def run_train(job):
             subprocess.run(["uv", "venv", "--python", "3.11", venv, "-q", "--allow-existing"], check=True, stdout=logf, stderr=logf)
             subprocess.run(f"uv pip install --python {py} -q {C.TRAIN_PACKAGES}", shell=True, check=True, stdout=logf, stderr=logf)
     cfg = os.path.join(jdir, "train.json")
-    json.dump({"parts": job["parts"], "speaker": job["speaker"], "epochs": job.get("epochs"), "learning_rate": job.get("learning_rate"),
-               "work": os.path.join(jdir, "work"), "out": jdir, "progress": prog,
-               "cache": os.path.join(C.MYVOICE_DIR, "codes")}, open(cfg, "w"))
+    dpo = job.get("method") == "dpo"
+    if dpo:
+        json.dump({"adapter_url": job["adapter"]["url"], "pairs_url": job["pairs_url"], "speaker": job["speaker"], "minutes": job["minutes"],
+                   "epochs": job.get("epochs"), "learning_rate": job.get("learning_rate"), "work": os.path.join(jdir, "work"), "out": jdir,
+                   "progress": prog}, open(cfg, "w"))
+    else:
+        json.dump({"parts": job["parts"], "speaker": job["speaker"], "epochs": job.get("epochs"), "learning_rate": job.get("learning_rate"),
+                   "work": os.path.join(jdir, "work"), "out": jdir, "progress": prog,
+                   "cache": os.path.join(C.MYVOICE_DIR, "codes")}, open(cfg, "w"))
     job["stage"] = "training"
     env = {**os.environ, "HF_HOME": cache_dir("myvoice"), "TOKENIZERS_PARALLELISM": "false", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
            "MPLBACKEND": "Agg"}
     with open(os.path.join(LOGS_DIR, "train.log"), "a") as logf:
-        p = subprocess.Popen([py, os.path.join(HERE, "train.py"), cfg], stdout=logf, stderr=logf, env=env, cwd=HERE, start_new_session=True)
+        p = subprocess.Popen([py, os.path.join(HERE, "train_dpo.py" if dpo else "train.py"), cfg], stdout=logf, stderr=logf, env=env, cwd=HERE, start_new_session=True)
         while p.poll() is None:
             if job["cancel"]:
                 import signal
@@ -2723,6 +2814,7 @@ def run_train(job):
     shutil.copytree(os.path.join(jdir, "adapter"), dst)
     shutil.rmtree(os.path.join(jdir, "adapter"), ignore_errors=True)
     ENG.errors.pop("myvoice", None)
+    run_selfcheck("after training")
     job["cur"], job["est_done"] = None, time.time() - t0
     job["est_total"] = job["est_done"]
     log(f"job {job['id']} trained your voice: {job['train']}")
@@ -2922,7 +3014,7 @@ def _progress(job):
 def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
                                  "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup",
-                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine")}
+                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method")}
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
     if job["kind"] == "tts":
@@ -2990,7 +3082,66 @@ def health():
             "ram": mem_info(), "disk": disk_info(), "mode": ENG.mode, "idle_unload_s": ENG.idle_left(), "idle_min": C.IDLE_MIN, "fetch": ENG.fetch,
             "vram_budget_gb": round(ENG.budget, 1), "engines": ENG.state, "engine_errors": ENG.errors,
             "loaded": list(ENG.procs), "queue": len(QUEUE), "rates": RATES,
-            "running": [j["id"] for j in JOBS.values() if j["status"] == "running"], "public_url": public_url()}
+            "running": [j["id"] for j in JOBS.values() if j["status"] == "running"], "public_url": public_url(),
+            "selfcheck": _selfcheck_result()}
+
+
+SELFCHECK = os.path.join(HOME, "selfcheck.json")
+
+
+def _selfcheck_result():
+    try:
+        return json.load(open(SELFCHECK))
+    except (OSError, ValueError):
+        return None
+
+
+def run_selfcheck(why, delay=0):
+    """The quick self-check (selfcheck.py --quick: Kokoro + the clean-up) in the background, results in /health.
+    Runs after every start and after training (which stopped every engine)."""
+    def go():
+        time.sleep(delay)
+        while any(j["status"] in ("queued", "running") for j in JOBS.values()):
+            time.sleep(30)  # never compete with real work
+        port = int(os.environ.get("VOICEBOX_PORT", "8000"))
+        r = subprocess.run([sys.executable, os.path.join(HERE, "selfcheck.py"), "--base", f"http://127.0.0.1:{port}", "--secret", SECRET,
+                            "--quick", "--json", SELFCHECK + ".tmp"], capture_output=True, text=True, timeout=1800)
+        try:
+            res = json.load(open(SELFCHECK + ".tmp"))
+        except (OSError, ValueError):
+            res = {"ok": False, "steps": [], "output": (r.stdout + r.stderr)[-2000:]}
+        res.update({"why": why, "at": time.time(), "version": C.VERSION})
+        json.dump(res, open(SELFCHECK, "w"))
+        log(f"self-check ({why}): {'ALL PASS' if res.get('ok') else 'FAILED'}")
+    threading.Thread(target=go, daemon=True).start()
+
+
+def self_update(url):
+    """Fetch the newest worker code (the dashboard's /api/bundle) over this one and restart the gateway: the launcher
+    starts it again within a minute, with the new code. Engines are stopped first so the GPU starts clean."""
+    import io, tarfile
+    if any(j["status"] in ("queued", "running") for j in JOBS.values()):
+        raise ValueError("a job is running: update when the queue is empty")
+    url = url or (os.environ.get("REGISTER_URL", "").rsplit("/api/", 1)[0] + "/api/bundle")
+    if not url.startswith("https://"):
+        raise ValueError("no bundle url: pass url (https://<dashboard>/api/bundle)")
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {SECRET}"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        data, version = r.read(), r.headers.get("X-Worker-Version")
+    tar = tarfile.open(fileobj=io.BytesIO(data), mode="r:gz")
+    try:
+        tar.extractall(HERE, filter="data")
+    except TypeError:  # Python < 3.12 without extraction filters
+        tar.extractall(HERE)
+
+    def restart():
+        time.sleep(1.5)
+        for name in list(ENG.procs):
+            ENG.stop(name)
+        log(f"updated to {version}: restarting")
+        os._exit(0)
+    threading.Thread(target=restart, daemon=True).start()
+    return {"ok": True, "version": version, "restarting": True}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -3055,6 +3206,11 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             if u.path == "/jobs":
                 return self._json(202, job_view(make_job(body)))
+            if u.path == "/admin/update":
+                return self._json(200, self_update(str(body.get("url") or "")))
+            if u.path == "/selfcheck":
+                run_selfcheck("asked")
+                return self._json(202, {"ok": True})
             if u.path == "/speakable":  # dry run of the pronunciation layer: what the voice will actually read
                 pron, tech = _pronounce(body.get("pronounce")), body.get("lexicon", True) is not False
                 return self._json(200, {"lines": [{"text": str(t)[:MAX_TEXT], "parts": [
@@ -3129,6 +3285,8 @@ def main():
     if len(SECRET) < 24:
         sys.exit("WORKER_SECRET must be set (>= 24 chars)")
     threading.Thread(target=worker_loop, daemon=True).start()
+    os.environ["VOICEBOX_PORT"] = str(a.port)
+    run_selfcheck("start", delay=20)
     log(f"voicebox gateway {C.VERSION} on {a.host}:{a.port} · GPU {gpu_info()['name']} · VRAM budget {ENG.budget:.1f} GB")
     ThreadingHTTPServer((a.host, a.port), Handler).serve_forever()
 

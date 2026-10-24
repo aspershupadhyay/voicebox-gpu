@@ -6,7 +6,7 @@
 // myvoice engine for. "me" means the most recently trained model. Every job that uses myvoice carries signed links to
 // the models it may need (withModels), and the worker downloads each adapter once, so both people's models work on the
 // same worker without restarting it.
-import { getJson, listObjs, presign, putJson } from "./store";
+import { delPrefix, getJson, listObjs, presign, putJson } from "./store";
 import { call } from "./worker";
 
 export type VoiceModel = {
@@ -125,4 +125,18 @@ export async function withModels<T extends Record<string, unknown>>(body: T): Pr
 export async function adapterUrl() {
   const m = (await listModels())[0];
   return m ? { url: await presign(`${dir(m)}adapter.zip`, "GET", 7 * 24 * 3600), speaker: m.speaker } : null;
+}
+
+/** Storage clean-up for one person: keep the model in use and the 2 newest others (the one before it, a candidate
+ *  waiting on its model check); delete the rest. */
+export async function pruneModels(name: string) {
+  const live = await getJson<VoiceModel>(`${LIVE}${name}.json`).catch(() => null);
+  if (!live) return [];
+  const objs = await listObjs(`models/${name}/`);
+  const jobs = [...new Set(objs.map((o) => o.key.split("/")[2]).filter(Boolean))];
+  const newest = (j: string) => Math.max(...objs.filter((o) => o.key.split("/")[2] === j).map((o) => o.modified));
+  const others = jobs.filter((j) => j !== live.job).sort((a, b) => newest(b) - newest(a));
+  const drop = others.slice(2);
+  for (const j of drop) await delPrefix(`models/${name}/${j}/`);
+  return drop;
 }

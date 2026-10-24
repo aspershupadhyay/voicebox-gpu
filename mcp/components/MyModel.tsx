@@ -227,7 +227,7 @@ function Collect({ name, open, onClose, onAdded, script }: { name: string; open:
         <>
           <p className="dim small" style={{ marginTop: 0 }}>Long recordings of just you talking work great: raw voiceovers, podcast tracks, a video&apos;s audio. Pick as many as you like
             (up to 20 per batch, 3 hours in all). With <b>Train automatically</b> on, {name} trains by itself once it has
-            15+ minutes, then retrains with every 5 new minutes (a retrain replaces the model only if it&apos;s better; you can close the tab, keep Colab running).</p>
+            15+ minutes, then retrains with every 15 new minutes (a retrain replaces the model only if it&apos;s better; you can close the tab, keep Colab running).</p>
           <label className="drop slim" style={{ cursor: "pointer" }}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files).filter((f) => /^(audio|video)\//.test(f.type)); setPending((p) => [...p, ...fs.map((file) => ({ file }))]); }}>
@@ -243,7 +243,7 @@ function Collect({ name, open, onClose, onAdded, script }: { name: string; open:
           {pending.map((x, k) => <FilePreview key={`${x.file.name}-${k}`} file={x.file} onRemove={() => drop(k)} />)}
           {pending.length > 20 && <span className="tiny dim">The first 20 go in this batch; add the rest after.</span>}
           <div className="row" style={{ gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-            <label className="row small" style={{ gap: 8, marginRight: "auto" }} title={`First training at 15+ minutes, then a retrain every 5 new minutes; a retrain only replaces the current model if it scores better`}>
+            <label className="row small" style={{ gap: 8, marginRight: "auto" }} title={`First training at 15+ minutes, then a retrain every 15 new minutes; a retrain only replaces the current model if it scores better`}>
               <input type="checkbox" style={{ width: "auto" }} checked={auto} onChange={(e) => { setAuto(e.target.checked); try { localStorage.setItem("vb-autotrain", e.target.checked ? "1" : "0"); } catch {} }} />
               Train automatically when added</label>
             <button className="ghost sm" onClick={() => setPending((p) => { p.forEach((x) => x.forget?.()); return []; })}>Discard all</button>
@@ -551,7 +551,8 @@ type Gate = { engine: "orpheus" | "qwen"; job: string; stage: "comparing" | "pro
 type Spot = { cat: string; label: string; lines: number; problem_rate: number; issues: { flag: string; label: string; lines: number }[] };
 type CoachReport = { name: string; lines: number; rated_up: number; rated_down: number; enough: boolean; problem_rate: number; retrain_minutes: number;
   recent: { lines: number; words: number | null; like_you: number | null; natural: number | null; pitch_spread: number | null };
-  weak_spots: Spot[]; everywhere: { flag: string; label: string; lines: number }[]; missed_words: { word: string; times: number }[]; gates: Gate[] };
+  weak_spots: Spot[]; everywhere: { flag: string; label: string; lines: number }[]; missed_words: { word: string; times: number }[]; gates: Gate[];
+  feedback?: { pairs: number; from_you: number; min: number; good: number } };
 type Script = { minutes: number; focus: { cat: string; label: string; tip: string }[]; words_to_practise: string[]; lines: { text: string; cat: string }[] };
 
 const GATE_TEXT: Record<Gate["stage"], string> = { comparing: "Comparing the new model with the current one…", promoted: "New model in use",
@@ -602,6 +603,14 @@ function Coach({ name, trained, onRecord, onSwitched }: { name: string; trained:
     } catch (e) { setErr((e as Error).message); }
   }
   const text = script ? script.lines.map((l) => l.text).join("\n") : "";
+  async function rlhf(kind: "practice" | "polish") {
+    setErr("");
+    try {
+      await api(`coach/${name}/${kind}`, { body: {} });
+      toast(kind === "polish" ? `Polishing ${name} on your feedback: when it's done it's compared with the current model` : `Voicing practice takes for ${name}: their winners and losers become feedback pairs`, "ok");
+    } catch (e) { setErr((e as Error).message); }
+  }
+  const fb = rep?.feedback;
   const g = rep?.gates[0];
 
   return (
@@ -610,7 +619,7 @@ function Coach({ name, trained, onRecord, onSwitched }: { name: string; trained:
       <p className="dim small" style={{ marginTop: 0 }}>
         Every line {trained ? <b>{name}</b> : "a trained voice"} reads is checked: the words (Whisper), how much it sounds like you, how natural it sounds, and the
         delivery (flat pitch, rushing, odd pauses). Rate lines with 👍 / 👎 in Voiceover and the Library too. The weak spots become your next recording script;
-        with <b>Train automatically</b> on, {rep?.retrain_minutes ?? 5} new minutes retrain the voice, and the new model only replaces the current one if it scores at least as well.
+        with <b>Train automatically</b> on, {rep?.retrain_minutes ?? 15} new minutes retrain the voice, and the new model only replaces the current one if it scores at least as well.
       </p>
       {!trained && <p className="small" style={{ color: "var(--warn)", margin: 0 }}>Train {name} first (above): the coach listens to a trained voice.</p>}
       {g && (
@@ -667,6 +676,22 @@ function Coach({ name, trained, onRecord, onSwitched }: { name: string; trained:
               </div>
             </div>
           )}
+        </div>
+      )}
+      {trained && fb && (
+        <div className="stack" style={{ gap: 6, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
+          <div className="row between small" style={{ flexWrap: "wrap", gap: 8 }}>
+            <b>Learn from feedback (RLHF)</b>
+            <span className="dim">{fb.pairs} of {fb.good} pairs{fb.from_you ? ` · ${fb.from_you} from your ratings` : ""}</span>
+          </div>
+          <div className="meter"><i style={{ width: `${Math.min(100, (fb.pairs / fb.good) * 100)}%` }} /></div>
+          <span className="tiny dim">Each time the review keeps one take of a sentence over another, that&apos;s a pair: the better take and the worse one.
+            Your 👍 / 👎 count double. With {fb.min}+ pairs, a short polish (DPO, ~15-30 min of GPU) teaches the model to prefer the better takes;
+            the model check only switches to it if it scores at least as well.</span>
+          <div className="row" style={{ gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <button className="ghost sm" onClick={() => rlhf("practice")} title="40 sentences × 3 takes each: a few minutes of GPU">Make practice takes</button>
+            <button className="sm" onClick={() => rlhf("polish")} disabled={fb.pairs < fb.min} title={fb.pairs < fb.min ? `Needs ${fb.min} pairs` : undefined}>Polish with feedback <ArrowRight size={13} /></button>
+          </div>
         </div>
       )}
       <div className="row between" style={{ marginTop: 12, flexWrap: "wrap", gap: 8 }}>

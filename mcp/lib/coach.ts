@@ -5,7 +5,7 @@
 //  2. report() turns that into weak spots ("questions come out flat", "rushes long sentences", words it keeps missing).
 //  3. nextScript() writes the next recording session around those weak spots (coachbank.ts). Recording it and adding it
 //     to the dataset is what actually teaches the model: a model never trains on its own output.
-//  4. With 5+ new minutes the dataset retrains itself (datasets.autoTrain), and a retrained model is compared with the
+//  4. With 15+ new minutes the dataset retrains itself (datasets.autoTrain), and a retrained model is compared with the
 //     one in use on sentences neither has heard (startGate / resolveGate): it only replaces it if it scores at least as well.
 // Stored per person in R2: coach/<name>.json, and coach/gates/<benchmark job>.json pointing back at the person.
 import { BANK, CAT_LABEL, CAT_TIP, TEST, type Cat } from "./coachbank";
@@ -27,7 +27,7 @@ type Result = { id: string; text: string; duration: number; similarity?: number 
 
 const KEEP = 400;          // lines remembered per person
 const MIN_LINES = 8;       // before weak spots are called
-export const RETRAIN_MINUTES = 5; // new recorded minutes that start a retrain (datasets.autoTrain)
+export const RETRAIN_MINUTES = 15; // new recorded minutes that start a retrain (datasets.autoTrain): a retrain is 1-2 GPU hours
 const TIE = 0.01;          // a retrained model within this of the old score still wins: it learned from more of you
 
 const safe = (x: string) => x.replace(/[^a-z0-9_-]/g, "_");
@@ -113,6 +113,12 @@ export async function recordJob(job: { id: string; kind?: string; mode?: string;
   return add.length;
 }
 
+/** Every rated line of this person: "job/line" -> 1 | -1 (the pair builder counts these double). */
+export async function ratingsFor(name: string) {
+  const c = await load(name);
+  return new Map(c.lines.filter((l) => l.rating).map((l) => [`${l.job}/${l.id}`, l.rating as number]));
+}
+
 /** A thumbs up / down on one line (0 clears it). Lines that were never recorded (an older job) are added from what the page sends. */
 export async function rate(input: { engine: string; voice: string; job: string; line: string; rating: number; text?: string; duration?: number }) {
   const name = await personOf(input.engine, input.voice);
@@ -174,6 +180,7 @@ export async function report(name: string) {
     problem_rate: Math.round(a.overall * 100) / 100, weak_spots: a.weak, everywhere: a.everywhere, missed_words: a.words,
     by_kind: a.spots.filter((s) => s.lines > 0), focus: focusOf(a).map((cat) => ({ cat, label: CAT_LABEL[cat] })),
     enough: c.lines.length >= MIN_LINES, gates: c.gates.slice(0, 6), retrain_minutes: RETRAIN_MINUTES,
+    feedback: await (await import("./pairs")).pairStats(name),
   };
 }
 
@@ -269,6 +276,12 @@ async function promote(name: string, g: Gate) {
   else await (await import("./voicemodel")).promoteModel(name, g.job);
 }
 
+/** Storage: keep the model in use, the one before it and the newest candidate; delete older ones. */
+async function prune(name: string, g: Gate) {
+  const lib = g.engine === "qwen" ? await import("./qwenmodels") : await import("./voicemodel");
+  await lib.pruneModels(name).catch(() => null);
+}
+
 type BenchJob = { id: string; status: string; error?: string | null; benchmark?: { candidates: { label: string; score?: number | null; error?: string }[] } | null };
 
 /** A finished (or failed) comparison: decide, and switch the model when the new one held up. Idempotent. */
@@ -300,6 +313,7 @@ export async function resolveGate(job: BenchJob) {
   }
   g.at = Date.now();
   await save(c);
+  await prune(ref.name, g);
   return g;
 }
 

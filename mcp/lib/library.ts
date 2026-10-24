@@ -94,6 +94,7 @@ export async function archiveWorkerJob(job: WorkerJob): Promise<LibJob | null> {
   await putLibJob(lib);
   await learnFromJob(job).catch(() => null); // this voice's scores feed its learned defaults
   await import("./coach").then((c) => c.recordJob(job as Parameters<typeof c.recordJob>[0])).catch(() => null); // and the voice coach
+  await import("./pairs").then((p) => p.archivePairs(job as Parameters<typeof p.archivePairs>[0])).catch(() => null); // RLHF pairs
   return lib;
 }
 

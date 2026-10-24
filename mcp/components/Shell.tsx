@@ -1,7 +1,7 @@
 "use client";
 import {
   ArrowsClockwise, Books, CalendarBlank, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, ImageSquare, Kanban, MagicWand, MagnifyingGlass,
-  Microphone, Moon, Power, Brain, SignOut, SquaresFour, Stack, Sun, UserSound, Images, HardDrives, Waveform, CaretUp, ArrowSquareOut,
+  Microphone, Moon, Power, Brain, Heartbeat, SignOut, SquaresFour, Stack, Sun, UserSound, Images, HardDrives, Waveform, CaretUp, ArrowSquareOut,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -29,6 +29,7 @@ const NAV = [
   { href: "/image", name: "Images", Icon: ImageSquare, sec: "Create" },
   { href: "/library", name: "Library", Icon: Books, sec: "Studio" },
   { href: "/", name: "Engines", Icon: SquaresFour, sec: "Studio" },
+  { href: "/health", name: "Health", Icon: Heartbeat, sec: "Studio" },
   { href: "/settings", name: "Settings", Icon: GearSix, sec: "Studio" },
 ] as const;
 const TABS = ["/content", "/workspace", "/calendar", "/generate"];

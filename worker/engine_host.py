@@ -84,6 +84,8 @@ def main():
                                     res.append({"error": f"{type(out).__name__}: {out}"})
                                 else:
                                     sf.write(it["out_path"], out[0], out[1])
+                                    if it.get("codes_path") and it.get("key") in getattr(engine, "recent", {}):
+                                        json.dump(engine.recent[it["key"]][1], open(it["codes_path"], "w"))  # for preference pairs
                                     res.append({"duration": len(out[0]) / out[1], "sample_rate": out[1]})
                             return self._send(200, {"results": res})
                         res = []
