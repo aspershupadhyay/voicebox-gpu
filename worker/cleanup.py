@@ -74,16 +74,21 @@ def run(src, dst, workdir, home, enhance=None, similarity=None, prefer=None, not
             sims = similarity(src, stages[1:])
         except Exception:  # noqa: BLE001
             sims = None
-    pick = len(stages) - 1
+    measured = [quality.analyze(s) for s in stages[1:]]
+    pick, why_back = len(stages) - 1, ""
     while pick > 0:
         ok_voice = sims is None or sims[pick - 1] >= IDENTITY_MIN
-        if ok_voice:
+        # a step that leaves the voice *less* clear of the noise than the input did more harm than good
+        snr0, snr1 = before.get("snr_db"), measured[pick - 1].get("snr_db")
+        ok_clean = snr0 is None or snr1 is None or snr1 >= snr0 - 2
+        if ok_voice and ok_clean:
             break
+        why_back = why_back or ("later steps changed the voice too much" if not ok_voice else "later steps made it noisier")
         pick -= 1
     chosen = stages[pick]
-    after = quality.analyze(chosen) if pick else before
+    after = measured[pick - 1] if pick else before
     if pick < len(stages) - 1:
-        plan["why"] += f"; kept step {pick} of {len(stages) - 1} (later steps changed the voice too much)"
+        plan["why"] += f"; kept step {pick} of {len(stages) - 1} ({why_back})"
     if chosen != dst:
         shutil.copy(chosen, dst)
     for s in stages[1:]:

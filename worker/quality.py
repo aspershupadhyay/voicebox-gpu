@@ -179,7 +179,11 @@ def analyze(path):
     n = 1 + (len(a) - win) // hop
     frames = np.lib.stride_tricks.as_strided(a, (n, win), (a.strides[0] * hop, a.strides[0]))
     e = 10 * np.log10(np.mean(frames ** 2, axis=1) + 1e-12)
-    live = e[e > -95]  # digital silence (padding, gated edits) isn't the room's noise floor
+    # digital silence at the ends is padding, not the room: leave it out. Silent pauses *between* words are real (a
+    # denoised or very quiet room): count them at -95 dB. Dropping those too measured the floor on quiet syllables,
+    # so the cleaner a take, the noisier it read (a denoised 30 dB recording came out at 18 dB and lost its clips).
+    loud = np.where(e > -95)[0]
+    live = np.maximum(e[loud[0]: loud[-1] + 1], -95.0) if len(loud) else e
     if len(live) < 20:
         live = e
     floor, peak = np.percentile(live, 10), np.percentile(live, 95)
