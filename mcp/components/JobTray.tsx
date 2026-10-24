@@ -7,7 +7,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
-import { forgetTracked, isLive, updateTracked, useTracked, type Tracked } from "./jobs";
+import { forgetTracked, isLive, isTracked, pageFor, trackJob, updateTracked, useTracked, type Tracked } from "./jobs";
 
 type Polled = { id: string; status: string; error?: string; label?: string; kind?: string; progress?: { fraction?: number; stage?: string; detail?: string };
   library?: unknown; part?: unknown; model?: unknown; myvoice?: unknown; kvoice_saved?: unknown };
@@ -20,6 +20,16 @@ export default function JobTray() {
   const [open, setOpen] = useState(false);
   const tries = useRef<Record<string, number>>({});
   const live = list.filter(isLive);
+
+  useEffect(() => {
+    // jobs started anywhere else (MCP, the other person's device, auto-train) join the tray too, so nothing runs unseen
+    const look = () => api<{ jobs: Polled[] }>("jobs").then((r) => r.jobs.forEach((j) => {
+      if (["queued", "running"].includes(j.status) && !isTracked(j.id)) trackJob(j, j.kind ?? "job", j.label, pageFor(j.kind ?? ""));
+    })).catch(() => {});
+    look();
+    const t = setInterval(look, 20_000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     if (!live.length) return;

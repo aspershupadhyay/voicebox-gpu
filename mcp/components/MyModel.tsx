@@ -54,6 +54,35 @@ function usePoll(onDone?: (j: Polled) => void) {
   return { job, start: (j: Job) => { setJob(j); timer.current = setTimeout(() => poll(j.id), 1200); } };
 }
 
+/** Jobs for this person that were started anywhere (MCP, another device, auto-train): show them here, live. Checks the
+ * worker's job list now and every 20 s while nothing is being followed; a finished dataset batch is stored on the way. */
+function useWorkerJobs(kind: "dataset" | "train", name: string, following: boolean, start: (j: Polled) => void, onStored?: () => void) {
+  const seen = useRef(new Set<string>());
+  const fns = useRef({ start, onStored });
+  fns.current = { start, onStored };
+  useEffect(() => {
+    if (following || !name) return;
+    let live = true;
+    const look = async () => {
+      const r = await api<{ jobs: (Job & { voice?: string })[] }>("jobs").catch(() => null);
+      if (!live || !r) return;
+      const mine = r.jobs.filter((j) => (j.kind as string) === kind && j.voice === name);
+      const busy = mine.find((j) => ["queued", "running"].includes(j.status));
+      if (busy) { fns.current.start(await api<Polled>(`jobs/${busy.id}`)); return; }
+      // done on the worker but maybe never stored (started elsewhere, nobody waited for it): store it now, quietly
+      const fresh = mine.filter((j) => j.status === "done" && !seen.current.has(j.id));
+      fresh.forEach((j) => seen.current.add(j.id));
+      if (kind === "dataset" && fresh.length) {
+        await Promise.all(fresh.map((j) => api(`jobs/${j.id}`).catch(() => null)));
+        if (live) fns.current.onStored?.();
+      }
+    };
+    look();
+    const t = setInterval(look, 20_000);
+    return () => { live = false; clearInterval(t); };
+  }, [kind, name, following]);
+}
+
 type Pending = { file: File; forget?: () => void; take?: string };
 
 function Collect({ name, onAdded }: { name: string; onAdded: (trainJob?: string) => void }) {
@@ -153,6 +182,7 @@ function Collect({ name, onAdded }: { name: string; onAdded: (trainJob?: string)
   }
   const busy = !!job && ["queued", "running"].includes(job.status);
   useResumeJob<Polled>(["dataset"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
+  useWorkerJobs("dataset", name, busy, start, () => onAdded());
   
   return (
     <div className="card">
@@ -251,6 +281,7 @@ function Train({ name, minutes, follow, onTrained }: { name: string; minutes: nu
   const busy = !!job && ["queued", "running"].includes(job.status);
   const p = job?.progress;
   useResumeJob<Polled>(["train"], (j) => { if ((j as Polled & { voice?: string }).voice === name) start(j); });
+  useWorkerJobs("train", name, busy, start);
   // a train job the server started after an upload (auto-train): show its progress here
   useEffect(() => { if (follow) api<Polled>(`jobs/${follow}`).then(start).catch(() => {}); }, [follow]); // eslint-disable-line react-hooks/exhaustive-deps
 

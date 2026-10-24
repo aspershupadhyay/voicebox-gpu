@@ -22,11 +22,17 @@ function write(list: Tracked[]) {
   subs.forEach((f) => f());
 }
 
-export function trackJob(j: { id: string; status?: string; label?: string }, kind: string, label?: string) {
+export function trackJob(j: { id: string; status?: string; label?: string }, kind: string, label?: string, path?: string) {
   if (typeof window === "undefined" || !j?.id) return;
   const list = read().filter((x) => x.id !== j.id);
-  write([{ id: j.id, kind, label: label || j.label || kind, path: location.pathname, at: Date.now(), status: j.status || "queued" }, ...list]);
+  write([{ id: j.id, kind, label: label || j.label || kind, path: path ?? location.pathname, at: Date.now(), status: j.status || "queued" }, ...list]);
 }
+
+export const isTracked = (id: string) => read().some((x) => x.id === id);
+
+/** Where a job started somewhere else (MCP, another device, auto-train) is shown on the dashboard. */
+export const pageFor = (kind: string) =>
+  ({ dataset: "/model", train: "/model", voicewalk: "/model", benchmark: "/model", reference: "/voices", transcribe: "/subtitles", image: "/image" } as Record<string, string>)[kind] ?? "/library";
 
 export function updateTracked(id: string, patch: Partial<Tracked>) {
   write(read().map((x) => (x.id === id ? { ...x, ...patch } : x)));
