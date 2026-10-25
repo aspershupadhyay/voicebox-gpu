@@ -4,6 +4,7 @@
 import { ArrowSquareOut, Bell, Lightning, Play, Stop } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { Info } from "./Info";
 import { useDialog } from "./Dialog";
 import { useStatus } from "./Shell";
 
@@ -52,7 +53,7 @@ export default function GpuCard() {
 
   if (!c.connected) return (
     <div className="card">
-      <div className="card-head"><h2>GPU · connect Colab</h2><span className="dim tiny">start and stop the GPU from here, see your compute units</span></div>
+      <div className="card-head"><h2>GPU · connect Colab</h2><Info>Start and stop the GPU from here and see your compute units, no Colab tab needed.</Info></div>
       <p className="dim small" style={{ marginTop: 0 }}>Sign in once with the Google account that has your Colab plan. It uses the same sign-in as Google&apos;s official Colab CLI;
         the token is stored encrypted on this server and only used to start, stop and read your Colab runtimes and balance.</p>
       {!authing ? <button onClick={begin}><Lightning size={14} weight="fill" /> Connect Colab</button> : (

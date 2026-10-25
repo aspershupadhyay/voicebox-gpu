@@ -1,20 +1,23 @@
 "use client";
 // Hand-drawn SVG art for voicebox: logo, engine illustrations, voice portraits, style glyphs, meters, empty states.
 // Everything is drawn with currentColor + CSS variables so it follows the theme.
+import { useId } from "react";
 
 const hash = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; };
 const rng = (seed: number) => () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 
-/** The mark: an ink tile holding five bars shaped like a spoken syllable; the loudest one is the live accent. */
+/** The mark: a box (the "box" in Voicebox) with five bars hanging from its lid, a waveform whose lower edge draws a V.
+ *  The middle bar is the one live accent; on hover the bars talk. */
 export function Logo({ size = 28 }: { size?: number }) {
-  const bars = [0.38, 0.72, 1, 0.6, 0.3];
+  const bars = [15, 11, 6.5, 11, 15];
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden className="logo">
-      <rect width="32" height="32" rx="8" fill="var(--ink)" />
-      {bars.map((b, i) => {
-        const h = 4 + b * 15;
-        return <rect key={i} className="logo-bar" style={{ animationDelay: `${i * 0.11}s` }} x={7 + i * 4} y={16 - h / 2} width="2.4" height={h} rx="1.2" fill={i === 2 ? "var(--signal)" : "var(--on-ink)"} />;
-      })}
+      <rect width="32" height="32" rx="9" fill="var(--ink)" />
+      <rect x="6" y="6.4" width="20" height="1.6" rx=".8" fill="var(--on-ink)" opacity=".38" />
+      {bars.map((h, i) => (
+        <rect key={i} className="logo-bar" style={{ animationDelay: `${i * 0.12}s` }} x={7.2 + i * 3.9} y="9.6" width="2.3" height={h} rx="1.15"
+          fill={i === 2 ? "var(--accent)" : "var(--on-ink)"} />
+      ))}
     </svg>
   );
 }
@@ -22,28 +25,29 @@ export function Logo({ size = 28 }: { size?: number }) {
 /** Two decimals: the server and the browser disagree on the last float digits of trig results (hydration warnings). */
 const q2 = (n: number) => Math.round(n * 100) / 100;
 
-const TONES = ["var(--signal)", "var(--glacier)", "var(--sand)", "var(--ok)", "var(--rose)"];
-
-/** A generative "sound portrait" per voice: radial bars whose rhythm is seeded by the voice name. */
+/** A voice's portrait: radial bars whose rhythm is seeded by the voice name (every voice has its own, the same
+ *  everywhere), in graphite, around the voice's initial set in the serif. The live voice turns emerald and breathes. */
 export function VoiceGlyph({ name, size = 40, active = false }: { name: string; size?: number; active?: boolean }) {
-  const h = hash(name), r = rng(h);
-  const tone = TONES[h % TONES.length];
-  const n = 36, f1 = 2 + (h % 4), f2 = 5 + ((h >> 3) % 5), ph = r() * 6.28;
+  const label = (name || "voice").replace(/^(ft_|kv_|[a-z]{2}_)/i, "");
+  const h = hash(name || "voice"), r = rng(h);
+  const n = 40, f1 = 2 + (h % 4), f2 = 5 + ((h >> 3) % 5), ph = r() * 6.28;
   const bars = Array.from({ length: n }, (_, i) => {
-    const a = (i / n) * Math.PI * 2;
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
     const v = 0.45 + 0.3 * Math.sin(a * f1 + ph) + 0.18 * Math.sin(a * f2) + r() * 0.12;
-    return { a, v: Math.max(0.15, Math.min(1, v)) };
+    return { a, v: Math.max(0.12, Math.min(1, v)) };
   });
   return (
-    <svg width={size} height={size} viewBox="-50 -50 100 100" aria-hidden className={`vglyph ${active ? "on" : ""}`} style={{ color: tone }}>
+    <svg width={size} height={size} viewBox="-50 -50 100 100" aria-hidden className={`vglyph ${active ? "on" : ""}`}>
       <circle r="49" fill="var(--raised)" stroke="var(--line2)" />
-      <circle r="13" fill="currentColor" opacity=".16" />
-      <circle r="5" fill="currentColor" />
-      {bars.map(({ a, v }, i) => {
-        const r0 = 17, r1 = 17 + v * 26;
-        return <line key={i} x1={q2(Math.cos(a) * r0)} y1={q2(Math.sin(a) * r0)} x2={q2(Math.cos(a) * r1)} y2={q2(Math.sin(a) * r1)}
-          stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" opacity={q2(0.35 + v * 0.65)} />;
-      })}
+      <g className="vg-bars">
+        {bars.map(({ a, v }, i) => {
+          const r0 = 22, r1 = 22 + v * 23;
+          return <line key={i} x1={q2(Math.cos(a) * r0)} y1={q2(Math.sin(a) * r0)} x2={q2(Math.cos(a) * r1)} y2={q2(Math.sin(a) * r1)}
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity={q2(0.25 + v * 0.75)} />;
+        })}
+      </g>
+      <circle r="17" fill="var(--surface)" stroke="var(--line)" />
+      <text y="7.5" textAnchor="middle" className="vg-initial">{label.charAt(0).toUpperCase()}</text>
     </svg>
   );
 }

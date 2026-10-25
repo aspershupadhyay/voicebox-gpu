@@ -65,6 +65,20 @@ export async function GET(req: Request, ctx: Ctx) {
       return Response.json(await describeProfile(b, c, style) ?? { engine: b, voice: c, style, jobs: 0 });
     }
     if (a === "colab" && !b) return Response.json(await (await import("@/lib/colab")).status());
+    if (a === "security" && !b) {
+      // who can get in and from where, this browser's session, and the last sign-ins
+      const acc = await import("@/lib/access");
+      const { sessionInfo } = await import("@/lib/session");
+      const s = await getSettings();
+      const env = (process.env.WORKSPACE_EMAILS ?? "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+      const members = await import("@/lib/appwrite").then((m) => (m.hasKey() ? m.listMembers() : [])).catch(() => []);
+      const emails = [...new Set([...env, ...s.workspace_emails, ...members.map((m) => m.email.toLowerCase())])];
+      const people = emails.map((email) => ({ email, name: members.find((m) => m.email.toLowerCase() === email)?.name ?? null,
+        on_vercel: env.includes(email), invited: s.workspace_emails.includes(email), member: members.some((m) => m.email.toLowerCase() === email) }));
+      const { allowedLogins } = await import("@/lib/github");
+      return Response.json({ session: await sessionInfo(), me: (await currentUser())?.email ?? null, people, github: await allowedLogins(),
+        log: await acc.signInLog(), session_days: (await import("@/lib/session")).SESSION_DAYS });
+    }
     if (a === "health" && !b) {
       // the Health page: what's working, what isn't (job notes in R2) + the worker's own state and self-check
       const { healthSummary } = await import("@/lib/telemetry");
@@ -322,6 +336,25 @@ export async function POST(req: Request, ctx: Ctx) {
       const files: string[] = Array.isArray(body.files) ? body.files.map(String) : [];
       if (!ID.test(b) || !files.length || !files.every((f) => FILE_RE.test(f))) return Response.json({ error: "bad job id or file names" }, { status: 400 });
       return Response.json(await presignPuts(b, files));
+    }
+    if (a === "security") {
+      const acc = await import("@/lib/access");
+      if (b === "signout-all") { await acc.signOutEverywhere(); return Response.json({ ok: true }); }
+      const email = String(body.email ?? "").trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return Response.json({ error: "a valid email, please" }, { status: 400 });
+      const s = await getSettings();
+      if (b === "add") return Response.json(await updateSettings({ workspace_emails: [...s.workspace_emails, email] }).then(() => ({ ok: true })));
+      if (b === "remove") {
+        if (email === (await currentUser())?.email.toLowerCase()) return Response.json({ error: "you can't remove yourself" }, { status: 400 });
+        if ((process.env.WORKSPACE_EMAILS ?? "").toLowerCase().split(",").map((x) => x.trim()).includes(email))
+          return Response.json({ error: "this email is in WORKSPACE_EMAILS on Vercel: remove it there" }, { status: 400 });
+        await updateSettings({ workspace_emails: s.workspace_emails.filter((x) => x !== email) });
+        const { hasKey, removeMember } = await import("@/lib/appwrite");
+        if (hasKey()) await removeMember(email);
+        await acc.allowedEmails(true);
+        return Response.json({ ok: true });
+      }
+      return Response.json({ error: "not found" }, { status: 404 });
     }
     if (a === "colab") {
       // the GPU from the app: connect Colab once, then start / stop runtimes, read the balance, set reminders

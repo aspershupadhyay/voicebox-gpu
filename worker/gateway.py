@@ -314,6 +314,7 @@ class Engines:
         self.errors = {}
         self.fetch = {}   # name -> live download / load progress while installing or loading
         self.loads = {}   # name -> the last start: seconds from launch to ready, and whether its weights were in RAM
+        self.parked = {}  # name -> when it was parked in RAM (its process lives on, off the GPU)
         self.lock = threading.RLock()
         self.budget = float(os.environ.get("VOICEBOX_VRAM_GB") or gpu_info()["total_gb"] or 0) - 1.5
         # size the vLLM engines to the card: a bigger KV cache generates more sentences at once
@@ -330,7 +331,8 @@ class Engines:
 
     @property
     def mode(self):
-        groups = {C.ENGINES[n]["group"] for n in self.procs if C.ENGINES[n]["gpu_gb"]} or {C.ENGINES[n]["group"] for n in self.procs}
+        live = [n for n in self.procs if n not in self.parked]
+        groups = {C.ENGINES[n]["group"] for n in live if C.ENGINES[n]["gpu_gb"]} or {C.ENGINES[n]["group"] for n in live}
         return groups.pop() if len(groups) == 1 else ("mixed" if groups else "idle")
 
     def idle_left(self):
@@ -346,9 +348,63 @@ class Engines:
             time.sleep(20)
             busy = any(j["status"] == "running" for j in list(JOBS.values()))
             for n, left in self.idle_left().items():
-                if left <= 0 and not busy:
+                if left <= 0 and not busy and n not in self.parked:
                     log(f"unloading {n}: idle for {C.IDLE_MIN:g} min")
                     self.stop(n)
+            for n, at in list(self.parked.items()):  # parked models give their RAM back after a while, or when RAM runs low
+                m = _meminfo()
+                if time.time() - at > C.PARK_MIN * 60 or (m and m["avail"] < C.RAM_RESERVE_GB / 2):
+                    log(f"stopping parked {n}: " + ("parked " + f"{C.PARK_MIN:g} min" if time.time() - at > C.PARK_MIN * 60 else "RAM is low"))
+                    self.stop(n)
+
+    def _can_park(self, name):
+        """Room in RAM for this engine's weights (and its process) with the reserve still free."""
+        if name in C.NO_PARK or not C.ENGINES[name]["gpu_gb"] or not self.running(name):
+            return False
+        m = _meminfo()
+        return bool(m) and m["avail"] - (float(C.ENGINES[name].get("disk_gb") or 4) + 2) >= C.RAM_RESERVE_GB
+
+    def _park_or_stop(self, name, why):
+        """Free the GPU for another engine: park this one in RAM when there's room (it wakes in seconds), else stop it."""
+        if self._can_park(name):
+            try:
+                t = time.time()
+                self._call(name, "/park", {}, timeout=300)
+                self.parked[name] = time.time()
+                self._set(name, "parked")
+                log(f"parked {name} in RAM in {time.time() - t:.1f} s: {why}")
+                return
+            except Exception as e:  # noqa: BLE001  e.g. vLLM without sleep mode
+                log(f"couldn't park {name} ({type(e).__name__}: {e}); stopping it instead")
+        log(f"stopping {name}: {why}")
+        self.stop(name)
+
+    def _wake(self, name):
+        t = time.time()
+        self._call(name, "/wake", {}, timeout=300)
+        self.parked.pop(name, None)
+        self._set(name, "ready")
+        self.loads[name] = {"secs": round(time.time() - t, 1), "warm": True, "parked": True, "at": time.time()}
+        log(f"woke {name} from RAM in {time.time() - t:.1f} s")
+
+    def _call(self, name, path, payload, timeout):
+        req = urllib.request.Request(f"http://127.0.0.1:{C.ENGINES[name]['port']}{path}", data=json.dumps(payload).encode(),
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            out = json.loads(r.read())
+        if "error" in out:
+            raise RuntimeError(out["error"])
+        return out
+
+    def _room_in_ram(self, name):
+        """Before a new engine loads, stop parked models (oldest first) until its weights fit in RAM with the reserve."""
+        need = float(C.ENGINES[name].get("disk_gb") or 4) * 1.2 + C.RAM_RESERVE_GB
+        for victim in sorted(self.parked, key=self.parked.get):
+            m = _meminfo()
+            if not m or m["avail"] >= need:
+                return
+            log(f"stopping parked {victim}: {name} needs the RAM")
+            self.stop(victim)
 
     def _watch(self, name):
         """While an engine installs or loads, measure how much of its weights have landed on disk (every 2 s) so the
@@ -400,13 +456,12 @@ class Engines:
         if not C.ENGINES[name]["gpu_gb"]:
             return  # a CPU engine (Kokoro) sits next to either group: it's what the CPU lane runs while the GPU works
         group = C.ENGINES[name]["group"]
-        others = [n for n in self.procs if C.ENGINES[n]["group"] != group and C.ENGINES[n]["gpu_gb"]]
+        others = [n for n in self.procs if C.ENGINES[n]["group"] != group and C.ENGINES[n]["gpu_gb"] and n not in self.parked]
         busy = [n for n in others if self.inflight[n]]
         if busy:
             raise RuntimeError(f"{busy[0]} is busy right now; {name} can start when it finishes")
         for other in others:
-            log(f"stopping {other}: switching to {group} models")
-            self.stop(other)
+            self._park_or_stop(other, f"switching to {group} models")
 
     def _ensure_disk(self, name):
         """Make room for a first download by deleting the least-recently-used weights of stopped engines."""
@@ -432,12 +487,18 @@ class Engines:
         need = C.ENGINES[name]["gpu_gb"]
         if need <= 0 or self.budget <= 0:
             return
-        while sum(C.ENGINES[n]["gpu_gb"] for n in self.procs) + need > self.budget:
-            victim = next((n for n in self.procs if C.ENGINES[n]["gpu_gb"] > 0), None)
+        # a parked engine keeps ~1 GB on the GPU (its CUDA context); a live one its whole share
+        used = lambda: sum(1.0 if n in self.parked else C.ENGINES[n]["gpu_gb"] for n in self.procs if n != name)
+        while used() + need > self.budget:
+            live = [n for n in self.procs if n != name and C.ENGINES[n]["gpu_gb"] > 0 and n not in self.parked and not self.inflight[n]]
+            victim = live[0] if live else next((n for n in self.procs if n != name and n in self.parked), None)
             if not victim:
                 return
-            log(f"evicting {victim} to make room for {name}")
-            self.stop(victim)
+            if victim in self.parked:
+                log(f"stopping parked {victim} to make room for {name}")
+                self.stop(victim)
+            else:
+                self._park_or_stop(victim, f"making room for {name}")
 
     def running(self, name):
         p = self.procs.get(name)
@@ -448,6 +509,16 @@ class Engines:
             p = self.procs.get(name)
             if p and p.poll() is None:
                 self.procs.move_to_end(name)
+                if name in self.parked:
+                    try:  # back from RAM: make GPU room the same way a cold start would, then wake it
+                        self._switch_group(name)
+                        self._evict_for(name)
+                        self._wake(name)
+                    except Exception as e:  # noqa: BLE001  a failed wake: a clean cold start instead
+                        log(f"couldn't wake {name} ({type(e).__name__}: {e}); restarting it")
+                        self.parked.pop(name, None)
+                        self.stop(name)
+                        return self.ensure(name)
                 return
             try:
                 self._switch_group(name)
@@ -457,6 +528,7 @@ class Engines:
                 threading.Thread(target=self._watch, args=(name,), daemon=True).start()
                 py = self._install(name)
                 self._evict_for(name)
+                self._room_in_ram(name)
                 self._set(name, "loading")
                 mark_used(name)
                 logf = open(os.path.join(LOGS_DIR, f"{name}.log"), "a")
@@ -497,6 +569,7 @@ class Engines:
 
     def stop(self, name, keep_state=False):
         with self.lock:
+            self.parked.pop(name, None)
             p = self.procs.pop(name, None)
             if p:
                 import signal
@@ -3309,7 +3382,7 @@ def health():
             "vram_budget_gb": round(ENG.budget, 1), "engines": ENG.state, "engine_errors": ENG.errors,
             "loaded": list(ENG.procs), "queue": len(QUEUE) + len(CPU_QUEUE), "rates": RATES, "lanes": lanes(),
             "cpu": {"cores": MON.cores, "load": os.getloadavg()[0] if hasattr(os, "getloadavg") else None}, "now": MON.latest(),
-            "warm": WARM.view(), "loads": ENG.loads,
+            "warm": WARM.view(), "loads": ENG.loads, "parked": {n: round(time.time() - t) for n, t in ENG.parked.items()},
             "running": [j["id"] for j in JOBS.values() if j["status"] == "running"], "public_url": public_url(),
             "selfcheck": _selfcheck_result(), "last_active": LAST_ACTIVE[0]}
 

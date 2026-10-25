@@ -41,6 +41,14 @@ export async function ensureMember(user: AwUser) {
   }
 }
 
+/** Take someone off the studio team (Settings → Security). Their next request is refused (lib/session.ts). */
+export async function removeMember(email: string) {
+  const r = await aw<{ memberships: { $id: string; userEmail: string }[] }>(`/teams/${AW.team}/memberships?${q({ method: "limit", values: [100] })}`);
+  const m = r.memberships.find((x) => x.userEmail.toLowerCase() === email.toLowerCase());
+  if (m) await aw(`/teams/${AW.team}/memberships/${m.$id}`, { method: "DELETE" });
+  return !!m;
+}
+
 export async function listMembers(): Promise<Member[]> {
   const r = await aw<{ memberships: { userId: string; userName: string; userEmail: string }[] }>(`/teams/${AW.team}/memberships?${q({ method: "limit", values: [25] })}`);
   return r.memberships.map((m) => ({ id: m.userId, name: m.userName || m.userEmail.split("@")[0], email: m.userEmail }));

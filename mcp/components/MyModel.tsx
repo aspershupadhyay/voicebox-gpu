@@ -6,6 +6,7 @@ import { ArrowRight, CaretLeft, CaretRight, Copy, DownloadSimple, Microphone, St
 import { useCallback, useEffect, useRef, useState } from "react";
 import { READ_ALONG } from "@/lib/readalong";
 import { api, fmtS, pct, simClass, matchClass, uploadFile, type Job, type MyVoice } from "./api";
+import { Info } from "./Info";
 import { useDialog } from "./Dialog";
 import JobProgress from "./JobProgress";
 import { useResumeJob } from "./jobs";
@@ -403,7 +404,7 @@ function Benchmark({ mine, name }: { mine: MyVoice[]; name: string }) {
 
   return (
     <div className="card">
-      <div className="card-head"><h2>Benchmark</h2><span className="dim tiny">same sentences, same scoring, every voice</span></div>
+      <div className="card-head"><h2>Benchmark</h2><Info>Every voice reads the same sentences and gets the same scoring.</Info></div>
       <p className="dim small" style={{ marginTop: 0 }}>Use sentences you never recorded. Voice match is measured against your real recording; naturalness is a predicted MOS (1-5); speed is seconds of compute per second of audio.</p>
       <div className="grid" style={{ gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)", gap: 14 }}>
         <textarea className="doc short" value={lines} onChange={(e) => setLines(e.target.value)} style={{ minHeight: 170, marginTop: 0 }} />
@@ -471,7 +472,7 @@ function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
 
   return (
     <div className="card">
-      <div className="card-head"><h2>Find it in Kokoro</h2><span className="dim tiny">af_heart clarity · instant · runs on the CPU</span></div>
+      <div className="card-head"><h2>Find it in Kokoro</h2><Info>af_heart clarity, instant, runs on the CPU.</Info></div>
       <p className="dim small" style={{ marginTop: 0 }}>
         Kokoro is the tiny engine behind af_heart: crisp, steady and instant. This searches Kokoro&apos;s voice space for the mix of its voices that
         sounds most like your recording (scored by the same voice match as the review), then checks it still speaks every word clearly.
@@ -615,7 +616,7 @@ function Coach({ name, trained, onRecord, onSwitched }: { name: string; trained:
 
   return (
     <div className="card">
-      <div className="card-head"><h2>Getting better</h2><span className="dim tiny">the more {name}&apos;s voice is used, the more it knows what to fix</span></div>
+      <div className="card-head"><h2>Getting better</h2><Info>The more {name}&apos;s voice is used, the more it knows what to fix.</Info></div>
       <p className="dim small" style={{ marginTop: 0 }}>
         Every line {trained ? <b>{name}</b> : "a trained voice"} reads is checked: the words (Whisper), how much it sounds like you, how natural it sounds, and the
         delivery (flat pitch, rushing, odd pauses). Rate lines with 👍 / 👎 in Voiceover and the Library too. The weak spots become your next recording script;
@@ -775,11 +776,11 @@ export default function MyModel() {
         <div>
           <div className="eyebrow">Your model</div>
           <h1>A voice that is <em>only you.</em></h1>
-          <p className="sub">Pick a voice, add recordings of it, make the voice. That&apos;s it.</p>
+          <p className="sub">Pick a voice, add recordings, train it.</p>
         </div>
       </div>
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="card-head"><h2>Voice</h2><span className="dim tiny">each voice has its own recordings and model; everyone can use every voice</span></div>
+        <div className="card-head"><h2>Voice</h2><Info>Each voice has its own recordings and model; everyone can use every voice.</Info></div>
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           {voices.map((n) => {
             const p = people.find((x) => x.name === n);

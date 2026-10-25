@@ -3,6 +3,7 @@ import { ArrowSquareOut, ClosedCaptioning, FileAudio, Plus, X } from "@phosphor-
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, fileUrl, fmtS, pct, uploadFile, type Job, type Word } from "./api";
+import { Info } from "./Info";
 import { CaptionArt, VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
 import { LANGUAGES } from "./guides";
@@ -119,7 +120,7 @@ export default function Subtitles() {
         <div>
           <div className="eyebrow">Transcribe</div>
           <h1>Every word, <em>on time.</em></h1>
-          <p className="sub">Whisper large-v3 writes word-timed subtitles in 99 languages, cut the way a subtitler would. Drop any audio or video, or subtitle a voiceover you already made.</p>
+          <p className="sub">Word-timed subtitles for any audio or video. <Info>Whisper large-v3, 99 languages, lines cut the way a subtitler would.</Info></p>
         </div>
         <GuideButton engine="whisper" />
       </div>

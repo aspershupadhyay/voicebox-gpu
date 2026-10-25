@@ -5,7 +5,7 @@ source of truth for defaults and ranges (docs/API.md is generated from the same 
 """
 import os
 
-VERSION = "3.2.0"
+VERSION = "3.3.0"
 HOME = os.environ.get("VOICEBOX_HOME", "/content/voicebox")
 VENVS = os.environ.get("VOICEBOX_VENVS", os.path.join(HOME, "venvs"))
 
@@ -18,6 +18,9 @@ PRESET_REFS = {"female": ("orpheus", "tara"), "male": ("orpheus", "dan")}
 # (VRAM *and* RAM are freed because each engine is its own process), and vice versa.
 GROUPS = {"voice": "Voice models", "visual": "Video models"}
 IDLE_MIN = float(os.environ.get("VOICEBOX_IDLE_MIN", "30"))   # unload an engine after this many idle minutes
+PARK_MIN = float(os.environ.get("VOICEBOX_PARK_MIN", "60"))   # a model parked in RAM is stopped after this many minutes
+RAM_RESERVE_GB = 16.0                                          # never park when it would leave less RAM free than this
+NO_PARK = {"wan", "wan14", "ltx", "animate"}                   # video engines that page themselves in and out (cpu offload)
 DISK_RESERVE_GB = 12.0                                         # keep this much disk free; evict old weights first
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
 

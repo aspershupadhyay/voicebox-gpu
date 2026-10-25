@@ -6,6 +6,7 @@ import {
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api, fmtS, uploadFile, type Gen, type GenImage, type Job } from "./api";
+import { Info } from "./Info";
 import FetchBar from "./FetchBar";
 import { PendingCard } from "./GenCard";
 import { GuideButton } from "./GuideDrawer";
@@ -164,11 +165,11 @@ export default function Images() {
         <div>
           <div className="eyebrow">Imagine</div>
           <h1>Say it, <em>see it.</em></h1>
-          <p className="sub">Two image models on your A100. Z-Image for fast photoreal shots, Qwen-Image for 2K, typography, edits and transparent PNGs. Any image can become a video start frame or an Animate character.</p>
+          <p className="sub">Stills, thumbnails and video start frames. <Info>Z-Image: fast photoreal. Qwen-Image: 2K, typography, edits and transparent PNGs.</Info></p>
         </div>
         <GuideButton engine={model} label="Prompting guide" />
       </div>
-      {!status?.online && status && <div className="banner"><WarningCircle size={20} weight="duotone" color="var(--signal2)" /><div><b>The GPU worker is offline.</b> <span className="dim">Run the Colab notebook; this page reconnects by itself.</span></div></div>}
+      {!status?.online && status && <div className="banner"><WarningCircle size={20} weight="duotone" color="var(--danger)" /><div><b>The GPU worker is offline.</b> <span className="dim">Run the Colab notebook; this page reconnects by itself.</span></div></div>}
 
       <div className="studio">
         <div className="composer">

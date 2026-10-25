@@ -65,7 +65,7 @@ export default function JobTray() {
           <div className="row between"><b className="small">Your jobs</b><button className="icon-btn" onClick={() => setOpen(false)} aria-label="Close"><X size={14} /></button></div>
           {list.map((t) => (
             <div key={t.id} className="jt-row">
-              {isLive(t) ? <CircleNotch size={15} className="spin" /> : t.status === "done" ? <CheckCircle size={15} weight="fill" color="var(--ok)" /> : <WarningCircle size={15} weight="fill" color="var(--signal)" />}
+              {isLive(t) ? <CircleNotch size={15} className="spin" /> : t.status === "done" ? <CheckCircle size={15} weight="fill" color="var(--ok)" /> : <WarningCircle size={15} weight="fill" color="var(--danger)" />}
               <div style={{ minWidth: 0, flex: 1 }}>
                 <Link href={t.path} className="small" style={{ fontWeight: 600, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} onClick={() => setOpen(false)}>{t.label}</Link>
                 <div className="tiny dim" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

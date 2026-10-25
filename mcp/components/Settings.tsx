@@ -2,7 +2,9 @@
 import { CheckCircle, Copy, FloppyDisk } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api, type MyVoice } from "./api";
+import { Info } from "./Info";
 import { useDialog } from "./Dialog";
+import SecurityCard from "./SecurityCard";
 
 type S = {
   engine: string; voice: string; style: string; platform: string; takes: number; subtitles: boolean; lexicon: boolean;
@@ -15,7 +17,7 @@ const opt = (pairs: readonly (readonly [string, string])[]) => pairs.map(([v, l]
 function Toggle({ on, set, title, about }: { on: boolean; set: (v: boolean) => void; title: string; about: string }) {
   return (
     <div className="row between" style={{ gap: 14, padding: "10px 0" }}>
-      <div style={{ minWidth: 0 }}><b className="small">{title}</b><div className="dim tiny">{about}</div></div>
+      <div style={{ minWidth: 0 }}><b className="small">{title}</b> <Info>{about}</Info></div>
       <button className={`switch ${on ? "on" : ""}`} onClick={() => set(!on)} aria-label={title} />
     </div>
   );
@@ -69,7 +71,7 @@ export default function Settings() {
         <div>
           <div className="eyebrow">Settings</div>
           <h1>Your <em>defaults.</em></h1>
-          <p className="sub">Set once, used everywhere: the Generate and Studio pages and every MCP client. A request can still override any of them.</p>
+          <p className="sub">Defaults for the studio, the two of you and Claude. <Info>Used by every page and every MCP client. A single request can still override them.</Info></p>
         </div>
         <button className="sig" onClick={save} disabled={saving}><FloppyDisk size={16} weight="bold" />{saving ? "Saving…" : "Save defaults"}</button>
       </div>
@@ -103,18 +105,18 @@ export default function Settings() {
           </div>
 
           <div className="card">
-            <div className="card-head"><h2>Claude / MCP access</h2><span className="dim tiny">no setup needed</span></div>
+            <div className="card-head"><h2>Claude / MCP access</h2></div>
             <label className="f">MCP server URL</label>
             <div className="row" style={{ gap: 8 }}>
               <input readOnly value={typeof window === "undefined" ? "" : `${location.origin}/api/mcp`} onFocus={(e) => e.currentTarget.select()} style={{ fontFamily: "var(--mono)", fontSize: 12.5 }} />
               <button className="ghost sm" onClick={() => { navigator.clipboard.writeText(`${location.origin}/api/mcp`).then(() => toast("Copied", "ok")).catch(() => {}); }}><Copy size={14} />Copy</button>
             </div>
             <div className="dim tiny" style={{ margin: "6px 0 14px" }}>In claude.ai: Settings → Connectors → Add custom connector, paste the URL, leave the OAuth fields empty. Each person connects their own Claude; there&apos;s no limit on connections.</div>
-            <div className="dim tiny">Anyone signed in to this dashboard can connect: they press Allow and they're in. Up to 4 people can create a workspace account on the sign-in page.</div>
+            <div className="dim tiny">Connecting asks the person to sign in to this dashboard first, so only the people under Security can connect a Claude.</div>
           </div>
 
           <div className="card">
-            <div className="card-head"><h2>Studio sound</h2><span className="dim tiny">bad mic, good audio</span></div>
+            <div className="card-head"><h2>Studio sound</h2></div>
             <Toggle on={s.enhance_recordings} set={(v) => set("enhance_recordings", v)} title="Enhance voice recordings"
               about="AI clean-up on the Voices page: noise and echo out, detail restored. A cleaner reference means a better clone." />
             <Toggle on={s.enhance_input} set={(v) => set("enhance_input", v)} title="Clean re-voice input"
@@ -125,6 +127,7 @@ export default function Settings() {
         </div>
 
         <div className="stack" style={{ gap: 16 }}>
+          <SecurityCard />
           <div className="card">
             <div className="card-head"><h2>Publishing</h2></div>
             <div className="field"><label className="f">Default platform</label>
@@ -134,7 +137,7 @@ export default function Settings() {
               </select></div>
           </div>
           <div className="card">
-            <div className="card-head"><h2>Workspace</h2><span className="dim tiny">Appwrite + R2</span></div>
+            <div className="card-head"><h2>Workspace</h2></div>
             <Toggle on={s.backup_media} set={(v) => set("backup_media", v)} title="Back up uploads to R2"
               about="Every file you add to the workspace is also copied to your R2 bucket (files up to ~180 MB), so nothing is lost if Appwrite is down or the plan ends." />
           </div>

@@ -17,16 +17,16 @@ const StatusCtx = createContext<{ status: Status | null; refresh: () => Promise<
 export const useStatus = () => useContext(StatusCtx);
 
 const NAV = [
-  { href: "/content", name: "Content", Icon: Stack, sec: "Workspace" },
-  { href: "/workspace", name: "Board", Icon: Kanban, sec: "Workspace" },
-  { href: "/calendar", name: "Calendar", Icon: CalendarBlank, sec: "Workspace" },
-  { href: "/media", name: "Media", Icon: Images, sec: "Workspace" },
   { href: "/generate", name: "Voiceover", Icon: Microphone, sec: "Create" },
   { href: "/voices", name: "Voices", Icon: UserSound, sec: "Create" },
   { href: "/model", name: "Your model", Icon: Brain, sec: "Create" },
   { href: "/studio", name: "Clean-up", Icon: MagicWand, sec: "Create" },
   { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning, sec: "Create" },
   { href: "/image", name: "Images", Icon: ImageSquare, sec: "Create" },
+  { href: "/content", name: "Content", Icon: Stack, sec: "Workspace" },
+  { href: "/workspace", name: "Board", Icon: Kanban, sec: "Workspace" },
+  { href: "/calendar", name: "Calendar", Icon: CalendarBlank, sec: "Workspace" },
+  { href: "/media", name: "Media", Icon: Images, sec: "Workspace" },
   { href: "/library", name: "Library", Icon: Books, sec: "Studio" },
   { href: "/", name: "Engines", Icon: SquaresFour, sec: "Studio" },
   { href: "/health", name: "Health", Icon: Heartbeat, sec: "Studio" },
@@ -54,7 +54,7 @@ const ALL_ENGINES = ["orpheus", "myvoice", "chatterbox", "kokoro", "qwen", "whis
 const MODE: Record<string, string> = { voice: "Voice mode", visual: "Image mode", idle: "Idle · GPU free", mixed: "Switching" };
 const ENGINE_ORDER = ["orpheus", "myvoice", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "zimage", "qwenimage"];
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-const stateClass = (s?: string) => (s === "ready" ? "ready" : s === "loading" || s === "installing" || s === "busy" ? "busy" : s === "error" ? "err" : "");
+const stateClass = (s?: string) => (s === "ready" ? "ready" : s === "parked" ? "parked" : s === "loading" || s === "installing" || s === "busy" ? "busy" : s === "error" ? "err" : "");
 
 /** The full GPU view: memory, mode, every engine (with its idle countdown), RAM and disk. Opens from the compact card. */
 function GpuDetails({ status, busy, vram }: { status: Status | null; busy: boolean; vram: number }) {
@@ -75,8 +75,8 @@ function GpuDetails({ status, busy, vram }: { status: Status | null; busy: boole
             const left = status.idle_unload_s?.[n];
             return (
               <div key={n} className="eng" title={left != null ? `unloads after ${status.idle_min ?? 10} idle minutes` : undefined}>
-                <span className={`dot ${status.engines![n] === "ready" ? "ok" : stateClass(status.engines![n]) === "busy" ? "warn" : "off"}`} style={{ width: 6, height: 6, boxShadow: "none", animation: "none" }} />{n}
-                <b className={stateClass(status.engines![n])}>{left != null && left < 600 ? `idle ${mmss(left)}` : status.engines![n]}</b>
+                <span className={`dot ${status.engines![n] === "ready" ? "ok" : status.engines![n] === "parked" ? "park" : stateClass(status.engines![n]) === "busy" ? "warn" : "off"}`} style={{ width: 6, height: 6, boxShadow: "none", animation: "none" }} />{n}
+                <b className={stateClass(status.engines![n])} title={status.engines![n] === "parked" ? "off the GPU, kept in RAM: back in seconds" : undefined}>{left != null && left < 600 ? `idle ${mmss(left)}` : status.engines![n] === "parked" ? "in RAM" : status.engines![n]}</b>
               </div>
             );
           })}
@@ -196,13 +196,13 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
   return (
     <div className="app">
       <aside className="side">
-        <div className="brand"><Logo size={24} /><span className="word">voicebox</span></div>
+        <Link href="/generate" className="brand" aria-label="Voicebox Studio home"><Logo size={30} /><span className="word"><b>Voicebox</b><span>Studio</span></span></Link>
         <nav className="side-nav" aria-label="Pages">
           {NAV.map(({ href, name, Icon, sec }, k) => (
             <div key={href} style={{ display: "contents" }}>
               {(k === 0 || NAV[k - 1].sec !== sec) && <div className="navsec">{sec}</div>}
               <Link href={href} className={`navlink ${on(href) ? "on" : ""}`}>
-                <Icon size={18} weight={on(href) ? "fill" : "regular"} className="ic" />
+                <Icon size={18} weight={on(href) ? "duotone" : "regular"} className="ic" />
                 {name}{k < 9 && <kbd>{k + 1}</kbd>}
               </Link>
             </div>

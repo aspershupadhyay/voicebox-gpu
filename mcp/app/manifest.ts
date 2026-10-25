@@ -3,16 +3,16 @@ import type { MetadataRoute } from "next";
 /** Makes the dashboard installable (Add to Home Screen on phones, Install app on desktop Chrome/Edge). */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "voicebox studio",
-    short_name: "voicebox",
+    name: "Voicebox Studio",
+    short_name: "Voicebox",
     description: "Your voice, studio-grade, and the shared desk where the two of you plan, make and post.",
     id: "/",
     start_url: "/workspace",
     scope: "/",
     display: "standalone",
     display_override: ["window-controls-overlay", "standalone"],
-    background_color: "#0a0a0a",
-    theme_color: "#0a0a0a",
+    background_color: "#09090b",
+    theme_color: "#09090b",
     categories: ["productivity", "music", "social"],
     icons: [
       { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },

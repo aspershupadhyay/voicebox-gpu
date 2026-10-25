@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useResumeJob } from "./jobs";
 import { api, fmtS, pct, rangeFill, simClass, type Job, type MyVoice } from "./api";
+import { Info } from "./Info";
 import { EngineArt, StyleGlyph, VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
 import { GUIDES, KOKORO_LANG, LANGUAGES, QWEN_LANG } from "./guides";
@@ -232,11 +233,11 @@ export default function Generate() {
         <div>
           <div className="eyebrow">Voiceover</div>
           <h1>Write it, <em>hear it.</em></h1>
-          <p className="sub">Script on the left, the voice on the right. Every take lands in the Library with word-timed subtitles.</p>
+          <p className="sub">Write the script, pick the voice, press Generate. <Info>Every take lands in the Library with word-timed subtitles.</Info></p>
         </div>
         <GuideButton engine={engine} />
       </div>
-      {!status?.online && status && <div className="banner"><WarningCircle size={20} weight="duotone" color="var(--signal2)" /><div><b>The GPU worker is offline.</b> <span className="dim">Run the Colab notebook; this page reconnects by itself.</span></div></div>}
+      {!status?.online && status && <div className="banner"><WarningCircle size={20} weight="duotone" color="var(--danger)" /><div><b>The GPU worker is offline.</b> <span className="dim">Run the Colab notebook; this page reconnects by itself.</span></div></div>}
       {catErr && <p className="err">{catErr}</p>}
       {forPost && <div className="note-strip"><Link href={`/workspace?post=${forPost.$id}`}><b>{forPost.title}</b></Link><span className="dim">Voiceovers you make here are attached to this post{forPost.jobs?.length ? ` · ${forPost.jobs.length} so far` : ""}.</span></div>}
 
@@ -245,7 +246,7 @@ export default function Generate() {
           <div className="card">
             <div className="card-head">
               <h2>Script</h2>
-              <span className="dim tiny">one line per row · <span className="mono">id | text | seconds</span> · or paste a timeline TSV</span>
+              <Info>One line per row. Or <span className="mono">id | text | seconds</span> per row, or paste a timeline TSV.</Info>
             </div>
             <div className="chips" style={{ marginBottom: 12 }}>
               <span className="label" style={{ alignSelf: "center", marginRight: 4 }}>Insert</span>
@@ -284,7 +285,7 @@ export default function Generate() {
           </div>
           <div className="card flat sub-toggle">
             <span className="thumb" style={{ color: "var(--glacier)" }}><ClosedCaptioning size={20} weight="duotone" /></span>
-            <div style={{ minWidth: 0 }}><b>Subtitles</b><div className="dim small">Whisper large-v3 word timing · SRT, VTT and JSON · a match score per line</div></div>
+            <div style={{ minWidth: 0 }}><b>Subtitles</b> <Info>Whisper large-v3 word timing. SRT, VTT and JSON, with a match score per line.</Info></div>
             <GuideButton engine="whisper" label="How" />
             <button className={`switch ${subtitles ? "on" : ""}`} onClick={() => setSubtitles(!subtitles)} aria-label="Subtitles" />
           </div>
@@ -292,7 +293,7 @@ export default function Generate() {
 
         <div className="stack" style={{ gap: 16 }}>
           <div className="card">
-            <div className="card-head"><h2>Delivery</h2><span className="dim tiny">how the read feels</span></div>
+            <div className="card-head"><h2>Delivery</h2></div>
             <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               {STYLE_ORDER.filter((k) => styles[k]).map((k) => (
                 <button key={k} className={`pick style-pick ${style === k ? "on" : ""}`} title={styles[k].about}
@@ -304,14 +305,13 @@ export default function Generate() {
             </div>
             <p className="dim small" style={{ margin: "12px 0 0" }}>{styles[style]?.about}</p>
             <div className="field" style={{ margin: "16px 0 0" }}>
-              <div className="row between" style={{ marginBottom: 4 }}><label className="f" style={{ margin: 0 }}>Pace</label><span className="mono small">{effTempo.toFixed(2)}×</span></div>
+              <div className="row between" style={{ marginBottom: 4 }}><label className="f" style={{ margin: 0 }}>Pace <Info>Pitch-preserving, applied after the voice is generated. Stay within ±8% to keep it natural.</Info></label><span className="mono small">{effTempo.toFixed(2)}×</span></div>
               <input type="range" min={0.85} max={1.2} step={0.01} value={effTempo} style={rangeFill(effTempo, 0.85, 1.2)} onChange={(e) => setTempo(+e.target.value)} />
-              <div className="dim tiny" style={{ marginTop: 4 }}>Pitch-preserving, applied after the voice is generated. Stay within ±8% to keep it natural.</div>
             </div>
           </div>
 
           <div className="card">
-            <div className="card-head"><h2>Publish for</h2><span className="dim tiny">mastering + captions</span></div>
+            <div className="card-head"><h2>Publish for</h2><Info>{plat ? `${plat.about}${plat.lufs != null ? " Broadcast voice chain: rumble cut, presence lift, de-ess, gentle compression." : ""}` : "Sets loudness mastering and the caption style for that platform."}</Info></div>
             <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
               {PLATFORM_ORDER.filter((k) => !cat || platforms[k]).map((k) => (
                 <button key={k} className={`pick ${platform === k ? "on" : ""}`} title={platforms[k]?.about} onClick={() => setPlatform(k)} style={{ padding: "10px 8px" }}>
@@ -320,19 +320,18 @@ export default function Generate() {
                 </button>
               ))}
             </div>
-            {plat && <p className="dim small" style={{ margin: "12px 0 0" }}>{plat.about}{plat.lufs != null ? " Broadcast voice chain: rumble cut, presence lift, de-ess, gentle compression." : ""}</p>}
+
             <div className="field" style={{ margin: "16px 0 0" }}>
               <div className="row between" style={{ marginBottom: 6 }}><label className="f" style={{ margin: 0 }}><Trophy size={13} weight="duotone" /> Best of</label>
-                <span className="dim tiny">{nTakes > 1 ? `${nTakes} takes per sentence, the best one wins` : "one take"}</span></div>
+                <Info>{engine === "kokoro" ? "Kokoro gives the same take every time." : "Each sentence is voiced N times; Whisper checks every word" + (CLONERS.includes(engine) ? " and how much it sounds like the voice" : "") + " and keeps the best. N× slower: use it for the final render."}</Info></div>
               <div className="seg">
                 {Array.from({ length: cat?.max_takes ?? 4 }, (_, i) => i + 1).map((n) => (
                   <button key={n} className={nTakes === n ? "on" : ""} disabled={engine === "kokoro" && n > 1} onClick={() => setTakes(n)}>{n}×</button>
                 ))}
               </div>
-              <div className="dim tiny" style={{ marginTop: 5 }}>{engine === "kokoro" ? "Kokoro gives the same take every time." : "Whisper checks every word of every take" + (CLONERS.includes(engine) ? " and how much it sounds like the voice" : "") + ". Takes N× longer; use it for the final render."}</div>
             </div>
             <div className="row between" style={{ marginTop: 14 }}>
-              <div style={{ minWidth: 0 }}><b className="small">Tech pronunciation</b><div className="dim tiny">SQL → sequel, GPU → G-P-U, 16GB → 16 gigabytes, markdown and links cleaned</div></div>
+              <div style={{ minWidth: 0 }}><b className="small">Tech pronunciation</b> <Info>SQL → sequel, GPU → G-P-U, 16GB → 16 gigabytes; markdown and links cleaned.</Info></div>
               <button className={`switch ${lexicon ? "on" : ""}`} onClick={() => setLexicon(!lexicon)} aria-label="Tech pronunciation" />
             </div>
             <button className="quiet xs" style={{ marginTop: 8 }} onClick={() => setShowLex(!showLex)}><CaretDown size={12} style={{ transform: showLex ? "rotate(180deg)" : "none", transition: "transform .2s" }} />Your pronunciations{Object.keys(parsePronounce(pronounce)).length ? ` (${Object.keys(parsePronounce(pronounce)).length})` : ""}</button>
@@ -388,19 +387,16 @@ export default function Generate() {
               const v = params[k] ?? styleParams[k] ?? p.default;
               if (p.type === "boolean") return (
                 <div className="field" key={k}>
-                  <label className="row small" style={{ gap: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={Boolean(v)} onChange={(e) => setParams({ ...params, [k]: e.target.checked })} />{k.replace(/_/g, " ")}</label>
-                  {p.about && <div className="dim tiny" style={{ marginTop: 4 }}>{p.about}</div>}</div>
+                  <label className="row small" style={{ gap: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={Boolean(v)} onChange={(e) => setParams({ ...params, [k]: e.target.checked })} />{k.replace(/_/g, " ")}{p.about && <Info>{p.about}</Info>}</label></div>
               );
               if (p.min === undefined) return (
-                <div className="field" key={k}><label className="f">{k}</label>
-                  <input type={p.type === "string" ? "text" : "number"} value={String(v)} onChange={(e) => setParams({ ...params, [k]: p.type === "string" ? e.target.value : +e.target.value })} />
-                  {p.about && <div className="dim tiny" style={{ marginTop: 4 }}>{p.about}</div>}</div>
+                <div className="field" key={k}><label className="f">{k}{p.about && <Info>{p.about}</Info>}</label>
+                  <input type={p.type === "string" ? "text" : "number"} value={String(v)} onChange={(e) => setParams({ ...params, [k]: p.type === "string" ? e.target.value : +e.target.value })} /></div>
               );
               return (
                 <div className="field" key={k}>
-                  <div className="row between" style={{ marginBottom: 6 }}><label className="f" style={{ margin: 0 }}>{k.replace(/_/g, " ")}</label><span className="mono small">{Number(v).toFixed(p.type === "integer" ? 0 : 2)}</span></div>
+                  <div className="row between" style={{ marginBottom: 6 }}><label className="f" style={{ margin: 0 }}>{k.replace(/_/g, " ")}{p.about && <Info>{p.about}</Info>}</label><span className="mono small">{Number(v).toFixed(p.type === "integer" ? 0 : 2)}</span></div>
                   <input type="range" min={p.min} max={p.max} step={p.type === "integer" ? 1 : 0.05} value={Number(v)} style={rangeFill(Number(v), p.min, p.max)} onChange={(e) => setParams({ ...params, [k]: +e.target.value })} />
-                  {p.about && <div className="dim tiny" style={{ marginTop: 5 }}>{p.about}</div>}
                 </div>
               );
             })}
