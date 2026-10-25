@@ -51,7 +51,7 @@ sound studio-grade and masters it for the platform, at the same length so it sta
 Zero-shot cloning copies about 20 seconds of you. A trained model learns how you actually talk, from 30-60 minutes of it.
 Everything below runs on free compute.
 
-1. **Collect** (dashboard → **Voice model**). *Read along* shows one line at a time from a script written like a tech
+1. **Collect** (dashboard → **Voices → Professional voice clone**). *Read along* shows one line at a time from a script written like a tech
    video (hooks, explanations, numbers, questions, asides) plus tongue-twisters that cover every English sound; press
    space for the next line and record 5-15 minutes per session; **P** (or the Pause button) holds the take while you
    breathe or grab water, and nothing is recorded or sent until you resume. Stopping never sends anything: each take
@@ -92,7 +92,7 @@ Everything below runs on free compute.
    `engine: "myvoice"`, `voice: "<your name>"`) right away. The worker fetches it from R2 the first time a job asks for
    it and keeps it. Training again replaces only your model.
 
-   **Two of you, two models.** Each person picks their own name at the top of the Voice model page (it opens on yours
+   **Two of you, two models.** Each person picks their own name at the top of the Professional voice clone page (it opens on yours
    when you're signed in) and collects and trains their own. Both models live side by side: in Voiceover, *Your model*
    lists every trained voice with its test line; in Settings, *This engine and voice just for me* makes your trained
    voice your default without changing the other person's; MCP clients see both under `my_voices` → `trained`.

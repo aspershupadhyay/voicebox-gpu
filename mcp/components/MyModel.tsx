@@ -2,7 +2,7 @@
 // Your own voice model, end to end: collect 30-60 minutes of you (read along or upload), train it on the GPU worker
 // with one click, then benchmark it against your cloned voices. One dataset and one model per person: each of you picks
 // your own name, and both models stay available to everyone (the myvoice engine, voice = the name).
-import { ArrowRight, CaretLeft, CaretRight, Copy, DownloadSimple, Microphone, Stop, TrashSimple, UploadSimple } from "@phosphor-icons/react";
+import { ArrowRight, CaretLeft, CaretRight, Copy, DownloadSimple, Microphone, Stop, TrashSimple, UploadSimple, ArrowLeft } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { READ_ALONG } from "@/lib/readalong";
 import { api, fmtS, pct, simClass, matchClass, uploadFile, type Job, type MyVoice } from "./api";
@@ -17,6 +17,7 @@ import { FilePreview, PauseButton, SavedTakes, startRecording, VoiceOrb, type Re
 import { useStatus } from "./Shell";
 import Link from "next/link";
 import { PageHeader } from "./ui";
+import { Select } from "./pop";
 
 type Part = { job: string; clips: number; minutes: number; input_minutes: number; dropped: Record<string, number>; created: number;
   sources: { name: string; duration: number; clips: number }[]; auto_train?: { job?: string; skipped?: string } };
@@ -409,7 +410,7 @@ function Benchmark({ mine, name }: { mine: MyVoice[]; name: string }) {
         <textarea className="doc short" aria-label="Benchmark sentences" value={lines} onChange={(e) => setLines(e.target.value)} style={{ minHeight: 170, marginTop: 0 }} />
         <div className="stack" style={{ gap: 10 }}>
           <div><label className="f">Your real voice (the target)</label>
-            <select aria-label="Your real voice (the target)" value={voice} onChange={(e) => setVoice(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Make it with Qwen3-TTS + Chatterbox above</option>}</select></div>
+            <Select label="Your real voice (the target)" value={voice} onChange={setVoice} placeholder="Record a voice on the Voices page first" options={mine.map((m) => [m.name, m.label] as const)} /></div>
           {([["myvoice", "Your trained model"], ["qwen", "Qwen clone"], ["chatterbox", "Chatterbox clone"], ["orpheus", "Orpheus preset"]] as const).map(([k, l]) => (
             <label key={k} className="row small" style={{ gap: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={picks[k]} onChange={(e) => setPicks({ ...picks, [k]: e.target.checked })} />{l}</label>
           ))}
@@ -485,10 +486,9 @@ function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
       )}
       <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
         <div className="field" style={{ margin: 0, flex: "1 1 200px" }}><label className="f">Match this recording of you</label>
-          <select aria-label="Match this recording of you" value={target} onChange={(e) => setTarget(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Make it with Qwen3-TTS + Chatterbox above</option>}</select></div>
+          <Select label="Match this recording of you" value={target} onChange={setTarget} placeholder="Record a voice on the Voices page first" options={mine.map((m) => [m.name, m.label] as const)} /></div>
         <div className="field" style={{ margin: 0, width: 150 }}><label className="f">Search</label>
-          <select aria-label="Search depth" value={rounds} onChange={(e) => setRounds(Number(e.target.value))}>
-            <option value={12}>Quick (12 rounds)</option><option value={24}>Normal (24)</option><option value={48}>Thorough (48)</option></select></div>
+          <Select label="Search depth" value={rounds} onChange={setRounds} options={[[12, "Quick (12 rounds)"], [24, "Normal (24)"], [48, "Thorough (48)"]]} /></div>
         <button onClick={run} disabled={busy || !target || !status?.online}>{have ? "Search again" : "Find my Kokoro voice"} <ArrowRight size={13} /></button>
       </div>
       {err && <p className="err" style={{ margin: "8px 0 0" }}>{err}</p>}
@@ -522,8 +522,7 @@ function EveryEngine({ name, minutes, mine, head, onMade }: { name: string; minu
       <HowItWorks>Ready in about a minute: picks the cleanest stretch of <b>{name}</b>&apos;s clips and saves it as the voice <b>{name}</b>. Then choose it in
         Voiceover on Qwen3-TTS (best cloning, 10 languages) or Chatterbox (emotion, 23 languages, Hindi).</HowItWorks>
       <label className="row small" style={{ gap: 8 }}>Sample length
-        <select value={cap} onChange={(e) => setCap(Number(e.target.value))} style={{ width: "auto" }}>
-          {[20, 30, 45, 60].map((v) => <option key={v} value={v}>{v} s{v === 20 ? " (best for cloning)" : ""}</option>)}</select>
+        <Select size="sm" label="Seconds to keep" value={cap} onChange={setCap} style={{ width: "auto" }} options={[20, 30, 45, 60].map((v) => [v, `${v} s${v === 20 ? " (best for cloning)" : ""}`] as const)} />
         <span className="tiny dim">longer can catch more of the voice; Chatterbox listens to about the first 10 s</span></label>
       {have && !busy && (
         <div className="stack" style={{ gap: 6, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
@@ -696,8 +695,7 @@ function Coach({ name, trained, onRecord, onSwitched }: { name: string; trained:
       <div className="row between" style={{ marginTop: 12, flexWrap: "wrap", gap: 8 }}>
         <span className="tiny dim">Your next recording session, written around what {name} is weakest at.</span>
         <span className="row" style={{ gap: 6 }}>
-          <select aria-label="Session length" value={mins} onChange={(e) => setMins(Number(e.target.value))} style={{ width: "auto" }}>
-            {[5, 8, 12, 15].map((m) => <option key={m} value={m}>{m} min</option>)}</select>
+          <Select size="sm" label="Session length" value={mins} onChange={setMins} style={{ width: "auto" }} options={[5, 8, 12, 15].map((m) => [m, `${m} min`] as const)} />
           <button className="sm" onClick={write} disabled={busy}>{script ? "Write another" : "Write my next script"} <ArrowRight size={13} /></button>
         </span>
       </div>
@@ -770,8 +768,8 @@ export default function MyModel() {
 
   return (
     <>
-      <PageHeader title="Voice model" sub="Train a model of your voice: pick a voice, add recordings, train it."
-        actions={<Link href="/voices?record=1" className="btn ghost">Quick clone instead</Link>} />
+      <PageHeader title="Professional voice clone" sub="Train a model of your voice: pick a voice, add recordings, train it. 30+ minutes sounds most like you."
+        actions={<><Link href="/voices" className="btn ghost"><ArrowLeft size={15} />Voices</Link><Link href="/voices/new" className="btn ghost">Instant clone instead</Link></>} />
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card-head"><div><h2>Voice</h2><p className="sub">Each voice has its own recordings and model; both of you can use every voice.</p></div></div>
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>

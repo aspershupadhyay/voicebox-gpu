@@ -17,6 +17,7 @@ import { createPost, dueLabel, Feed, PostDrawer, savePost } from "./PostDrawer";
 import { forgetTargets, saveGoals, saveTargets, useTargets } from "./useTargets";
 import { Avatar, Gate } from "./wsparts";
 import { Empty, PageHeader, StatCard } from "./ui";
+import { Select } from "./pop";
 
 type View = "board" | "calendar" | "list" | "gallery";
 const VIEWS: { id: View; label: string; Icon: typeof Kanban }[] = [
@@ -431,7 +432,7 @@ function PostsInner() {
                   <tr key={e.p.$id} className={open === e.p.$id ? "on" : ""}>
                     <td><button className="linkish" onClick={() => go({ post: e.p.$id })}><b style={{ fontWeight: 600 }}>{e.p.title}</b></button><div className="tiny faint">Edited {timeAgo(e.p.$updatedAt)}</div></td>
                     <td><div className="row" style={{ gap: 4 }}>{e.all.map((t) => <PlatformBadge key={t.space} space={t.space} size={18} solid={t.status === "posted"} />)}{!e.all.length && <span className="tiny faint">Idea</span>}</div></td>
-                    <td><select aria-label={`Stage of ${e.p.title}`} value={stOf(e)} onChange={(x) => setStatus(e, x.target.value as Status)}>{STATUSES.map((st) => <option key={st.id} value={st.id}>{st.label}</option>)}</select></td>
+                    <td><Select size="sm" label={`Stage of ${e.p.title}`} value={stOf(e)} onChange={(v) => setStatus(e, v as Status)} options={STATUSES.map((st) => [st.id, st.label] as const)} /></td>
                     <td><input type="datetime-local" aria-label={`Publish time of ${e.p.title}`} value={local} onChange={(x) => setDue(e, x.target.value ? new Date(x.target.value).toISOString() : null)} /></td>
                     <td>{(e.p.assignee_name || e.p.owner_name) && <Avatar id={e.p.assignee_id ?? e.p.owner_id} name={e.p.assignee_name ?? e.p.owner_name} sm />}</td>
                     <td><button className="icon-btn sm danger-h" aria-label={`Delete ${e.p.title}`} onClick={() => remove(e.p)}><TrashSimple size={15} /></button></td>

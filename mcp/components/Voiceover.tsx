@@ -1,22 +1,28 @@
 "use client";
 // Voiceover: write on a clean canvas, pick the voice and settings in the panel on the right, press Generate.
+// Two views of the same script: Script (one box to paste and write in) and Lines (each line on its own, with what the
+// voice will actually read, its audio, its scores and a 👍/👎, and a button to redo just that line). Every generated
+// line is kept, and the lines are joined into one full take you can play and download.
 // Every take lands in Files with word-timed subtitles. From a post (?post=) the script loads and the result is attached
 // back to the post; from Voices (?engine=&voice=) the voice is preselected.
-import { ArrowSquareOut, CaretDown, CaretUp, ClosedCaptioning, DownloadSimple, Eye, Flask, Microphone, Plus, Power, SlidersHorizontal, Sparkle, WarningCircle } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowSquareOut, CaretDown, CaretUp, ClosedCaptioning, DownloadSimple, Microphone, Plus, Power, SlidersHorizontal, Sparkle, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useResumeJob } from "./jobs";
-import { ago, api, fmtS, pct, rangeFill, simClass, type Job, type MyVoice } from "./api";
+import { ago, api, fileUrl, fmtS, matchClass, pct, rangeFill, simClass, type Job, type JobResult, type MyVoice } from "./api";
+import { decode, joinWav } from "./audio";
 import { Info } from "./Info";
 import { VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
 import { describeVoice, KOKORO_LANG, KOKORO_VOICES, LANGUAGES, ORPHEUS_VOICES, QWEN_LANG } from "./guides";
 import JobProgress from "./JobProgress";
-import LineRow, { coached } from "./LineRow";
+import { Rate } from "./LineRow";
+import Player from "./Player";
+import { Select, useDismiss } from "./pop";
 import { SampleButton, useSamples } from "./Sample";
 import { useStatus } from "./Shell";
 import { aw, logActivity } from "./aw";
-import { Notice } from "./ui";
+import { Notice, PopMenu } from "./ui";
 import { AW, type Post } from "@/lib/workspace";
 
 type Param = { type: "number" | "integer" | "string" | "boolean"; default: number | string | boolean; min?: number; max?: number; about?: string };
@@ -95,6 +101,120 @@ function History({ refreshKey }: { refreshKey: string | null }) {
   );
 }
 
+type Take = { job: string; r: JobResult; audio: string; engine: string; voice: string };
+
+/** Replace the text of the i-th voiced line in the script, keeping comments, blank rows and "id | text | window". */
+function withLine(src: string, i: number, text: string) {
+  const rows = src.split("\n");
+  let n = -1;
+  for (let k = 0; k < rows.length; k++) {
+    const l = rows[k].trimEnd();
+    if (!l.trim() || l.startsWith("#")) continue;
+    if (++n !== i) continue;
+    const tsv = l.split("\t");
+    if (tsv.length >= 4) { tsv[3] = text; rows[k] = tsv.join("\t"); }
+    else { const bar = l.split(" | "); if (bar.length >= 2) { bar[1] = text; rows[k] = bar.join(" | "); } else rows[k] = text; }
+    break;
+  }
+  return rows.join("\n");
+}
+
+const needsLook = (r: JobResult) => (r.match != null && r.match < 0.9) || (r.similarity != null && r.similarity < 0.86) || r.fits === false || !!r.review?.issues.length;
+
+/** Every voiced line joined into one take, in script order, built in the browser from the line files. */
+function FullTake({ parts, name, jobs }: { parts: { job: string; id: string }[]; name: string; jobs: string[] }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [state, setState] = useState<"idle" | "building" | "error">("idle");
+  const key = parts.map((p) => `${p.job}/${p.id}`).join(",");
+  useEffect(() => {
+    if (!parts.length) return;
+    let gone = false, made: string | null = null;
+    setState("building");
+    Promise.all(parts.map((p) => decode(fileUrl(p.job, `${p.id}.wav`)))).then((bufs) => {
+      if (gone) return;
+      made = URL.createObjectURL(joinWav(bufs, 0.35));
+      setUrl(made); setState("idle");
+    }).catch(() => !gone && setState("error"));
+    return () => { gone = true; if (made) URL.revokeObjectURL(made); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return (
+    <div className="fulltake">
+      <div className="ft-head">
+        <div><b>Full take</b><span className="dim small"> · {parts.length} line{parts.length === 1 ? "" : "s"} joined</span></div>
+        <div className="row" style={{ gap: 6 }}>
+          {jobs.length === 1 && <a className="btn ghost sm" href={`/api/zip/${jobs[0]}`}><DownloadSimple size={14} />All files</a>}
+          {url && <a className="btn sm" href={url} download={`${name}.wav`}><DownloadSimple size={14} weight="bold" />Download</a>}
+        </div>
+      </div>
+      {url ? <Player src={url} /> : <div className="small dim">{state === "error" ? "Couldn't join the lines. Each line can still be played and downloaded below." : "Joining the lines…"}</div>}
+    </div>
+  );
+}
+
+function LinesView({ lines, spoken, takes, pending, ratings, blocked, onEdit, onRedo, onAdd, slug }: {
+  lines: ParsedLine[]; spoken: string[]; takes: Record<string, Take>; pending: Set<string>; ratings: Record<string, number>; blocked: string;
+  onEdit: (i: number, text: string) => void; onRedo: (l: ParsedLine) => void; onAdd: () => void; slug: string;
+}) {
+  const done = lines.map((l) => takes[l.id]).filter(Boolean);
+  const avg = (xs: (number | null | undefined)[]) => { const v = xs.filter((x): x is number => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const m = avg(done.map((t) => t.r.match)), sim = avg(done.map((t) => t.r.similarity));
+  const look = done.filter((t) => needsLook(t.r)).length;
+  const longest = Math.max(0.1, ...done.map((t) => t.r.duration));
+  return (
+    <div className="vlines">
+      {done.length > 0 && (
+        <div className="vl-sum" role="status">
+          <span><b>{done.length}</b> of {lines.length} voiced</span>
+          {m != null && <span className={`pill ${matchClass(m)}`} title="How closely Whisper heard your script (95%+ is good)">script match {pct(m)}</span>}
+          {sim != null && <span className={`pill ${simClass(sim)}`} title="How much it sounds like the voice's recording (86%+ = same speaker)">voice match {pct(sim)}</span>}
+          {look > 0 && <span className="pill warn">{look} to check</span>}
+        </div>
+      )}
+      {lines.map((l, i) => {
+        const t = takes[l.id];
+        const stale = t && (t.r.text ?? "").replace(/\s+/g, " ").trim() !== l.text.replace(/\s+/g, " ").trim();
+        const reads = spoken[i] && spoken[i].replace(/ ⏸[\d.]+s/g, "") !== l.text ? spoken[i] : "";
+        return (
+          <div key={l.id} className={`vline ${t ? "has" : ""} ${t && needsLook(t.r) ? "look" : ""}`}>
+            <span className="vl-n" aria-hidden>{i + 1}</span>
+            <div className="vl-body">
+              <label className="sr-only" htmlFor={`vl-${l.id}`}>Line {i + 1}</label>
+              <textarea id={`vl-${l.id}`} className="vl-text" rows={Math.max(1, Math.ceil(l.text.length / 72))} value={l.text} spellCheck={false}
+                onChange={(e) => onEdit(i, e.target.value.replace(/\n/g, " "))} />
+              {reads && <div className="vl-reads">Reads: {reads}</div>}
+              {pending.has(l.id) && <div className="vl-wait"><span className="spin" aria-hidden />Generating…</div>}
+              {t && !pending.has(l.id) && (
+                <>
+                  <Player src={t.audio} duration={t.r.duration} scale={t.r.duration / longest} />
+                  <div className="vl-meta">
+                    {stale && <span className="pill warn">edited · redo to update</span>}
+                    {t.r.match != null && <span className={`pill ${matchClass(t.r.match)}`} title={t.r.heard ? `Whisper heard: “${t.r.heard}”` : "How closely Whisper heard the script"}>match {pct(t.r.match)}</span>}
+                    {t.r.similarity != null && <span className={`pill ${simClass(t.r.similarity)}`} title="Voice match vs the recording (86%+ = same speaker)">voice {pct(t.r.similarity)}</span>}
+                    {t.r.fits === false && <span className="pill bad">over {t.r.window}s</span>}
+                    {t.r.review && t.r.review.fixed > 0 && <span className="pill ok" title="The review heard a sentence miss and re-voiced it">fixed {t.r.review.fixed}</span>}
+                    {t.r.takes && t.r.takes.n > 1 && <span className="pill">best of {t.r.takes.n}</span>}
+                    {t.r.diff && (t.r.diff.missed.length > 0 || t.r.diff.added.length > 0) && <span className="small dim">{t.r.diff.missed.length > 0 ? `not heard: ${t.r.diff.missed.join(" ")}` : `extra: ${t.r.diff.added.join(" ")}`}</span>}
+                    <span className="grow" />
+                    <Rate jobId={t.job} line={t.r} voice={{ engine: t.engine, voice: t.voice }} initial={ratings[`${t.job}/${l.id}`]} />
+                    <a className="icon-btn" href={fileUrl(t.job, `${l.id}.wav`, `${slug}-${l.id}.wav`)} aria-label={`Download line ${i + 1}`} title="Download WAV"><DownloadSimple size={15} /></a>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="vl-side">
+              <span className="mono tiny dim">{t && !stale ? fmtS(t.r.duration) : `≈${(l.text.length / 14.5).toFixed(1)}s`}</span>
+              <button className="ghost xs" onClick={() => onRedo(l)} disabled={!!blocked || pending.has(l.id)} title={blocked || (t ? "Voice this line again" : "Voice just this line")}>
+                <ArrowClockwise size={13} />{t ? "Redo" : "Voice"}</button>
+            </div>
+          </div>
+        );
+      })}
+      <button className="quiet sm" onClick={onAdd} style={{ alignSelf: "flex-start" }}><Plus size={14} />Add a line</button>
+    </div>
+  );
+}
+
 export default function Voiceover() {
   const { status } = useStatus();
   const [cat, setCat] = useState<Catalogue | null>(null);
@@ -108,15 +228,17 @@ export default function Voiceover() {
   const [subtitles, setSubtitles] = useState(true);
   const [post, setPost] = useState({ trim: true, sample_rate: 48000 });
   const [platform, setPlatform] = useState("youtube");
-  const [takes, setTakes] = useState(1);
+  const [nBest, setNBest] = useState(1);
   const [lexicon, setLexicon] = useState(true);
   const [pronounce, setPronounce] = useState("");
   const [advanced, setAdvanced] = useState(false);
   const [script, setScript] = useState(SAMPLE);
   const [label, setLabel] = useState("");
-  const [preview, setPreview] = useState(false);
+  const [view, setView] = useState<"script" | "lines">("script");
   const [job, setJob] = useState<Job | null>(null);
-  const [lib, setLib] = useState<{ results: { id: string; audio: string }[] } | null>(null);
+  const [takes, setTakes] = useState<Record<string, Take>>({}); // the latest audio of each line, across jobs
+  const [ratings, setRatings] = useState<Record<string, number>>({});
+  const [sent, setSent] = useState<string[]>([]); // the lines the running job is voicing
   const [err, setErr] = useState("");
   const [mine, setMine] = useState<MyVoice[]>([]);
   const [mineLoaded, setMineLoaded] = useState(false);
@@ -125,6 +247,9 @@ export default function Voiceover() {
   const [qmodels, setQmodels] = useState<{ voice: string; name: string; sample_url?: string | null }[]>([]); // fine-tuned Qwen voices
   const [tab, setTab] = useState<"settings" | "history">("settings");
   const [pickOpen, setPickOpen] = useState(false);
+  const pickBtn = useRef<HTMLButtonElement>(null);
+  const pickList = useRef<HTMLDivElement>(null);
+  useDismiss(pickOpen, () => setPickOpen(false), [pickBtn, pickList]);
   const samples = useSamples();
   const ta = useRef<HTMLTextAreaElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -135,7 +260,8 @@ export default function Voiceover() {
     const s = JSON.parse(localStorage.getItem("vb-gen2") || "{}");
     if (s.engine) setEngine(s.engine); if (s.voice) setVoice(s.voice); if (s.script) setScript(s.script);
     if (s.params) setParams(s.params); if (s.style) setStyle(s.style); if (s.lang) setLang(s.lang); if (s.subtitles !== undefined) setSubtitles(s.subtitles);
-    if (s.platform) setPlatform(s.platform); if (s.takes) setTakes(s.takes); if (s.lexicon !== undefined) setLexicon(s.lexicon); if (s.pronounce) setPronounce(s.pronounce);
+    if (s.view === "lines") setView("lines");
+    if (s.platform) setPlatform(s.platform); if (s.takes) setNBest(s.takes); if (s.lexicon !== undefined) setLexicon(s.lexicon); if (s.pronounce) setPronounce(s.pronounce);
     // deep links from the Voices page: /voiceover?engine=qwen&voice=<name>
     const q = new URLSearchParams(location.search);
     if (q.get("engine") && (TTS as readonly string[]).includes(q.get("engine")!)) { setEngine(q.get("engine")!); setParams({}); }
@@ -156,7 +282,7 @@ export default function Voiceover() {
     loaded.current = true;
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, []);
-  useEffect(() => { if (loaded.current) localStorage.setItem("vb-gen2", JSON.stringify({ engine, voice, script, params, style, lang, subtitles, platform, takes, lexicon, pronounce })); }, [engine, voice, script, params, style, lang, subtitles, platform, takes, lexicon, pronounce]);
+  useEffect(() => { if (loaded.current) localStorage.setItem("vb-gen2", JSON.stringify({ engine, voice, script, params, style, lang, subtitles, platform, takes: nBest, lexicon, pronounce, view })); }, [engine, voice, script, params, style, lang, subtitles, platform, nBest, lexicon, pronounce, view]);
   useEffect(() => { if (status?.online && !cat) api<Catalogue>("voices").then(setCat).catch((e) => setCatErr(e.message)); }, [status?.online, cat]);
 
   const eng = cat?.engines[engine];
@@ -166,14 +292,14 @@ export default function Voiceover() {
   const lines = useMemo(() => parse(script), [script]);
   const [spoken, setSpoken] = useState<string[]>([]);
   useEffect(() => {  // what the voice will actually read (tech terms, your dictionary, [pause] markers): worker dry run, no GPU
-    if (!preview || !status?.online || !lines.length) return;
+    if (view !== "lines" || !status?.online || !lines.length) return;
     const t = setTimeout(() => {
       api<{ lines: { parts: { spoken: string; pause_after: number | null }[] }[] }>("speakable", { body: { lines: lines.slice(0, 200).map((l) => l.text), lexicon, pronounce: parsePronounce(pronounce) } })
         .then((r) => setSpoken(r.lines.map((l) => l.parts.map((p) => p.spoken + (p.pause_after ? ` ⏸${p.pause_after}s` : "")).join(" "))))
         .catch(() => setSpoken([]));
     }, 500);
     return () => clearTimeout(t);
-  }, [preview, status?.online, lines, lexicon, pronounce]);
+  }, [view, status?.online, lines, lexicon, pronounce]);
   const lively = styles[style]?.voices?.[engine] ?? [];
   const chars = lines.reduce((s, l) => s + l.text.length, 0);
   const langs = LANGUAGES.filter((l) => l.engines.includes(engine));
@@ -202,7 +328,7 @@ export default function Voiceover() {
   const audioS = chars / 14.5;
   const ready = status?.engines?.[engine] === "ready";
   const subsReady = status?.engines?.whisper === "ready";
-  const nTakes = engine === "kokoro" ? 1 : takes;
+  const nTakes = engine === "kokoro" ? 1 : nBest;
   const whisperRate = status?.rates?.whisper ?? RATE.whisper;
   const estS = rate * chars * nTakes + (ready ? 0 : LOAD_S[engine]) + (subtitles ? whisperRate * audioS + (subsReady ? 0 : LOAD_S.whisper) : 0)
     + (nTakes > 1 ? whisperRate * audioS * nTakes + (subtitles || subsReady ? 0 : LOAD_S.whisper) : 0) + 4;
@@ -222,11 +348,21 @@ export default function Voiceover() {
     requestAnimationFrame(() => { el.focus(); const p = a + pad.length + tag.length + 1; el.setSelectionRange(p, p); });
   }
 
+  /** A finished job's lines become the current take of each line (a redo replaces just its line). */
+  function keep(j: Job, lib: { results: { id: string; audio: string }[] } | null) {
+    setTakes((cur) => {
+      const next = { ...cur };
+      for (const r of j.results) next[r.id] = { job: j.id, r, audio: lib?.results.find((x) => x.id === r.id)?.audio ?? fileUrl(j.id, `${r.id}.wav`), engine: j.engine, voice: j.voice };
+      return next;
+    });
+    api<{ lines?: Record<string, number> }>(`ratings/${j.engine}/${j.voice}?job=${j.id}`).then((x) => setRatings((cur) => ({ ...cur, ...Object.fromEntries(Object.entries(x.lines ?? {}).map(([k, v]) => [`${j.id}/${k}`, v])) }))).catch(() => {});
+  }
+
   async function poll(id: string) {
     try {
       const j = await api<Job>(`jobs/${id}`);
       setJob(j);
-      if (j.library) api(`library/${id}`).then(setLib).catch(() => {});
+      if (j.library) api<{ results: { id: string; audio: string }[] }>(`library/${id}`).then((l) => keep(j, l)).catch(() => keep(j, null));
       if (["queued", "running"].includes(j.status) || (j.status === "done" && !j.library)) timer.current = setTimeout(() => poll(id), 1500);
     } catch (e) {
       setErr((e as Error).message);
@@ -235,7 +371,9 @@ export default function Voiceover() {
   }
 
   async function submit(only?: ParsedLine[]) {
-    setErr(""); setJob(null); setLib(null);
+    setErr(""); setJob(null);
+    setView("lines");
+    setSent((only ?? lines).map((l) => l.id));
     const p = { ...params };
     if (engine === "chatterbox") p.language = lang;
     if (engine === "qwen") p.language = QWEN_LANG[lang] ?? "English";
@@ -254,15 +392,15 @@ export default function Voiceover() {
         aw().tables.updateRow<Post>({ databaseId: AW.db, tableId: "posts", rowId: forPost.$id, data: { jobs } }).then(setForPost).catch(() => {});
         logActivity(forPost.$id, "voiced", `${engine} · ${label || forPost.title}`);
       }
-      setTimeout(() => document.getElementById("vo-results")?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+
     } catch (e) {
       setErr((e as Error).message);
     }
   }
 
-  useResumeJob<Job>(["voice"], (j) => { setJob(j); timer.current = setTimeout(() => poll(j.id), 300); });
+  useResumeJob<Job>(["voice"], (j) => { setJob(j); setSent(j.results.map((r) => r.id)); timer.current = setTimeout(() => poll(j.id), 300); });
   const running = !!job && (["queued", "running"].includes(job.status) || (job.status === "done" && !job.library));
-  const libAudio = (id: string) => lib?.results.find((r) => r.id === id)?.audio;
+  const pending = new Set(running ? sent : []);
   const slug = (label || `${engine}-${voice}`).replace(/[^A-Za-z0-9._-]/g, "_");
   const blocked = !status ? "Connecting to the GPU…" : offline ? "Start the GPU to generate" : !lines.length ? "Write a line first" : running ? "Generating…" : "";
 
@@ -283,74 +421,69 @@ export default function Voiceover() {
             </Notice>
           )}
 
-          <div className="row between" style={{ marginBottom: 0 }}>
+          <div className="tts-head">
             <button className="tts-voicechip" onClick={() => { setTab("settings"); setPickOpen(true); document.getElementById("vo-voice")?.scrollIntoView({ block: "nearest" }); }}>
               <VoiceGlyph name={CLONERS.includes(engine) && !myVoice(voice) ? (voice === "male" ? "dan" : "tara") : realName(voice)} size={22} active={running} />
               {voiceLabel(voice)} <span className="dim">· {NAME[engine]}</span>
             </button>
+            <div className="seg" role="radiogroup" aria-label="View">
+              <button role="radio" aria-checked={view === "script"} className={view === "script" ? "on" : ""} onClick={() => setView("script")}>Script</button>
+              <button role="radio" aria-checked={view === "lines"} className={view === "lines" ? "on" : ""} onClick={() => setView("lines")}>Lines{Object.keys(takes).length ? <span className="count">{lines.filter((l) => takes[l.id]).length}/{lines.length}</span> : null}</button>
+            </div>
+            <span className="grow" />
             <GuideButton engine={engine} />
           </div>
-          <label htmlFor="vo-script" className="sr-only">Script, one line per row</label>
-          <textarea id="vo-script" ref={ta} value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false} className="tts-text"
-            placeholder={lang === "hi" ? "यहाँ अपनी स्क्रिप्ट लिखें, हर पंक्ति एक लाइन…" : "Start writing. One line per row; each line becomes its own take."} />
-          {preview && (
-            <div className="table-wrap" style={{ marginTop: 8 }}>
-              <table className="table"><tbody>
-                {lines.map((l, i) => (
-                  <tr key={l.id}><td className="mono dim" style={{ width: 50 }}>{l.id}</td><td>{l.text}
-                    {spoken[i] && spoken[i].replace(/ ⏸[\d.]+s/g, "") !== l.text && <div className="dim tiny">Reads: {spoken[i]}</div>}</td>
-                    <td className="mono dim" style={{ whiteSpace: "nowrap" }}>≈{(l.text.length / 14.5).toFixed(1)}s{l.window ? ` / ${l.window}s` : ""}</td></tr>
-                ))}
-              </tbody></table>
-            </div>
-          )}
+
+          {job && running && <JobProgress job={job} onCancel={() => api(`jobs/${job.id}/cancel`, { body: {} })} />}
+          {job && !running && ["error", "cancelled"].includes(job.status) && <JobProgress job={job} />}
+
+          {view === "script" ? (
+            <>
+              <label htmlFor="vo-script" className="sr-only">Script, one line per row</label>
+              <textarea id="vo-script" ref={ta} value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false} className="tts-text"
+                placeholder={lang === "hi" ? "यहाँ अपनी स्क्रिप्ट लिखें, हर पंक्ति एक लाइन…" : "Start writing or paste your script. One line per row; each line becomes its own take."} />
+            </>
+          ) : (() => {
+            const parts = lines.filter((l) => takes[l.id] && (takes[l.id].r.text ?? "").replace(/\s+/g, " ").trim() === l.text.replace(/\s+/g, " ").trim()).map((l) => ({ job: takes[l.id].job, id: l.id }));
+            return (
+              <>
+                {parts.length > 0 && !running && <FullTake parts={parts} name={slug} jobs={[...new Set(parts.map((p) => p.job))]} />}
+                {lines.length ? (
+                  <LinesView lines={lines} spoken={spoken} takes={takes} pending={pending} ratings={ratings} blocked={blocked} slug={slug}
+                    onEdit={(i, text) => setScript(withLine(script, i, text))} onRedo={(l) => submit([l])}
+                    onAdd={() => { setScript(`${script.replace(/\s+$/, "")}\nNew line`); }} />
+                ) : <p className="small dim">No lines yet. Switch to Script and paste or write one.</p>}
+              </>
+            );
+          })()}
 
           <div className="tts-foot tts-gen-bar">
             <span className="tts-status"><span className={`dot ${status?.online ? (ready ? "ok" : "off") : status ? "bad" : "off"}`} />
               {!status ? "Connecting" : offline ? "GPU off" : ready ? `${NAME[engine]} warm` : `${NAME[engine]} loads on first use`}</span>
-            <details className="menu">
-              <summary className="btn ghost sm"><Plus size={14} weight="bold" />Insert</summary>
-              <div className="menu-pop up" style={{ left: 0, right: "auto" }}>
-                <span className="menu-h">Pauses</span>
-                {MARKS.map((t) => <button key={t} className="chip tag" onClick={() => insertTag(t)}>{t}</button>)}
-                {engine === "orpheus" && <><span className="menu-h">Sounds</span>{TAGS.map((t) => <button key={t} className="chip tag" onClick={() => insertTag(t)}>{t}</button>)}</>}
-              </div>
-            </details>
-            {lines.length > 0 && <button className="quiet sm" onClick={() => setPreview(!preview)} aria-pressed={preview}><Eye size={15} />{preview ? "Hide preview" : "Preview"}</button>}
+            {view === "script" && (
+              <PopMenu align="left" up width={300} trigger={({ toggle, ref, open }) => <button ref={ref} className="ghost sm" onClick={toggle} aria-expanded={open}><Plus size={14} weight="bold" />Insert</button>}>
+                {(close) => (
+                  <div className="insert-pop">
+                    <span className="pm-h">Pauses</span>
+                    <div className="chips">{MARKS.map((t) => <button key={t} className="chip tag" onClick={() => { insertTag(t); close(); }}>{t}</button>)}</div>
+                    {engine === "orpheus" && <><span className="pm-h">Sounds</span><div className="chips">{TAGS.map((t) => <button key={t} className="chip tag" onClick={() => { insertTag(t); close(); }}>{t}</button>)}</div></>}
+                  </div>
+                )}
+              </PopMenu>
+            )}
             <span className="count">{lines.length} line{lines.length === 1 ? "" : "s"} · {chars.toLocaleString()} characters · ≈{fmtS(audioS)}{status?.online ? ` · ready in ≈${fmtS(estS)}` : ""}</span>
-            <button className="ghost" disabled={!!blocked} onClick={() => submit(lines.slice(0, 1))} title={blocked || "Voice only the first line, to check the voice and settings"}><Flask size={15} />Test line 1</button>
+            {job?.library && !running && (
+              <span className="row" style={{ gap: 4 }}>
+                <Link className="icon-btn" href={`/files#${job.id}`} aria-label="Open in Files" title="Open in Files"><ArrowSquareOut size={16} /></Link>
+                {job.subs && <a className="icon-btn" href={`/api/file/${job.id}/subtitles.srt?download&name=${slug}.srt`} aria-label="Download subtitles (.srt)" title="Subtitles (.srt)"><ClosedCaptioning size={16} /></a>}
+              </span>
+            )}
             {offline
               ? <Link href="/gpu" className="btn"><Power size={15} weight="bold" />Start the GPU</Link>
-              : <button disabled={!!blocked} onClick={() => submit()} title={blocked || undefined}><Microphone size={16} weight="bold" />{running ? "Generating…" : "Generate speech"}</button>}
+              : <button disabled={!!blocked} onClick={() => submit()} title={blocked || undefined}><Microphone size={16} weight="bold" />{running ? "Generating…" : Object.keys(takes).length ? "Generate all again" : "Generate speech"}</button>}
           </div>
           {err && <p className="err" role="alert">{err}</p>}
         </div>
-
-        {job && (
-          <div className="tts-results" id="vo-results">
-            <JobProgress job={job} onCancel={() => api(`jobs/${job.id}/cancel`, { body: {} })} />
-            {job.results.length > 0 && (
-              <div className="card reveal">
-                <div className="card-head">
-                  <h2>Takes{job.match != null ? <span className={`pill ${job.match >= 0.95 ? "ok" : "warn"}`}>script match {pct(job.match)}</span> : null}
-                    {job.similarity != null ? <span className={`pill ${simClass(job.similarity)}`} title="Speaker match vs the recording (0.86+ = same speaker)">voice match {pct(job.similarity)}</span> : null}
-                    {job.platform && platforms[job.platform] ? <span className="pill">{platforms[job.platform].label}</span> : null}</h2>
-                  {job.library && (
-                    <div className="row" style={{ gap: 6 }}>
-                      <Link className="btn ghost sm" href={`/files#${job.id}`}><ArrowSquareOut size={14} />Files</Link>
-                      {job.subs && <a className="btn ghost sm" href={`/api/file/${job.id}/subtitles.srt?download&name=${slug}.srt`}><ClosedCaptioning size={14} />.srt</a>}
-                      <a className="btn sm" href={`/api/zip/${job.id}`}><DownloadSimple size={14} weight="bold" />Download all</a>
-                    </div>
-                  )}
-                </div>
-                {job.results.map((r) => (
-                  <LineRow key={r.id} jobId={job.id} line={job.library ? r : { ...r, subs: false }} audio={libAudio(r.id) ?? r.url} slug={slug} scale={r.duration / Math.max(...job.results.map((x) => x.duration), 0.1)}
-                    rate={!job.mode && coached(job.engine, job.voice) ? { engine: job.engine, voice: job.voice } : null} />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       <aside className="tts-side" aria-label="Voice settings">
@@ -362,13 +495,13 @@ export default function Voiceover() {
           <>
             <div className="set-row" id="vo-voice">
               <div className="sr-h">Voice <Link href="/voices" className="aside linkish u">Browse voices</Link></div>
-              <button className="picker-btn" onClick={() => setPickOpen(!pickOpen)} aria-expanded={pickOpen} aria-controls="vo-voices">
+              <button ref={pickBtn} className="picker-btn" onClick={() => setPickOpen(!pickOpen)} aria-expanded={pickOpen} aria-controls="vo-voices">
                 <VoiceGlyph name={CLONERS.includes(engine) && !myVoice(voice) ? (voice === "male" ? "dan" : "tara") : realName(voice)} size={28} active={running} />
                 <span className="ellipsis">{voiceLabel(voice)} <span className="pb-sub">· {voiceDesc(voice)}</span></span>
                 {pickOpen ? <CaretUp size={14} className="pb-chev" /> : <CaretDown size={14} className="pb-chev" />}
               </button>
               {pickOpen && (
-                <div className="voice-list" id="vo-voices" role="listbox" aria-label={`${NAME[engine]} voices`} style={{ marginTop: 8 }}>
+                <div ref={pickList} className="voice-list" id="vo-voices" role="listbox" aria-label={`${NAME[engine]} voices`} style={{ marginTop: 8 }}>
                   {[...voices.filter((v) => lively.includes(v)), ...voices.filter((v) => !lively.includes(v))].map((v) => {
                     const mv = myVoice(v);
                     const trained = engine === "myvoice" ? models?.find((m) => m.name === v) : undefined;
@@ -385,16 +518,14 @@ export default function Voiceover() {
                     );
                   })}
                   {!voices.length && <p className="small dim" style={{ padding: 8 }}>{engine === "kokoro" ? "No Kokoro voices for this language yet." : "No voices yet."}</p>}
-                  {CLONERS.includes(engine) && <Link href="/voices?record=1" className="voice-opt"><span className="thumb" style={{ width: 30, height: 30, borderRadius: "50%" }}><Plus size={15} /></span><span className="vo-n"><b>Record your voice</b><span>20 seconds, ready to use</span></span></Link>}
+                  {CLONERS.includes(engine) && <Link href="/voices/new" className="voice-opt"><span className="thumb" style={{ width: 30, height: 30, borderRadius: "50%" }}><Plus size={15} /></span><span className="vo-n"><b>Record your voice</b><span>20 seconds, ready to use</span></span></Link>}
                 </div>
               )}
             </div>
 
             <div className="set-row">
               <div className="sr-h"><label htmlFor="vo-engine">Model</label><Info label="Model">{BLURB[engine]}. {engine === "orpheus" ? "English only; use Chatterbox for Hindi and 21 more languages." : engine === "kokoro" ? "Same take every time; great for timing drafts." : "Voice match is checked against the recording."}</Info></div>
-              <select id="vo-engine" value={engine} onChange={(e) => { setEngine(e.target.value); setParams({}); setPickOpen(true); }}>
-                {TTS.map((n) => <option key={n} value={n}>{NAME[n]} · {BLURB[n]}</option>)}
-              </select>
+              <Select id="vo-engine" value={engine} onChange={(v) => { setEngine(v); setParams({}); }} options={TTS.map((n) => ({ value: n, label: NAME[n], hint: BLURB[n] }))} />
             </div>
 
             <div className="set-row">
@@ -412,11 +543,8 @@ export default function Voiceover() {
 
             <div className="set-row">
               <div className="sr-h"><label htmlFor="vo-platform">Publish for</label><Info label="Publish for">{plat ? `${plat.about}${plat.lufs != null ? " Broadcast voice chain: rumble cut, presence lift, de-ess, gentle compression." : ""}` : "Sets loudness mastering and the caption style for that platform."}</Info></div>
-              <select id="vo-platform" value={platform} onChange={(e) => setPlatform(e.target.value)}>
-                {PLATFORM_ORDER.filter((k) => !cat || platforms[k]).map((k) => (
-                  <option key={k} value={k}>{platforms[k]?.label ?? PLATFORM_FALLBACK[k]}{platforms[k] ? (platforms[k].lufs != null ? ` · ${platforms[k].lufs} LUFS` : " · unmastered") : ""}</option>
-                ))}
-              </select>
+              <Select id="vo-platform" value={platform} onChange={setPlatform}
+                options={PLATFORM_ORDER.filter((k) => !cat || platforms[k]).map((k) => ({ value: k, label: platforms[k]?.label ?? PLATFORM_FALLBACK[k], hint: platforms[k] ? (platforms[k].lufs != null ? `${platforms[k].lufs} LUFS` : "unmastered") : undefined }))} />
             </div>
 
             <div className="set-row">
@@ -424,7 +552,7 @@ export default function Voiceover() {
               <div className="set-line"><span>Best of <Info label="Best of">{engine === "kokoro" ? "Kokoro gives the same take every time." : "Each sentence is voiced N times; Whisper checks every word" + (CLONERS.includes(engine) ? " and how much it sounds like the voice" : "") + " and keeps the best. N× slower: use it for the final render."}</Info></span>
                 <div className="seg" role="radiogroup" aria-label="Best of">
                   {Array.from({ length: cat?.max_takes ?? 4 }, (_, i) => i + 1).map((n) => (
-                    <button key={n} role="radio" aria-checked={nTakes === n} className={nTakes === n ? "on" : ""} disabled={engine === "kokoro" && n > 1} onClick={() => setTakes(n)}>{n}×</button>
+                    <button key={n} role="radio" aria-checked={nTakes === n} className={nTakes === n ? "on" : ""} disabled={engine === "kokoro" && n > 1} onClick={() => setNBest(n)}>{n}×</button>
                   ))}
                 </div></div>
               <div className="set-line"><span>Subtitles <Info label="Subtitles">Whisper large-v3 word timing. SRT, VTT and JSON, with a match score per line.</Info></span>
@@ -443,9 +571,7 @@ export default function Voiceover() {
               <div style={{ marginTop: 14 }}>
                 <div className="field">
                   <label className="f" htmlFor="vo-lang">Language {engine === "orpheus" ? <Info label="Language">Orpheus speaks English only. Use Chatterbox for Hindi and 21 more languages.</Info> : engine === "qwen" ? <Info label="Language">Your voice can speak any of these, even ones you didn&apos;t record in. Hindi: use Chatterbox.</Info> : null}</label>
-                  <select id="vo-lang" value={lang} onChange={(e) => setLang(e.target.value)} disabled={engine === "orpheus"}>
-                    {langs.map((l) => <option key={l.code} value={l.code}>{l.name}{l.script ? ` · ${l.script}` : ""}</option>)}
-                  </select>
+                  <Select id="vo-lang" value={lang} onChange={setLang} disabled={engine === "orpheus"} options={langs.map((l) => ({ value: l.code, label: l.name, hint: l.script }))} />
                   {lang !== "en" && <div className="hint">Write in {LANGUAGES.find((l) => l.code === lang)?.script ?? "the language's own spelling"}, not romanised text.</div>}
                 </div>
                 {eng && Object.entries(eng.params).filter(([k]) => !((engine === "chatterbox" || engine === "qwen") && k === "language") && !(engine === "kokoro" && k === "lang")).map(([k, p]) => {
@@ -473,9 +599,7 @@ export default function Voiceover() {
                 <label className="row small" style={{ gap: 8, marginBottom: 12 }}><input type="checkbox" checked={post.trim} onChange={(e) => setPost({ ...post, trim: e.target.checked })} />Trim silence at the start and end</label>
                 <div className="field">
                   <label className="f" htmlFor="vo-sr">Sample rate</label>
-                  <select id="vo-sr" value={post.sample_rate} onChange={(e) => setPost({ ...post, sample_rate: +e.target.value })}>
-                    <option value={48000}>48 kHz · video</option><option value={44100}>44.1 kHz · music</option><option value={24000}>24 kHz</option><option value={0}>Engine native</option>
-                  </select>
+                  <Select id="vo-sr" value={post.sample_rate} onChange={(v) => setPost({ ...post, sample_rate: v })} options={[[48000, "48 kHz · video"], [44100, "44.1 kHz · music"], [24000, "24 kHz"], [0, "Engine native"]]} />
                 </div>
                 {(Object.keys(params).length > 0 || tempo != null) && <button className="ghost sm" onClick={() => { setParams({}); setTempo(null); }}>Reset to {styles[style]?.label ?? "the delivery's defaults"}</button>}
               </div>

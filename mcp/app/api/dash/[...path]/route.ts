@@ -60,6 +60,11 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "samples") return Response.json(await getSamples());
     if (a === "myvoices") return Response.json({ voices: await listMyVoices() });
     if (a === "settings") return Response.json(settingsFor(await getSettings(), (await currentUser())?.id));
+    if (a === "ratings" && b && c) {
+      const job = new URL(req.url).searchParams.get("job") ?? undefined;
+      const { ratingsOf } = await import("@/lib/ratings");
+      return Response.json(await ratingsOf(b, c, job && ID.test(job) ? job : undefined));
+    }
     if (a === "profile" && b && c) {
       const style = new URL(req.url).searchParams.get("style") ?? "tech";
       return Response.json(await describeProfile(b, c, style) ?? { engine: b, voice: c, style, jobs: 0 });
@@ -154,8 +159,16 @@ export async function POST(req: Request, ctx: Ctx) {
     if (a === "coach") {
       // the voice coach: rate a line, get the next recording script, or act on a model comparison
       const coach = await import("@/lib/coach");
-      if (b === "rate") return Response.json(await coach.rate({ engine: String(body.engine ?? ""), voice: String(body.voice ?? ""), job: String(body.job ?? ""),
-        line: String(body.line ?? ""), rating: Number(body.rating) || 0, text: body.text ? String(body.text) : undefined, duration: Number(body.duration) || 0 }));
+      if (b === "rate") {
+        // every voice's ratings are kept (lib/ratings.ts); a trained voice's also go to its coach
+        const input = { engine: String(body.engine ?? ""), voice: String(body.voice ?? ""), job: String(body.job ?? ""), line: String(body.line ?? ""),
+          rating: Number(body.rating) || 0, text: body.text ? String(body.text) : undefined, duration: Number(body.duration) || 0 };
+        if (!ID.test(input.job)) return Response.json({ error: "bad job" }, { status: 400 });
+        const { rateLine } = await import("@/lib/ratings");
+        const saved = await rateLine({ ...input, match: body.match, sim: body.sim });
+        if (await coach.personOf(input.engine, input.voice)) await coach.rate(input).catch(() => null);
+        return Response.json(saved);
+      }
       if (b && VOICE_RE.test(b) && c === "script") return Response.json(await coach.nextScript(b, Number(body.minutes) || 8));
       if (b && VOICE_RE.test(b) && (c === "polish" || c === "practice")) {
         // RLHF: polish the model in use on preference pairs, or voice practice takes to collect more pairs

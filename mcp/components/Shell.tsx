@@ -3,7 +3,7 @@
 // name and the GPU's state, the ⌘K command palette, and on phones a bottom tab bar plus the sidebar as a drawer.
 import {
   ArrowsClockwise, Books, CaretDown, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
-  MagicWand, MagnifyingGlass, Microphone, Moon, Plus, Power, Brain, SignOut, Sun, UserSound, X,
+  MagicWand, MagnifyingGlass, Microphone, Moon, Plus, Power, SignOut, Sun, UserSound, X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -26,7 +26,6 @@ export const NAV: Nav[] = [
   { href: "/posts", name: "Posts", Icon: Kanban, sec: "main" },
   { href: "/files", name: "Files", Icon: Books, sec: "main" },
   { href: "/voiceover", name: "Voiceover", Icon: Microphone, sec: "create" },
-  { href: "/model", name: "Voice model", Icon: Brain, sec: "create" },
   { href: "/clean-up", name: "Clean-up", Icon: MagicWand, sec: "create" },
   { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning, sec: "create" },
   { href: "/images", name: "Images", Icon: ImageSquare, sec: "create" },

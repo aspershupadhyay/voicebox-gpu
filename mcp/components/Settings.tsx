@@ -7,6 +7,7 @@ import { api, type MyVoice } from "./api";
 import { useDialog } from "./Dialog";
 import SecurityCard from "./SecurityCard";
 import { Field, PageHeader, Toggle } from "./ui";
+import { Select } from "./pop";
 
 type S = {
   engine: string; voice: string; style: string; platform: string; takes: number; subtitles: boolean; lexicon: boolean;
@@ -14,7 +15,6 @@ type S = {
   backup_media: boolean; review: boolean; personal?: boolean; mcp_github: string[]; workspace_emails: string[];
 };
 
-const opt = (pairs: readonly (readonly [string, string])[]) => pairs.map(([v, l]) => <option key={v} value={v}>{l}</option>);
 const lexText = (p: Record<string, string>) => Object.entries(p).map(([k, v]) => `${k} = ${v}`).join("\n");
 
 export default function Settings() {
@@ -82,12 +82,11 @@ export default function Settings() {
             <div className="card-head"><div><h2>Voice</h2><p className="sub">What a new voiceover starts with. Any single request can override it.</p></div></div>
             <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0 12px" }}>
               <Field label="Engine">
-                <select value={s.engine} onChange={(e) => setS({ ...s, engine: e.target.value, voice: e.target.value === "myvoice" ? models[0] ?? "me" : e.target.value === "orpheus" ? "tara" : e.target.value === "kokoro" ? "af_heart" : mine[0]?.name ?? "female" })}>
-                  {opt([["qwen", "Qwen · your voice"], ["myvoice", "Your voice model"], ["orpheus", "Orpheus · most human"], ["chatterbox", "Chatterbox · emotion"], ["kokoro", "Kokoro · instant"]])}
-                </select>
+                <Select value={s.engine} onChange={(v) => setS({ ...s, engine: v, voice: v === "myvoice" ? models[0] ?? "me" : v === "orpheus" ? "tara" : v === "kokoro" ? "af_heart" : mine[0]?.name ?? "female" })}
+                  options={[["qwen", "Qwen · your voice"], ["myvoice", "Your voice model"], ["orpheus", "Orpheus · most human"], ["chatterbox", "Chatterbox · emotion"], ["kokoro", "Kokoro · instant"]]} />
               </Field>
-              <Field label="Voice"><select value={s.voice} onChange={(e) => set("voice", e.target.value)}>{opt(voices)}</select></Field>
-              <Field label="Delivery"><select value={s.style} onChange={(e) => set("style", e.target.value)}>{opt([["tech", "Tech explainer"], ["hype", "Launch / hype"], ["narrator", "Calm narrator"], ["neutral", "Neutral"]])}</select></Field>
+              <Field label="Voice"><Select value={s.voice} onChange={(v) => set("voice", v)} options={voices} /></Field>
+              <Field label="Delivery"><Select value={s.style} onChange={(v) => set("style", v)} options={[["tech", "Tech explainer"], ["hype", "Launch / hype"], ["narrator", "Calm narrator"], ["neutral", "Neutral"]]} /></Field>
               <div className="field"><span className="f" style={{ display: "block", font: "500 13px var(--sans)", color: "var(--ink2)", marginBottom: 6 }} id="set-takes">Best of</span>
                 <div className="seg" role="radiogroup" aria-labelledby="set-takes">{[1, 2, 3, 4].map((n) => <button key={n} role="radio" aria-checked={s.takes === n} className={s.takes === n ? "on" : ""} onClick={() => set("takes", n)}>{n}×</button>)}</div></div>
             </div>
@@ -126,10 +125,9 @@ export default function Settings() {
           <div className="card">
             <div className="card-head"><h2>Publishing</h2></div>
             <Field label="Default platform" style={{ marginBottom: 0 }}>
-              <select value={s.platform} onChange={(e) => set("platform", e.target.value)}>
-                {opt([["youtube", "YouTube · -14 LUFS, subtitles"], ["shorts", "YouTube Shorts · -14 LUFS, pop-up captions"], ["reels", "Instagram Reels · -14 LUFS, pop-up captions"],
-                  ["tiktok", "TikTok · -14 LUFS, pop-up captions"], ["podcast", "Podcast · -16 LUFS"], ["raw", "Raw · no mastering"]])}
-              </select>
+              <Select value={s.platform} onChange={(v) => set("platform", v)}
+                options={[["youtube", "YouTube · -14 LUFS, subtitles"], ["shorts", "YouTube Shorts · -14 LUFS, pop-up captions"], ["reels", "Instagram Reels · -14 LUFS, pop-up captions"],
+                  ["tiktok", "TikTok · -14 LUFS, pop-up captions"], ["podcast", "Podcast · -16 LUFS"], ["raw", "Raw · no mastering"]]} />
             </Field>
           </div>
           <div className="card">

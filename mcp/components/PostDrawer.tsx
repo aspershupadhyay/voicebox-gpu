@@ -14,6 +14,7 @@ import { Avatar, deleteMedia, Gate, MediaTile, MediaViewer, UploadList, useUploa
 import { NETWORKS, spaceName, spaceOf, targetsOf, type Target } from "@/lib/spaces";
 import { forgetTargets, saveTargets, useTargets } from "./useTargets";
 import { PlatformBadge } from "./platform";
+import { Select } from "./pop";
 
 const T = { databaseId: AW.db, tableId: "posts" };
 const LABEL = Object.fromEntries(PLATFORMS.map((p) => [p.id, p.label])) as Record<Platform, string>;
@@ -157,23 +158,15 @@ export function TargetsEditor({ post }: { post: Post }) {
       {targets.map((t, i) => (
         <div key={t.space} className="target-row">
           <b className="small" title={spaceOf(t.space)?.about}><PlatformBadge space={t.space} size={20} solid={t.status === "posted"} />{spaceName(t.space)}</b>
-          <select aria-label={`Stage on ${spaceName(t.space)}`} value={t.status} onChange={(e) => patch(i, { status: e.target.value as Status })}>
-            {STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </select>
+          <Select size="sm" label={`Stage on ${spaceName(t.space)}`} value={t.status} onChange={(v) => patch(i, { status: v as Status })} options={STATUSES.map((s) => [s.id, s.label] as const)} />
           <input type="datetime-local" aria-label={`Publish time on ${spaceName(t.space)}`} value={toLocal(t.due_at)} onChange={(e) => patch(i, { due_at: e.target.value ? new Date(e.target.value).toISOString() : null })} />
           <LinkInput value={t.link ?? ""} onSave={(link) => patch(i, { link })} />
           <button className="icon-btn danger-h" title={`Stop posting to ${spaceName(t.space)}`} onClick={() => set(targets.filter((_, k) => k !== i))}><X size={14} /></button>
         </div>
       ))}
-      <select aria-label="Add a platform" value="" style={{ width: "auto", alignSelf: "flex-start" }}
-        onChange={(e) => { const sp = spaceOf(e.target.value); if (sp) set([...targets, { space: sp.id, status: post.status === "posted" ? "draft" : post.status, due_at: post.due_at, link: null }]); }}>
-        <option value="">{targets.length ? "+ Cross-post to…" : "+ Where does it go?"}</option>
-        {NETWORKS.map((n) => (
-          <optgroup key={n.id} label={n.label}>
-            {n.spaces.filter((sp) => !targets.some((t) => t.space === sp.id)).map((sp) => <option key={sp.id} value={sp.id}>{n.label} {sp.label}</option>)}
-          </optgroup>
-        ))}
-      </select>
+      <Select size="sm" label="Add a platform" value="" style={{ width: "auto", alignSelf: "flex-start" }} placeholder={targets.length ? "+ Cross-post to…" : "+ Where does it go?"}
+        onChange={(v) => { const sp = spaceOf(v); if (sp) set([...targets, { space: sp.id, status: post.status === "posted" ? "draft" : post.status, due_at: post.due_at, link: null }]); }}
+        options={NETWORKS.flatMap((n) => n.spaces.filter((sp) => !targets.some((t) => t.space === sp.id)).map((sp) => ({ value: sp.id, label: `${n.label} ${sp.label}` })))} />
     </div>
   );
 }
@@ -263,10 +256,9 @@ export function PostDrawer({ post, onClose }: { post: Post; onClose: () => void 
           </>}
           <dt>Owner</dt>
           <dd>
-            <select aria-label="Owner" value={val("assignee_id") ?? ""} style={{ width: "auto", minWidth: 180 }} onChange={(e) => { const m = members.find((x) => x.id === e.target.value); edit({ assignee_id: m?.id ?? null, assignee_name: m?.name ?? null }, true); }}>
-              <option value="">Nobody yet</option>
-              {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
+            <Select size="sm" label="Owner" value={(val("assignee_id") as string | null) ?? ""} style={{ width: "auto", minWidth: 180 }}
+              onChange={(v) => { const m = members.find((x) => x.id === v); edit({ assignee_id: m?.id ?? null, assignee_name: m?.name ?? null }, true); }}
+              options={[["", "Nobody yet"] as const, ...members.map((m) => [m.id, m.name] as const)]} />
           </dd>
           {!hasTargets && (val("status") === "posted" || val("link")) && <><dt>Live link</dt><dd><input value={val("link") ?? ""} placeholder="https://…" onChange={(e) => edit({ link: e.target.value.slice(0, 500) || null })} /></dd></>}
         </dl>
