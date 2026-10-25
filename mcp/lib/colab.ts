@@ -296,19 +296,19 @@ export const appOrigin = (fallback?: string) =>
  *  purpose picks the GPU from settings (voice: voiceovers, an L4 by default; heavy: training and video, an A100); an
  *  explicit gpu wins over both. */
 export async function start(origin: string, gpu?: Gpu, opts: { purpose?: Purpose; high_ram?: boolean } = {}) {
-  const t0 = Date.now(); // the whole start has to fit in the request's 60 s
+  const t0 = Date.now(); // the whole start has to fit in the request's 300 s (maxDuration of the dash and MCP routes)
   const cfg = await getConfig();
   const want = gpu && GPUS.includes(gpu) ? gpu : opts.purpose === "voice" ? cfg.voice_gpu : opts.purpose === "heavy" ? cfg.heavy_gpu : cfg.gpu;
   const highRam = typeof opts.high_ram === "boolean" ? opts.high_ram : cfg.high_ram;
   const have = await runtimes();
   if (have.length) throw new Error(`a runtime is already running (${have.map((r) => r.accelerator).join(", ")}): stop it first, or wait for the worker to come online`);
   // the pick first, then the other GPUs you chose in settings, in case Colab can't give the pick right now
-  const a = await assign([want, cfg.gpu, cfg.voice_gpu, cfg.heavy_gpu], highRam, t0 + 25_000);
+  const a = await assign([want, cfg.gpu, cfg.voice_gpu, cfg.heavy_gpu], highRam, t0 + 60_000);
   const s: ColabSession = { endpoint: a.endpoint, gpu: a.gpu, started: Date.now(), by: "app", notified_hours: 0, last_active: Date.now(),
     high_ram: a.high_ram, purpose: opts.purpose ?? null };
   await putJson(SESSION, s);
   try {
-    const r = await launch(a.runtimeProxyInfo, bootstrap(appOrigin(origin), process.env.COLAB_PREWARM ?? ""), t0 + 52_000);
+    const r = await launch(a.runtimeProxyInfo, bootstrap(appOrigin(origin), process.env.COLAB_PREWARM ?? ""), t0 + 270_000);
     const note = a.gpu !== want ? `${want} wasn't available, so ${a.gpu} was started instead`
       : highRam && !a.high_ram ? `${want} has no high-RAM machine on this account, so the standard one was started` : undefined;
     return { ...s, kernel: r.kernel, output: r.output, ...(note ? { note } : {}) };

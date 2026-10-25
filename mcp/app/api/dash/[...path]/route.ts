@@ -28,7 +28,7 @@ async function archiveReference(job: RefJob) {
 }
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300; // starting a Colab GPU waits on the VM to boot (lib/colab.ts)
 
 type Ctx = { params: Promise<{ path: string[] }> };
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
