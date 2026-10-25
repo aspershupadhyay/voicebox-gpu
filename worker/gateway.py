@@ -2891,6 +2891,7 @@ def worker_loop():
         if not job or job["cancel"]:
             continue
         job["status"], job["started"] = "running", time.time()
+        LAST_ACTIVE[0] = time.time()
         try:
             {"transcribe": run_transcribe, "video": run_video, "reference": run_reference,
              "image": run_image, "dataset": run_dataset, "train": run_train, "voicewalk": run_voicewalk}.get(job["kind"], run_tts)(job)
@@ -2902,6 +2903,7 @@ def worker_loop():
             traceback.print_exc()
             job["status"], job["stage"], job["error"] = "error", "error", str(e)
         job["finished"] = time.time()
+        LAST_ACTIVE[0] = time.time()
 
 
 def _progress(job):
@@ -3083,7 +3085,10 @@ def health():
             "vram_budget_gb": round(ENG.budget, 1), "engines": ENG.state, "engine_errors": ENG.errors,
             "loaded": list(ENG.procs), "queue": len(QUEUE), "rates": RATES,
             "running": [j["id"] for j in JOBS.values() if j["status"] == "running"], "public_url": public_url(),
-            "selfcheck": _selfcheck_result()}
+            "selfcheck": _selfcheck_result(), "last_active": LAST_ACTIVE[0]}
+
+
+LAST_ACTIVE = [time.time()]  # when a job last started or finished: the dashboard stops an idle runtime the app started
 
 
 SELFCHECK = os.path.join(HOME, "selfcheck.json")
@@ -3208,6 +3213,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(202, job_view(make_job(body)))
             if u.path == "/admin/update":
                 return self._json(200, self_update(str(body.get("url") or "")))
+            if u.path == "/admin/restart":
+                if any(j["status"] in ("queued", "running") for j in JOBS.values()) and not body.get("force"):
+                    raise ValueError("a job is running: restart when the queue is empty")
+
+                def restart():
+                    time.sleep(1.5)
+                    for name in list(ENG.procs):
+                        ENG.stop(name)
+                    log("restart asked: restarting")
+                    os._exit(0)
+                threading.Thread(target=restart, daemon=True).start()
+                return self._json(200, {"ok": True, "restarting": True})
             if u.path == "/selfcheck":
                 run_selfcheck("asked")
                 return self._json(202, {"ok": True})

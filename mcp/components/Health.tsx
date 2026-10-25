@@ -6,6 +6,7 @@ import { ArrowsClockwise, CheckCircle, WarningCircle } from "@phosphor-icons/rea
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
+import GpuCard from "./GpuCard";
 
 type Engine = { engine: string; jobs: number; failed: number; lines: number; audio_min: number; speed: number | null; steps: Record<string, number | null>;
   step_share: Record<string, number>; retry_rate: number | null; unfixed: number };
@@ -56,10 +57,12 @@ export default function Health() {
         <p className="sub">Speed, failures, retrains and the worker&apos;s own checks, from the last {h?.jobs ?? "…"} jobs.</p></div></div>
       {err && <p className="err">{err}</p>}
       <div className="stack" style={{ gap: 16 }}>
+        <GpuCard />
         <div className="card">
           <div className="card-head"><h2>Worker</h2>
             <span className="row" style={{ gap: 6 }}>
               <button className="ghost sm" onClick={check} disabled={!!busy || !!w?.offline}>Run self-check</button>
+              <button className="ghost sm" disabled={!!busy || !!w?.offline} onClick={() => api("worker/restart", { method: "POST", body: {} }).then(() => toast("Restarting the worker: back in about a minute", "ok")).catch((e) => toast((e as Error).message, "bad"))}>Restart worker</button>
               <button className="sm" onClick={update} disabled={!!busy || !!w?.offline} title="Fetch the newest worker code and restart (no Colab restart)"><ArrowsClockwise size={13} /> Update worker</button>
             </span></div>
           {w?.offline ? <p className="small" style={{ color: "var(--warn)", margin: 0 }}>Offline: {w.offline}</p> : w && (

@@ -88,9 +88,9 @@ function GpuDetails({ status, busy, vram }: { status: Status | null; busy: boole
           ) : null}
         </>
       ) : (
-        <div className="meta" style={{ lineHeight: 1.6 }}>{status?.reason === "heartbeat stale" ? "The Colab runtime stopped. Run the notebook to bring it back." : "Waiting for the Colab worker to check in."}</div>
+        <div className="meta" style={{ lineHeight: 1.6 }}>{status?.reason === "heartbeat stale" ? "The Colab runtime stopped." : "Waiting for the Colab worker to check in."} Start it from Health, no Colab needed.</div>
       )}
-      <Link href="/" className="gpu-open tiny">Open Engines <ArrowSquareOut size={11} /></Link>
+      <Link href={status?.online ? "/" : "/health"} className="gpu-open tiny">{status?.online ? "Open Engines" : "Start the GPU"} <ArrowSquareOut size={11} /></Link>
     </div>
   );
 }

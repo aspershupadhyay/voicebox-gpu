@@ -351,6 +351,33 @@ const handler = createMcpHandler(
     );
 
     server.registerTool(
+      "gpu",
+      {
+        title: "Start, stop and check the Colab GPU",
+        description: "The GPU without opening Colab (once Colab is connected on the Health page). action status (default): connected account, compute-unit balance and hourly burn, runtimes assigned, the app-started session (GPU, since when, last activity, why it stopped), reminder settings. action start: assign a Colab GPU runtime (gpu: A100 / L4 / H100 / T4 / G4, default from settings) and launch the worker on it; it comes online in worker_status within ~3-8 minutes. action stop: release a runtime (endpoint, default the app-started one); billing stops at once. The app also stops an app-started runtime after idle_stop_min idle minutes and sends hourly reminders and a low-balance warning to the ntfy topic.",
+        inputSchema: z.object({
+          action: z.enum(["status", "start", "stop"]).optional(),
+          gpu: z.enum(["A100", "L4", "H100", "T4", "G4"]).optional(),
+          endpoint: z.string().max(200).optional(),
+        }),
+      },
+      async ({ action, gpu, endpoint }) => {
+        try {
+          const colab = await import("@/lib/colab");
+          if (action === "start") return text(await colab.start(colab.appOrigin(), gpu));
+          if (action === "stop") {
+            const ep = endpoint ?? (await colab.getSession())?.endpoint;
+            if (!ep) throw new Error("no runtime to stop");
+            return text(await colab.stopRuntime(ep, "stopped by an agent"));
+          }
+          return text(await colab.status());
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    );
+
+    server.registerTool(
       "voice_coach",
       {
         title: "How a trained voice is improving",

@@ -64,6 +64,7 @@ export async function GET(req: Request, ctx: Ctx) {
       const style = new URL(req.url).searchParams.get("style") ?? "tech";
       return Response.json(await describeProfile(b, c, style) ?? { engine: b, voice: c, style, jobs: 0 });
     }
+    if (a === "colab" && !b) return Response.json(await (await import("@/lib/colab")).status());
     if (a === "health" && !b) {
       // the Health page: what's working, what isn't (job notes in R2) + the worker's own state and self-check
       const { healthSummary } = await import("@/lib/telemetry");
@@ -321,6 +322,23 @@ export async function POST(req: Request, ctx: Ctx) {
       if (!ID.test(b) || !files.length || !files.every((f) => FILE_RE.test(f))) return Response.json({ error: "bad job id or file names" }, { status: 400 });
       return Response.json(await presignPuts(b, files));
     }
+    if (a === "colab") {
+      // the GPU from the app: connect Colab once, then start / stop runtimes, read the balance, set reminders
+      const colab = await import("@/lib/colab");
+      if (b === "auth") return Response.json({ url: await colab.authUrl() });
+      if (b === "connect") return Response.json(await colab.connect(String(body.code ?? "")));
+      if (b === "disconnect") { await colab.disconnect(); return Response.json({ ok: true }); }
+      if (b === "start") return Response.json(await colab.start(new URL(req.url).origin, body.gpu));
+      if (b === "stop") {
+        const ep = String(body.endpoint ?? (await colab.getSession())?.endpoint ?? "");
+        if (!ep) return Response.json({ error: "no runtime to stop" }, { status: 400 });
+        return Response.json(await colab.stopRuntime(ep));
+      }
+      if (b === "config") return Response.json(await colab.setConfig(body));
+      if (b === "notify") return Response.json({ sent: await colab.notify("Voicebox test", "Notifications work: you'll get GPU reminders here.", "bell") });
+      return Response.json({ error: "not found" }, { status: 404 });
+    }
+    if (a === "worker" && b === "restart") return Response.json(await call("/admin/restart", { body: {} }));
     if (a === "worker" && b === "update") {
       // the worker fetches the newest code from this dashboard and restarts itself (no Colab restart needed)
       return Response.json(await call("/admin/update", { body: { url: `${new URL(req.url).origin}/api/bundle` }, timeoutMs: 55_000 }));

@@ -1,0 +1,308 @@
+// The GPU from the app: start a Colab runtime, launch the worker on it, stop it, and read the compute-unit balance,
+// without opening Colab. Same backend and same Google sign-in as Google's official Colab CLI (google-colab-cli):
+//   - sign-in: Google OAuth (the CLI's client, COLAB_OAUTH_CLIENT_ID / _SECRET), the copy-paste code flow with PKCE;
+//     the refresh token is kept encrypted in R2 (colab/token.enc), keyed from COLAB_TOKEN_KEY or WORKER_SECRET;
+//   - runtimes: colab.research.google.com/tun/m (assign, assignments, unassign, ccu-info);
+//   - the worker: a Jupyter kernel on the runtime (its proxy URL + token) runs the notebook's own start cells, so the
+//     worker heartbeats this dashboard exactly as if the notebook had been run. The busy kernel keeps the VM alive.
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import { delObjs, getJson, getObj, putJson, putObj } from "./store";
+
+const COLAB = "https://colab.research.google.com";
+const REDIRECT = "https://sdk.cloud.google.com/applicationdefaultauthcode.html"; // registered to the CLI's client
+const SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/colaboratory", "https://www.googleapis.com/auth/drive.file"];
+const TOKEN = "colab/token.enc";
+const PENDING = "colab/pending.json";
+const SESSION = "colab/session.json";
+const CONFIG = "colab/config.json";
+export const GPUS = ["A100", "L4", "H100", "T4", "G4"] as const;
+export type Gpu = (typeof GPUS)[number];
+
+export type ColabConfig = { gpu: Gpu; idle_stop_min: number; ntfy_topic: string | null; remind_hours: number; low_units: number };
+export type ColabSession = { endpoint: string; gpu: string; started: number; by: "app" | "notebook"; worker_started?: number; notified_hours?: number;
+  last_active?: number; stopped?: number; stop_reason?: string; low_warned?: boolean; usage?: Usage | null };
+export type Usage = { balance: number; rate: number; assignments: number; at: number };
+
+const client = () => {
+  const id = process.env.COLAB_OAUTH_CLIENT_ID, secret = process.env.COLAB_OAUTH_CLIENT_SECRET;
+  if (!id || !secret) throw new Error("COLAB_OAUTH_CLIENT_ID / COLAB_OAUTH_CLIENT_SECRET aren't set on the server");
+  return { id, secret };
+};
+const key = () => createHash("sha256").update(`colab-token:${process.env.COLAB_TOKEN_KEY || process.env.WORKER_SECRET || ""}`).digest();
+const b64url = (b: Buffer) => b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+function seal(obj: unknown) {
+  const iv = randomBytes(12);
+  const c = createCipheriv("aes-256-gcm", key(), iv);
+  const data = Buffer.concat([c.update(JSON.stringify(obj), "utf8"), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), data]);
+}
+function open<T>(buf: Buffer): T {
+  const d = createDecipheriv("aes-256-gcm", key(), buf.subarray(0, 12));
+  d.setAuthTag(buf.subarray(12, 28));
+  return JSON.parse(Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString("utf8"));
+}
+
+// ── sign-in ────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Step 1: the Google sign-in link. Google then shows a code to paste back into the app (step 2). */
+export async function authUrl() {
+  const verifier = b64url(randomBytes(48));
+  const state = b64url(randomBytes(12));
+  await putJson(PENDING, { verifier, state, at: Date.now() });
+  const q = new URLSearchParams({ client_id: client().id, redirect_uri: REDIRECT, response_type: "code", scope: SCOPES.join(" "),
+    access_type: "offline", prompt: "consent", token_usage: "remote", state,
+    code_challenge: b64url(createHash("sha256").update(verifier).digest()), code_challenge_method: "S256" });
+  return `https://accounts.google.com/o/oauth2/auth?${q}`;
+}
+
+/** Step 2: the pasted code -> a refresh token, stored encrypted. */
+export async function connect(code: string) {
+  const p = await getJson<{ verifier: string; at: number }>(PENDING).catch(() => null);
+  if (!p || Date.now() - p.at > 15 * 60_000) throw new Error("the sign-in link expired: press Connect again");
+  const r = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ code: code.trim(), client_id: client().id, client_secret: client().secret, redirect_uri: REDIRECT,
+      grant_type: "authorization_code", code_verifier: p.verifier }) });
+  const t = await r.json() as { refresh_token?: string; access_token?: string; error?: string; error_description?: string };
+  if (!r.ok || !t.refresh_token) throw new Error(`Google refused the code: ${t.error_description || t.error || r.status}`);
+  const who = await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: `Bearer ${t.access_token}` } })
+    .then((x) => x.json()).catch(() => ({})) as { email?: string };
+  await putObj(TOKEN, seal({ refresh_token: t.refresh_token, email: who.email ?? null, at: Date.now() }), "application/octet-stream");
+  await delObjs([PENDING]);
+  cached = null;
+  return { email: who.email ?? null };
+}
+
+export async function disconnect() {
+  await delObjs([TOKEN]);
+  cached = null;
+}
+
+async function stored() {
+  const r = await getObj(TOKEN);
+  if (!r) return null;
+  return open<{ refresh_token: string; email: string | null; at: number }>(Buffer.from(await r.arrayBuffer()));
+}
+
+let cached: { token: string; until: number } | null = null;
+async function accessToken() {
+  if (cached && cached.until > Date.now() + 60_000) return cached.token;
+  const s = await stored();
+  if (!s) throw new Error("Colab isn't connected: Health → GPU → Connect Colab");
+  const r = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ refresh_token: s.refresh_token, client_id: client().id, client_secret: client().secret, grant_type: "refresh_token" }) });
+  const t = await r.json() as { access_token?: string; expires_in?: number; error?: string };
+  if (!r.ok || !t.access_token) throw new Error(t.error === "invalid_grant" ? "the Colab sign-in expired or was revoked: connect again" : `Google token refresh failed (${t.error ?? r.status})`);
+  cached = { token: t.access_token, until: Date.now() + (t.expires_in ?? 3600) * 1000 };
+  return cached.token;
+}
+
+// ── the Colab backend ──────────────────────────────────────────────────────────────────────────────────────────
+
+async function tun<T>(path: string, init: { method?: string; headers?: Record<string, string> } = {}): Promise<T> {
+  const u = new URL(`${COLAB}/tun/m${path}`);
+  u.searchParams.set("authuser", "0");
+  const r = await fetch(u, { method: init.method ?? "GET", cache: "no-store", signal: AbortSignal.timeout(45_000),
+    headers: { Accept: "application/json", "X-Colab-Client-Agent": "colab-cli", Authorization: `Bearer ${await accessToken()}`, ...(init.headers ?? {}) } });
+  const text = (await r.text()).replace(/^\)\]\}'\n/, "");
+  if (!r.ok) {
+    const hint = r.status === 412 ? "too many runtimes are assigned already (stop one first)"
+      : r.status === 503 ? "no GPU of that type is free right now: try another (L4 is usually available)"
+      : r.status === 403 ? "this Google account can't use that GPU (check your Colab plan)" : text.slice(0, 200);
+    throw new Error(`Colab ${r.status}: ${hint}`);
+  }
+  return (text ? JSON.parse(text) : {}) as T;
+}
+
+type Proxy = { url: string; token: string; tokenExpiresInSeconds: number };
+type Listed = { accelerator: string; endpoint: string; variant: number; machineShape: number; runtimeProxyInfo: Proxy };
+
+export async function usage(): Promise<Usage> {
+  const c = await tun<{ currentBalance: number; consumptionRateHourly: number; assignmentsCount: number }>("/ccu-info");
+  return { balance: Math.round(c.currentBalance * 100) / 100, rate: Math.round(c.consumptionRateHourly * 100) / 100, assignments: c.assignmentsCount, at: Date.now() };
+}
+
+export async function runtimes() {
+  const r = await tun<{ assignments?: Listed[] }>("/assignments");
+  return (r.assignments ?? []).map((a) => ({ endpoint: a.endpoint, accelerator: a.accelerator, high_ram: a.machineShape === 1 }));
+}
+
+export async function stopRuntime(endpoint: string, reason = "stopped from the app") {
+  const t = await tun<{ token: string }>(`/unassign/${encodeURIComponent(endpoint)}`);
+  await tun(`/unassign/${encodeURIComponent(endpoint)}`, { method: "POST", headers: { "X-Goog-Colab-Token": t.token } });
+  const s = await getSession();
+  if (s?.endpoint === endpoint) await putJson(SESSION, { ...s, stopped: Date.now(), stop_reason: reason });
+  return { stopped: endpoint };
+}
+
+/** Ask Colab for a GPU runtime (same request as `colab new --gpu X`). */
+async function assign(gpu: Gpu) {
+  const nbh = randomUUID().replace(/-/g, "_").padEnd(44, ".");
+  const q = `?nbh=${encodeURIComponent(nbh)}&variant=GPU&accelerator=${gpu}`;
+  const first = await tun<{ token?: string; endpoint?: string; runtimeProxyInfo?: Proxy }>(`/assign${q}`);
+  if (first.endpoint && first.runtimeProxyInfo) return first as { endpoint: string; runtimeProxyInfo: Proxy };
+  if (!first.token) throw new Error("Colab didn't hand out an assignment token");
+  const got = await tun<{ endpoint: string; runtimeProxyInfo: Proxy; accelerator: string }>(`/assign${q}`, { method: "POST", headers: { "X-Goog-Colab-Token": first.token } });
+  return got;
+}
+
+/** Python the worker's kernel runs: the notebook's two start cells, with the secrets passed in (no Colab Secrets here). */
+function bootstrap(origin: string, prewarm: string) {
+  const env = { WORKER_SECRET: process.env.WORKER_SECRET ?? "", REGISTER_URL: `${origin}/api/register`, PREWARM: prewarm, VOICEBOX_STARTED_BY: "app" };
+  return [
+    "import io, json, os, runpy, sys, tarfile, urllib.request",
+    `os.environ.update(json.loads(${JSON.stringify(JSON.stringify(env))}))`,
+    'APP = "/content/voicebox/app"',
+    "os.makedirs(APP, exist_ok=True)",
+    'req = urllib.request.Request(os.environ["REGISTER_URL"].rsplit("/api/", 1)[0] + "/api/bundle", headers={"Authorization": "Bearer " + os.environ["WORKER_SECRET"]})',
+    "data = urllib.request.urlopen(req, timeout=120).read()",
+    'tarfile.open(fileobj=io.BytesIO(data), mode="r:gz").extractall(APP, filter="data")',
+    'print("voicebox worker unpacked; starting", flush=True)',
+    'sys.argv = ["launcher.py"]',
+    'runpy.run_path(APP + "/launcher.py", run_name="__main__")',
+  ].join("\n");
+}
+
+/** Start a kernel on the runtime and run the worker in it; returns once the kernel is busy with it (it keeps running). */
+export async function launch(proxy: Proxy, code: string) {
+  const headers = { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli", "Content-Type": "application/json" };
+  const base = proxy.url.replace(/\/$/, "");
+  let kernel: { id: string } | null = null;
+  for (let i = 0; i < 6 && !kernel; i++) { // a fresh VM takes a few seconds to accept kernels
+    const r = await fetch(`${base}/api/kernels`, { method: "POST", headers, body: JSON.stringify({ name: "python3" }), signal: AbortSignal.timeout(20_000) }).catch(() => null);
+    if (r?.ok) kernel = await r.json();
+    else await new Promise((res) => setTimeout(res, 3000));
+  }
+  if (!kernel) throw new Error("the runtime didn't start a Python kernel");
+  const { default: WebSocket } = await import("ws");
+  const ws = new WebSocket(`${base.replace(/^http/, "ws")}/api/kernels/${kernel.id}/channels?colab-runtime-proxy-token=${encodeURIComponent(proxy.token)}`,
+    { headers: { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli" } });
+  const session = randomUUID(), msgId = randomUUID();
+  const out: string[] = [];
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => (out.length ? resolve() : reject(new Error("the kernel never started the worker"))), 25_000);
+    ws.on("open", () => ws.send(JSON.stringify({
+      header: { msg_id: msgId, username: "voicebox", session, msg_type: "execute_request", version: "5.3", date: new Date().toISOString() },
+      parent_header: {}, metadata: {}, channel: "shell", buffers: [],
+      content: { code, silent: false, store_history: true, user_expressions: {}, allow_stdin: false, stop_on_error: true },
+    })));
+    ws.on("message", (raw) => {
+      let m: { msg_type?: string; header?: { msg_type: string }; parent_header?: { msg_id?: string }; content?: { text?: string; ename?: string; evalue?: string; execution_state?: string } };
+      try { m = JSON.parse(raw.toString()); } catch { return; }
+      if (m.parent_header?.msg_id !== msgId) return;
+      const t = m.header?.msg_type ?? m.msg_type;
+      if (t === "stream" && m.content?.text) out.push(m.content.text);
+      if (t === "error") { clearTimeout(timer); reject(new Error(`the worker failed to start: ${m.content?.ename}: ${m.content?.evalue}`)); }
+      // the bundle is unpacked and the launcher is running: from here it heartbeats the dashboard by itself
+      if (out.join("").includes("starting")) { clearTimeout(timer); setTimeout(resolve, 1500); }
+    });
+    ws.on("error", (e) => { clearTimeout(timer); reject(e); });
+  }).finally(() => { try { ws.close(); } catch { /* the kernel keeps running without us */ } });
+  return { kernel: kernel.id, output: out.join("").slice(-1500) };
+}
+
+export async function getSession() {
+  return getJson<ColabSession>(SESSION).catch(() => null);
+}
+
+export async function getConfig(): Promise<ColabConfig> {
+  const c = await getJson<Partial<ColabConfig>>(CONFIG).catch(() => null);
+  return { gpu: "A100", idle_stop_min: 45, ntfy_topic: null, remind_hours: 1, low_units: 15, ...(c ?? {}) };
+}
+
+export async function setConfig(patch: Partial<ColabConfig>) {
+  const cur = await getConfig();
+  const next: ColabConfig = {
+    gpu: GPUS.includes(patch.gpu as Gpu) ? patch.gpu as Gpu : cur.gpu,
+    idle_stop_min: typeof patch.idle_stop_min === "number" ? Math.max(0, Math.min(600, Math.round(patch.idle_stop_min))) : cur.idle_stop_min,
+    remind_hours: typeof patch.remind_hours === "number" ? Math.max(0, Math.min(12, patch.remind_hours)) : cur.remind_hours,
+    low_units: typeof patch.low_units === "number" ? Math.max(0, Math.min(500, patch.low_units)) : cur.low_units,
+    ntfy_topic: patch.ntfy_topic === null ? null : typeof patch.ntfy_topic === "string" && /^[A-Za-z0-9_-]{6,64}$/.test(patch.ntfy_topic) ? patch.ntfy_topic : cur.ntfy_topic,
+  };
+  await putJson(CONFIG, next);
+  return next;
+}
+
+/** The dashboard's public address (the worker heartbeats it): APP_URL, else Vercel's production domain. */
+export const appOrigin = (fallback?: string) =>
+  process.env.APP_URL?.replace(/\/$/, "") || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : fallback ?? "");
+
+/** Start: a GPU runtime + the worker on it. Refuses while a worker is online or a runtime is already assigned. */
+export async function start(origin: string, gpu?: Gpu) {
+  const cfg = await getConfig();
+  const want = gpu && GPUS.includes(gpu) ? gpu : cfg.gpu;
+  const have = await runtimes();
+  if (have.length) throw new Error(`a runtime is already running (${have.map((r) => r.accelerator).join(", ")}): stop it first, or wait for the worker to come online`);
+  const a = await assign(want);
+  const s: ColabSession = { endpoint: a.endpoint, gpu: want, started: Date.now(), by: "app", notified_hours: 0, last_active: Date.now() };
+  await putJson(SESSION, s);
+  try {
+    const r = await launch(a.runtimeProxyInfo, bootstrap(appOrigin(origin), process.env.COLAB_PREWARM ?? ""));
+    return { ...s, kernel: r.kernel, output: r.output };
+  } catch (e) {
+    // a runtime without a worker only burns units: give it back
+    await stopRuntime(a.endpoint, `the worker didn't start: ${(e as Error).message}`).catch(() => null);
+    throw e;
+  }
+}
+
+/** Push to the phone (ntfy app, subscribed to the topic). */
+export async function notify(title: string, body: string, tags = "computer") {
+  const cfg = await getConfig();
+  if (!cfg.ntfy_topic) return false;
+  const r = await fetch(`https://ntfy.sh/${cfg.ntfy_topic}`, { method: "POST", body, headers: { Title: title, Tags: tags } }).catch(() => null);
+  return !!r?.ok;
+}
+
+/** Every worker heartbeat (once a minute): hourly reminders with the real balance, a low-balance warning, and
+ *  stopping a runtime the app started once it has sat idle for idle_stop_min. Cheap when nothing is due. */
+export async function onHeartbeat(hb: { started_at?: number; queue?: number; running?: number; last_active?: number; gpu?: string }) {
+  let s = await getSession();
+  if (!(await getObj(TOKEN))) return;
+  const boot = hb.started_at ? Math.round(hb.started_at * 1000) : 0;
+  const fresh = s?.by === "notebook" && boot && s.worker_started && boot - s.worker_started > 3600_000 * 0.25 && !s.stopped; // a new runtime since
+  if (((!s || s.stopped) && boot && (!s || boot > (s.stopped ?? s.started))) || fresh) {
+    // a worker started from the notebook: remind and show the balance too (auto-stop is only for GPUs started here)
+    s = { endpoint: "", gpu: hb.gpu?.replace("NVIDIA ", "").split(/[- ]/)[0] || "GPU", started: boot, by: "notebook", notified_hours: 0, last_active: Date.now(), worker_started: boot };
+    await putJson(SESSION, s);
+  }
+  if (!s || s.stopped) return;
+  const cfg = await getConfig();
+  const now = Date.now();
+  let changed = false;
+  if (hb.last_active && hb.last_active * 1000 > (s.last_active ?? 0)) { s.last_active = hb.last_active * 1000; changed = true; }
+  if ((hb.queue ?? 0) > 0 || (hb.running ?? 0) > 0) { s.last_active = now; changed = true; }
+  const hours = Math.floor((now - s.started) / 3600_000);
+  const due = cfg.remind_hours > 0 && hours >= (s.notified_hours ?? 0) + cfg.remind_hours;
+  const stale = !s.usage || now - s.usage.at > 5 * 60_000;
+  if (due || stale) {
+    const u = await usage().catch(() => null);
+    if (u) { s.usage = u; changed = true; }
+    if (due) {
+      s.notified_hours = hours;
+      const left = u && u.rate > 0 ? ` · about ${(u.balance / u.rate).toFixed(1)} h left at this rate` : "";
+      await notify(`GPU running ${hours} h`, `${s.gpu} on for ${hours} h${u ? ` · ${u.balance} units left (${u.rate}/h)${left}` : ""}. Stop it from Health if you're done.`, "hourglass");
+    }
+    if (u && cfg.low_units > 0 && u.balance < cfg.low_units && !s.low_warned) {
+      s.low_warned = true;
+      await notify("Compute units low", `${u.balance} units left on Colab (${u.rate}/h). Top up or stop the GPU.`, "warning");
+    }
+  }
+  if (s.by === "app" && s.endpoint && cfg.idle_stop_min > 0 && s.last_active && now - s.last_active > cfg.idle_stop_min * 60_000) {
+    const mins = Math.round((now - s.last_active) / 60_000);
+    await stopRuntime(s.endpoint, `idle for ${mins} min`).catch(() => null);
+    await notify("GPU stopped", `${s.gpu} stopped after ${mins} min idle, to save units.`, "zzz");
+    return;
+  }
+  if (changed) await putJson(SESSION, s);
+}
+
+/** Everything the GPU card shows. */
+export async function status() {
+  const s = await stored().catch(() => null);
+  const [session, config] = await Promise.all([getSession(), getConfig()]);
+  if (!s) return { connected: false, session, config };
+  const [u, list] = await Promise.all([usage().catch((e: Error) => ({ error: e.message })), runtimes().catch((e: Error) => ({ error: e.message }))]);
+  return { connected: true, email: s.email, usage: u, runtimes: list, session, config };
+}
