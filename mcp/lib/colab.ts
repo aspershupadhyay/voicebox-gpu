@@ -163,6 +163,7 @@ function bootstrap(origin: string, prewarm: string) {
     `os.environ.update(json.loads(${JSON.stringify(JSON.stringify(env))}))`,
     'APP = "/content/voicebox/app"',
     "os.makedirs(APP, exist_ok=True)",
+    'print("voicebox kernel up; fetching the worker", flush=True)',
     'req = urllib.request.Request(os.environ["REGISTER_URL"].rsplit("/api/", 1)[0] + "/api/bundle", headers={"Authorization": "Bearer " + os.environ["WORKER_SECRET"]})',
     "data = urllib.request.urlopen(req, timeout=120).read()",
     'tarfile.open(fileobj=io.BytesIO(data), mode="r:gz").extractall(APP, filter="data")',
@@ -172,12 +173,14 @@ function bootstrap(origin: string, prewarm: string) {
   ].join("\n");
 }
 
-/** Start a kernel on the runtime and run the worker in it; returns once the kernel is busy with it (it keeps running). */
-export async function launch(proxy: Proxy, code: string) {
+/** Start a kernel on the runtime and run the worker in it; returns once the kernel is busy with it (it keeps running).
+ *  A fresh GPU VM can take well over 20 s to boot Python and pull the bundle, so any sign the kernel is running our code
+ *  counts (it going busy on our request, or its first line); only a kernel that never takes the request is a failure. */
+export async function launch(proxy: Proxy, code: string, deadline = Date.now() + 45_000) {
   const headers = { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli", "Content-Type": "application/json" };
   const base = proxy.url.replace(/\/$/, "");
   let kernel: { id: string } | null = null;
-  for (let i = 0; i < 6 && !kernel; i++) { // a fresh VM takes a few seconds to accept kernels
+  for (let i = 0; i < 6 && !kernel && Date.now() < deadline - 15_000; i++) { // a fresh VM takes a few seconds to accept kernels
     const r = await fetch(`${base}/api/kernels`, { method: "POST", headers, body: JSON.stringify({ name: "python3" }), signal: AbortSignal.timeout(20_000) }).catch(() => null);
     if (r?.ok) kernel = await r.json();
     else await new Promise((res) => setTimeout(res, 3000));
@@ -188,8 +191,17 @@ export async function launch(proxy: Proxy, code: string) {
     { headers: { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli" } });
   const session = randomUUID(), msgId = randomUUID();
   const out: string[] = [];
+  let busy = false; // the kernel has picked up our request: the worker code is running
+  const kernelBusy = async () => {
+    const r = await fetch(`${base}/api/kernels/${kernel!.id}`, { headers, signal: AbortSignal.timeout(8000) }).catch(() => null);
+    const k = r?.ok ? ((await r.json().catch(() => ({}))) as { execution_state?: string }) : {};
+    return k.execution_state === "busy";
+  };
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => (out.length ? resolve() : reject(new Error("the kernel never started the worker"))), 25_000);
+    const timer = setTimeout(async () => {
+      if (out.length || busy || (await kernelBusy())) resolve();
+      else reject(new Error("the kernel never picked up the worker code"));
+    }, Math.max(12_000, deadline - Date.now()));
     ws.on("open", () => ws.send(JSON.stringify({
       header: { msg_id: msgId, username: "voicebox", session, msg_type: "execute_request", version: "5.3", date: new Date().toISOString() },
       parent_header: {}, metadata: {}, channel: "shell", buffers: [],
@@ -201,6 +213,7 @@ export async function launch(proxy: Proxy, code: string) {
       if (m.parent_header?.msg_id !== msgId) return;
       const t = m.header?.msg_type ?? m.msg_type;
       if (t === "stream" && m.content?.text) out.push(m.content.text);
+      if (t === "status" && m.content?.execution_state === "busy") busy = true;
       if (t === "error") { clearTimeout(timer); reject(new Error(`the worker failed to start: ${m.content?.ename}: ${m.content?.evalue}`)); }
       // the bundle is unpacked and the launcher is running: from here it heartbeats the dashboard by itself
       if (out.join("").includes("starting")) { clearTimeout(timer); setTimeout(resolve, 1500); }
@@ -245,6 +258,7 @@ export const appOrigin = (fallback?: string) =>
  *  purpose picks the GPU from settings (voice: voiceovers, an L4 by default; heavy: training and video, an A100); an
  *  explicit gpu wins over both. */
 export async function start(origin: string, gpu?: Gpu, opts: { purpose?: Purpose; high_ram?: boolean } = {}) {
+  const t0 = Date.now(); // the whole start has to fit in the request's 60 s
   const cfg = await getConfig();
   const want = gpu && GPUS.includes(gpu) ? gpu : opts.purpose === "voice" ? cfg.voice_gpu : opts.purpose === "heavy" ? cfg.heavy_gpu : cfg.gpu;
   const highRam = typeof opts.high_ram === "boolean" ? opts.high_ram : cfg.high_ram;
@@ -255,7 +269,7 @@ export async function start(origin: string, gpu?: Gpu, opts: { purpose?: Purpose
     high_ram: highRam && !ONE_SHAPE.includes(want), purpose: opts.purpose ?? null };
   await putJson(SESSION, s);
   try {
-    const r = await launch(a.runtimeProxyInfo, bootstrap(appOrigin(origin), process.env.COLAB_PREWARM ?? ""));
+    const r = await launch(a.runtimeProxyInfo, bootstrap(appOrigin(origin), process.env.COLAB_PREWARM ?? ""), t0 + 52_000);
     return { ...s, kernel: r.kernel, output: r.output };
   } catch (e) {
     // a runtime without a worker only burns units: give it back
