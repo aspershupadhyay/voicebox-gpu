@@ -9,6 +9,7 @@ import { useResumeJob } from "./jobs";
 import LineRow from "./LineRow";
 import Recorder, { FilePreview } from "./Recorder";
 import { useStatus } from "./Shell";
+import { PageHeader } from "./ui";
 
 type Settings = { engine: string; voice: string; style: string; platform: string; takes: number; visuals: string; visual_style: string; captions_look: string; transition: string; music_lufs: number };
 
@@ -94,27 +95,27 @@ function CleanUp({ settings }: { settings: Settings | null }) {
   return (
     <div className="stack" style={{ gap: 14 }}>
       <div className="row between">
-        <div className="seg">
-          <button className={src === "upload" ? "on" : ""} onClick={() => { setSrc("upload"); setFile(null); }}>Upload</button>
-          <button className={src === "record" ? "on" : ""} onClick={() => { setSrc("record"); setFile(null); }}>Record</button>
+        <div className="seg lg" role="radiogroup" aria-label="Source">
+          <button role="radio" aria-checked={src === "upload"} className={src === "upload" ? "on" : ""} onClick={() => { setSrc("upload"); setFile(null); }}>Upload</button>
+          <button role="radio" aria-checked={src === "record"} className={src === "record" ? "on" : ""} onClick={() => { setSrc("record"); setFile(null); }}>Record</button>
         </div>
-        <Info>It measures the noise, the room echo and how much of the voice the mic captured, runs only what the recording needs, and checks it still sounds like you. Same length as the original, so it drops back onto your edit.</Info>
+        <Info label="How clean-up works">It measures the noise, the room echo and how much of the voice the mic captured, runs only what the recording needs, and checks it still sounds like you. Same length as the original, so it drops back onto your edit.</Info>
       </div>
       {src === "upload" && !file && (
         <label className="bigdrop" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) setFile(f); }}>
-          <UploadSimple size={26} />
+          <span className="d-ic"><UploadSimple size={22} /></span>
           <b>Drop a recording here</b>
           <span>or click to choose · audio or video · laptop mic, phone, noisy room</span>
           <input type="file" accept="audio/*,video/*" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
         </label>
       )}
-      <div className="optrow">
-        <label className="f">Mode <Info>Auto measures each recording. Denoise only keeps your exact tone. Restore rebuilds a thin or echoey voice.</Info></label>
-        <select value={mode} onChange={(e) => setMode(e.target.value)}>
+      <div className="optrow card pad-sm">
+        <label className="f" htmlFor="cu-mode">Mode <Info label="Mode">Auto measures each recording. Denoise only keeps your exact tone. Restore rebuilds a thin or echoey voice.</Info></label>
+        <select id="cu-mode" value={mode} onChange={(e) => setMode(e.target.value)}>
           <option value="auto">Auto</option><option value="denoise">Denoise only</option><option value="enhance">Restore</option>
         </select>
-        <label className="f">Publish for</label>
-        <select value={platform} onChange={(e) => setPlatform(e.target.value)}>
+        <label className="f" htmlFor="cu-platform">Publish for</label>
+        <select id="cu-platform" value={platform} onChange={(e) => setPlatform(e.target.value)}>
           {[...PLATFORMS.map(([p, l]) => [p, l] as const), ["raw", "Raw (no mastering)"] as const].map(([p, l]) => <option key={p} value={p}>{l}</option>)}
         </select>
       </div>
@@ -122,15 +123,17 @@ function CleanUp({ settings }: { settings: Settings | null }) {
       {src === "upload" && file && <div style={{ marginTop: 12 }}><FilePreview file={file} onRemove={() => setFile(null)} /></div>}
       {mode === "enhance" && (
         <div className="field" style={{ margin: "12px 0 0" }}>
-          <div className="row between"><label className="f" style={{ margin: 0 }}>Clean-up strength <Info>Higher for noisy rooms and echo; lower keeps more of the original character.</Info></label><span className="mono small">{strength.toFixed(2)}</span></div>
-          <input type="range" min={0.1} max={1} step={0.05} value={strength} style={rangeFill(strength, 0.1, 1)} onChange={(e) => setStrength(+e.target.value)} />
+          <div className="row between"><label className="f" htmlFor="cu-strength" style={{ margin: 0 }}>Clean-up strength <Info label="Clean-up strength">Higher for noisy rooms and echo; lower keeps more of the original character.</Info></label><span className="mono small">{strength.toFixed(2)}</span></div>
+          <input id="cu-strength" type="range" min={0.1} max={1} step={0.05} value={strength} style={rangeFill(strength, 0.1, 1)} onChange={(e) => setStrength(+e.target.value)} />
         </div>
       )}
       <div className="row between" style={{ marginTop: 12 }}>
-        <label className="row small" style={{ gap: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} />Also make subtitles</label>
-        <button className="sig" onClick={go} disabled={!file || busy || upFrac !== null || !status?.online}><MagicWand size={16} weight="bold" />Clean it up</button>
+        <label className="row small" style={{ gap: 8 }}><input type="checkbox" checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} />Also make subtitles</label>
+        {status && !status.online
+          ? <Link href="/gpu" className="btn">Start the GPU to clean up</Link>
+          : <button onClick={go} disabled={!file || busy || upFrac !== null || !status?.online} title={!file ? "Add a recording first" : undefined}><MagicWand size={16} weight="bold" />Clean it up</button>}
       </div>
-      {err && <p className="err" style={{ marginTop: 10 }}>{err}</p>}
+      {err && <p className="err" role="alert">{err}</p>}
       {(job || upFrac !== null) && <div style={{ marginTop: 14 }}><JobProgress job={job} kind="tts" uploading={upFrac !== null} uploadFrac={upFrac ?? 0} onCancel={job ? () => api(`jobs/${job.id}/cancel`, { body: {} }) : undefined} /></div>}
       {job?.library && r && (
         <div style={{ marginTop: 12 }}>
@@ -150,16 +153,9 @@ export default function Studio() {
   }, []);
   return (
     <>
-      <div className="head">
-        <div>
-          <div className="eyebrow">Clean-up</div>
-          <h1>Studio <em>sound.</em></h1>
-          <p className="sub">A rough recording in, studio sound out. <Info>Noise and room echo out, detail back, mastered for the platform, same length so it stays in sync.</Info></p>
-        </div>
-        <Link className="btn ghost sm" href="/settings">Defaults</Link>
-      </div>
+      <PageHeader title="Clean-up" sub="A rough recording in, studio sound out, same length so it stays in sync."
+        actions={<Link className="btn ghost" href="/settings">Defaults</Link>} />
       <CleanUp settings={settings} />
-      <div style={{ height: 30 }} />
     </>
   );
 }

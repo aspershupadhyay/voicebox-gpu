@@ -391,3 +391,18 @@ GUIDES.myvoice = {
   title: "Your model",
   tagline: "Orpheus 3B fine-tuned on 30-60 minutes of you (Your model page). Your pace and emphasis, not just your timbre. English; tags like <laugh> still work.",
 };
+
+/** The engines' built-in voices, known without the GPU (the worker's catalogue adds samples and any extras). */
+export const ORPHEUS_VOICES: Record<string, string> = { tara: "female", leah: "female", jess: "female", mia: "female", zoe: "female", leo: "male", dan: "male", zac: "male" };
+export const KOKORO_VOICES = ["af_heart", "af_bella", "af_nicole", "af_aoede", "af_kore", "af_sarah", "af_alloy", "af_nova", "af_sky", "af_jessica", "af_river", "am_fenrir", "am_michael", "am_puck", "am_echo", "am_eric", "am_liam", "am_onyx", "am_santa", "am_adam", "bf_emma", "bf_isabella", "bf_alice", "bf_lily", "bm_fable", "bm_george", "bm_lewis", "bm_daniel", "hf_alpha", "hf_beta", "hm_omega", "hm_psi", "ff_siwis", "if_sara", "im_nicola", "jf_alpha", "jf_gongitsune", "jm_kumo", "ef_dora", "em_alex", "pf_dora", "pm_alex", "zf_xiaobei", "zf_xiaoxiao", "zm_yunjian", "zm_yunxi"];
+const ACCENT: Record<string, string> = { a: "American", b: "British" };
+
+/** One line about a built-in voice: "female · American", "male preset". */
+export function describeVoice(engine: string, v: string) {
+  if (engine === "orpheus") return ORPHEUS_VOICES[v] ?? "voice";
+  if (engine === "kokoro") {
+    const lang = LANGUAGES.find((l) => l.code === KOKORO_LANG[v[0]])?.name ?? "";
+    return `${v[1] === "f" ? "female" : "male"} · ${ACCENT[v[0]] ?? lang}`;
+  }
+  return `${v} preset`;
+}

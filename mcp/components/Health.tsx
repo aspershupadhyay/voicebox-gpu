@@ -7,7 +7,6 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { Info } from "./Info";
 import { useDialog } from "./Dialog";
-import GpuCard from "./GpuCard";
 import MachineCard, { type GpuFit, type MachineWorker, type Metrics } from "./MachineCard";
 
 type Engine = { engine: string; jobs: number; failed: number; lines: number; audio_min: number; speed: number | null; steps: Record<string, number | null>;
@@ -25,6 +24,7 @@ type HealthData = {
 const STEPS = ["loading", "generating", "listening", "re-voicing", "mastering"];
 const when = (t: number) => new Date(t).toLocaleString();
 
+/** The worker, the machine and how every engine has been doing: the lower half of GPU & engines. */
 export default function Health() {
   const { toast } = useDialog();
   const [h, setH] = useState<HealthData | null>(null);
@@ -55,11 +55,8 @@ export default function Health() {
 
   return (
     <>
-      <div className="head"><div><div className="eyebrow">Health</div><h1>What&apos;s <em>working.</em></h1>
-        <p className="sub">The GPU, the machine and every engine, from the last {h?.jobs ?? "…"} jobs.</p></div></div>
-      {err && <p className="err">{err}</p>}
+      {err && <p className="err" role="alert">{err}</p>}
       <div className="stack" style={{ gap: 16 }}>
-        <GpuCard />
         <MachineCard w={w} m={h?.metrics ?? null} fit={h?.gpu_fit} />
         <div className="card">
           <div className="card-head"><h2>Worker</h2>
@@ -88,9 +85,9 @@ export default function Health() {
         </div>
 
         <div className="card">
-          <div className="card-head"><h2>Voice engines</h2><Info>Speed = seconds of GPU work per second of audio. Lower is faster.</Info></div>
+          <div className="card-head"><div><h2>Engine performance</h2><p className="sub">From the last {h?.jobs ?? "…"} jobs.</p></div><Info label="Engine performance">Speed = seconds of GPU work per second of audio. Lower is faster.</Info></div>
           {!h?.engines.length ? <p className="dim small" style={{ margin: 0 }}>No voiceovers recorded yet.</p> : (
-            <table className="table">
+            <div style={{ overflowX: "auto" }}><table className="table">
               <thead><tr><th>Engine</th><th>Jobs</th><th>Audio</th><th>Speed</th><th>Where the time goes</th><th>Re-voiced</th><th title="Average GPU busy while its jobs ran">GPU busy</th><th>Failed</th></tr></thead>
               <tbody>{h.engines.map((e) => (
                 <tr key={e.engine}>
@@ -103,7 +100,7 @@ export default function Health() {
                   <td className="mono small">{e.gpu_util != null ? `${e.gpu_util}%` : "—"}</td>
                   <td className="small">{e.failed ? <span className="pill bad">{e.failed}</span> : <span className="dim">0</span>} <button className="ghost xs" onClick={() => showLog(e.engine)}>log</button></td>
                 </tr>))}</tbody>
-            </table>
+            </table></div>
           )}
         </div>
 
@@ -144,7 +141,6 @@ export default function Health() {
           </div>
         )}
       </div>
-      <div style={{ height: 30 }} />
     </>
   );
 }

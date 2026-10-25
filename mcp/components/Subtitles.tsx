@@ -12,6 +12,7 @@ import { useResumeJob } from "./jobs";
 import Player from "./Player";
 import Recorder from "./Recorder";
 import { useStatus } from "./Shell";
+import { PageHeader } from "./ui";
 
 type Item = { file: File; id: string; frac: number; url: string };
 type Lib = { id: string; kind?: string; engine: string; voice: string; label?: string; subs?: unknown; created?: number; results: { duration: number; audio?: string | null }[] };
@@ -33,7 +34,7 @@ function Result({ jobId, id, name, src, heard, duration, match }: { jobId: strin
   return (
     <div className="card reveal">
       <div className="row between" style={{ marginBottom: 12 }}>
-        <div className="row" style={{ gap: 12 }}><span className="thumb" style={{ color: "var(--glacier)" }}><FileAudio size={20} weight="duotone" /></span>
+        <div className="row" style={{ gap: 12 }}><span className="thumb"><FileAudio size={20} /></span>
           <div><b>{name}</b><div className="dim tiny mono">{fmtS(duration)} · {cues.length} cues · {words?.length ?? "…"} words{match != null ? ` · match ${pct(match)}` : ""}</div></div></div>
         <div className="dl">
           {["srt", "vtt", "json"].map((x) => <a key={x} href={fileUrl(jobId, `${id}.subs.${x}`, `${id}.${x}`)}>.{x}</a>)}
@@ -116,23 +117,16 @@ export default function Subtitles() {
 
   return (
     <>
-      <div className="head">
-        <div>
-          <div className="eyebrow">Transcribe</div>
-          <h1>Every word, <em>on time.</em></h1>
-          <p className="sub">Word-timed subtitles for any audio or video. <Info>Whisper large-v3, 99 languages, lines cut the way a subtitler would.</Info></p>
-        </div>
-        <GuideButton engine="whisper" />
-      </div>
-
+      <PageHeader title="Subtitles" sub="Word-timed subtitles for any audio or video, in 99 languages."
+        actions={<GuideButton engine="whisper" label="Subtitle guide" />} />
       <div className="row" style={{ marginBottom: 16 }}>
-        <div className="seg">
-          <button className={mode === "upload" ? "on" : ""} onClick={() => setMode("upload")}>Upload files</button>
-          <button className={mode === "record" ? "on" : ""} onClick={() => setMode("record")}>Record</button>
-          <button className={mode === "library" ? "on" : ""} onClick={() => setMode("library")}>Generated voiceovers</button>
+        <div className="seg lg" role="radiogroup" aria-label="Source">
+          <button role="radio" aria-checked={mode === "upload"} className={mode === "upload" ? "on" : ""} onClick={() => setMode("upload")}>Upload files</button>
+          <button role="radio" aria-checked={mode === "record"} className={mode === "record" ? "on" : ""} onClick={() => setMode("record")}>Record</button>
+          <button role="radio" aria-checked={mode === "library"} className={mode === "library" ? "on" : ""} onClick={() => setMode("library")}>From your voiceovers</button>
         </div>
         <div style={{ flex: 1 }} />
-        <select value={lang} onChange={(e) => setLang(e.target.value)} style={{ width: 240 }}>
+        <select aria-label="Language" value={lang} onChange={(e) => setLang(e.target.value)} style={{ width: 240, maxWidth: "100%" }}>
           <option value="">Auto-detect language</option>
           {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.name}</option>)}
         </select>
@@ -144,35 +138,35 @@ export default function Subtitles() {
           <Recorder scope="subtitles" onReady={(f, fg) => { forget.current = fg ?? null; setItems(f ? [{ file: f, id: "recording", frac: 0, url: URL.createObjectURL(f) }] : []); }} />
           {items.length > 0 && (
             <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
-              <button className="sig" disabled={busy || !status?.online} onClick={start}><ClosedCaptioning size={16} weight="bold" />{status?.online ? "Make subtitles" : "GPU offline"}</button>
+              <button disabled={busy || !status?.online} onClick={start} title={!status?.online ? "Start the GPU first (GPU & engines)" : undefined}><ClosedCaptioning size={16} weight="bold" />{status?.online ? "Make subtitles" : "Start the GPU first"}</button>
             </div>
           )}
         </div>
       ) : mode === "upload" ? (
-        <div className="card">
-          <div className={`drop ${over ? "over" : ""}`} onClick={() => input.current?.click()}
+        <div>
+          <div className={`drop ${over ? "over" : ""}`} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.current?.click(); } }} onClick={() => input.current?.click()}
             onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
             onDrop={(e) => { e.preventDefault(); setOver(false); add(e.dataTransfer.files); }}>
             <CaptionArt />
-            <div style={{ font: "400 24px var(--display)" }}>Drop audio or video here</div>
-            <div className="dim small">or <span style={{ color: "var(--signal2)" }}>choose files</span> · wav, mp3, m4a, flac, mp4, mov · any length</div>
-            <div className="faint tiny">Uploads go straight to your private storage.</div>
+            <b>Drop audio or video here</b>
+            <span>or <u>choose files</u> · wav, mp3, m4a, flac, mp4, mov · any length</span>
+            <span className="tiny">Uploads go straight to your private storage.</span>
             <input ref={input} type="file" multiple accept="audio/*,video/*" hidden onChange={(e) => add(e.target.files)} />
           </div>
           {items.length > 0 && (
-            <div style={{ marginTop: 14 }}>
+            <div className="card" style={{ marginTop: 14 }}>
               {items.map((it, i) => (
                 <div key={it.id} className="row" style={{ padding: "10px 0", borderBottom: "1px solid var(--line)" }}>
-                  <FileAudio size={18} weight="duotone" color="var(--glacier)" />
+                  <FileAudio size={18} />
                   <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.file.name}</span>
                   <span className="mono dim tiny">{(it.file.size / 1024 / 1024).toFixed(1)} MB</span>
-                  <div className="bar thin blue" style={{ width: 120 }}><i style={{ width: `${it.frac * 100}%` }} /></div>
+                  <div className="bar thin" style={{ width: 120 }}><i style={{ width: `${it.frac * 100}%` }} /></div>
                   <button className="icon-btn" disabled={busy} onClick={() => setItems(items.filter((_, k) => k !== i))} aria-label="Remove"><X size={14} /></button>
                 </div>
               ))}
               <div className="row between" style={{ marginTop: 14 }}>
                 <span className="dim small">{items.length} file{items.length === 1 ? "" : "s"} · {(items.reduce((s, i) => s + i.file.size, 0) / 1024 / 1024).toFixed(1)} MB</span>
-                <button className="sig" disabled={busy || !status?.online} onClick={start}><ClosedCaptioning size={16} weight="bold" />{status?.online ? "Make subtitles" : "GPU offline"}</button>
+                <button disabled={busy || !status?.online} onClick={start} title={!status?.online ? "Start the GPU first (GPU & engines)" : undefined}><ClosedCaptioning size={16} weight="bold" />{status?.online ? "Make subtitles" : "Start the GPU first"}</button>
               </div>
             </div>
           )}
@@ -180,10 +174,10 @@ export default function Subtitles() {
       ) : (
         <div className="card">
           <div className="card-head"><h2>Your generated voiceovers</h2>
-            <input value={libQ} onChange={(e) => setLibQ(e.target.value)} placeholder="Search" style={{ width: 200 }} /></div>
+            <input value={libQ} onChange={(e) => setLibQ(e.target.value)} placeholder="Search" aria-label="Search your voiceovers" style={{ width: 200 }} /></div>
           {(() => {
             const shown = lib.filter((j) => j.kind !== "video" && (!libQ || `${j.label ?? ""} ${j.voice} ${j.engine}`.toLowerCase().includes(libQ.toLowerCase())));
-            if (!shown.length) return <div className="empty"><ClosedCaptioning size={30} weight="duotone" /><b>No voiceovers yet</b><span>Make one on the Voiceover page, then subtitle it here.</span></div>;
+            if (!shown.length) return <div className="empty"><ClosedCaptioning size={30} weight="duotone" /><b>No voiceovers yet</b><span>Make one in Voiceover, then subtitle it here.</span></div>;
             return shown.map((j) => (
               <div key={j.id} className="list-row" style={{ gridTemplateColumns: "40px minmax(0,1fr) minmax(0, 220px) auto" }}>
                 <VoiceGlyph name={j.voice || j.engine} size={40} />
@@ -196,14 +190,14 @@ export default function Subtitles() {
           })()}
         </div>
       )}
-      {err && <p className="err">{err}</p>}
+      {err && <p className="err" role="alert">{err}</p>}
 
       {(uploading || job) && <div style={{ marginTop: 16 }}><JobProgress job={job} uploading={uploading} uploadFrac={totalUp} onCancel={() => job && api(`jobs/${job.id}/cancel`, { body: {} })} /></div>}
 
       {job?.library && job.kind === "transcribe" && (
         <div className="stack" style={{ gap: 14, marginTop: 16 }}>
           {mode === "library" || (job as Job & { attach_to?: string }).attach_to ? (
-            <div className="card row between"><span className="row"><ClosedCaptioning size={20} weight="duotone" color="var(--ok)" />Subtitles attached to the voiceover.</span><Link className="btn sm" href={`/library#${job.library.id}`}><ArrowSquareOut size={14} />Open in library</Link></div>
+            <div className="card row between"><span className="row"><ClosedCaptioning size={20} color="var(--ok)" />Subtitles attached to the voiceover.</span><Link className="btn sm" href={`/files#${job.library.id}`}><ArrowSquareOut size={14} />Open in Files</Link></div>
           ) : (
             <>
               {job.results.length > 1 && (

@@ -1,5 +1,5 @@
 import { clientIp, emailAllowed, lockedFor, noteAttempt } from "@/lib/access";
-import { AppwriteError, ensureMember, hasKey, userFromJwt } from "@/lib/appwrite";
+import { AppwriteError, createUser, ensureMember, hasKey, userFromJwt } from "@/lib/appwrite";
 import { endSession, startSession, tokenOk } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -7,11 +7,37 @@ export const dynamic = "force-dynamic";
 const slow = () => new Promise((r) => setTimeout(r, 600)); // slow down guessing
 const locked = (s: number) => Response.json({ error: `Too many tries from here. Try again in ${Math.ceil(s / 60)} min.` }, { status: 429, headers: { "Retry-After": String(s) } });
 
+const NO_SEAT = "We couldn't create a seat for that email. Ask the owner to add it in Settings → Security, then try again.";
+
 export async function POST(req: Request) {
-  const { token, jwt } = (await req.json().catch(() => ({}))) as { token?: string; jwt?: string };
+  const { token, jwt, signup } = (await req.json().catch(() => ({}))) as { token?: string; jwt?: string; signup?: { name?: string; email?: string; password?: string } };
   if ((process.env.MCP_TOKEN ?? "").length < 24) return Response.json({ error: "MCP_TOKEN is not set on the server (24+ characters)." }, { status: 500 });
   const wait = await lockedFor(clientIp(req));
   if (wait) return locked(wait);
+
+  // sign-up: the list is checked before any account exists, so an uninvited email never gets one
+  if (signup) {
+    const site = req.headers.get("sec-fetch-site");
+    if (site && !["same-origin", "none"].includes(site)) return Response.json({ error: "forbidden" }, { status: 403 });
+    const email = String(signup.email ?? "").trim().toLowerCase(), password = String(signup.password ?? ""), name = String(signup.name ?? "").trim().slice(0, 120);
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return Response.json({ error: "Enter a valid email address." }, { status: 400 });
+    if (password.length < 8) return Response.json({ error: "Use at least 8 characters for the password." }, { status: 400 });
+    const ok = await emailAllowed(email).catch(() => false);
+    if (!ok) {
+      await noteAttempt(req, false, email, "sign-up (not on the list)");
+      await slow();
+      return Response.json({ error: NO_SEAT }, { status: 403 });
+    }
+    if (!hasKey()) return Response.json({ ok: true, create: "client" }); // no server key: the browser creates it (already checked)
+    try {
+      await createUser(email, password, name || email.split("@")[0]);
+      return Response.json({ ok: true });
+    } catch (e) {
+      if (e instanceof AppwriteError && e.status === 409) return Response.json({ error: "That email already has a seat. Sign in instead.", exists: true }, { status: 409 });
+      await slow();
+      return Response.json({ error: e instanceof AppwriteError && e.status < 500 ? e.message : "Couldn't create the account right now. Try again in a minute." }, { status: e instanceof AppwriteError && e.status < 500 ? 400 : 502 });
+    }
+  }
 
   if (jwt) {
     let email = "?";

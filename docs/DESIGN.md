@@ -1,98 +1,84 @@
 # Voicebox Studio design rules
 
-The dashboard should feel like a quiet, hand-made instrument, not a template. Read this before you build or change any
-screen. The tokens live in `mcp/app/globals.css`; the shared parts live in `mcp/components/` (`Info`, `art.tsx`, `Shell`).
-
-## The idea
-
-The login page set the tone: a dark ink panel, a serif script reading itself, a REC timecode and an emerald current
-word. The whole studio carries it:
-
-- The sidebar is always warm ink (#0b0b0a), the studio's frame, in light and dark mode alike. Nav labels sit in
-  graphite on the ink, the active page is white with an emerald icon and a 2px emerald edge, section labels are mono
-  caps, and the GPU sits at the bottom as an "On air" module with a live five-bar meter.
-- Pages are bone paper. Every page opens with a mono eyebrow (emerald dot + label), a 52px Instrument Serif title
-  whose key word is emerald italic (`<h1>Write it, <em>hear it.</em></h1>`), one short subtitle line, and at most two
-  actions on the right.
-
-## Feel
-
-- Calm and confident. The content (scripts, voices, takes) is the loudest thing on a page; the chrome stays quiet.
-- Decide for people. Show one obvious next action, sensible defaults, and options only where a choice matters.
-- Every corner is deliberate: aligned edges, consistent spacing, no stray borders, nothing that looks like a default.
-
-## Colour
-
-- Light mode is bone paper (`--bg #fbfbfa`); dark mode is warm ink (`--bg #0b0b0a`). Hairline borders (`--line*`) give
-  structure; text runs in graphite (`--ink`, `--ink2`, `--dim`, `--faint`).
-- There is one accent, studio emerald (`--accent`, which `--signal` and `--ok` point to). It means "live", "selected"
-  or "good", and nothing else. Use it sparingly: a live dot, the active waveform, the current word.
-- `--danger` (red) is only for errors and destructive actions. `--warn` (ochre) is only for warnings. `--glacier`
-  (steel blue) is only for informational states, such as a model parked in RAM.
-- Never use gradients on surfaces, text or buttons. Never use orange, purple or "AI" rainbow palettes, and never use
-  glows. The primary button is solid ink (`button.sig`).
-
-## Type
-
-- Geist for the interface. Geist Mono only for numbers that move (timings, sizes, counters) and for code.
-- Instrument Serif (`--serif`, italic) is for display moments only: one word in a page title (`<h1>Write it,
-  <em>hear it.</em></h1>`), the voice initials and the login script. Never use it for body text or labels.
-- Page titles are 52px Instrument Serif (38px on phones), with the key word in emerald italic. Section labels and
-  eyebrows are 10.5px Geist Mono in uppercase with wide tracking. Card titles are 13px semibold.
-
-## Text and explanations
-
-- Page subtitles (`.sub`) are one short line, under about 60 characters. Say what the page is for, nothing more.
-- Card headers carry a title only. If something needs explaining, put an `<Info>` (ⓘ) next to the label with one or
-  two plain sentences; never add a grey paragraph to the page.
-- Labels say what a control does in a few words. Anything a first-time user might wonder about goes in `<Info>`.
-  Anything they must know before they act goes in the label itself.
-- Don't add marketing copy, feature lists or "how it works" essays to working screens.
+The dashboard is a clean product UI in the family of ElevenLabs and Linear-style workspaces: a light sidebar, a white
+canvas, hairline borders, black primary buttons, soft tinted status pills, and nothing decorative. Read this before you
+build or change any screen. Tokens live in `mcp/app/globals.css`; the shared parts live in `mcp/components/ui.tsx`
+(`PageHeader`, `Field`, `StatCard`, `Empty`, `Notice`, `Toggle`, `PopMenu`), `Info.tsx` and `Shell.tsx`.
 
 ## Structure
 
-- Give each page one job and one obvious action. Ask first what the page is for, and make that the biggest thing
-  on it: the script canvas on Voiceover, a big drop zone (`.bigdrop`) on Clean-up and Subtitles, the image stage on
-  Images.
-- Use fewer boxes. Lists are rows on the paper with hairline dividers (`.erow`, `.lib-card`, `.myvoice`), not cards.
-  Row actions are icon buttons that fade in on hover. A voice portrait doubles as the play button.
-- Settings for a tool live in one rail (`.vo-rail`): a few short sections (mono `.rail-h` labels), then the rarely
-  used dials folded into an "Advanced" `<details>`.
-- Unlabelled sections use `.sec` with a mono caps `h2`. Readouts use `.strip`: mono caps keys and serif values,
-  split by hairlines.
-- A paragraph that explains a feature becomes `How it works ⓘ` (`HowItWorks` in MyModel.tsx) or an `<Info>` next to
-  its label.
+The studio has nine destinations, grouped by what you're doing, not by which backend stores the data:
 
-## Layout
+| Group | Page | Route | Job |
+|---|---|---|---|
+| — | Home | `/` | Greeting with the GPU's state, tool tiles, latest takes, ways to make a voice, what's due next |
+| — | Voices | `/voices` | Your voices and the built-in voices; clone your voice; re-voice a take |
+| — | Posts | `/posts` | Every post as a Board, Calendar, List or Gallery, filtered by platform; the post drawer |
+| — | Files | `/files` | Generated (takes, subtitles, images, videos in R2) and Uploads (shared workspace files) |
+| Create | Voiceover | `/voiceover` | Write, pick a voice, generate |
+| Create | Voice model | `/model` | Collect recordings and train your own model |
+| Create | Clean-up, Subtitles, Images | `/clean-up`, `/subtitles`, `/images` | One tool each |
+| Studio | GPU & engines | `/gpu` | Start/stop the Colab GPU, engines, machine, worker, failures |
+| Studio | Settings | `/settings` | Defaults, security, MCP access |
 
-- The sidebar holds three sections: Create (the tools), Workspace (planning), and Studio (library, engines, health,
-  settings). The topbar shows the breadcrumb, a live status pill and ⌘K search.
-- Structure a page like this: the head (eyebrow, title, one-line sub, and the primary action on the right), then
-  cards in a grid (`.split` for editor + options, `.g2`/`.g3` for peers). Sticky action bars sit at the bottom for
-  long forms.
-- Cards: 14px radius, 22px padding, a 1px `--line` border and a barely-there shadow. Keep at most two levels of
-  nesting.
-- Use the full width at 1440px or wider, and keep the layout working at 390px (the tab bar replaces the sidebar).
+Old addresses redirect (`next.config.ts`). Add a page only when a capability has its own object and its own primary
+action; otherwise it's a view, tab or section of an existing page.
 
-## Identity
+**One name per page.** The nav label, the route, the H1 and how the docs and MCP instructions refer to it all agree.
 
-- The logo (`Logo` in `art.tsx`) is an ink box with five bars hanging from its lid. Their lower edge draws a V, and
-  the middle bar is emerald. Don't recolour it, add effects to it, or put it on a gradient.
-- Voice portraits (`VoiceGlyph`) are graphite radial waveforms seeded by the voice name, with the voice's initial in
-  the serif. The active or playing voice turns emerald and breathes. Don't use gradient orbs or photos.
-- The login page is typographic: a script reads itself word by word over a waveform, with a REC timecode. Keep it
-  free of feature lists.
+## Page anatomy
+
+- `PageHeader`: an optional small eyebrow (Home only), the page name as the H1, one sub line under ~90 characters,
+  and at most two actions on the right (one black primary, one ghost).
+- System state goes in a `Notice` strip directly under the header ("The GPU is off" + the action that fixes it).
+- Summary numbers go in a row of `StatCard`s (icon tile, number, what it counts, an optional link). Use them only when
+  the numbers help decide what to do next (Posts, GPU).
+- Then the content. Lists are rows inside one bordered container (`.lib-list`, `.erows`, `.table-wrap`), not a card per
+  row. Cards (`.card`) group a form or a section; keep nesting to two levels.
+- Tool pages (Voiceover) use the full height: a writing canvas on the left and a settings panel with Settings / History
+  tabs on the right (`.tts`), with the generate bar at the bottom of the canvas.
+
+## Colour
+
+- Light: white canvas (`--bg`), barely-grey sidebar (`--side`), `--fill` for tiles, tracks and inputs on grey.
+  Dark mirrors it on near-black. Every colour is a token; never write a hex in a component.
+- Text: `--ink`, `--ink2`, `--dim`, `--mute`. All are 4.5:1 or better on their backgrounds in both themes. There is
+  no fainter text token: decoration that must be lighter is not text.
+- The primary button is solid ink (black in light, white in dark). Ghost buttons are white with a hairline border.
+- Status pills are soft tints with strong text: `ok` (green), `warn` (amber), `bad` (red), `blue`, `violet`, `grey`.
+  Post stages always use the same tint: Ideas grey, In production amber, Review violet, Scheduled blue, Posted green.
+- Red means an error, a destructive action or something overdue. Green means live or done. No gradients or glows.
+
+## Type
+
+- Geist for everything; Geist Mono only for numbers that move (timings, sizes, counters) and code.
+- H1 26px/600, section H2 15–16px/600, body 14px, small 13px, labels 13px/500. No serif, no all-caps labels.
+
+## Controls and accessibility
+
+- Every input has a visible label wired to it (`Field`, or `htmlFor`/`id`); icon-only buttons have an `aria-label`.
+- `Info` (ⓘ) takes a `label` so screen readers hear "About Pace". Put what someone must know before acting in the label
+  or sub line, never only behind an ⓘ.
+- Don't disable a primary button without saying why next to it; better, keep it enabled and validate on submit with
+  the message beside the field (`role="alert"`, `aria-invalid`).
+- Shortcuts use a modifier: ⌘K / Ctrl+K opens search, Alt+1–9 jumps to a page. No bare single-letter shortcuts.
+- Popovers and drawers close on Escape and return focus. Targets are at least 24px.
+- Anything fixed or sticky at the bottom (`.sticky`, `.save-bar`, the generate bar, the job tray) clears the phone tab
+  bar (`--tab-h`).
 
 ## Motion
 
-- Pages rise in (0.42 s, `--ease`, staggered by section). Hover lifts clickable cards by 1px. Popovers fade in over
-  0.14 s.
-- Only live things loop: the live dot, the playing voice and a running job. Nothing else animates on its own.
-- Always respect `prefers-reduced-motion`; `globals.css` already turns motion off for it.
+- Pages rise in once (0.3 s). Hover changes colour or border, never layout.
+- Only live things loop: the GPU meter, a recording, a running job. `prefers-reduced-motion` stops them all, including
+  the login's reading animation.
+
+## Phones
+
+- Below 960px the sidebar becomes a drawer, and a bottom tab bar shows Home, Voiceover, Posts, Voices and More.
+- Stat cards go two-up, the board scrolls one column per screen, settings panels stack under their canvas.
 
 ## Before you ship UI
 
-- Check light, dark and 390px width.
-- Check that every new explanation lives in an `<Info>`.
-- Make sure the page uses no new colours outside the tokens.
+- Check light, dark and 390px width. No horizontal scrolling on any page.
+- Run axe (or the browser's accessibility checker) on the page you changed.
 - Run `npx tsc --noEmit` and `npx next build`.

@@ -7,12 +7,12 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: "Voicebox",
     description: "Your voice, studio-grade, and the shared desk where the two of you plan, make and post.",
     id: "/",
-    start_url: "/workspace",
+    start_url: "/",
     scope: "/",
     display: "standalone",
     display_override: ["window-controls-overlay", "standalone"],
-    background_color: "#09090b",
-    theme_color: "#09090b",
+    background_color: "#ffffff",
+    theme_color: "#ffffff",
     categories: ["productivity", "music", "social"],
     icons: [
       { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
@@ -21,9 +21,9 @@ export default function manifest(): MetadataRoute.Manifest {
       { src: "/icon.svg", sizes: "any", type: "image/svg+xml" },
     ],
     shortcuts: [
-      { name: "Board", url: "/workspace", icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }] },
-      { name: "New voiceover", url: "/generate", icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }] },
-      { name: "Calendar", url: "/calendar", icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }] },
+      { name: "Posts", url: "/posts", icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }] },
+      { name: "New voiceover", url: "/voiceover", icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }] },
+      { name: "Calendar", url: "/posts?view=calendar", icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }] },
     ],
   };
 }

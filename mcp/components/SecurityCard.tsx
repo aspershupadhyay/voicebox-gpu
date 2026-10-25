@@ -29,10 +29,10 @@ export default function SecurityCard() {
   }
 
   return (
-    <div className="card glow">
-      <div className="card-head"><h2><ShieldCheck size={16} weight="duotone" className="ic" /> Security</h2>
+    <div className="card">
+      <div className="card-head"><h2><ShieldCheck size={17} /> Security</h2>
         <span className="row" style={{ gap: 4 }}><span className="pill ok"><CheckCircle size={12} weight="fill" /> Invite-only</span>
-          <Info>Only the people below can sign in. Removing someone locks them out within a minute, on every device.</Info></span></div>
+          <Info label="Security">Only the people below can sign in. Removing someone locks them out within a minute, on every device.</Info></span></div>
 
       <div className="stack" style={{ gap: 0, marginTop: 8 }}>
         {(d?.people ?? []).map((p) => (
@@ -53,7 +53,7 @@ export default function SecurityCard() {
         {d?.github.length ? <div className="sec-row"><GithubLogo size={20} /><div className="small">GitHub sign-in: <span className="mono">{d.github.join(", ")}</span></div><span /></div> : null}
       </div>
       <form className="row" style={{ gap: 8, marginTop: 12 }} onSubmit={(e) => { e.preventDefault(); if (email.trim()) act("add", { email }, `${email.trim()} can now sign in`).then(() => setEmail("")); }}>
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="partner@email.com" style={{ flex: 1, minWidth: 200 }} />
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="partner@email.com" aria-label="Email to invite" style={{ flex: 1, minWidth: 200 }} />
         <button className="ghost" disabled={busy || !email.trim()}><UserPlus size={15} /> Invite</button>
       </form>
 
@@ -61,7 +61,7 @@ export default function SecurityCard() {
         <div className="small">
           <b>This device</b>
           <div className="tiny dim">{d?.session ? `${d.session.how === "user" ? "Account" : d.session.how === "github" ? "GitHub" : "Access token"} · signed in ${ago(d.session.since)} · until ${new Date(d.session.until).toLocaleDateString()}` : "—"}
-            <Info>Sessions last {d?.session_days ?? 14} days, then you sign in again.</Info></div>
+            <Info label="Session length">Sessions last {d?.session_days ?? 14} days, then you sign in again.</Info></div>
         </div>
         <button className="ghost sm" disabled={busy} onClick={async () => {
           if (await confirm({ title: "Sign out everywhere?", body: "Every browser and device is signed out, this one included. Scripts using the access token keep working.", confirm: "Sign out everywhere", danger: true })) {

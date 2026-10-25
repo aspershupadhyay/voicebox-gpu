@@ -1,38 +1,40 @@
 "use client";
+// The studio's frame: a light sidebar (studio switcher, search, the pages, a GPU card, you), a top bar with the page
+// name and the GPU's state, the ⌘K command palette, and on phones a bottom tab bar plus the sidebar as a drawer.
 import {
-  ArrowsClockwise, Books, CalendarBlank, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, ImageSquare, Kanban, MagicWand, MagnifyingGlass,
-  Microphone, Moon, Power, Brain, Heartbeat, SignOut, SquaresFour, Stack, Sun, UserSound, Images, HardDrives, Waveform, CaretUp, ArrowSquareOut,
+  ArrowsClockwise, Books, CaretDown, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
+  MagicWand, MagnifyingGlass, Microphone, Moon, Plus, Power, Brain, SignOut, Sun, UserSound, X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, type Status } from "./api";
-import { LedMeter, Logo } from "./art";
+import { Logo } from "./art";
 import { signOut, useMe } from "./aw";
 import { DialogProvider, useDialog } from "./Dialog";
 import JobTray from "./JobTray";
+import { PopMenu } from "./ui";
 import { initials } from "@/lib/workspace";
 
 const StatusCtx = createContext<{ status: Status | null; refresh: () => Promise<void> }>({ status: null, refresh: async () => {} });
 export const useStatus = () => useContext(StatusCtx);
 
-const NAV = [
-  { href: "/generate", name: "Voiceover", Icon: Microphone, sec: "Create" },
-  { href: "/voices", name: "Voices", Icon: UserSound, sec: "Create" },
-  { href: "/model", name: "Your model", Icon: Brain, sec: "Create" },
-  { href: "/studio", name: "Clean-up", Icon: MagicWand, sec: "Create" },
-  { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning, sec: "Create" },
-  { href: "/image", name: "Images", Icon: ImageSquare, sec: "Create" },
-  { href: "/content", name: "Content", Icon: Stack, sec: "Workspace" },
-  { href: "/workspace", name: "Board", Icon: Kanban, sec: "Workspace" },
-  { href: "/calendar", name: "Calendar", Icon: CalendarBlank, sec: "Workspace" },
-  { href: "/media", name: "Media", Icon: Images, sec: "Workspace" },
-  { href: "/library", name: "Library", Icon: Books, sec: "Studio" },
-  { href: "/", name: "Engines", Icon: SquaresFour, sec: "Studio" },
-  { href: "/health", name: "Health", Icon: Heartbeat, sec: "Studio" },
-  { href: "/settings", name: "Settings", Icon: GearSix, sec: "Studio" },
-] as const;
-const TABS = ["/content", "/workspace", "/calendar", "/generate"];
+type Nav = { href: string; name: string; Icon: typeof House; sec: "main" | "create" | "studio"; match?: string[] };
+export const NAV: Nav[] = [
+  { href: "/", name: "Home", Icon: House, sec: "main" },
+  { href: "/voices", name: "Voices", Icon: UserSound, sec: "main" },
+  { href: "/posts", name: "Posts", Icon: Kanban, sec: "main" },
+  { href: "/files", name: "Files", Icon: Books, sec: "main" },
+  { href: "/voiceover", name: "Voiceover", Icon: Microphone, sec: "create" },
+  { href: "/model", name: "Voice model", Icon: Brain, sec: "create" },
+  { href: "/clean-up", name: "Clean-up", Icon: MagicWand, sec: "create" },
+  { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning, sec: "create" },
+  { href: "/images", name: "Images", Icon: ImageSquare, sec: "create" },
+  { href: "/gpu", name: "GPU & engines", Icon: Cpu, sec: "studio" },
+  { href: "/settings", name: "Settings", Icon: GearSix, sec: "studio" },
+];
+const TABS = ["/", "/voiceover", "/posts", "/voices"];
+const ALL_ENGINES = ["orpheus", "myvoice", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "zimage", "qwenimage"];
 
 function useTheme() {
   const [t, setT] = useState<"light" | "dark" | null>(null);
@@ -40,60 +42,19 @@ function useTheme() {
     const cur = document.documentElement.dataset.theme as "light" | "dark" | undefined;
     setT(cur ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
   }, []);
-  const flip = () => {
-    const next = t === "dark" ? "light" : "dark";
-    document.documentElement.dataset.theme = next;
-    try { localStorage.setItem("vb-theme", next); } catch {}
-    setT(next);
-  };
+  const flip = useCallback(() => {
+    setT((cur) => {
+      const next = cur === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      try { localStorage.setItem("vb-theme", next); } catch {}
+      return next;
+    });
+  }, []);
   return { theme: t, flip };
 }
 
 async function leave() { await signOut(); location.href = "/login"; }
-const ALL_ENGINES = ["orpheus", "myvoice", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "zimage", "qwenimage"];
-const MODE: Record<string, string> = { voice: "Voice mode", visual: "Image mode", idle: "Idle · GPU free", mixed: "Switching" };
-const ENGINE_ORDER = ["orpheus", "myvoice", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "zimage", "qwenimage"];
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-const stateClass = (s?: string) => (s === "ready" ? "ready" : s === "parked" ? "parked" : s === "loading" || s === "installing" || s === "busy" ? "busy" : s === "error" ? "err" : "");
-
-/** The full GPU view: memory, mode, every engine (with its idle countdown), RAM and disk. Opens from the compact card. */
-function GpuDetails({ status, busy, vram }: { status: Status | null; busy: boolean; vram: number }) {
-  return (
-    <div className="rack">
-      <div className="title">
-        <span className={`dot ${status?.online ? (busy ? "warn" : "ok") : status ? "bad" : "off"}`} />
-        {status ? (status.online ? (busy ? "Rendering" : "GPU online") : "GPU offline") : "Connecting"}
-        <Cpu size={15} className="dim" style={{ marginLeft: "auto" }} />
-      </div>
-      {status?.online ? (
-        <>
-          <div className="meta">{status.gpu?.name?.replace("NVIDIA ", "")} · up {fmtUptime(status.uptime_s)}</div>
-          <div style={{ margin: "12px 0 4px" }}><LedMeter value={vram} segments={18} label="GPU memory" /></div>
-          <div className="eng" style={{ marginBottom: 6 }}><span>VRAM</span><b style={{ color: "var(--ink2)" }}>{status.gpu?.used_gb} / {status.gpu?.total_gb} GB</b></div>
-          {status.mode && <div className={`mode-chip ${status.mode}`}>{status.mode === "visual" ? <ImageSquare size={13} weight="fill" /> : <Waveform size={13} weight="bold" />}{MODE[status.mode] ?? status.mode}</div>}
-          {ENGINE_ORDER.filter((n) => status.engines?.[n] && (status.engines[n] !== "idle" || n === "kokoro" || n === "orpheus")).map((n) => {
-            const left = status.idle_unload_s?.[n];
-            return (
-              <div key={n} className="eng" title={left != null ? `unloads after ${status.idle_min ?? 10} idle minutes` : undefined}>
-                <span className={`dot ${status.engines![n] === "ready" ? "ok" : status.engines![n] === "parked" ? "park" : stateClass(status.engines![n]) === "busy" ? "warn" : "off"}`} style={{ width: 6, height: 6, boxShadow: "none", animation: "none" }} />{n}
-                <b className={stateClass(status.engines![n])} title={status.engines![n] === "parked" ? "off the GPU, kept in RAM: back in seconds" : undefined}>{left != null && left < 600 ? `idle ${mmss(left)}` : status.engines![n] === "parked" ? "in RAM" : status.engines![n]}</b>
-              </div>
-            );
-          })}
-          {(status.ram?.total_gb || status.disk?.total_gb) ? (
-            <div className="res">
-              {status.ram?.total_gb ? <div className="eng"><span>RAM</span><b style={{ color: "var(--ink2)" }}>{status.ram.used_gb} / {status.ram.total_gb} GB</b></div> : null}
-              {status.disk?.total_gb ? <div className="eng" title={Object.entries(status.disk.weights_gb).map(([k, v]) => `${k} ${v} GB`).join(" · ") || "no weights downloaded"}><span><HardDrives size={11} /> Disk free</span><b style={{ color: status.disk.free_gb < 25 ? "var(--warn)" : "var(--ink2)" }}>{Math.round(status.disk.free_gb)} GB</b></div> : null}
-            </div>
-          ) : null}
-        </>
-      ) : (
-        <div className="meta" style={{ lineHeight: 1.6 }}>{status?.reason === "heartbeat stale" ? "The Colab runtime stopped." : "Waiting for the Colab worker to check in."} Start it from Health, no Colab needed.</div>
-      )}
-      <Link href={status?.online ? "/" : "/health"} className="gpu-open tiny">{status?.online ? "Open Engines" : "Start the GPU"} <ArrowSquareOut size={11} /></Link>
-    </div>
-  );
-}
+export const pageOf = (path: string) => NAV.find((n) => (n.href === "/" ? path === "/" : path === n.href || path.startsWith(`${n.href}/`)));
 
 export function fmtUptime(s?: number) {
   if (!s) return "—";
@@ -103,49 +64,82 @@ export function fmtUptime(s?: number) {
 
 type Cmd = { id: string; label: string; group: string; Icon: typeof Fire; run: () => void | Promise<void> };
 
+/** ⌘K: an ARIA combobox over a listbox. Arrow keys move, Enter runs, Escape closes and hands focus back. */
 function Palette({ open, onClose, cmds }: { open: boolean; onClose: () => void; cmds: Cmd[] }) {
   const [q, setQ] = useState("");
   const [i, setI] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  const back = useRef<HTMLElement | null>(null);
+  const lid = useId();
   const list = useMemo(() => {
     const t = q.trim().toLowerCase();
     return t ? cmds.filter((c) => `${c.group} ${c.label}`.toLowerCase().includes(t)) : cmds;
   }, [q, cmds]);
-  useEffect(() => { if (open) { setQ(""); setI(0); setTimeout(() => input.current?.focus(), 0); } }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    back.current = document.activeElement as HTMLElement;
+    setQ(""); setI(0);
+    setTimeout(() => input.current?.focus(), 0);
+    return () => { back.current?.focus?.(); };
+  }, [open]);
   useEffect(() => setI(0), [q]);
+  useEffect(() => { document.getElementById(`${lid}-${i}`)?.scrollIntoView({ block: "nearest" }); }, [i, lid]);
   if (!open) return null;
   const pick = (c?: Cmd) => { if (c) { onClose(); c.run(); } };
   let lastGroup = "";
   return (
     <>
       <div className="scrim-modal" onClick={onClose} />
-      <div className="palette" role="dialog" aria-label="Command palette">
+      <div className="palette" role="dialog" aria-modal="true" aria-label="Search and commands"
+        onKeyDown={(e) => { if (e.key === "Tab") e.preventDefault(); /* focus stays in the box */ }}>
         <div className="pin">
-          <MagnifyingGlass size={18} />
-          <input ref={input} value={q} placeholder="Jump to a page, warm an engine…" onChange={(e) => setQ(e.target.value)}
+          <MagnifyingGlass size={18} aria-hidden />
+          <input ref={input} value={q} placeholder="Go to a page, warm an engine…" onChange={(e) => setQ(e.target.value)}
+            role="combobox" aria-expanded="true" aria-controls={`${lid}-list`} aria-autocomplete="list"
+            aria-activedescendant={list[i] ? `${lid}-${i}` : undefined}
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") { e.preventDefault(); setI((x) => Math.min(list.length - 1, x + 1)); }
               if (e.key === "ArrowUp") { e.preventDefault(); setI((x) => Math.max(0, x - 1)); }
               if (e.key === "Enter") { e.preventDefault(); pick(list[i]); }
               if (e.key === "Escape") onClose();
             }} />
-          <kbd>esc</kbd>
+          <button className="icon-btn sm" onClick={onClose} aria-label="Close"><X size={16} /></button>
         </div>
-        <ul>
+        <ul role="listbox" id={`${lid}-list`} aria-label="Results">
           {list.map((c, k) => {
-            const head = c.group !== lastGroup ? <li key={`g-${c.group}`} className="grp">{c.group}</li> : null;
+            const head = c.group !== lastGroup ? <li key={`g-${c.group}`} className="grp" role="presentation">{c.group}</li> : null;
             lastGroup = c.group;
             return [head, (
-              <li key={c.id} className={`item ${k === i ? "on" : ""}`} onMouseEnter={() => setI(k)} onClick={() => pick(c)}>
-                <c.Icon size={18} weight="duotone" className="ic" />{c.label}
+              <li key={c.id} id={`${lid}-${k}`} role="option" aria-selected={k === i} onMouseMove={() => setI(k)} onClick={() => pick(c)}>
+                <c.Icon size={18} className="ic" aria-hidden />{c.label}
               </li>
             )];
           })}
-          {!list.length && <li className="item dim">Nothing matches “{q}”</li>}
+          {!list.length && <li className="none" role="presentation">Nothing matches “{q}”</li>}
         </ul>
-        <div className="foot"><span><kbd>↑</kbd> <kbd>↓</kbd> move</span><span><kbd>↵</kbd> run</span></div>
+        <div className="foot"><span><kbd>↑</kbd> <kbd>↓</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>Alt</kbd> + <kbd>1</kbd>–<kbd>9</kbd> jump to a page</span></div>
       </div>
     </>
+  );
+}
+
+/** The GPU in the sidebar: on or off at a glance, how full its memory is, and the one action that matters. */
+function GpuCard({ status }: { status: Status | null }) {
+  const busy = !!(status?.running?.length || status?.queue);
+  const vram = status?.gpu?.total_gb ? status.gpu.used_gb / status.gpu.total_gb : 0;
+  const ready = Object.values(status?.engines ?? {}).filter((x) => x === "ready").length;
+  return (
+    <div className="side-card">
+      <div className="sc-head">
+        <span className="sc-ic"><span className={`onair ${status?.online ? "live" : ""}`} aria-hidden><i style={{ height: "55%" }} /><i style={{ height: "90%" }} /><i style={{ height: "40%" }} /><i style={{ height: "75%" }} /><i style={{ height: "50%" }} /></span></span>
+        <div style={{ minWidth: 0 }}>
+          <b>{!status ? "Connecting…" : status.online ? (busy ? "GPU busy" : "GPU on") : "GPU off"}</b>
+          <p className="ellipsis">{status?.online ? `${status.gpu?.name?.replace("NVIDIA ", "") ?? "GPU"} · ${ready} engine${ready === 1 ? "" : "s"} warm` : "Voice work needs the GPU."}</p>
+        </div>
+      </div>
+      {status?.online && <div className="gm-bar" role="meter" aria-label="GPU memory" aria-valuenow={Math.round(vram * 100)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${Math.round(vram * 100)}%` }} /></div>}
+      <Link href="/gpu" className="btn ghost sm block">{status?.online ? "Open GPU & engines" : <><Power size={14} weight="bold" /> Start the GPU</>}</Link>
+    </div>
   );
 }
 
@@ -155,14 +149,13 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
   const { toast } = useDialog();
   const { refresh } = useStatus();
   const [palette, setPalette] = useState(false);
-  const [gpuOpen, setGpuOpen] = useState(false);
-  const [scrolled, setScrolled] = useState(false);
-  const busy = !!(status?.running?.length || status?.queue);
-  const here = NAV.find((n) => (n.href === "/" ? path === "/" : path.startsWith(n.href))) ?? NAV[0];
-  const vram = status?.gpu?.total_gb ? status.gpu.used_gb / status.gpu.total_gb : 0;
+  const [drawer, setDrawer] = useState(false);
   const me = useMe();
   const { theme, flip } = useTheme();
+  const here = pageOf(path);
   const on = (href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`));
+  const busy = !!(status?.running?.length || status?.queue);
+  useEffect(() => setDrawer(false), [path]);
 
   const cmds = useMemo<Cmd[]>(() => {
     const engine = (name: string, action: "load" | "unload") => async () => {
@@ -170,10 +163,12 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
       catch (e) { toast((e as Error).message, "bad"); }
     };
     return [
-      ...NAV.map((n) => ({ id: `go-${n.href}`, label: n.name, group: "Go to", Icon: n.Icon as typeof Fire, run: () => router.push(n.href) })),
+      ...NAV.map((n) => ({ id: `go-${n.href}`, label: n.name, group: "Pages", Icon: n.Icon as typeof Fire, run: () => router.push(n.href) })),
+      { id: "new-post", label: "New post", group: "Create", Icon: Plus, run: () => router.push("/posts?new=1") },
+      { id: "new-vo", label: "New voiceover", group: "Create", Icon: Microphone, run: () => router.push("/voiceover") },
       ...ALL_ENGINES.map((n) => ({ id: `warm-${n}`, label: `Warm up ${n}`, group: "Engines", Icon: Fire, run: engine(n, "load") })),
       ...ALL_ENGINES.map((n) => ({ id: `unload-${n}`, label: `Unload ${n}`, group: "Engines", Icon: Power, run: engine(n, "unload") })),
-      { id: "refresh", label: "Refresh worker status", group: "System", Icon: ArrowsClockwise, run: () => refresh() },
+      { id: "refresh", label: "Refresh GPU status", group: "System", Icon: ArrowsClockwise, run: () => refresh() },
       { id: "theme", label: "Switch light / dark", group: "System", Icon: Moon, run: flip },
       { id: "signout", label: "Sign out", group: "System", Icon: SignOut, run: leave },
     ];
@@ -182,73 +177,103 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((p) => !p); return; }
-      const t = e.target as HTMLElement;
-      if (e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable]")) return;
-      const n = Number(e.key);
-      if (n >= 1 && n <= 9) router.push(NAV[n - 1].href);
+      // page shortcuts need Alt, so typing or dictating a digit never navigates (WCAG 2.1.4)
+      if (e.altKey && !e.metaKey && !e.ctrlKey && /^Digit[1-9]$/.test(e.code)) {
+        const n = NAV[Number(e.code.slice(5)) - 1];
+        if (n) { e.preventDefault(); router.push(n.href); }
+      }
     };
-    const onScroll = () => setScrolled(window.scrollY > 8);
     window.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("scroll", onScroll); };
+    return () => window.removeEventListener("keydown", onKey);
   }, [router]);
+
+  const section = (sec: Nav["sec"]) => NAV.filter((n) => n.sec === sec).map(({ href, name, Icon }) => (
+    <Link key={href} href={href} className={`navlink ${on(href) ? "on" : ""}`} aria-current={on(href) ? "page" : undefined}>
+      <Icon size={18} weight={on(href) ? "fill" : "regular"} className="ic" />{name}
+    </Link>
+  ));
 
   return (
     <div className="app">
-      <aside className="side">
-        <Link href="/generate" className="brand" aria-label="Voicebox Studio home"><Logo size={30} /><span className="word"><b>Voicebox</b><span>Studio</span></span></Link>
+      <a href="#main" className="skip">Skip to content</a>
+      {drawer && <div className="side-scrim" onClick={() => setDrawer(false)} />}
+      <aside className={`side ${drawer ? "open" : ""}`} aria-label="Sidebar">
+        <PopMenu align="left" width={230} trigger={({ toggle, ref, open }) => (
+          <button ref={ref} className="ws-btn" onClick={toggle} aria-expanded={open} aria-haspopup="menu">
+            <Logo size={28} />
+            <span className="ws-name"><b>Voicebox Studio</b><span>Shared studio</span></span>
+            <CaretUpDown size={14} className="dim" />
+          </button>
+        )}>
+          {(close) => (
+            <>
+              <Link className="pm-item" role="menuitem" href="/settings" onClick={close}><GearSix size={16} className="ic" />Settings</Link>
+              <Link className="pm-item" role="menuitem" href="/gpu" onClick={close}><Cpu size={16} className="ic" />GPU &amp; engines</Link>
+              <hr />
+              <button className="pm-item" role="menuitem" onClick={() => { flip(); close(); }}>{theme === "dark" ? <Sun size={16} className="ic" /> : <Moon size={16} className="ic" />}{theme === "dark" ? "Light mode" : "Dark mode"}</button>
+              <button className="pm-item" role="menuitem" onClick={leave}><SignOut size={16} className="ic" />Sign out</button>
+            </>
+          )}
+        </PopMenu>
+        <button className="side-search" onClick={() => setPalette(true)}><MagnifyingGlass size={16} />Search<kbd>⌘K</kbd></button>
         <nav className="side-nav" aria-label="Pages">
-          {NAV.map(({ href, name, Icon, sec }, k) => (
-            <div key={href} style={{ display: "contents" }}>
-              {(k === 0 || NAV[k - 1].sec !== sec) && <div className="navsec">{sec}</div>}
-              <Link href={href} className={`navlink ${on(href) ? "on" : ""}`}>
-                <Icon size={18} weight={on(href) ? "duotone" : "regular"} className="ic" />
-                {name}{k < 9 && <kbd>{k + 1}</kbd>}
-              </Link>
-            </div>
-          ))}
+          {section("main")}
+          <div className="navsec">Create</div>
+          {section("create")}
         </nav>
-        {/* the GPU at a glance; click for every engine, RAM and disk */}
-        <div className="gpu-wrap">
-        {gpuOpen && <><div className="gpu-scrim" onClick={() => setGpuOpen(false)} /><div className="gpu-pop"><GpuDetails status={status} busy={busy} vram={vram} /></div></>}
-        <button className={`gpu-mini ${gpuOpen ? "on" : ""}`} aria-expanded={gpuOpen} onClick={() => setGpuOpen(!gpuOpen)} title="GPU details">
-          <span className={`onair ${status?.online ? "live" : ""}`} aria-hidden><i style={{ height: "55%" }} /><i style={{ height: "90%" }} /><i style={{ height: "40%" }} /><i style={{ height: "75%" }} /><i style={{ height: "50%" }} /></span>
-          <span className="gm-text">
-            <b>{status ? (status.online ? (busy ? "On air · rendering" : "On air") : "Off air") : "Tuning in"}</b>
-            <span className="tiny faint">{status?.online
-              ? `${status.gpu?.name?.replace("NVIDIA ", "") ?? ""}${status.mode ? ` · ${MODE[status.mode] ?? status.mode}` : ""} · ${Object.values(status.engines ?? {}).filter((x) => x === "ready").length} ready`
-              : "Start the GPU from Health"}</span>
-          </span>
-          {status?.online ? <span className="gm-bar" aria-label="GPU memory"><i style={{ width: `${Math.round(vram * 100)}%` }} /></span> : <Cpu size={15} className="dim" />}
-          <CaretUp size={12} className="dim gm-caret" />
-        </button>
-        </div>
-        <div className="me-row">
-          <span className="avatar">{initials(me?.user?.name)}</span>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div className="small" style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{me?.user?.name ?? (me ? "Token session" : " ")}</div>
-            <div className="tiny faint" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{me?.user?.email ?? (me ? "no shared workspace" : " ")}</div>
-          </div>
-          <button className="icon-btn" title={theme === "dark" ? "Light mode" : "Dark mode"} onClick={flip}>{theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}</button>
-          <button className="icon-btn" title="Sign out" onClick={leave}><SignOut size={16} /></button>
-        </div>
+        <GpuCard status={status} />
+        <div className="side-foot">{section("studio")}</div>
+        <PopMenu align="left" up width={230} trigger={({ toggle, ref, open }) => (
+          <button ref={ref} className="me-btn" onClick={toggle} aria-expanded={open} aria-haspopup="menu">
+            <span className="avatar">{initials(me?.user?.name ?? (me ? "T" : ""))}</span>
+            <span className="me-name"><b className="ellipsis">{me?.user?.name ?? (me ? "Access token" : " ")}</b><span className="ellipsis">{me?.user?.email ?? (me ? "Studio only, no shared workspace" : " ")}</span></span>
+            <CaretUpDown size={14} className="dim" />
+          </button>
+        )}>
+          {(close) => (
+            <>
+              <button className="pm-item" role="menuitem" onClick={() => { flip(); close(); }}>{theme === "dark" ? <Sun size={16} className="ic" /> : <Moon size={16} className="ic" />}{theme === "dark" ? "Light mode" : "Dark mode"}</button>
+              <Link className="pm-item" role="menuitem" href="/settings" onClick={close}><GearSix size={16} className="ic" />Settings</Link>
+              <hr />
+              <button className="pm-item" role="menuitem" onClick={leave}><SignOut size={16} className="ic" />Sign out</button>
+            </>
+          )}
+        </PopMenu>
       </aside>
-      <main className="main">
-        <div className={`topbar ${scrolled ? "scrolled" : ""}`}>
-          <div className="crumb">{here.sec}<span className="faint">/</span><b>{here.name}</b></div>
-          <span className="status-pill">
-            <span className={`dot ${status?.online ? (busy ? "warn" : "ok") : "bad"}`} />
-            {status?.online ? (busy ? `Working · ${status.queue ?? 0} queued` : `${status.gpu?.name?.replace("NVIDIA ", "")} ready`) : "Worker offline"}
-          </span>
-          <button className="search" onClick={() => setPalette(true)}><MagnifyingGlass size={15} /><span>Search or run a command</span><kbd>⌘K</kbd></button>
-        </div>
-        {children}
-      </main>
+
+      <div className="main">
+        <header className="topbar">
+          <button className="icon-btn menu-btn" onClick={() => setDrawer(true)} aria-label="Open menu" aria-expanded={drawer}><List size={20} /></button>
+          <div className="crumb">{here && here.sec !== "main" && <span className="hide-sm">{here.sec === "create" ? "Create" : "Studio"}<span aria-hidden> /</span></span>}<b>{here?.name ?? "Voicebox"}</b></div>
+          <div className="top-actions">
+            <Link href="/gpu" className="status-pill" title="GPU & engines">
+              <span className={`dot ${status?.online ? (busy ? "warn" : "ok") : status ? "bad" : "off"}`} />
+              {!status ? "Connecting" : status.online ? (busy ? `Working · ${status.queue ?? 0} queued` : `${status.gpu?.name?.replace("NVIDIA ", "") ?? "GPU"} ready`) : "GPU off"}
+            </Link>
+            <button className="icon-btn boxed hide-sm" onClick={flip} aria-label={theme === "dark" ? "Light mode" : "Dark mode"} title={theme === "dark" ? "Light mode" : "Dark mode"}>{theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}</button>
+            <PopMenu width={220} trigger={({ toggle, ref, open }) => (
+              <button ref={ref} className="sm" onClick={toggle} aria-expanded={open} aria-haspopup="menu"><Plus size={15} weight="bold" /><span className="hide-sm">Create</span><CaretDown size={12} className="hide-sm" /></button>
+            )}>
+              {(close) => (
+                <>
+                  <Link className="pm-item" role="menuitem" href="/voiceover" onClick={close}><Microphone size={16} className="ic" />Voiceover</Link>
+                  <Link className="pm-item" role="menuitem" href="/posts?new=1" onClick={close}><Kanban size={16} className="ic" />Post</Link>
+                  <Link className="pm-item" role="menuitem" href="/images" onClick={close}><ImageSquare size={16} className="ic" />Image</Link>
+                  <Link className="pm-item" role="menuitem" href="/subtitles" onClick={close}><ClosedCaptioning size={16} className="ic" />Subtitles</Link>
+                  <Link className="pm-item" role="menuitem" href="/clean-up" onClick={close}><MagicWand size={16} className="ic" />Clean-up</Link>
+                </>
+              )}
+            </PopMenu>
+          </div>
+        </header>
+        <main id="main" className="main-inner" tabIndex={-1}>{children}</main>
+      </div>
+
       <nav className="tabbar" aria-label="Main">
         {TABS.map((href) => { const n = NAV.find((x) => x.href === href)!; return (
-          <Link key={href} href={href} className={on(href) ? "on" : ""}><n.Icon size={22} weight={on(href) ? "fill" : "regular"} /><span>{n.name}</span></Link>
+          <Link key={href} href={href} className={on(href) ? "on" : ""} aria-current={on(href) ? "page" : undefined}><n.Icon size={22} weight={on(href) ? "fill" : "regular"} /><span>{n.name}</span></Link>
         ); })}
-        <button onClick={() => setPalette(true)}><DotsThreeOutline size={22} /><span>More</span></button>
+        <button onClick={() => setDrawer(true)} aria-label="More pages"><DotsThreeOutline size={22} /><span>More</span></button>
       </nav>
       <Palette open={palette} onClose={() => setPalette(false)} cmds={cmds} />
       <JobTray />

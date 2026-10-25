@@ -32,6 +32,11 @@ export type AwUser = { $id: string; name: string; email: string };
 /** Who a browser JWT belongs to (throws when it is expired or forged). */
 export const userFromJwt = (jwt: string) => aw<AwUser>("/account", { jwt });
 
+/** Create a person's account with the server key. The caller has already checked they're on the list (lib/access.ts),
+ *  so an uninvited email never gets an account. Throws AppwriteError 409 when the email already has one. */
+export const createUser = (email: string, password: string, name: string) =>
+  aw<AwUser>("/users", { method: "POST", body: { userId: "unique()", email, password, name } });
+
 /** Put a signed-in user on the studio team. Idempotent. */
 export async function ensureMember(user: AwUser) {
   try {

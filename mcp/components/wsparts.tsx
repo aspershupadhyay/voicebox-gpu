@@ -1,26 +1,27 @@
 "use client";
-// Building blocks shared by the Board, Calendar and Media pages.
+// Building blocks shared by Posts and Files: the sign-in gate, avatars, uploads and media tiles.
 import { FileAudio, FileText, FilmStrip, Paperclip, Play, UsersThree } from "@phosphor-icons/react";
 import { useCallback, useState } from "react";
 import { AW, fileUrl, initials, kindOf, type Media } from "@/lib/workspace";
 import { aw, getMe, ID, logActivity, signOut, useMe } from "./aw";
+import { Empty, PageHeader } from "./ui";
 
-/** The workspace needs a real account (the token login is single-user). Renders children only when signed in. */
-export function Gate({ children }: { children: React.ReactNode }) {
+/** The workspace needs a real account (the token login is single-user). Renders children only when signed in;
+ *  otherwise the page's header and a clear next step. */
+export function Gate({ children, title }: { children: React.ReactNode; title?: string }) {
   const me = useMe();
   if (!me) return <div className="ws-skel" aria-busy />;
   if (me.user && me.session && me.workspace) return <>{children}</>;
   return (
-    <div className="empty" style={{ marginTop: 40, padding: "56px 24px" }}>
-      <UsersThree size={34} weight="duotone" />
-      <b>{!me.workspace ? "The shared workspace isn't switched on yet" : "Sign in with your account to see the shared workspace"}</b>
-      <span style={{ maxWidth: 440 }}>
+    <>
+      {title && <PageHeader title={title} />}
+      <Empty icon={<UsersThree size={22} />} title={!me.workspace ? "The shared workspace isn't set up yet" : "Sign in with your account to see the shared workspace"}
+        action={me.workspace ? <button className="sm" onClick={async () => { await signOut(); location.href = "/login"; }}>Sign in with email</button> : undefined}>
         {!me.workspace
-          ? "The server needs APPWRITE_API_KEY (see docs/WORKSPACE.md). Voiceovers, voices and the library keep working meanwhile."
-          : "The access token opens the studio, but posts, comments and media belong to people. Create your account (one each) and you'll both see the same desk, live."}
-      </span>
-      {me.workspace && <button style={{ marginTop: 8 }} onClick={async () => { await signOut(); location.href = "/login"; }}>Sign in with email</button>}
-    </div>
+          ? "Posts, comments and shared files appear here once the owner connects the workspace (APPWRITE_API_KEY, see docs/WORKSPACE.md). Voiceovers, voices and files keep working meanwhile."
+          : "The access token opens the studio, but posts, comments and media belong to people. Sign in with your own account and you'll both see the same desk, live."}
+      </Empty>
+    </>
   );
 }
 

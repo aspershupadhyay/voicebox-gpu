@@ -11,10 +11,11 @@ run succeeded and say so. A restarted Colab worker picks up `worker/` changes.
 
 Every dashboard change follows `docs/DESIGN.md`. In short:
 
-- Bone and ink with one emerald accent. No gradients, no orange or purple.
-- Geist for the interface, with an Instrument Serif italic only for display words.
-- One-line page subtitles. Explanations go in `<Info>` (ⓘ), not on the page.
-- Pages rise in. Only live things loop.
+- Clean product UI: light sidebar, white canvas, hairline borders, black primary buttons, soft tinted status pills.
+- Geist only (Mono for moving numbers). Every page opens with `PageHeader` (the page name as the H1, one sub line).
+- Build from `components/ui.tsx`; every text colour is a token at 4.5:1 or better; every control has a label.
+- Nine pages (Home, Voices, Posts, Files, Voiceover, Voice model, Clean-up/Subtitles/Images, GPU & engines, Settings).
+  New capabilities become views or tabs, not new pages. Pages rise in; only live things loop.
 
 Check light, dark and 390px width before you ship.
 

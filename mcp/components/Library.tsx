@@ -29,7 +29,7 @@ function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) {
   const slug = (j.label || j.id).replace(/[^A-Za-z0-9._-]/g, "_");
   const v = j.video;
   return (
-    <div className={`card lib-card ${selected ? "selected" : ""}`} id={j.id}>
+    <div className={`lib-card ${selected ? "selected" : ""}`} id={j.id}>
       <div className="lc-head" onClick={() => setOpen(!isOpen)}>
         <Check selected={selected} onSelect={onSelect} />
         <CaretRight size={14} weight="bold" className={`chev ${isOpen ? "open" : ""}`} />
@@ -82,7 +82,7 @@ function ImageCard({ j, selected, onSelect, onDelete }: CardProps) {
   const slug = (j.label || j.id).replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 40);
   const ims = j.images ?? [];
   return (
-    <div className={`card lib-card ${selected ? "selected" : ""}`} id={j.id}>
+    <div className={`lib-card ${selected ? "selected" : ""}`} id={j.id}>
       <div className="lc-head">
         <Check selected={selected} onSelect={onSelect} />
         <span className="thumb">{ims[0]?.thumb_url ? <img src={ims[0].thumb_url} alt="" /> : <ImageSquare size={20} weight="duotone" />}</span>
@@ -94,7 +94,7 @@ function ImageCard({ j, selected, onSelect, onDelete }: CardProps) {
           </div>
         </div>
         <div className="lc-actions" onClick={(e) => e.stopPropagation()}>
-          <Link className="btn ghost sm" href="/image"><ImageSquare size={14} />Image</Link>
+          <Link className="btn ghost sm" href="/images"><ImageSquare size={14} />Images</Link>
           <button className="icon-btn danger-h" onClick={onDelete} title="Delete" aria-label="Delete"><TrashSimple size={16} /></button>
         </div>
       </div>
@@ -129,7 +129,7 @@ function JobCard({ j, open, selected, onSelect, onDelete, onSubtitle }: CardProp
   }
 
   return (
-    <div className={`card lib-card ${selected ? "selected" : ""}`} id={j.id}>
+    <div className={`lib-card ${selected ? "selected" : ""}`} id={j.id}>
       <div className="lc-head" onClick={() => setOpen(!isOpen)}>
         <Check selected={selected} onSelect={onSelect} />
         <CaretRight size={14} weight="bold" className={`chev ${isOpen ? "open" : ""}`} />
@@ -168,6 +168,7 @@ function JobCard({ j, open, selected, onSelect, onDelete, onSubtitle }: CardProp
   );
 }
 
+/** Everything the GPU made (takes, subtitles, images, videos): the Generated tab of Files. */
 export default function Library() {
   const { status } = useStatus();
   const { confirm, toast } = useDialog();
@@ -276,7 +277,7 @@ export default function Library() {
     if (!status?.online) return toast("The GPU worker is offline. Start the Colab notebook first.", "bad");
     try {
       await api("jobs", { body: { kind: "transcribe", library: j.id, language: j.language || undefined } });
-      setNote(`Subtitling "${j.label || j.id}"… it'll show a CC badge here when done (follow it on Overview).`);
+      setNote(`Subtitling "${j.label || j.id}"… it'll show a CC badge here when done (follow it in the jobs tray).`);
     } catch (e) {
       toast((e as Error).message, "bad");
     }
@@ -284,19 +285,11 @@ export default function Library() {
 
   return (
     <>
-      <div className="head">
-        <div>
-          <div className="eyebrow">Archive</div>
-          <h1>The <em>library.</em></h1>
-          <p className="sub">Every take, subtitle and render, kept privately. <Info>Stored in your R2 bucket, so it stays after the GPU shuts down.</Info></p>
-        </div>
-        <Link href="/generate" className="btn sig"><Microphone size={16} weight="bold" />New voiceover</Link>
-      </div>
       <div className="filters">
         <div className="seg">
           {["all", ...(hasVideo ? ["videos"] : []), ...(hasImages ? ["images"] : []), ...engines, "subtitles"].map((e) => <button key={e} className={filter === e ? "on" : ""} style={{ textTransform: "capitalize" }} onClick={() => setFilter(e)}>{e}</button>)}
         </div>
-        <div className="searchbox"><MagnifyingGlass size={16} className="ic" /><input placeholder="Search titles, voices, script text…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <div className="searchbox"><MagnifyingGlass size={16} className="ic" /><input placeholder="Search titles, voices, script text…" aria-label="Search files" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <button className="ghost sm" onClick={load}>Refresh</button>
       </div>
 
@@ -313,21 +306,21 @@ export default function Library() {
             </button>
           </div>
         ) : (
-          <label className="row tiny dim" style={{ gap: 10, margin: "0 0 12px 18px", cursor: "pointer", width: "fit-content" }}>
+          <label className="row tiny dim" style={{ gap: 10, margin: "0 0 10px 14px", cursor: "pointer", width: "fit-content" }}>
             <input type="checkbox" className="selbox" checked={false} onChange={toggleAll} aria-label="Select all shown" />
             Select all · {shown.length} shown
           </label>
         )
       )}
 
-      {note && <div className="banner" style={{ borderColor: "rgba(124,196,212,.35)", background: "var(--glacier-soft)" }}><ClosedCaptioning size={20} weight="duotone" color="var(--glacier)" /><span>{note}</span></div>}
+      {note && <div className="notice"><span className="n-ic"><ClosedCaptioning size={18} /></span><span className="n-text">{note}</span></div>}
       {err && <p className="err">{err}</p>}
-      {jobs === null && !err && <div className="stack">{[0, 1, 2].map((i) => <div key={i} className="card" style={{ height: 72, opacity: 0.45 }} />)}</div>}
+      {jobs === null && !err && <div className="skel" style={{ height: 220 }} />}
       {jobs && !shown.length && (
-        <div className="empty"><CassetteArt /><b>{jobs.length ? "Nothing matches" : "The shelf is empty"}</b><span>{jobs.length ? "Try another filter or search." : "Record your first take and it lands here."}</span>
-          {!jobs.length && <Link href="/generate" className="btn sig sm"><Microphone size={14} weight="bold" />Record a voiceover</Link>}</div>
+        <div className="empty"><CassetteArt /><b>{jobs.length ? "Nothing matches" : "Nothing made yet"}</b><span>{jobs.length ? "Try another filter or search." : "Takes, subtitles and images you make land here."}</span>
+          {!jobs.length && <Link href="/voiceover" className="btn sm"><Microphone size={14} weight="bold" />Make a voiceover</Link>}</div>
       )}
-      {shown.map((j) => (
+      {shown.length > 0 && <div className="lib-list">{shown.map((j) => (
         <div key={j.id} className={removing.has(j.id) ? "removing" : ""}>
           {j.kind === "image"
             ? <ImageCard j={j} open={hash === j.id} selected={sel.has(j.id)} onSelect={(sh) => toggle(j.id, sh)} onDelete={() => removeMany([j.id])} />
@@ -335,7 +328,7 @@ export default function Library() {
             ? <VideoCard j={j} open={hash === j.id} selected={sel.has(j.id)} onSelect={(sh) => toggle(j.id, sh)} onDelete={() => removeMany([j.id])} />
             : <JobCard j={j} open={hash === j.id} selected={sel.has(j.id)} onSelect={(sh) => toggle(j.id, sh)} onDelete={() => removeMany([j.id])} onSubtitle={() => subtitle(j)} />}
         </div>
-      ))}
+      ))}</div>}
     </>
   );
 }

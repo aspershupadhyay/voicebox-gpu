@@ -1,6 +1,6 @@
 "use client";
 import {
-  ArrowCounterClockwise, ArrowRight, ArrowsClockwise, CheckCircle, Lightbulb, Microphone, Shuffle, Stop, TrashSimple, UploadSimple, WarningCircle,
+  ArrowCounterClockwise, ArrowRight, ArrowsClockwise, CheckCircle, Lightbulb, MagnifyingGlass, Microphone, Shuffle, Stop, TrashSimple, UploadSimple, WarningCircle,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -9,13 +9,14 @@ import { Info } from "./Info";
 import { VoiceGlyph } from "./art";
 import { useDialog } from "./Dialog";
 import { GuideButton } from "./GuideDrawer";
-import { KOKORO_LANG, LANGUAGES } from "./guides";
+import { describeVoice as describe, KOKORO_LANG, KOKORO_VOICES, LANGUAGES, ORPHEUS_VOICES } from "./guides";
 import JobProgress from "./JobProgress";
 import { useResumeJob } from "./jobs";
 import LineRow from "./LineRow";
 import Player from "./Player";
 import { SampleButton, useSamples } from "./Sample";
 import { useStatus } from "./Shell";
+import { Empty, PageHeader } from "./ui";
 import { PauseButton, SavedTakes, startRecording, VoiceOrb, VoiceSeed, type Recording } from "./Recorder";
 
 const READS = [
@@ -34,21 +35,9 @@ const ENGINES = [
   { id: "orpheus", name: "Orpheus", note: "Most human · English" },
   { id: "kokoro", name: "Kokoro", note: "Instant · 9 languages" },
   { id: "chatterbox", name: "Chatterbox", note: "Emotion · 23 languages" },
-  { id: "qwen", name: "Qwen", note: "Cloner · presets shown" },
+  { id: "qwen", name: "Qwen", note: "Cloner · presets" },
 ] as const;
-const ORPHEUS: Record<string, string> = { tara: "female", leah: "female", jess: "female", mia: "female", zoe: "female", leo: "male", dan: "male", zac: "male" };
-const KOKORO_VOICES = ["af_heart", "af_bella", "af_nicole", "af_aoede", "af_kore", "af_sarah", "af_alloy", "af_nova", "af_sky", "af_jessica", "af_river", "am_fenrir", "am_michael", "am_puck", "am_echo", "am_eric", "am_liam", "am_onyx", "am_santa", "am_adam", "bf_emma", "bf_isabella", "bf_alice", "bf_lily", "bm_fable", "bm_george", "bm_lewis", "bm_daniel", "hf_alpha", "hf_beta", "hm_omega", "hm_psi", "ff_siwis", "if_sara", "im_nicola", "jf_alpha", "jf_gongitsune", "jm_kumo", "ef_dora", "em_alex", "pf_dora", "pm_alex", "zf_xiaobei", "zf_xiaoxiao", "zm_yunjian", "zm_yunxi"];
-const VOICES: Record<string, string[]> = { orpheus: Object.keys(ORPHEUS), kokoro: KOKORO_VOICES, chatterbox: ["female", "male"], qwen: ["female", "male"] };
-const ACCENT: Record<string, string> = { a: "American", b: "British" };
-
-function describe(engine: string, v: string) {
-  if (engine === "orpheus") return ORPHEUS[v];
-  if (engine === "kokoro") {
-    const lang = LANGUAGES.find((l) => l.code === KOKORO_LANG[v[0]])?.name ?? "";
-    return `${v[1] === "f" ? "female" : "male"} · ${ACCENT[v[0]] ?? lang}`;
-  }
-  return `${v} preset`;
-}
+const VOICES: Record<string, string[]> = { orpheus: Object.keys(ORPHEUS_VOICES), kokoro: KOKORO_VOICES, chatterbox: ["female", "male"], qwen: ["female", "male"] };
 
 type Phase = "idle" | "asking" | "recording" | "review" | "saving";
 
@@ -180,7 +169,7 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
             <span className="dim small">Read the card on the right, about 20 seconds.{" "}
               <button className="linkish" onClick={() => fileIn.current?.click()}>Upload a file instead</button></span>
             <label className="row tiny dim" style={{ gap: 6 }}>Keep up to
-              <select value={cap} onChange={(e) => setCap(Number(e.target.value))} style={{ width: "auto" }}>
+              <select aria-label="Keep up to" value={cap} onChange={(e) => setCap(Number(e.target.value))} style={{ width: "auto" }}>
                 {[20, 30, 45, 60].map((v) => <option key={v} value={v}>{v} s{v === 20 ? " (best for cloning)" : ""}</option>)}</select></label>
             <input ref={fileIn} type="file" accept="audio/*,video/*" hidden onChange={(e) => {
               const f = e.target.files?.[0];
@@ -206,8 +195,8 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
           <div className="rec-review">
             {take && <Player src={take.url} />}
             <div className="field" style={{ margin: "14px 0 0" }}>
-              <label className="f">Name this voice</label>
-              <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Sparsh, energetic" disabled={phase === "saving"} />
+              <label className="f" htmlFor="rec-label">Name this voice</label>
+              <input id="rec-label" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Sparsh, energetic" disabled={phase === "saving"} />
               <div className="dim tiny mono" style={{ marginTop: 4 }}>id: {slug}</div>
             </div>
             <div className="row" style={{ marginTop: 12 }}>
@@ -228,7 +217,7 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
 
       <div className="rec-side">
         <div className="row between">
-          <div className="label">Read this</div>
+          <b className="small">Read this out loud</b>
           <button className="quiet xs" onClick={() => setRead((read + 1) % READS.length)}><Shuffle size={13} />Another</button>
         </div>
         <p className="read-card">{READS[read]}</p>
@@ -296,23 +285,23 @@ function Revoice({ mine }: { mine: MyVoice[] }) {
   const busy = upFrac !== null || (!!job && (["queued", "running"].includes(job.status) || (job.status === "done" && !job.library)));
   const voices = [...mine.map((m) => [m.name, m.label] as const), ["female", "female preset"] as const, ["male", "male preset"] as const];
   return (
-    <div className="card" style={{ marginTop: 14 }}>
-      <div className="card-head"><h2><ArrowsClockwise size={18} weight="duotone" /> Re-voice a take</h2><Info>Record yourself anywhere (a phone memo, a screen recording, a rough take) and get it back in your clean voice. Timing, emphasis and emotion stay, so it lines up with the video frame for frame. Up to 15 minutes.</Info></div>
+    <div className="card">
+      <div className="card-head"><div><h2><ArrowsClockwise size={18} /> Re-voice a take</h2><p className="sub">A rough take of yourself in, your clean voice out, same timing.</p></div><Info label="Re-voice">Record yourself anywhere (a phone memo, a screen recording, a rough take) and get it back in your clean voice. Timing, emphasis and emotion stay, so it lines up with the video frame for frame. Up to 15 minutes.</Info></div>
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, alignItems: "end" }}>
         <div className="field" style={{ margin: 0 }}>
-          <label className="f">Performance (audio or video)</label>
+          <span className="f" style={{ display: "block", font: "500 13px var(--sans)", color: "var(--ink2)", marginBottom: 6 }}>Performance (audio or video)</span>
           <label className="btn ghost sm" style={{ width: "100%", justifyContent: "flex-start", overflow: "hidden" }}>
             <UploadSimple size={14} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file ? file.name : "Choose a file"}</span>
             <input type="file" accept="audio/*,video/*" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
           </label>
         </div>
         <div className="field" style={{ margin: 0 }}>
-          <label className="f">Speak it as</label>
-          <select value={voice} onChange={(e) => setVoice(e.target.value)}>{voices.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          <label className="f" htmlFor="rv-voice">Speak it as</label>
+          <select id="rv-voice" value={voice} onChange={(e) => setVoice(e.target.value)}>{voices.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
         </div>
         <div className="field" style={{ margin: 0 }}>
-          <label className="f">Publish for</label>
-          <select value={platform} onChange={(e) => setPlatform(e.target.value)}>{PLATFORMS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          <label className="f" htmlFor="rv-platform">Publish for</label>
+          <select id="rv-platform" value={platform} onChange={(e) => setPlatform(e.target.value)}>{PLATFORMS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
         </div>
       </div>
       <div className="row between" style={{ marginTop: 12 }}>
@@ -357,86 +346,106 @@ export default function Voices() {
   const [mine, setMine] = useState<MyVoice[] | null>(null);
   const [engine, setEngine] = useState<string>("orpheus");
   const [lang, setLang] = useState("en");
+  const [tab, setTab] = useState<"mine" | "library">("mine");
+  const [recording, setRecording] = useState(false);
+  const [q, setQ] = useState("");
 
   const load = () => api<{ voices: MyVoice[] }>("myvoices").then((r) => setMine(r.voices)).catch(() => setMine([]));
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const p = new URLSearchParams(location.search);
+    if (p.get("record")) setRecording(true);
+    if (location.hash === "#revoice") setTimeout(() => document.getElementById("revoice")?.scrollIntoView({ behavior: "smooth" }), 300);
+  }, []);
+  useEffect(() => { if (mine && !mine.length) setTab((t) => (t === "mine" && !recording ? "library" : t)); }, [mine, recording]);
 
-  const list = useMemo(() => (engine === "kokoro" ? VOICES.kokoro.filter((v) => KOKORO_LANG[v[0]] === lang) : VOICES[engine]), [engine, lang]);
+  const list = useMemo(() => (engine === "kokoro" ? VOICES.kokoro.filter((v) => KOKORO_LANG[v[0]] === lang) : VOICES[engine]).filter((v) => !q || `${v} ${describe(engine, v)}`.toLowerCase().includes(q.toLowerCase())), [engine, lang, q]);
   const have = samples?.voices[engine] ?? {};
   const missing = list.filter((v) => !have[v]).length;
+  const shownMine = (mine ?? []).filter((v) => !q || `${v.label} ${v.name} ${v.transcript}`.toLowerCase().includes(q.toLowerCase()));
 
   async function remove(v: MyVoice) {
-    if (!(await confirm({ title: `Delete “${v.label}”?`, body: "The recording and its transcript are removed from storage. Takes you already generated with it stay in the Library.", confirm: "Delete voice", danger: true }))) return;
+    if (!(await confirm({ title: `Delete “${v.label}”?`, body: "The recording and its transcript are removed from storage. Takes you already made with it stay in Files.", confirm: "Delete voice", danger: true }))) return;
     await api(`myvoices/${v.name}`, { method: "DELETE" }).then(() => { toast("Voice deleted", "ok"); load(); }).catch((e) => toast((e as Error).message, "bad"));
   }
 
   return (
     <>
-      <div className="head">
-        <div>
-          <div className="eyebrow">Cast</div>
-          <h1>Hear them <em>first.</em></h1>
-          <p className="sub">Audition any voice, or record your own.</p>
-        </div>
-        <GuideButton engine="qwen" label="Recording guide" />
-      </div>
+      <PageHeader title="Voices" sub="Audition the built-in voices, or clone your own in 20 seconds."
+        actions={<><GuideButton engine="qwen" label="Recording guide" /><button onClick={() => setRecording(!recording)} aria-expanded={recording}><Microphone size={15} weight="bold" />{recording ? "Close recorder" : "Clone your voice"}</button></>} />
 
-      <h2 className="section-h">Your voice</h2>
-      <Recorder onSaved={(v) => { toast(`“${v.label}” is ready to use`, "ok"); load(); }} />
-
-      {mine && mine.length > 0 && (
-        <div className="stack" style={{ gap: 10, marginTop: 14 }}>
-          {mine.map((v) => (
-            <div key={v.name} className="card myvoice reveal">
-              <VoiceGlyph name={v.name} size={52} />
-              <div style={{ minWidth: 0 }}>
-                <div className="row" style={{ gap: 10 }}><b style={{ font: "600 19px var(--display)", letterSpacing: "-.02em" }}>{v.label}</b><span className="mono dim tiny">{v.name}</span><span className="dim tiny">{v.duration.toFixed(1)} s · {ago(v.created)}</span>
-                  {v.enhanced && <span className="pill ok" title="Cleaned by the studio enhancer: noise and echo removed, detail restored">studio-enhanced</span>}</div>
-                <p className="dim small clamp2" style={{ margin: "4px 0 10px", fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 16 }}>“{v.transcript}”</p>
-                {v.url && <Player src={v.url} compact />}
-                <Learned voice={v.name} />
-                {v.warnings?.map((w) => <div key={w} className="tiny" style={{ color: "var(--warn)", marginTop: 6 }}><WarningCircle size={12} /> {w}</div>)}
-              </div>
-              <div className="row" style={{ gap: 4, alignSelf: "center" }}>
-                <Link className="btn quiet sm" href={`/generate?engine=chatterbox&voice=${v.name}`} title="Use with Chatterbox">Chatterbox</Link>
-                <Link className="btn sm" href={`/generate?engine=qwen&voice=${v.name}`}>Use<ArrowRight size={13} /></Link>
-                <button className="icon-btn danger-h" onClick={() => remove(v)} aria-label="Delete voice"><TrashSimple size={16} /></button>
-              </div>
-            </div>
-          ))}
-        </div>
+      {recording && (
+        <section className="section" style={{ marginTop: 0, marginBottom: 28 }} aria-label="Clone your voice">
+          <Recorder onSaved={(v) => { toast(`“${v.label}” is ready to use`, "ok"); load(); setTab("mine"); }} />
+        </section>
       )}
 
-      {mine && <Revoice mine={mine} />}
-
-      <div className="row between" style={{ marginTop: 34 }}>
-        <h2 className="section-h" style={{ margin: 0 }}>Every voice, auditioned</h2>
-        <Info>Every voice reads the same line, so you can compare them fairly.</Info>
+      <div className="tabs" role="tablist">
+        <button role="tab" aria-selected={tab === "mine"} className={tab === "mine" ? "on" : ""} onClick={() => setTab("mine")}>My voices<span className="count">{mine?.length ?? ""}</span></button>
+        <button role="tab" aria-selected={tab === "library"} className={tab === "library" ? "on" : ""} onClick={() => setTab("library")}>Built-in voices<span className="count">{Object.values(VOICES).reduce((n, v) => n + v.length, 0)}</span></button>
       </div>
-      <div className="seg" style={{ margin: "14px 0 16px" }}>
-        {ENGINES.map((e) => <button key={e.id} className={engine === e.id ? "on" : ""} onClick={() => setEngine(e.id)}>{e.name}<span className="dim tiny" style={{ marginLeft: 6 }}>{VOICES[e.id].length}</span></button>)}
-      </div>
-      {engine === "kokoro" && (
-        <div className="chips" style={{ marginBottom: 14 }}>
-          {LANGUAGES.filter((l) => l.engines.includes("kokoro")).map((l) => <button key={l.code} className={`chip ${lang === l.code ? "on" : ""}`} onClick={() => setLang(l.code)}>{l.name}</button>)}
-        </div>
-      )}
-      {samples && missing > 0 && <p className="dim small" style={{ margin: "0 0 12px" }}><Microphone size={13} /> {missing} of these {missing === 1 ? "voice has" : "voices have"} no sample yet.</p>}
-      <div className="audition">
-        {list.map((v) => (
-          <div key={v} className="aud-card">
-            <VoiceGlyph name={engine === "qwen" || engine === "chatterbox" ? (v === "male" ? "dan" : "tara") : v} size={48} />
-            <div style={{ minWidth: 0 }}>
-              <b>{v}</b>
-              <span className="dim tiny">{describe(engine, v)}{have[v] ? ` · ${have[v].duration.toFixed(1)} s` : ""}</span>
-            </div>
-            <SampleButton id={`${engine}/${v}`} url={have[v]?.url} size={34} label={v} />
-            <Link className="aud-use" href={`/generate?engine=${engine}&voice=${v}`} title={`Write with ${v}`}><ArrowRight size={14} /></Link>
+      <div className="vlib-tools">
+        <div className="searchbox" style={{ maxWidth: 320 }}><MagnifyingGlass size={15} className="ic" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder={tab === "mine" ? "Search your voices" : "Search voices"} aria-label="Search voices" /></div>
+        {tab === "library" && (
+          <div className="seg" role="radiogroup" aria-label="Engine">
+            {ENGINES.map((e) => <button key={e.id} role="radio" aria-checked={engine === e.id} className={engine === e.id ? "on" : ""} onClick={() => setEngine(e.id)}>{e.name}<span className="faint tiny" style={{ marginLeft: 6 }}>{VOICES[e.id].length}</span></button>)}
           </div>
-        ))}
+        )}
       </div>
-      {samples?.text && Object.keys(samples.text).length > 0 && <p className="dim tiny" style={{ marginTop: 12 }}>Sample line: “{samples.text[`${engine}/${list[0]}`] ?? Object.values(samples.text)[0]}”</p>}
-      <div style={{ height: 30 }} />
+
+      {tab === "mine" ? (
+        mine === null ? <div className="skel" style={{ height: 160 }} /> : !mine.length ? (
+          <Empty icon={<Microphone size={22} />} title="No voices of your own yet" action={<button className="sm" onClick={() => setRecording(true)}><Microphone size={14} weight="bold" />Clone your voice</button>}>
+            Read a short card out loud and your voice is ready for any script. For the most natural result, train a <Link className="linkish u" href="/model">voice model</Link> later.
+          </Empty>
+        ) : (
+          <div className="card" style={{ padding: "4px 18px" }}>
+            {shownMine.map((v) => (
+              <div key={v.name} className="vrow reveal">
+                <VoiceGlyph name={v.name} size={48} />
+                <div style={{ minWidth: 0 }}>
+                  <div className="row" style={{ gap: 8 }}><b style={{ fontSize: 15 }}>{v.label}</b><span className="mono faint tiny">{v.name}</span><span className="tiny faint">{v.duration.toFixed(1)} s · {ago(v.created)}</span>
+                    {v.enhanced && <span className="pill ok" title="Cleaned by the studio enhancer: noise and echo removed, detail restored">Studio-enhanced</span>}</div>
+                  <p className="quote clamp2">“{v.transcript}”</p>
+                  {v.url && <Player src={v.url} compact />}
+                  <Learned voice={v.name} />
+                  {v.warnings?.map((w) => <div key={w} className="tiny" style={{ color: "var(--warn)", marginTop: 6 }}><WarningCircle size={12} /> {w}</div>)}
+                </div>
+                <div className="row" style={{ gap: 6 }}>
+                  <Link className="btn ghost sm" href={`/voiceover?engine=chatterbox&voice=${v.name}`} title="Use with Chatterbox (emotion, 23 languages)">Chatterbox</Link>
+                  <Link className="btn sm" href={`/voiceover?engine=qwen&voice=${v.name}`}>Use<ArrowRight size={13} /></Link>
+                  <button className="icon-btn danger-h" onClick={() => remove(v)} aria-label={`Delete ${v.label}`}><TrashSimple size={16} /></button>
+                </div>
+              </div>
+            ))}
+            {!shownMine.length && <p className="small dim" style={{ padding: "16px 0" }}>No voice matches “{q}”.</p>}
+          </div>
+        )
+      ) : (
+        <>
+          {engine === "kokoro" && (
+            <div className="chips" style={{ marginBottom: 14 }} role="radiogroup" aria-label="Language">
+              {LANGUAGES.filter((l) => l.engines.includes("kokoro")).map((l) => <button key={l.code} role="radio" aria-checked={lang === l.code} className={`chip ${lang === l.code ? "on" : ""}`} onClick={() => setLang(l.code)}>{l.name}</button>)}
+            </div>
+          )}
+          {samples && missing > 0 && <p className="small dim" style={{ margin: "0 0 12px" }}>{missing} of these {missing === 1 ? "voice has" : "voices have"} no sample yet.</p>}
+          <div className="vgrid">
+            {list.map((v) => (
+              <div key={v} className="vcard">
+                <VoiceGlyph name={engine === "qwen" || engine === "chatterbox" ? (v === "male" ? "dan" : "tara") : v} size={44} />
+                <div className="vc-name"><b>{v}</b><span>{ENGINES.find((e) => e.id === engine)?.name} · {describe(engine, v)}{have[v] ? ` · ${have[v].duration.toFixed(1)} s` : ""}</span></div>
+                <div className="vc-act">
+                  {have[v]?.url && <SampleButton id={`${engine}/${v}`} url={have[v].url} size={32} label={v} />}
+                  <Link className="btn ghost sm" href={`/voiceover?engine=${engine}&voice=${v}`} aria-label={`Use ${v} in a voiceover`}>Use</Link>
+                </div>
+              </div>
+            ))}
+          </div>
+          {samples?.text && Object.keys(samples.text).length > 0 && <p className="tiny faint" style={{ marginTop: 12 }}>Every voice reads the same line: “{samples.text[`${engine}/${list[0]}`] ?? Object.values(samples.text)[0]}”</p>}
+        </>
+      )}
+
+      {mine && <section className="section" id="revoice"><Revoice mine={mine} /></section>}
     </>
   );
 }

@@ -15,6 +15,8 @@ import LineRow from "./LineRow";
 import Player from "./Player";
 import { FilePreview, PauseButton, SavedTakes, startRecording, VoiceOrb, type Recording } from "./Recorder";
 import { useStatus } from "./Shell";
+import Link from "next/link";
+import { PageHeader } from "./ui";
 
 type Part = { job: string; clips: number; minutes: number; input_minutes: number; dropped: Record<string, number>; created: number;
   sources: { name: string; duration: number; clips: number }[]; auto_train?: { job?: string; skipped?: string } };
@@ -139,7 +141,7 @@ function Collect({ name, open, onClose, onAdded, script }: { name: string; open:
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest?.("input, textarea, select")) return;
       if ((e.key === " " || e.key === "ArrowRight") && !rec.paused) { e.preventDefault(); setI((x) => (x + 1) % LINES.length); }
-      if (e.key.toLowerCase() === "p") { e.preventDefault(); if (rec.paused) { rec.resume(); setPaused(false); } else { rec.pause(); setPaused(true); } }
+      if (e.code === "KeyP" && e.shiftKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (rec.paused) { rec.resume(); setPaused(false); } else { rec.pause(); setPaused(true); } }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -203,7 +205,7 @@ function Collect({ name, open, onClose, onAdded, script }: { name: string; open:
       {tab === "read" ? (
         <>
           <HowItWorks>Record a session of 5-15 minutes at your natural YouTube pace. <kbd>space</kbd> moves to the next line,
-            <kbd>P</kbd> pauses and resumes (take a sip of water, the take waits). Stop when you&apos;re done: you listen first, nothing is sent until you add it.</HowItWorks>
+            <kbd>Shift</kbd> + <kbd>P</kbd> pauses and resumes (take a sip of water, the take waits). Stop when you&apos;re done: you listen first, nothing is sent until you add it.</HowItWorks>
           {!!script?.length && <p className="tiny" style={{ margin: "0 0 8px", color: "var(--ok)" }}>Reading the coach&apos;s script for {name}: aimed at what the voice is weakest at.</p>}
           <div className={`read-card big ${rec && !paused ? "live" : ""}`}>{LINES[i]}</div>
           <div className="row between" style={{ flexWrap: "wrap", gap: 10 }}>
@@ -404,10 +406,10 @@ function Benchmark({ mine, name }: { mine: MyVoice[]; name: string }) {
       <div className="card-head"><h2>Benchmark</h2><Info>Every voice reads the same sentences and gets the same scoring.</Info></div>
       <HowItWorks>Use sentences you never recorded. Voice match is measured against your real recording; naturalness is a predicted MOS (1-5); speed is seconds of compute per second of audio.</HowItWorks>
       <div className="grid" style={{ gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)", gap: 14 }}>
-        <textarea className="doc short" value={lines} onChange={(e) => setLines(e.target.value)} style={{ minHeight: 170, marginTop: 0 }} />
+        <textarea className="doc short" aria-label="Benchmark sentences" value={lines} onChange={(e) => setLines(e.target.value)} style={{ minHeight: 170, marginTop: 0 }} />
         <div className="stack" style={{ gap: 10 }}>
           <div><label className="f">Your real voice (the target)</label>
-            <select value={voice} onChange={(e) => setVoice(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Make it with Qwen3-TTS + Chatterbox above</option>}</select></div>
+            <select aria-label="Your real voice (the target)" value={voice} onChange={(e) => setVoice(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Make it with Qwen3-TTS + Chatterbox above</option>}</select></div>
           {([["myvoice", "Your trained model"], ["qwen", "Qwen clone"], ["chatterbox", "Chatterbox clone"], ["orpheus", "Orpheus preset"]] as const).map(([k, l]) => (
             <label key={k} className="row small" style={{ gap: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={picks[k]} onChange={(e) => setPicks({ ...picks, [k]: e.target.checked })} />{l}</label>
           ))}
@@ -483,9 +485,9 @@ function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
       )}
       <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
         <div className="field" style={{ margin: 0, flex: "1 1 200px" }}><label className="f">Match this recording of you</label>
-          <select value={target} onChange={(e) => setTarget(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Make it with Qwen3-TTS + Chatterbox above</option>}</select></div>
+          <select aria-label="Match this recording of you" value={target} onChange={(e) => setTarget(e.target.value)}>{mine.map((m) => <option key={m.name} value={m.name}>{m.label}</option>)}{!mine.length && <option value="">Make it with Qwen3-TTS + Chatterbox above</option>}</select></div>
         <div className="field" style={{ margin: 0, width: 150 }}><label className="f">Search</label>
-          <select value={rounds} onChange={(e) => setRounds(Number(e.target.value))}>
+          <select aria-label="Search depth" value={rounds} onChange={(e) => setRounds(Number(e.target.value))}>
             <option value={12}>Quick (12 rounds)</option><option value={24}>Normal (24)</option><option value={48}>Thorough (48)</option></select></div>
         <button onClick={run} disabled={busy || !target || !status?.online}>{have ? "Search again" : "Find my Kokoro voice"} <ArrowRight size={13} /></button>
       </div>
@@ -694,7 +696,7 @@ function Coach({ name, trained, onRecord, onSwitched }: { name: string; trained:
       <div className="row between" style={{ marginTop: 12, flexWrap: "wrap", gap: 8 }}>
         <span className="tiny dim">Your next recording session, written around what {name} is weakest at.</span>
         <span className="row" style={{ gap: 6 }}>
-          <select value={mins} onChange={(e) => setMins(Number(e.target.value))} style={{ width: "auto" }}>
+          <select aria-label="Session length" value={mins} onChange={(e) => setMins(Number(e.target.value))} style={{ width: "auto" }}>
             {[5, 8, 12, 15].map((m) => <option key={m} value={m}>{m} min</option>)}</select>
           <button className="sm" onClick={write} disabled={busy}>{script ? "Write another" : "Write my next script"} <ArrowRight size={13} /></button>
         </span>
@@ -760,23 +762,18 @@ export default function MyModel() {
   const voices = [...new Set([...people.map((p) => p.name), ...models.map((m) => m.name), ...(name ? [name] : [])])];
   const pickEngine = (
     <div className="card-head"><h2>Make the voice</h2>
-      <div className="seg"><button className={make === "orpheus" ? "on" : ""} onClick={() => setMake("orpheus")}>Train Orpheus</button>
-        <button className={make === "qwen" ? "on" : ""} onClick={() => setMake("qwen")}>Fine-tune Qwen3-TTS</button>
-        <button className={make === "clone" ? "on" : ""} onClick={() => setMake("clone")}>Instant clone · 1 min</button></div>
+      <div className="seg"><button className={make === "orpheus" ? "on" : ""} aria-pressed={make === "orpheus"} onClick={() => setMake("orpheus")}>Most natural <span className="faint tiny">· Orpheus</span></button>
+        <button className={make === "qwen" ? "on" : ""} aria-pressed={make === "qwen"} onClick={() => setMake("qwen")}>Multilingual <span className="faint tiny">· Qwen3-TTS</span></button>
+        <button className={make === "clone" ? "on" : ""} aria-pressed={make === "clone"} onClick={() => setMake("clone")}>Instant clone <span className="faint tiny">· 1 min</span></button></div>
     </div>
   );
 
   return (
     <>
-      <div className="head">
-        <div>
-          <div className="eyebrow">Your model</div>
-          <h1>Only <em>you.</em></h1>
-          <p className="sub">Pick a voice, add recordings, train it.</p>
-        </div>
-      </div>
+      <PageHeader title="Voice model" sub="Train a model of your voice: pick a voice, add recordings, train it."
+        actions={<Link href="/voices?record=1" className="btn ghost">Quick clone instead</Link>} />
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="card-head"><h2>Voice</h2><Info>Each voice has its own recordings and model; everyone can use every voice.</Info></div>
+        <div className="card-head"><div><h2>Voice</h2><p className="sub">Each voice has its own recordings and model; both of you can use every voice.</p></div></div>
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           {voices.map((n) => {
             const p = people.find((x) => x.name === n);
@@ -786,7 +783,7 @@ export default function MyModel() {
               <span><b>{n}</b><span className="dim tiny mono">{(p?.minutes ?? 0).toFixed(1)} min{m ? " · trained" : ""}</span></span></button>;
           })}
           <span className="row" style={{ gap: 6 }}>
-            <input value={fresh} placeholder="+ new voice name" style={{ width: 160 }}
+            <input value={fresh} placeholder="+ New voice name" aria-label="New voice name" style={{ width: 170 }}
               onChange={(e) => setFresh(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
               onKeyDown={(e) => { if (e.key === "Enter" && fresh) { setName(fresh); setFresh(""); } }} />
             {fresh && <button className="sm" onClick={() => { setName(fresh); setFresh(""); }}>Add <ArrowRight size={13} /></button>}
@@ -822,7 +819,7 @@ export default function MyModel() {
             : <Train key={make} name={name} minutes={minutes} follow={follow} head={pickEngine} engine={make} onTrained={loadModels} />}
           <Coach name={name} trained={models.some((m) => m.name === name)} onSwitched={loadModels}
             onRecord={(lines) => { setScript(lines); setAdding(true); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
-          <details className="card"><summary><b>More tools</b> <span className="dim small">· compare engines (Benchmark) · find the voice in Kokoro</span></summary>
+          <details className="card"><summary style={{ cursor: "pointer" }}><b>More tools</b> <span className="dim small">· compare engines · find the voice in Kokoro</span></summary>
             <div className="stack" style={{ gap: 16, marginTop: 14 }}>
               <Benchmark mine={mine} name={name} />
               <KokoroVoice mine={mine} name={name} />
@@ -830,7 +827,6 @@ export default function MyModel() {
           </details>
         </div>
       )}
-      <div style={{ height: 30 }} />
     </>
   );
 }

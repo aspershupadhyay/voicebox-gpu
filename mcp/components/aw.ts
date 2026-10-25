@@ -15,11 +15,17 @@ export function aw() {
 }
 export { ID, Query };
 
-/** Sign in to Appwrite, then trade a short-lived JWT for the dashboard's own cookie (who you are, for attribution). */
+/** Sign in to Appwrite, then trade a short-lived JWT for the dashboard's own cookie (who you are, for attribution).
+ *  With a name it's a sign-up: the server checks the invite list first and creates the account (api/login). */
 export async function signIn(email: string, password: string, name?: string) {
   const { account } = aw();
   await account.deleteSession({ sessionId: "current" }).catch(() => {});
-  if (name !== undefined) await account.create({ userId: ID.unique(), email, password, name: name || email.split("@")[0] });
+  if (name !== undefined) {
+    const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ signup: { name, email, password } }) });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(out.error || "Sign-up failed");
+    if (out.create === "client") await account.create({ userId: ID.unique(), email, password, name: name || email.split("@")[0] });
+  }
   await account.createEmailPasswordSession({ email, password });
   const { jwt } = await account.createJWT();
   const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jwt }) });
