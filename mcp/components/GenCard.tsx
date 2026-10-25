@@ -41,7 +41,7 @@ export function PendingCard({ job, w, h, label }: { job: Job | null; w: number; 
   if (failed) return (
     <div className="gen-card failed" style={{ aspectRatio: `${w} / ${h}` }}>
       <div className="stack" style={{ alignItems: "center", gap: 6, padding: 16, textAlign: "center" }}>
-        <WarningCircle size={26} weight="duotone" color="var(--signal2)" />
+        <WarningCircle size={26} weight="duotone" color="var(--danger)" />
         <b className="small">{job?.status === "cancelled" ? "Cancelled" : "Failed"}</b>
         {job?.error && <span className="tiny dim clamp2">{job.error}</span>}
       </div>

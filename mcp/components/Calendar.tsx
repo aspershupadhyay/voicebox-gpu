@@ -63,7 +63,7 @@ function CalendarInner() {
         <div>
           <div className="eyebrow">Workspace</div>
           <h1>Calendar. <em>What goes out, when.</em></h1>
-          <p className="sub">Drag posts onto a day to schedule them. Ideas you drop on a day become Scheduled.</p>
+          <p className="sub">Drag a post onto a day to schedule it.</p>
         </div>
         <div className="row" style={{ gap: 6 }}>
           <button className="ghost sm" onClick={() => { const d = new Date(); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); }}>Today</button>

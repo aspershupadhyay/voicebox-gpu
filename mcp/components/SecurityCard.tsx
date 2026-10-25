@@ -1,0 +1,89 @@
+"use client";
+// Settings → Security: who can get into the studio (and remove them), how this browser is signed in, "sign out
+// everywhere", and the last sign-ins, failed ones included. Server side: lib/access.ts, lib/session.ts.
+import { CheckCircle, GithubLogo, ShieldCheck, SignOut, UserPlus, WarningCircle, X } from "@phosphor-icons/react";
+import { useCallback, useEffect, useState } from "react";
+import { api } from "./api";
+import { useDialog } from "./Dialog";
+import { Info } from "./Info";
+
+type Person = { email: string; name: string | null; on_vercel: boolean; invited: boolean; member: boolean };
+type Sec = { session: { how: string; who: string; since: number; until: number } | null; me: string | null; people: Person[]; github: string[]; session_days: number;
+  log: { at: number; ok: boolean; who: string; how: string; ip: string; agent: string }[] };
+
+const ago = (t: number) => { const m = Math.round((Date.now() - t) / 60_000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+const device = (ua: string) => `${/iPhone|iPad/.test(ua) ? "iPhone/iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "Device"}${/Edg\//.test(ua) ? " · Edge" : /Chrome\//.test(ua) ? " · Chrome" : /Safari\//.test(ua) ? " · Safari" : /Firefox\//.test(ua) ? " · Firefox" : ""}`;
+
+export default function SecurityCard() {
+  const { toast, confirm } = useDialog();
+  const [d, setD] = useState<Sec | null>(null);
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => { api<Sec>("security").then(setD).catch(() => {}); }, []);
+  useEffect(load, [load]);
+
+  async function act(path: string, body: object, ok: string) {
+    setBusy(true);
+    try { await api(`security/${path}`, { body }); toast(ok, "ok"); load(); } catch (e) { toast((e as Error).message, "bad"); }
+    setBusy(false);
+  }
+
+  return (
+    <div className="card glow">
+      <div className="card-head"><h2><ShieldCheck size={16} weight="duotone" className="ic" /> Security</h2>
+        <span className="row" style={{ gap: 4 }}><span className="pill ok"><CheckCircle size={12} weight="fill" /> Invite-only</span>
+          <Info>Only the people below can sign in. Removing someone locks them out within a minute, on every device.</Info></span></div>
+
+      <div className="stack" style={{ gap: 0, marginTop: 8 }}>
+        {(d?.people ?? []).map((p) => (
+          <div key={p.email} className="sec-row">
+            <span className="avatar sm">{(p.name ?? p.email).slice(0, 2).toUpperCase()}</span>
+            <div style={{ minWidth: 0 }}>
+              <div className="small" style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{p.name ?? p.email}{p.email === d?.me ? <span className="faint"> · you</span> : null}</div>
+              <div className="tiny dim">{p.email} · {p.member ? "member" : "invited, not signed in yet"}{p.on_vercel ? " · set on Vercel" : ""}</div>
+            </div>
+            {p.email !== d?.me && !p.on_vercel ? (
+              <button className="icon-btn danger-h" title={`Remove ${p.email}`} disabled={busy} onClick={async () => {
+                if (await confirm({ title: `Remove ${p.email}?`, body: "They're signed out everywhere within a minute and can't sign back in until you add them again.", confirm: "Remove", danger: true }))
+                  act("remove", { email: p.email }, `${p.email} removed`);
+              }}><X size={15} /></button>
+            ) : <span />}
+          </div>
+        ))}
+        {d?.github.length ? <div className="sec-row"><GithubLogo size={20} /><div className="small">GitHub sign-in: <span className="mono">{d.github.join(", ")}</span></div><span /></div> : null}
+      </div>
+      <form className="row" style={{ gap: 8, marginTop: 12 }} onSubmit={(e) => { e.preventDefault(); if (email.trim()) act("add", { email }, `${email.trim()} can now sign in`).then(() => setEmail("")); }}>
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="partner@email.com" style={{ flex: 1, minWidth: 200 }} />
+        <button className="ghost" disabled={busy || !email.trim()}><UserPlus size={15} /> Invite</button>
+      </form>
+
+      <div className="row between" style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--line)", gap: 12 }}>
+        <div className="small">
+          <b>This device</b>
+          <div className="tiny dim">{d?.session ? `${d.session.how === "user" ? "Account" : d.session.how === "github" ? "GitHub" : "Access token"} · signed in ${ago(d.session.since)} · until ${new Date(d.session.until).toLocaleDateString()}` : "—"}
+            <Info>Sessions last {d?.session_days ?? 14} days, then you sign in again.</Info></div>
+        </div>
+        <button className="ghost sm" disabled={busy} onClick={async () => {
+          if (await confirm({ title: "Sign out everywhere?", body: "Every browser and device is signed out, this one included. Scripts using the access token keep working.", confirm: "Sign out everywhere", danger: true })) {
+            await act("signout-all", {}, "Signed out everywhere");
+            location.href = "/login";
+          }
+        }}><SignOut size={14} /> Sign out everywhere</button>
+      </div>
+
+      <details style={{ marginTop: 14 }}>
+        <summary className="small">Recent sign-ins {d?.log.some((l) => !l.ok) ? <span className="pill bad" style={{ marginLeft: 6 }}>{d.log.filter((l) => !l.ok).length} refused</span> : null}</summary>
+        <div style={{ marginTop: 8 }}>
+          {!d?.log.length ? <p className="tiny dim">None recorded yet.</p> : d.log.slice(0, 20).map((l, k) => (
+            <div key={k} className="sec-log">
+              {l.ok ? <CheckCircle size={15} weight="fill" color="var(--ok)" /> : <WarningCircle size={15} weight="fill" color="var(--danger)" />}
+              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><b style={{ fontWeight: 550 }}>{l.who}</b> <span className="dim">{l.how}</span></span>
+              <span className="dim agent">{device(l.agent)} · {l.ip}</span>
+              <span className="faint tiny">{ago(l.at)}</span>
+            </div>
+          ))}
+        </div>
+      </details>
+    </div>
+  );
+}

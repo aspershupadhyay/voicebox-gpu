@@ -2,7 +2,8 @@
 import { cookies } from "next/headers";
 import { allowedLogins, githubEnabled, githubLogin, safeNext, STATE_COOKIE } from "@/lib/github";
 import { origin } from "@/lib/oauth";
-import { COOKIE, sessionValue } from "@/lib/session";
+import { noteAttempt } from "@/lib/access";
+import { startSession } from "@/lib/session";
 import { safeEqual } from "@/lib/worker";
 
 export const dynamic = "force-dynamic";
@@ -25,9 +26,12 @@ export async function GET(req: Request) {
   } catch (e) {
     return deny((e as Error).message, 502);
   }
-  if (!login || !(await allowedLogins()).includes(login)) return deny(`GitHub account "${login || "?"}" isn't allowed on this voicebox.`);
-
-  jar.set(COOKIE, sessionValue(), { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 30 });
+  if (!login || !(await allowedLogins()).includes(login)) {
+    await noteAttempt(req, false, `github:${login || "?"}`, "github");
+    return deny(`GitHub account "${login || "?"}" isn't allowed on this voicebox.`);
+  }
+  await startSession("github", login);
+  await noteAttempt(req, true, `github:${login}`, "github");
   const next = safeNext(Buffer.from(nextB64 ?? "", "base64url").toString());
   return Response.redirect(new URL(next, origin(req)), 303);
 }

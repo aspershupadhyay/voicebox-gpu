@@ -68,16 +68,27 @@ class Engine:
                     lora = {"enable_lora": True, "max_lora_rank": max(16, rank, LORA_RANK if MULTI_LORA else 0), "max_loras": 2 if MULTI_LORA else 1}
                 kw = dict(model=MODEL, dtype="bfloat16" if has_bf16() else "float16", gpu_memory_utilization=util,
                           max_model_len=8192, enable_prefix_caching=True, max_num_seqs=int(os.environ.get("ORPHEUS_MAX_SEQS", "64")), **lora)
+
+                def build(**q):
+                    """Sleep mode lets the gateway park this engine in RAM (llm.sleep) when another model needs the GPU,
+                    and wake it in seconds instead of a cold start; without it, parking falls back to stopping."""
+                    if os.environ.get("ORPHEUS_SLEEP", "1") != "0":
+                        try:
+                            return LLM(enable_sleep_mode=True, **q, **kw)
+                        except Exception as e:  # noqa: BLE001
+                            print(f"[orpheus] sleep mode unavailable ({type(e).__name__}: {e})", flush=True)
+                            torch.cuda.empty_cache()
+                    return LLM(**q, **kw)
                 if fp8_ok():  # Ada / Hopper: 8-bit weights, half the memory traffic, ~1.5x the tokens a second
                     try:
-                        self.llm = LLM(quantization="fp8", **kw)
+                        self.llm = build(quantization="fp8")
                         print("[orpheus] fp8 weights", flush=True)
                     except Exception as e:  # noqa: BLE001  e.g. this vLLM can't mix fp8 with LoRA: plain weights then
                         print(f"[orpheus] fp8 unavailable ({type(e).__name__}: {e}); 16-bit weights", flush=True)
                         torch.cuda.empty_cache()
-                        self.llm = LLM(**kw)
+                        self.llm = build()
                 else:
-                    self.llm = LLM(**kw)
+                    self.llm = build()
                 if LORA:
                     from vllm.lora.request import LoRARequest
                     self.lora_req = LoRARequest("myvoice", 1, LORA)

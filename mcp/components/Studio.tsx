@@ -3,6 +3,7 @@ import { MagicWand, UploadSimple, Waveform, WarningCircle } from "@phosphor-icon
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, rangeFill, uploadFile, type Cleanup, type Job } from "./api";
+import { Info } from "./Info";
 import JobProgress from "./JobProgress";
 import { useResumeJob } from "./jobs";
 import LineRow from "./LineRow";
@@ -92,7 +93,7 @@ function CleanUp({ settings }: { settings: Settings | null }) {
   const r = job?.results[0];
   return (
     <div className="card" style={{ marginTop: 16 }}>
-      <div className="card-head"><h2><Waveform size={18} weight="duotone" /> Studio clean-up</h2><span className="dim tiny">bad mic in, studio sound out</span></div>
+      <div className="card-head"><h2><Waveform size={18} weight="duotone" /> Studio clean-up</h2></div>
       <p className="dim small" style={{ marginTop: 0 }}>
         Upload any recording of yourself (laptop mic, phone, a noisy room, or a video), or record one right here. It measures the noise, the room echo and how much
         of the voice the mic captured, runs only what that recording needs, and checks it still sounds like you. Same length as the
@@ -156,7 +157,7 @@ export default function Studio() {
         <div>
           <div className="eyebrow">Clean-up</div>
           <h1>Bad mic in, <em>studio sound out.</em></h1>
-          <p className="sub">Drop a voiceover you recorded yourself. Noise and room echo come out, detail comes back, and it's mastered for the platform, at exactly the same length so it stays in sync with your edit.</p>
+          <p className="sub">A rough recording in, studio sound out. <Info>Noise and room echo out, detail back, mastered for the platform, same length so it stays in sync.</Info></p>
         </div>
         <Link className="btn ghost sm" href="/settings">Defaults</Link>
       </div>

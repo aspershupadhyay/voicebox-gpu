@@ -5,6 +5,7 @@
 import { ArrowsClockwise, CheckCircle, WarningCircle } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { Info } from "./Info";
 import { useDialog } from "./Dialog";
 import GpuCard from "./GpuCard";
 import MachineCard, { type GpuFit, type MachineWorker, type Metrics } from "./MachineCard";
@@ -55,7 +56,7 @@ export default function Health() {
   return (
     <>
       <div className="head"><div><div className="eyebrow">Health</div><h1>What&apos;s <em>working.</em></h1>
-        <p className="sub">Speed, failures, retrains and the worker&apos;s own checks, from the last {h?.jobs ?? "…"} jobs.</p></div></div>
+        <p className="sub">The GPU, the machine and every engine, from the last {h?.jobs ?? "…"} jobs.</p></div></div>
       {err && <p className="err">{err}</p>}
       <div className="stack" style={{ gap: 16 }}>
         <GpuCard />
@@ -87,7 +88,7 @@ export default function Health() {
         </div>
 
         <div className="card">
-          <div className="card-head"><h2>Voice engines</h2><span className="dim tiny">speed = seconds of GPU work per second of audio (lower is faster)</span></div>
+          <div className="card-head"><h2>Voice engines</h2><Info>Speed = seconds of GPU work per second of audio. Lower is faster.</Info></div>
           {!h?.engines.length ? <p className="dim small" style={{ margin: 0 }}>No voiceovers recorded yet.</p> : (
             <table className="table">
               <thead><tr><th>Engine</th><th>Jobs</th><th>Audio</th><th>Speed</th><th>Where the time goes</th><th>Re-voiced</th><th title="Average GPU busy while its jobs ran">GPU busy</th><th>Failed</th></tr></thead>

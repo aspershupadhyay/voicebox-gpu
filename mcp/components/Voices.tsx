@@ -5,6 +5,7 @@ import {
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api, uploadFile, type Job, type MyVoice } from "./api";
+import { Info } from "./Info";
 import { VoiceGlyph } from "./art";
 import { useDialog } from "./Dialog";
 import { GuideButton } from "./GuideDrawer";
@@ -293,7 +294,7 @@ function Revoice({ mine }: { mine: MyVoice[] }) {
   const voices = [...mine.map((m) => [m.name, m.label] as const), ["female", "female preset"] as const, ["male", "male preset"] as const];
   return (
     <div className="card" style={{ marginTop: 14 }}>
-      <div className="card-head"><h2><ArrowsClockwise size={18} weight="duotone" /> Re-voice a take</h2><span className="dim tiny">your performance, studio voice</span></div>
+      <div className="card-head"><h2><ArrowsClockwise size={18} weight="duotone" /> Re-voice a take</h2><Info>Perform the line your way; it comes back in a clean studio voice.</Info></div>
       <p className="dim small" style={{ marginTop: 0 }}>
         Record yourself anywhere (a phone voice memo, a screen recording, a rough take) and get it back in your clean recorded voice.
         Your timing, emphasis and emotion stay, so it lines up with the original video frame for frame. Up to 15 minutes.
@@ -376,7 +377,7 @@ export default function Voices() {
         <div>
           <div className="eyebrow">Cast</div>
           <h1>Hear them <em>first.</em></h1>
-          <p className="sub">Audition every voice before you write a word, or record your own and let Qwen read your scripts in it.</p>
+          <p className="sub">Audition any voice, or record your own.</p>
         </div>
         <GuideButton engine="qwen" label="Recording guide" />
       </div>

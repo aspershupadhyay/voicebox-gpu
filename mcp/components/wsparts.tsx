@@ -68,7 +68,7 @@ export function UploadList({ uploads }: { uploads: Upload[] }) {
       {uploads.map((u) => (
         <div key={u.key} className="up-row">
           <span className="small" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
-          {u.error ? <span className="tiny" style={{ color: u.progress >= 1 ? "var(--warn)" : "var(--signal2)" }}>{u.error}</span>
+          {u.error ? <span className="tiny" style={{ color: u.progress >= 1 ? "var(--warn)" : "var(--danger)" }}>{u.error}</span>
             : <span className="mono tiny dim">{Math.round(u.progress * 100)}%</span>}
           <div className="bar thin" style={{ width: 90 }}><i style={{ width: `${u.progress * 100}%` }} /></div>
         </div>

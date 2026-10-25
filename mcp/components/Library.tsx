@@ -5,6 +5,7 @@ import {
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api, fileUrl, fmtS, matchClass, pct, type Gen, type GenImage } from "./api";
+import { Info } from "./Info";
 import { CassetteArt, VoiceGlyph } from "./art";
 import LineRow, { coached, type Line } from "./LineRow";
 import { useStatus } from "./Shell";
@@ -287,7 +288,7 @@ export default function Library() {
         <div>
           <div className="eyebrow">Archive</div>
           <h1>The <em>library.</em></h1>
-          <p className="sub">Every take, subtitle and render, stored privately in your R2 bucket. It stays here after Colab shuts down.</p>
+          <p className="sub">Every take, subtitle and render, kept privately. <Info>Stored in your R2 bucket, so it stays after the GPU shuts down.</Info></p>
         </div>
         <Link href="/generate" className="btn sig"><Microphone size={16} weight="bold" />New voiceover</Link>
       </div>

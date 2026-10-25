@@ -35,7 +35,7 @@ export default async function Authorize({ searchParams }: { searchParams: Promis
       </div>
       <div className="l-form">
         <div style={{ width: "100%", maxWidth: 380 }}>
-          <div className="row" style={{ gap: 12, marginBottom: 34 }}><Logo size={36} /><span style={{ font: "400 32px var(--display)" }}>voice<em style={{ color: "var(--signal)" }}>box</em></span></div>
+          <div className="row" style={{ gap: 12, marginBottom: 34 }}><Logo size={36} /><span style={{ font: "600 26px var(--sans)", letterSpacing: "-.02em" }}>Voicebox <em style={{ font: "italic 400 28px var(--serif)", color: "var(--dim)" }}>Studio</em></span></div>
           <div className="eyebrow">Connect an app</div>
           {bad ? (
             <>
