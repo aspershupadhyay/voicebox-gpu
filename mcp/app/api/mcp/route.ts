@@ -114,7 +114,7 @@ const handler = createMcpHandler(
             [n, await call<{ text: string }>(`/logs/${n}?n=40`).then((r) => r.text.slice(-4000)).catch(() => null)] as const)));
           return text({ online: true, last_seen_s_ago: age, ...h, latest_worker_version: WORKER_VERSION, colab, ...(Object.keys(logs).length ? { engine_logs: logs } : {}) });
         } catch (e) {
-          return text({ online: false, last_seen_s_ago: age, registered: rec, error: (e as Error).message });
+          return text({ online: false, last_seen_s_ago: age, registered: rec, error: (e as Error).message, colab });
         }
       },
     );
@@ -356,10 +356,14 @@ const handler = createMcpHandler(
       "gpu",
       {
         title: "Control the Colab GPU",
-        description: "The GPU without opening Colab (Colab is connected on the Health page). Actions: status (default): compute units left, hourly burn, runtimes assigned, the current session, settings. start: assign a Colab GPU (gpu A100 / L4 / H100 / T4 / G4, default from settings) and launch the worker on it; it shows online in worker_status in ~3-8 min. stop: release a runtime (endpoint, default the current session's; with nothing else known, the only runtime assigned) and billing stops at once. restart_worker: restart the worker process on the running GPU (keeps the runtime; force: true even while a job runs). update_worker: fetch the newest worker code and restart with it (worker 3.1.0+). selfcheck: run the worker's quick self-check (results in worker_status.selfcheck). settings: change gpu (default for start), idle_stop_min (0 = never; stops a GPU started from the app after that many idle minutes), remind_hours (0 = never), low_units (warn below), ntfy (on / off: phone push via the ntfy app). notify_test: send a test push.",
+        description: "The GPU without opening Colab (Colab is connected on the Health page). Actions: status (default): compute units left, hourly burn, runtimes assigned, the current session, settings. start: assign a Colab GPU and launch the worker on it; it shows online in worker_status in ~3-8 min. Pick by purpose: voice (voiceovers, subtitles, clean-up: settings voice_gpu, an L4 by default, far cheaper and plenty for them) or heavy (training, RLHF polish, video: settings heavy_gpu, an A100); or name gpu (A100 / L4 / H100 / T4 / G4) outright; high_ram true/false overrides the setting (L4 has one shape). status shows rates: the units an hour Colab really charged per runtime kind. stop: release a runtime (endpoint, default the current session's; with nothing else known, the only runtime assigned) and billing stops at once. restart_worker: restart the worker process on the running GPU (keeps the runtime; force: true even while a job runs). update_worker: fetch the newest worker code and restart with it (worker 3.1.0+). selfcheck: run the worker's quick self-check (results in worker_status.selfcheck). settings: change gpu (default for start without a purpose), voice_gpu, heavy_gpu, high_ram, idle_stop_min (0 = never; stops a GPU started from the app after that many idle minutes), remind_hours (0 = never), low_units (warn below), ntfy (on / off: phone push via the ntfy app). notify_test: send a test push.",
         inputSchema: z.object({
           action: z.enum(["status", "start", "stop", "restart_worker", "update_worker", "selfcheck", "settings", "notify_test"]).optional(),
           gpu: z.enum(["A100", "L4", "H100", "T4", "G4"]).optional(),
+          purpose: z.enum(["voice", "heavy"]).optional(),
+          high_ram: z.boolean().optional(),
+          voice_gpu: z.enum(["A100", "L4", "H100", "T4", "G4"]).optional(),
+          heavy_gpu: z.enum(["A100", "L4", "H100", "T4", "G4"]).optional(),
           endpoint: z.string().max(200).optional(),
           force: z.boolean().optional(),
           idle_stop_min: z.number().min(0).max(600).optional(),
@@ -368,10 +372,10 @@ const handler = createMcpHandler(
           ntfy: z.enum(["on", "off"]).optional(),
         }),
       },
-      async ({ action, gpu, endpoint, force, idle_stop_min, remind_hours, low_units, ntfy }) => {
+      async ({ action, gpu, purpose, high_ram, voice_gpu, heavy_gpu, endpoint, force, idle_stop_min, remind_hours, low_units, ntfy }) => {
         try {
           const colab = await import("@/lib/colab");
-          if (action === "start") return text({ ...(await colab.start(colab.appOrigin(), gpu)), next: "The worker comes online in ~3-8 min: check worker_status." });
+          if (action === "start") return text({ ...(await colab.start(colab.appOrigin(), gpu, { purpose, high_ram })), next: "The worker comes online in ~3-8 min: check worker_status." });
           if (action === "stop") {
             let ep = endpoint ?? (await colab.getSession())?.endpoint;
             if (!ep) {
@@ -388,7 +392,7 @@ const handler = createMcpHandler(
           if (action === "settings") {
             const cur = await colab.getConfig();
             const topic = ntfy === "off" ? null : ntfy === "on" ? (cur.ntfy_topic ?? `voicebox-${crypto.randomUUID().replace(/-/g, "").slice(0, 14)}`) : undefined;
-            const next = await colab.setConfig({ gpu, idle_stop_min, remind_hours, low_units, ...(topic !== undefined ? { ntfy_topic: topic } : {}) });
+            const next = await colab.setConfig({ gpu, voice_gpu, heavy_gpu, high_ram, idle_stop_min, remind_hours, low_units, ...(topic !== undefined ? { ntfy_topic: topic } : {}) });
             return text({ ...next, ...(next.ntfy_topic ? { ntfy_subscribe: `Install the ntfy app and subscribe to ${next.ntfy_topic} (https://ntfy.sh/${next.ntfy_topic})` } : {}) });
           }
           return text(await colab.status());

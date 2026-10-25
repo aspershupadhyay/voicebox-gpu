@@ -67,7 +67,7 @@ class Engine:
                     rank = int(json.load(open(os.path.join(LORA, "adapter_config.json"))).get("r", LORA_RANK)) if LORA else LORA_RANK
                     lora = {"enable_lora": True, "max_lora_rank": max(16, rank, LORA_RANK if MULTI_LORA else 0), "max_loras": 2 if MULTI_LORA else 1}
                 kw = dict(model=MODEL, dtype="bfloat16" if has_bf16() else "float16", gpu_memory_utilization=util,
-                          max_model_len=8192, enable_prefix_caching=True, max_num_seqs=64, **lora)
+                          max_model_len=8192, enable_prefix_caching=True, max_num_seqs=int(os.environ.get("ORPHEUS_MAX_SEQS", "64")), **lora)
                 if fp8_ok():  # Ada / Hopper: 8-bit weights, half the memory traffic, ~1.5x the tokens a second
                     try:
                         self.llm = LLM(quantization="fp8", **kw)

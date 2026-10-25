@@ -7,17 +7,18 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
 import GpuCard from "./GpuCard";
+import MachineCard, { type GpuFit, type MachineWorker, type Metrics } from "./MachineCard";
 
 type Engine = { engine: string; jobs: number; failed: number; lines: number; audio_min: number; speed: number | null; steps: Record<string, number | null>;
-  step_share: Record<string, number>; retry_rate: number | null; unfixed: number };
+  step_share: Record<string, number>; retry_rate: number | null; unfixed: number; gpu_util?: number | null; vram_peak_gb?: number | null };
 type Step = { name: string; ok: boolean; detail: string };
 type HealthData = {
   jobs: number; engines: Engine[]; latest_version: string;
   failures: { id: string; kind: string; mode?: string | null; method?: string | null; engine?: string; voice?: string; error?: string | null; at: number }[];
   trains: { id: string; method: string; voice?: string; status: string; error?: string | null; minutes: number; at: number }[];
   gates: { name: string; engine: string; stage: string; at: number; old?: number | null; new?: number | null; note?: string }[];
-  kept: { promoted: number; kept_old: number };
-  worker: { offline?: string; version?: string; gpu?: { name: string; used_gb: number; total_gb: number }; engine_errors?: Record<string, string>; uptime_s?: number;
+  kept: { promoted: number; kept_old: number }; metrics: Metrics; gpu_fit?: GpuFit;
+  worker: MachineWorker & { offline?: string; version?: string; gpu?: { name: string; used_gb: number; total_gb: number }; engine_errors?: Record<string, string>; uptime_s?: number;
     selfcheck?: { ok: boolean; why: string; at: number; version?: string; steps: Step[] } | null };
 };
 const STEPS = ["loading", "generating", "listening", "re-voicing", "mastering"];
@@ -30,7 +31,7 @@ export default function Health() {
   const [log, setLog] = useState<{ engine: string; text: string } | null>(null);
   const [busy, setBusy] = useState("");
   const load = useCallback(() => { api<HealthData>("health").then(setH).catch((e) => setErr((e as Error).message)); }, []);
-  useEffect(() => { load(); const t = setInterval(load, 30_000); return () => clearInterval(t); }, [load]);
+  useEffect(() => { load(); const t = setInterval(load, 15_000); return () => clearInterval(t); }, [load]);
   const w = h?.worker;
   const stale = w?.version && h && w.version !== h.latest_version;
 
@@ -58,6 +59,7 @@ export default function Health() {
       {err && <p className="err">{err}</p>}
       <div className="stack" style={{ gap: 16 }}>
         <GpuCard />
+        <MachineCard w={w} m={h?.metrics ?? null} fit={h?.gpu_fit} />
         <div className="card">
           <div className="card-head"><h2>Worker</h2>
             <span className="row" style={{ gap: 6 }}>
@@ -88,7 +90,7 @@ export default function Health() {
           <div className="card-head"><h2>Voice engines</h2><span className="dim tiny">speed = seconds of GPU work per second of audio (lower is faster)</span></div>
           {!h?.engines.length ? <p className="dim small" style={{ margin: 0 }}>No voiceovers recorded yet.</p> : (
             <table className="table">
-              <thead><tr><th>Engine</th><th>Jobs</th><th>Audio</th><th>Speed</th><th>Where the time goes</th><th>Re-voiced</th><th>Failed</th></tr></thead>
+              <thead><tr><th>Engine</th><th>Jobs</th><th>Audio</th><th>Speed</th><th>Where the time goes</th><th>Re-voiced</th><th title="Average GPU busy while its jobs ran">GPU busy</th><th>Failed</th></tr></thead>
               <tbody>{h.engines.map((e) => (
                 <tr key={e.engine}>
                   <td><b className="small">{e.engine}</b></td>
@@ -97,6 +99,7 @@ export default function Health() {
                   <td className="mono small">{e.speed != null ? `${e.speed}×` : "—"}</td>
                   <td className="tiny">{STEPS.filter((s) => e.step_share[s]).map((s) => `${s} ${e.step_share[s]}%`).join(" · ") || "—"}</td>
                   <td className="mono small" title="Share of lines the review had to voice again; unfixed = still below the bar">{e.retry_rate != null ? `${Math.round(e.retry_rate * 100)}%` : "—"}{e.unfixed ? ` · ${e.unfixed} unfixed` : ""}</td>
+                  <td className="mono small">{e.gpu_util != null ? `${e.gpu_util}%` : "—"}</td>
                   <td className="small">{e.failed ? <span className="pill bad">{e.failed}</span> : <span className="dim">0</span>} <button className="ghost xs" onClick={() => showLog(e.engine)}>log</button></td>
                 </tr>))}</tbody>
             </table>

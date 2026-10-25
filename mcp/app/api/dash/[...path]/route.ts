@@ -69,8 +69,9 @@ export async function GET(req: Request, ctx: Ctx) {
       // the Health page: what's working, what isn't (job notes in R2) + the worker's own state and self-check
       const { healthSummary } = await import("@/lib/telemetry");
       const { WORKER_VERSION } = await import("@/lib/bundle");
-      const worker = await call<Record<string, unknown>>("/health", { timeoutMs: 8000 }).catch((e: Error) => ({ offline: e.message }));
-      return Response.json({ ...(await healthSummary()), worker, latest_version: WORKER_VERSION });
+      const [worker, metrics] = await Promise.all([call<Record<string, unknown>>("/health", { timeoutMs: 8000 }).catch((e: Error) => ({ offline: e.message })),
+        call<Record<string, unknown>>("/metrics", { timeoutMs: 8000 }).catch(() => null)]); // older workers have no /metrics
+      return Response.json({ ...(await healthSummary()), worker, metrics, latest_version: WORKER_VERSION });
     }
     if (a === "coach" && b && VOICE_RE.test(b)) return Response.json(await (await import("@/lib/coach")).report(b));
     if (a === "datasets" && !b) return Response.json({ datasets: await listDatasets() });
@@ -328,7 +329,8 @@ export async function POST(req: Request, ctx: Ctx) {
       if (b === "auth") return Response.json({ url: await colab.authUrl() });
       if (b === "connect") return Response.json(await colab.connect(String(body.code ?? "")));
       if (b === "disconnect") { await colab.disconnect(); return Response.json({ ok: true }); }
-      if (b === "start") return Response.json(await colab.start(new URL(req.url).origin, body.gpu));
+      if (b === "start") return Response.json(await colab.start(new URL(req.url).origin, body.gpu,
+        { purpose: body.purpose === "voice" || body.purpose === "heavy" ? body.purpose : undefined, high_ram: typeof body.high_ram === "boolean" ? body.high_ram : undefined }));
       if (b === "stop") {
         const ep = String(body.endpoint ?? (await colab.getSession())?.endpoint ?? "");
         if (!ep) return Response.json({ error: "no runtime to stop" }, { status: 400 });

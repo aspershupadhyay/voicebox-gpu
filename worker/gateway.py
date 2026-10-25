@@ -124,6 +124,178 @@ def mark_used(name):
         pass
 
 
+
+def _meminfo():
+    """/proc/meminfo in GB: total, available, and the page cache (files the kernel keeps in RAM, e.g. model weights)."""
+    try:
+        m = {l.split(":")[0]: int(l.split()[1]) / 2**20 for l in open("/proc/meminfo")}
+        return {"total": m["MemTotal"], "avail": m["MemAvailable"], "cache": m.get("Cached", 0.0) + m.get("Buffers", 0.0)}
+    except Exception:
+        return None
+
+
+# --------------------------------------------------------------------------------------- monitor
+class Monitor:
+    """What the machine is doing, every few seconds: CPU busy %, RAM (and the page cache holding model weights), GPU
+    busy %, GPU memory, power. Keeps the last 10 minutes for the Health page's charts, and folds each running job's
+    share into job["_res"] (job_view "resources"), so the dashboard can tell which jobs need a big GPU and which
+    leave it idle."""
+
+    def __init__(self, every=5, keep=120):
+        from collections import deque
+        self.every, self.samples, self.cores = every, deque(maxlen=keep), os.cpu_count() or 1
+        self._cpu = self._stat()
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    @staticmethod
+    def _stat():
+        try:
+            v = [int(x) for x in open("/proc/stat").readline().split()[1:]]
+            return sum(v), v[3] + (v[4] if len(v) > 4 else 0)  # all jiffies, idle + iowait
+        except Exception:
+            return None
+
+    @staticmethod
+    def _gpu():
+        try:
+            out = subprocess.check_output(["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,power.draw,temperature.gpu",
+                                           "--format=csv,noheader,nounits"], text=True, timeout=5).strip().splitlines()[0]
+            num = [float(x) if re.match(r"^[\d.]+$", x.strip()) else None for x in out.split(",")]
+            return {"gpu": num[0], "vram_gb": round(num[1] / 1024, 1) if num[1] is not None else None, "power_w": num[2], "temp_c": num[3]}
+        except Exception:
+            return {}
+
+    def sample(self):
+        now, cpu = self._stat(), None
+        if now and self._cpu and now[0] > self._cpu[0]:
+            cpu = round(100 * (1 - (now[1] - self._cpu[1]) / (now[0] - self._cpu[0])), 1)
+        self._cpu = now
+        m = _meminfo() or {"total": 0, "avail": 0, "cache": 0}
+        return {"t": round(time.time()), "cpu": cpu, "ram_gb": round(m["total"] - m["avail"], 1), "cache_gb": round(m["cache"], 1), **self._gpu()}
+
+    def _loop(self):
+        while True:
+            time.sleep(self.every)
+            try:
+                s = self.sample()
+            except Exception:  # noqa: BLE001  a missed sample is nothing
+                continue
+            self.samples.append(s)
+            for j in [j for j in list(JOBS.values()) if j["status"] == "running"]:
+                r = j.setdefault("_res", {"n": 0, "gpu": 0.0, "cpu": 0.0, "vram_peak_gb": 0.0, "ram_peak_gb": 0.0, "power": 0.0})
+                r["n"] += 1
+                r["gpu"] += s.get("gpu") or 0
+                r["cpu"] += s.get("cpu") or 0
+                r["power"] += s.get("power_w") or 0
+                r["vram_peak_gb"] = max(r["vram_peak_gb"], s.get("vram_gb") or 0)
+                r["ram_peak_gb"] = max(r["ram_peak_gb"], s["ram_gb"])
+
+    def latest(self):
+        return self.samples[-1] if self.samples else self.sample()
+
+
+def job_resources(job):
+    """A job's average GPU / CPU use and its peaks, from the monitor's samples while it ran (None until sampled)."""
+    r = job.get("_res")
+    if not r or not r["n"]:
+        return None
+    return {"gpu_util": round(r["gpu"] / r["n"]), "cpu_util": round(r["cpu"] / r["n"]), "power_w": round(r["power"] / r["n"]),
+            "vram_peak_gb": r["vram_peak_gb"], "ram_peak_gb": r["ram_peak_gb"], "gpu_name": gpu_info_cached()["name"], "lane": job.get("lane", "gpu")}
+
+
+_GPU_INFO = []
+
+
+def gpu_info_cached():
+    if not _GPU_INFO:
+        _GPU_INFO.append(gpu_info())
+    return _GPU_INFO[0]
+
+
+# --------------------------------------------------------------------------------------- warm weights
+class Warmer:
+    """Keeps model weights in RAM so starting an engine reads them from memory, not the disk: the engines you use most
+    (weights + their Python packages) are read into the kernel's page cache while nothing is loading. The page cache
+    belongs to the VM, not to this process, so it outlives worker restarts and updates, and the kernel hands it back
+    the moment a program needs the memory: it never takes RAM from a job. Budget: VOICEBOX_WARM_GB, else 55% of RAM
+    less what programs already use (a 167 GB machine holds every engine; a 12 GB one warms nothing)."""
+
+    def __init__(self):
+        self.state, self.files, self.last = {}, {}, 0.0   # engine -> {gb, warm, secs}; path -> (size, mtime) read
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    @staticmethod
+    def budget_gb():
+        if os.environ.get("VOICEBOX_WARM_GB"):
+            return float(os.environ["VOICEBOX_WARM_GB"])
+        m = _meminfo()
+        if not m:
+            return 0.0
+        b = 0.55 * m["total"] - (m["total"] - m["avail"])
+        return round(b, 1) if b >= 4 else 0.0
+
+    @staticmethod
+    def dirs(name):
+        out = [cache_dir(name)]
+        venv = os.path.dirname(os.path.dirname(C.python_for(name)))
+        if os.path.isdir(venv):
+            out.append(venv)
+        return [d for d in out if os.path.isdir(d)]
+
+    def plan(self):
+        """The engines to keep warm: most recently used first, while they fit the budget."""
+        budget, used, out = self.budget_gb(), 0.0, []
+        for n in sorted((n for n in C.ENGINES if USAGE.get(n)), key=lambda n: -USAGE[n]):
+            gb = sum(dir_gb(d) for d in self.dirs(n))
+            if gb and used + gb <= budget:
+                out.append((n, gb))
+                used += gb
+        return out
+
+    def _quiet(self):
+        return not any(ENG.state[n] in ("installing", "loading") for n in C.ENGINES)
+
+    def _read(self, path, buf):
+        st = os.stat(path)
+        if self.files.get(path) == (st.st_size, st.st_mtime) and time.time() - self.last < 3600:
+            return 0
+        with open(path, "rb", buffering=0) as f:
+            while f.readinto(buf):
+                pass
+        self.files[path] = (st.st_size, st.st_mtime)
+        return st.st_size
+
+    def warm(self):
+        buf = bytearray(16 << 20)
+        for name, gb in self.plan():
+            t0, done = time.time(), 0
+            self.state[name] = {"gb": round(gb, 1), "warm": False, "secs": None}
+            for d in self.dirs(name):
+                for root, _, fs in os.walk(d):
+                    for f in fs:
+                        while not self._quiet():  # never compete with an engine that is loading
+                            time.sleep(5)
+                        try:
+                            done += self._read(os.path.join(root, f), buf)
+                        except OSError:
+                            pass
+            self.state[name] = {"gb": round(gb, 1), "warm": True, "secs": round(time.time() - t0, 1), "read_gb": round(done / 1e9, 1)}
+        self.last = time.time()
+
+    def _loop(self):
+        time.sleep(15)
+        while True:
+            try:
+                if self.budget_gb() > 0:
+                    self.warm()
+            except Exception as e:  # noqa: BLE001
+                log(f"warm weights: {type(e).__name__}: {e}")
+            time.sleep(600)  # pick up new downloads; re-read anything the kernel let go of
+
+    def view(self):
+        return {"budget_gb": self.budget_gb(), "engines": self.state}
+
+
 # --------------------------------------------------------------------------------------- engines
 class Engines:
     """Starts engine processes lazily and keeps the machine lean:
@@ -141,11 +313,13 @@ class Engines:
         self.batch = {}
         self.errors = {}
         self.fetch = {}   # name -> live download / load progress while installing or loading
+        self.loads = {}   # name -> the last start: seconds from launch to ready, and whether its weights were in RAM
         self.lock = threading.RLock()
         self.budget = float(os.environ.get("VOICEBOX_VRAM_GB") or gpu_info()["total_gb"] or 0) - 1.5
         # size the vLLM engines to the card: a bigger KV cache generates more sentences at once
         pool = float(os.environ.get("ORPHEUS_VRAM_GB") or C.vllm_pool_gb(self.budget + 1.5))
         os.environ["ORPHEUS_VRAM_GB"] = f"{pool:g}"
+        os.environ.setdefault("ORPHEUS_MAX_SEQS", str(C.vllm_max_seqs(pool)))
         for n in ("orpheus", "myvoice"):
             C.ENGINES[n]["gpu_gb"] = pool + 2.5  # + SNAC decoder + CUDA context
         threading.Thread(target=self._reaper, daemon=True).start()
@@ -156,7 +330,7 @@ class Engines:
 
     @property
     def mode(self):
-        groups = {C.ENGINES[n]["group"] for n in self.procs}
+        groups = {C.ENGINES[n]["group"] for n in self.procs if C.ENGINES[n]["gpu_gb"]} or {C.ENGINES[n]["group"] for n in self.procs}
         return groups.pop() if len(groups) == 1 else ("mixed" if groups else "idle")
 
     def idle_left(self):
@@ -223,8 +397,10 @@ class Engines:
         return py
 
     def _switch_group(self, name):
+        if not C.ENGINES[name]["gpu_gb"]:
+            return  # a CPU engine (Kokoro) sits next to either group: it's what the CPU lane runs while the GPU works
         group = C.ENGINES[name]["group"]
-        others = [n for n in self.procs if C.ENGINES[n]["group"] != group]
+        others = [n for n in self.procs if C.ENGINES[n]["group"] != group and C.ENGINES[n]["gpu_gb"]]
         busy = [n for n in others if self.inflight[n]]
         if busy:
             raise RuntimeError(f"{busy[0]} is busy right now; {name} can start when it finishes")
@@ -297,6 +473,7 @@ class Engines:
                                       "--port", str(C.ENGINES[name]["port"])], stdout=logf, stderr=logf, env=env, cwd=HERE,
                                      start_new_session=True)  # own process group: stop() also kills vLLM's children
                 self.procs[name] = p
+                t_load, warm = time.time(), bool(WARM.state.get(name, {}).get("warm"))
                 deadline = time.time() + 30 * 60
                 while time.time() < deadline:
                     if p.poll() is not None:
@@ -306,7 +483,8 @@ class Engines:
                             self.batch[name] = bool(json.loads(r.read()).get("batch"))
                         self._set(name, "ready")
                         self.errors.pop(name, None)
-                        log(f"{name} ready (batch={self.batch[name]})")
+                        self.loads[name] = {"secs": round(time.time() - t_load, 1), "warm": warm, "at": time.time()}
+                        log(f"{name} ready in {time.time() - t_load:.0f} s (batch={self.batch[name]}, weights {'in RAM' if warm else 'from disk'})")
                         return
                     except Exception:
                         time.sleep(2)
@@ -385,6 +563,8 @@ class Engines:
 
 
 ENG = Engines()
+WARM = Warmer()
+MON = Monitor()
 
 
 # --------------------------------------------------------------------------------------- references
@@ -718,7 +898,8 @@ def write_subs(jdir, stem, cues, words):
 
 # --------------------------------------------------------------------------------------- jobs
 JOBS = OrderedDict()
-QUEUE = []
+QUEUE = []       # the GPU lane: one job at a time
+CPU_QUEUE = []   # the CPU lane: jobs that need no GPU, run alongside
 QCOND = threading.Condition()
 MAX_LINES, MAX_TEXT = 1000, 100_000
 
@@ -729,12 +910,28 @@ def resolve_voice(engine, voice):
     return spec["presets"].get(voice, voice)
 
 
+def _cpu_only(job):
+    """A job that never touches the GPU (a Kokoro voiceover with no listening pass, subtitles or studio polish): it runs
+    in the CPU lane, next to whatever the GPU is doing, instead of waiting behind it."""
+    return (job["kind"] == "tts" and not job.get("mode") and C.ENGINES.get(job.get("engine"), {}).get("gpu_gb", 1) == 0
+            and job.get("takes", 1) == 1 and not job.get("review") and not job.get("subtitles") and not (job.get("post") or {}).get("enhance"))
+
+
+def _queue_of(job):
+    return CPU_QUEUE if job.get("lane") == "cpu" else QUEUE
+
+
 def _enqueue(job):
     os.makedirs(os.path.join(JOBS_DIR, job["id"]), exist_ok=True)
+    job["lane"] = "cpu" if _cpu_only(job) else "gpu"
+    g = gpu_info_cached()
+    if job["kind"] in ("train", "video") and 0 < g["total_gb"] < 30:
+        job.setdefault("warnings", []).append(f"{'training' if job['kind'] == 'train' else 'video'} on a {g['total_gb']:.0f} GB {g['name'].replace('NVIDIA ', '')}: "
+                                              "it works, but an A100 does it much faster (Health: Start for training & video)")
     with QCOND:
         JOBS[job["id"]] = job
-        QUEUE.append(job["id"])
-        QCOND.notify()
+        _queue_of(job).append(job["id"])
+        QCOND.notify_all()
     while len(JOBS) > 300:
         JOBS.popitem(last=False)
     return job
@@ -1553,13 +1750,11 @@ def run_tts(job):
     _generate(job, first, out, ref_path, ref_text, order, len(plans))
 
     if takes == 1 and not job.get("review"):  # fast path: no listening pass
-        for p in plans:
-            _assemble(job, jdir, p, [out(p, i, 0) for i in range(len(p["chunks"]))])
+        _assemble_all(job, jdir, [(p, [out(p, i, 0) for i in range(len(p["chunks"]))], None) for p in plans])
     else:
         picks = _review(job, plans, out, ref_path, ref_text, order)
-        for p in plans:
-            _assemble(job, jdir, p, [out(p, i, picks[p["ln"]["id"]]["take"][i]) for i in range(len(p["chunks"]))],
-                      picks[p["ln"]["id"]])
+        _assemble_all(job, jdir, [(p, [out(p, i, picks[p["ln"]["id"]]["take"][i]) for i in range(len(p["chunks"]))], picks[p["ln"]["id"]])
+                                  for p in plans])
         for x in os.listdir(jdir):  # the takes that lost
             if re.search(r"\.c\d+\.t\d+\.wav$", x):
                 os.remove(os.path.join(jdir, x))
@@ -1657,7 +1852,7 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
         job["stage"] = "generating" if job["stage"] != "fixing" else "fixing"
         # vLLM schedules its own batches (continuous batching over the KV cache): hand it the whole job at once.
         # Qwen batches on plain transformers, where memory grows with the batch: 8 at a time.
-        size = (64 if eng in ("orpheus", "myvoice") else 8) if ENG.batch.get(eng) else 1
+        size = (int(os.environ.get("ORPHEUS_MAX_SEQS", "64")) if eng in ("orpheus", "myvoice") else 8) if ENG.batch.get(eng) else 1
         for b in range(0, len(mine), size):
             group = mine[b:b + size]
             items = [{"text": p["chunks"][i][1], "voice": p["voice_arg"], "params": params, "ref_path": ref_path,
@@ -1682,7 +1877,23 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
         log(f"job {job['id']} {eng}/{job['voice']} {len(mine)} chunk takes")
 
 
-def _assemble(job, jdir, p, paths, pick=None):
+def _assemble_all(job, jdir, items):
+    """Master every line, on all CPU cores at once (join, trim, pace, loudness and the delivery measure are CPU work:
+    a 60-line script finishes in the time of a few lines). Studio polish runs on the GPU's enhancer, so in order."""
+    from concurrent.futures import ThreadPoolExecutor
+    workers = min(len(items), max(1, (os.cpu_count() or 2) - 1), 12)
+    if workers < 2 or job["post"].get("enhance"):
+        for p, paths, pick in items:
+            _assemble(job, jdir, p, paths, pick)
+        return
+    t0 = time.time()
+    job["stage"] = "mastering"
+    with ThreadPoolExecutor(workers) as ex:
+        list(ex.map(lambda it: _assemble(job, jdir, *it, timed=False), items))
+    _time(job, "mastering", time.time() - t0)
+
+
+def _assemble(job, jdir, p, paths, pick=None, timed=True):
     """Chunks -> one line WAV: join with the asked-for gaps, then trim, pace, resample and master."""
     ln = p["ln"]
     t0 = time.time()
@@ -1709,7 +1920,8 @@ def _assemble(job, jdir, p, paths, pick=None):
         r["delivery"] = quality.delivery(os.path.join(jdir, f"{ln['id']}.wav"))
     except Exception:  # noqa: BLE001  a measurement, never worth failing a voiceover over
         pass
-    _time(job, "mastering", time.time() - t0)
+    if timed:
+        _time(job, "mastering", time.time() - t0)
     job["results"].append(r)
 
 
@@ -2353,7 +2565,7 @@ def run_dataset(job):
     os.makedirs(wavs, exist_ok=True)
     meta, dropped, total_in, kept_s, failed = [], {}, 0.0, 0.0, []
     srcs = job["lines"]
-    prep_pool, cut_pool = ThreadPoolExecutor(1), ThreadPoolExecutor(max(1, min(4, (os.cpu_count() or 2) - 1)))
+    prep_pool, cut_pool = ThreadPoolExecutor(1), ThreadPoolExecutor(max(1, min(12, (os.cpu_count() or 2) - 1)))
     job["stage"] = "downloading"
     preps = [prep_pool.submit(_dataset_prep, job, src, jdir) for src in srcs]  # run one after another, ahead of the GPU
     cuts = []
@@ -2881,12 +3093,13 @@ def push_files(job_id, targets, headers):
     return {"pushed": [n for n, e in results if not e], "failed": {n: e for n, e in results if e}}
 
 
-def worker_loop():
+def worker_loop(q=None):
+    q = QUEUE if q is None else q
     while True:
         with QCOND:
-            while not QUEUE:
+            while not q:
                 QCOND.wait()
-            jid = QUEUE.pop(0)
+            jid = q.pop(0)
         job = JOBS.get(jid)
         if not job or job["cancel"]:
             continue
@@ -2915,9 +3128,10 @@ def _progress(job):
     if job["status"] in ("error", "cancelled"):
         return min(1.0, job["est_done"] / max(job["est_total"], 1e-6)), 0, job["status"], ""
     if job["status"] == "queued":
-        ahead = [JOBS[j] for j in QUEUE[:QUEUE.index(job["id"])]] if job["id"] in QUEUE else []
+        q = _queue_of(job)
+        ahead = [JOBS[j] for j in q[:q.index(job["id"])]] if job["id"] in q else []
         wait = sum(max(0, j["est_total"] - j["est_done"]) for j in ahead)
-        for r in (JOBS[x] for x in JOBS if JOBS[x]["status"] == "running"):
+        for r in (JOBS[x] for x in JOBS if JOBS[x]["status"] == "running" and JOBS[x].get("lane") == job.get("lane")):
             wait += max(0, r["est_total"] - r["est_done"])
         return 0.0, round(wait), "queued", f"{len(ahead)} job(s) ahead"
     extra, detail = 0.0, ""
@@ -3016,7 +3230,8 @@ def _progress(job):
 def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
                                  "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup",
-                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method")}
+                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method", "lane")}
+    v["resources"] = job_resources(job)
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
     if job["kind"] == "tts":
@@ -3030,7 +3245,7 @@ def job_view(job, urls=True):
                      "elapsed_s": round((job.get("finished") or time.time()) - job.get("started", time.time()), 1)
                      if job.get("started") else 0}
     if job["status"] == "queued":
-        v["queue_position"] = QUEUE.index(job["id"]) + 1 if job["id"] in QUEUE else 0
+        v["queue_position"] = _queue_of(job).index(job["id"]) + 1 if job["id"] in _queue_of(job) else 0
     res = []
     for r in job["results"]:
         r = {k: val for k, val in r.items() if k != "words"} if urls else dict(r)
@@ -3079,11 +3294,22 @@ def catalogue():
             "styles": C.STYLES, "default_style": C.DEFAULT_STYLE, "groups": C.GROUPS, "idle_min": C.IDLE_MIN}
 
 
+def lanes():
+    """What each lane is doing: the GPU lane (one job at a time) and the CPU lane beside it."""
+    out = {}
+    for name, q in (("gpu", QUEUE), ("cpu", CPU_QUEUE)):
+        run = [j for j in list(JOBS.values()) if j["status"] == "running" and j.get("lane", "gpu") == name]
+        out[name] = {"running": [{"id": j["id"], "label": j.get("label"), "stage": j.get("stage"), "engine": j.get("engine")} for j in run], "queued": len(q)}
+    return out
+
+
 def health():
     return {"ok": True, "version": C.VERSION, "uptime_s": int(time.time() - STARTED), "gpu": gpu_info(),
             "ram": mem_info(), "disk": disk_info(), "mode": ENG.mode, "idle_unload_s": ENG.idle_left(), "idle_min": C.IDLE_MIN, "fetch": ENG.fetch,
             "vram_budget_gb": round(ENG.budget, 1), "engines": ENG.state, "engine_errors": ENG.errors,
-            "loaded": list(ENG.procs), "queue": len(QUEUE), "rates": RATES,
+            "loaded": list(ENG.procs), "queue": len(QUEUE) + len(CPU_QUEUE), "rates": RATES, "lanes": lanes(),
+            "cpu": {"cores": MON.cores, "load": os.getloadavg()[0] if hasattr(os, "getloadavg") else None}, "now": MON.latest(),
+            "warm": WARM.view(), "loads": ENG.loads,
             "running": [j["id"] for j in JOBS.values() if j["status"] == "running"], "public_url": public_url(),
             "selfcheck": _selfcheck_result(), "last_active": LAST_ACTIVE[0]}
 
@@ -3181,6 +3407,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(401, {"error": "unauthorized"})
         if u.path == "/health":
             return self._json(200, health())
+        if u.path == "/metrics":  # the last 10 minutes of CPU / RAM / GPU samples, for the Health page's charts
+            return self._json(200, {"every_s": MON.every, "cores": MON.cores, "ram_total_gb": (_meminfo() or {}).get("total"),
+                                    "vram_total_gb": gpu_info_cached()["total_gb"], "samples": list(MON.samples)})
         if u.path == "/voices":
             return self._json(200, catalogue())
         if u.path == "/jobs":
@@ -3243,8 +3472,8 @@ class Handler(BaseHTTPRequestHandler):
                 if pf:  # a running video: the engine checks this file between denoising steps
                     open(pf + ".cancel", "w").close()
                 with QCOND:
-                    if m.group(1) in QUEUE:
-                        QUEUE.remove(m.group(1))
+                    if m.group(1) in _queue_of(JOBS[m.group(1)]):
+                        _queue_of(JOBS[m.group(1)]).remove(m.group(1))
                         JOBS[m.group(1)]["status"] = "cancelled"
                 return self._json(200, job_view(JOBS[m.group(1)]))
             if u.path == "/refs":
@@ -3302,6 +3531,7 @@ def main():
     if len(SECRET) < 24:
         sys.exit("WORKER_SECRET must be set (>= 24 chars)")
     threading.Thread(target=worker_loop, daemon=True).start()
+    threading.Thread(target=worker_loop, args=(CPU_QUEUE,), daemon=True).start()
     os.environ["VOICEBOX_PORT"] = str(a.port)
     run_selfcheck("start", delay=20)
     log(f"voicebox gateway {C.VERSION} on {a.host}:{a.port} · GPU {gpu_info()['name']} · VRAM budget {ENG.budget:.1f} GB")
