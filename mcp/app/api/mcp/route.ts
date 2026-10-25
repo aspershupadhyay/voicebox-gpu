@@ -97,20 +97,22 @@ const handler = createMcpHandler(
       "worker_status",
       {
         title: "Worker status",
-        description: "Is the Colab GPU worker online? Shows GPU, VRAM, which engines are loaded, and queue length.",
+        description: "Is the Colab GPU worker online? Shows GPU, VRAM, which engines are loaded, queue length, the worker version vs the latest, and (once Colab is connected on Health) colab: compute units left, hourly burn, runtimes assigned and the current session. Start / stop / configure the GPU with the gpu tool.",
         inputSchema: z.object({}),
       },
       async () => {
         const rec = await loadWorker();
-        if (!rec) return text({ online: false, hint: "No worker has registered. Run the Colab notebook." });
+        const { WORKER_VERSION } = await import("@/lib/bundle");
+        const colab = await import("@/lib/colab").then((c) => c.status()).catch((e: Error) => ({ error: e.message }));
+        if (!rec) return text({ online: false, latest_worker_version: WORKER_VERSION, colab, hint: "No worker has registered: gpu action start, or run the Colab notebook." });
         const age = Math.round((Date.now() - rec.last_seen) / 1000);
-        if (age * 1000 > STALE_MS) return text({ online: false, last_seen_s_ago: age, hint: "Colab runtime stopped? Re-run the notebook." });
+        if (age * 1000 > STALE_MS) return text({ online: false, last_seen_s_ago: age, latest_worker_version: WORKER_VERSION, colab, hint: "Colab runtime stopped: gpu action start, or re-run the notebook." });
         try {
           const h = await call<Record<string, unknown> & { engine_errors?: Record<string, string> }>("/health");
           // "exited while loading" says nothing: the end of each failing engine's log is the reason
           const logs = Object.fromEntries(await Promise.all(Object.keys(h.engine_errors ?? {}).map(async (n) =>
             [n, await call<{ text: string }>(`/logs/${n}?n=40`).then((r) => r.text.slice(-4000)).catch(() => null)] as const)));
-          return text({ online: true, last_seen_s_ago: age, ...h, ...(Object.keys(logs).length ? { engine_logs: logs } : {}) });
+          return text({ online: true, last_seen_s_ago: age, ...h, latest_worker_version: WORKER_VERSION, colab, ...(Object.keys(logs).length ? { engine_logs: logs } : {}) });
         } catch (e) {
           return text({ online: false, last_seen_s_ago: age, registered: rec, error: (e as Error).message });
         }
@@ -353,22 +355,41 @@ const handler = createMcpHandler(
     server.registerTool(
       "gpu",
       {
-        title: "Start, stop and check the Colab GPU",
-        description: "The GPU without opening Colab (once Colab is connected on the Health page). action status (default): connected account, compute-unit balance and hourly burn, runtimes assigned, the app-started session (GPU, since when, last activity, why it stopped), reminder settings. action start: assign a Colab GPU runtime (gpu: A100 / L4 / H100 / T4 / G4, default from settings) and launch the worker on it; it comes online in worker_status within ~3-8 minutes. action stop: release a runtime (endpoint, default the app-started one); billing stops at once. The app also stops an app-started runtime after idle_stop_min idle minutes and sends hourly reminders and a low-balance warning to the ntfy topic.",
+        title: "Control the Colab GPU",
+        description: "The GPU without opening Colab (Colab is connected on the Health page). Actions: status (default): compute units left, hourly burn, runtimes assigned, the current session, settings. start: assign a Colab GPU (gpu A100 / L4 / H100 / T4 / G4, default from settings) and launch the worker on it; it shows online in worker_status in ~3-8 min. stop: release a runtime (endpoint, default the current session's; with nothing else known, the only runtime assigned) and billing stops at once. restart_worker: restart the worker process on the running GPU (keeps the runtime; force: true even while a job runs). update_worker: fetch the newest worker code and restart with it (worker 3.1.0+). selfcheck: run the worker's quick self-check (results in worker_status.selfcheck). settings: change gpu (default for start), idle_stop_min (0 = never; stops a GPU started from the app after that many idle minutes), remind_hours (0 = never), low_units (warn below), ntfy (on / off: phone push via the ntfy app). notify_test: send a test push.",
         inputSchema: z.object({
-          action: z.enum(["status", "start", "stop"]).optional(),
+          action: z.enum(["status", "start", "stop", "restart_worker", "update_worker", "selfcheck", "settings", "notify_test"]).optional(),
           gpu: z.enum(["A100", "L4", "H100", "T4", "G4"]).optional(),
           endpoint: z.string().max(200).optional(),
+          force: z.boolean().optional(),
+          idle_stop_min: z.number().min(0).max(600).optional(),
+          remind_hours: z.number().min(0).max(12).optional(),
+          low_units: z.number().min(0).max(500).optional(),
+          ntfy: z.enum(["on", "off"]).optional(),
         }),
       },
-      async ({ action, gpu, endpoint }) => {
+      async ({ action, gpu, endpoint, force, idle_stop_min, remind_hours, low_units, ntfy }) => {
         try {
           const colab = await import("@/lib/colab");
-          if (action === "start") return text(await colab.start(colab.appOrigin(), gpu));
+          if (action === "start") return text({ ...(await colab.start(colab.appOrigin(), gpu)), next: "The worker comes online in ~3-8 min: check worker_status." });
           if (action === "stop") {
-            const ep = endpoint ?? (await colab.getSession())?.endpoint;
-            if (!ep) throw new Error("no runtime to stop");
+            let ep = endpoint ?? (await colab.getSession())?.endpoint;
+            if (!ep) {
+              const all = await colab.runtimes();
+              if (all.length !== 1) throw new Error(all.length ? `${all.length} runtimes are assigned: pass endpoint (${all.map((r) => `${r.accelerator} ${r.endpoint}`).join(", ")})` : "no runtime is assigned");
+              ep = all[0].endpoint;
+            }
             return text(await colab.stopRuntime(ep, "stopped by an agent"));
+          }
+          if (action === "restart_worker") return text(await call("/admin/restart", { body: { force: !!force } }));
+          if (action === "update_worker") return text(await call("/admin/update", { body: { url: `${colab.appOrigin()}/api/bundle` }, timeoutMs: 55_000 }));
+          if (action === "selfcheck") return text(await call("/selfcheck", { body: {} }));
+          if (action === "notify_test") return text({ sent: await colab.notify("Voicebox test", "Notifications work: GPU reminders arrive here.", "bell") });
+          if (action === "settings") {
+            const cur = await colab.getConfig();
+            const topic = ntfy === "off" ? null : ntfy === "on" ? (cur.ntfy_topic ?? `voicebox-${crypto.randomUUID().replace(/-/g, "").slice(0, 14)}`) : undefined;
+            const next = await colab.setConfig({ gpu, idle_stop_min, remind_hours, low_units, ...(topic !== undefined ? { ntfy_topic: topic } : {}) });
+            return text({ ...next, ...(next.ntfy_topic ? { ntfy_subscribe: `Install the ntfy app and subscribe to ${next.ntfy_topic} (https://ntfy.sh/${next.ntfy_topic})` } : {}) });
           }
           return text(await colab.status());
         } catch (e) {
