@@ -6,17 +6,15 @@ import { useId } from "react";
 const hash = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; };
 const rng = (seed: number) => () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 
-/** The mark: a box (the "box" in Voicebox) with five bars hanging from its lid, a waveform whose lower edge draws a V.
- *  The middle bar is the one live accent; on hover the bars talk. */
+/** The mark: a waveform whose seven bars fall into a V (Voicebox), on a solid ink tile. Flat, no gradients; it
+ *  inverts in dark mode. On hover the bars talk. The same drawing is public/icon.svg and the PWA icons. */
+const LOGO_BARS = [[6.45, 7.7, 3], [9.28, 9.81, 5.5], [12.12, 11.92, 8], [14.95, 14.28, 10], [17.78, 11.92, 8], [20.62, 9.81, 5.5], [23.45, 7.7, 3]];
 export function Logo({ size = 28 }: { size?: number }) {
-  const bars = [15, 11, 6.5, 11, 15];
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden className="logo">
       <rect width="32" height="32" rx="9" fill="var(--ink)" />
-      <rect x="6" y="6.4" width="20" height="1.6" rx=".8" fill="var(--on-ink)" opacity=".38" />
-      {bars.map((h, i) => (
-        <rect key={i} className="logo-bar" style={{ animationDelay: `${i * 0.12}s` }} x={7.2 + i * 3.9} y="9.6" width="2.3" height={h} rx="1.15"
-          fill={i === 2 ? "var(--accent)" : "var(--on-ink)"} />
+      {LOGO_BARS.map(([x, y, h], i) => (
+        <rect key={i} className="logo-bar" style={{ animationDelay: `${Math.abs(i - 3) * 0.09}s` }} x={x} y={y} width="2.1" height={h} rx="1.05" fill="var(--on-ink)" />
       ))}
     </svg>
   );

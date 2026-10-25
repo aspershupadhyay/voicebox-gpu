@@ -32,7 +32,7 @@ export const isTracked = (id: string) => read().some((x) => x.id === id);
 
 /** Where a job started somewhere else (MCP, another device, auto-train) is shown on the dashboard. */
 export const pageFor = (kind: string) =>
-  ({ dataset: "/model", train: "/model", voicewalk: "/model", benchmark: "/model", reference: "/voices", transcribe: "/subtitles", image: "/images", clean: "/clean-up", revoice: "/voices" } as Record<string, string>)[kind] ?? "/files";
+  ({ dataset: "/voices/professional", train: "/voices/professional", voicewalk: "/voices/professional", benchmark: "/voices/professional", reference: "/voices/new", transcribe: "/subtitles", image: "/images", clean: "/clean-up", revoice: "/voices/revoice" } as Record<string, string>)[kind] ?? "/files";
 
 export function updateTracked(id: string, patch: Partial<Tracked>) {
   write(read().map((x) => (x.id === id ? { ...x, ...patch } : x)));

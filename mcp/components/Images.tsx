@@ -6,12 +6,12 @@ import {
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api, fmtS, uploadFile, type Gen, type GenImage, type Job } from "./api";
-import { Info } from "./Info";
 import FetchBar from "./FetchBar";
 import { PendingCard } from "./GenCard";
 import { GuideButton } from "./GuideDrawer";
 import { useStatus } from "./Shell";
-import { Notice, PageHeader } from "./ui";
+import { Select } from "./pop";
+import { Empty, Notice, SideRow, ToolPage } from "./ui";
 
 type Spec = { about: string; sizes: Record<string, [number, number]>; qualities: Record<string, { steps: number; about: string }>; disk_gb: number;
   max_count: number; edit?: boolean; max_refs?: number; transparent?: boolean; commercial?: boolean; license?: string; downloaded?: boolean };
@@ -160,111 +160,75 @@ export default function Images() {
   const cols = (n: number) => (n === 1 ? 1 : 2);
   const dl = (item: LibImages, i: number) => `/api/file/${item.id}/${item.images![i].file}?download&name=${encodeURIComponent(`${(item.label || item.id).slice(0, 40)}-${i + 1}`)}.png`;
 
+  const offline = !!status && !status.online;
   return (
     <>
-      <PageHeader title="Images" sub="Stills, thumbnails and video start frames from a prompt."
-        actions={<GuideButton engine={model} label="Prompting guide" />} />
-      {!status?.online && status && (
-        <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/gpu" className="btn sm">Start the GPU</Link>}>
-          <b>The GPU is off.</b> Write your prompt now; this page connects by itself once it&apos;s on.
-        </Notice>
-      )}
-
-      <div className="studio">
-        <div className="composer">
-          <div className="model-pick">
-            {MODELS.map((m) => (
-              <button key={m} className={`model-row ${model === m ? "on" : ""}`} aria-pressed={model === m} onClick={() => setModel(m)}>
-                <span className="glyph">{m === "zimage" ? <Lightning size={19} /> : <Sparkle size={19} />}</span>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span className="row between"><b>{NAMES[m]}</b>
-                    <span className={`dot ${status?.engines?.[m] === "ready" ? "ok" : ["loading", "installing"].includes(status?.engines?.[m] ?? "") ? "warn" : "off"}`} title={status?.engines?.[m] ?? "not loaded"} />
-                  </span>
-                  <span className="row" style={{ gap: 5, marginTop: 5, flexWrap: "wrap" }}>
-                    {specs[m].commercial ? <span className="badge ok">commercial OK</span> : <span className="badge warn">non-commercial</span>}
-                    <span className="badge">{m === "zimage" ? "~2 s · 1K" : "2K · text · edit · alpha"}</span>
-                  </span>
-                </span>
-              </button>
-            ))}
-          </div>
-          {warming && <FetchBar f={warming} name={model} compact />}
-
+      <ToolPage title="Images" sub="Stills, thumbnails and video start frames from a prompt."
+        actions={<GuideButton engine={model} label="Prompting guide" />}
+        notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/gpu" className="btn sm">Start the GPU</Link>}><b>The GPU is off.</b> Write your prompt now; this page connects by itself once it&apos;s on.</Notice>}
+        side={
+          <>
+            <SideRow label="Model" htmlFor="img-model" info={spec.about}>
+              <Select id="img-model" value={model} onChange={setModel} options={MODELS.map((m) => ({ value: m, label: NAMES[m], hint: `${m === "zimage" ? "~2 s · 1K · photoreal" : "2K · text · edits · transparent"} · ${specs[m].commercial ? "commercial OK" : "non-commercial"}` }))} />
+              {warming && <div style={{ marginTop: 10 }}><FetchBar f={warming} name={model} compact /></div>}
+            </SideRow>
+            <SideRow label="Aspect" aside={<span className="mono">{w}×{h}</span>}>
+              <div className="aspect-row">{Object.entries(spec.sizes).map(([a, [ww, hh]]) => <AspectChip key={a} a={a} w={ww} h={hh} on={aspect === a} onPick={() => setAspect(a)} />)}</div>
+            </SideRow>
+            <div className="set-row">
+              <div className="set-line"><span id="img-count">Images</span>
+                <div className="seg" role="radiogroup" aria-labelledby="img-count">{[1, 2, 3, 4].slice(0, spec.max_count).map((n) => <button key={n} role="radio" aria-checked={count === n} className={count === n ? "on" : ""} onClick={() => setCount(n)}>{n}</button>)}</div></div>
+              {Object.keys(spec.qualities).length > 1 && (
+                <div className="set-line"><span id="img-q">Quality</span>
+                  <div className="seg" role="radiogroup" aria-labelledby="img-q">
+                    {Object.entries(spec.qualities).map(([k, v]) => <button key={k} role="radio" aria-checked={quality === k} className={quality === k ? "on" : ""} onClick={() => setQuality(k)} title={v.about}>{k === "turbo" ? "Turbo" : "Max"}</button>)}
+                  </div></div>
+              )}
+              {spec.transparent && (
+                <div className="set-line"><span>Transparent background</span>
+                  <button role="switch" aria-checked={transparent} className={`switch ${transparent ? "on" : ""}`} onClick={() => setTransparent(!transparent)} aria-label="Transparent background" /></div>
+              )}
+            </div>
+            <div className="set-row">
+              <div className="set-line"><label htmlFor="img-seed">Seed</label>
+                <span className="row" style={{ gap: 6 }}><input id="img-seed" type="number" value={seed} onChange={(e) => setSeed(+e.target.value)} style={{ width: 110, height: 32 }} />
+                  <button className="icon-btn" onClick={() => setSeed(Math.floor(Math.random() * 1e6))} aria-label="New random seed"><DiceFive size={16} /></button></span></div>
+              <div className="tiny dim" style={{ marginTop: 6 }}>The same seed and prompt reproduce an image.</div>
+            </div>
+            <div className="tool-go">
+              {offline ? <Link href="/gpu" className="btn block">Start the GPU</Link>
+                : <button className="block" disabled={busy || !status} onClick={() => (prompt.trim().length < 3 ? setErr("Write a prompt first.") : generate())}>
+                  <Sparkle size={16} weight="fill" />Generate{count > 1 ? ` ${count}` : ""}<span className="est">≈{fmtS(estS)}</span></button>}
+              {!downloaded && <span className="tiny dim"><DownloadSimple size={12} weight="bold" /> First use downloads ~{spec.disk_gb} GB onto the GPU machine, once per runtime.</span>}
+            </div>
+          </>
+        }>
+        <div className="tool-canvas">
           <div className="prompt-box">
             <textarea aria-label="Prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} spellCheck={false}
               onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") generate(); }}
               placeholder={refs.length ? "Say what to change or combine: “put the person from image 1 in the jacket from image 2”…" : "Describe the image: subject, setting, light, lens, style…"} />
+            {showNeg && <input aria-label="Avoid" value={negative} onChange={(e) => setNegative(e.target.value)} placeholder="Avoid: blurry, extra fingers, watermark…" className="pb-neg" />}
             <div className="prompt-foot">
-              <span className="dim tiny mono">{prompt.trim().split(/\s+/).filter(Boolean).length} words · ⌘↵</span>
-              <button className="quiet xs" onClick={() => setShowNeg(!showNeg)}><Prohibit size={13} />Avoid</button>
+              <span className="dim tiny mono">{prompt.trim().split(/\s+/).filter(Boolean).length} words · ⌘↵ to generate</span>
+              <span className="row" style={{ gap: 6 }}>
+                {maxRefs > 0 && <label className="btn quiet xs"><Plus size={13} />Reference{refs.length ? ` ${refs.length}/${maxRefs}` : ""}<input type="file" accept="image/*" multiple hidden onChange={(e) => e.target.files && addFiles(e.target.files)} /></label>}
+                <button className="quiet xs" onClick={() => setShowNeg(!showNeg)} aria-pressed={showNeg}><Prohibit size={13} />Avoid</button>
+              </span>
             </div>
           </div>
-          {showNeg && <input aria-label="Avoid" value={negative} onChange={(e) => setNegative(e.target.value)} placeholder="blurry, extra fingers, watermark…" />}
-
-          {maxRefs > 0 && (
-            <div>
-              <div className="row between" style={{ marginBottom: 6 }}><label className="f" style={{ margin: 0 }}>References</label><span className="dim tiny">{refs.length}/{maxRefs} · edit or combine</span></div>
-              <div className="refs" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}>
-                {refs.map((r, i) => (
-                  <div className="ref" key={r.id} title={`image ${i + 1}`}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={r.url} alt="" />
-                    <button onClick={() => setRefs((x) => x.filter((y) => y.id !== r.id))}><X size={11} weight="bold" /></button>
-                  </div>
-                ))}
-                {refs.length < maxRefs && (
-                  <label className="add" title="Add reference images"><Plus size={18} />
-                    <input type="file" accept="image/*" multiple hidden onChange={(e) => e.target.files && addFiles(e.target.files)} />
-                  </label>
-                )}
-              </div>
+          {refs.length > 0 && (
+            <div className="refs" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}>
+              {refs.map((r, i) => (
+                <div className="ref" key={r.id} title={`image ${i + 1}`}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={r.url} alt={`Reference ${i + 1}`} />
+                  <button onClick={() => setRefs((x) => x.filter((y) => y.id !== r.id))} aria-label={`Remove reference ${i + 1}`}><X size={11} weight="bold" /></button>
+                </div>
+              ))}
             </div>
           )}
-
-          <div>
-            <label className="f">Aspect <span className="faint mono" style={{ fontWeight: 400, marginLeft: 6 }}>{w}×{h}</span></label>
-            <div className="aspect-row">{Object.entries(spec.sizes).map(([a, [ww, hh]]) => <AspectChip key={a} a={a} w={ww} h={hh} on={aspect === a} onPick={() => setAspect(a)} />)}</div>
-          </div>
-
-          <div className="row" style={{ gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
-            <div>
-              <label className="f">Images</label>
-              <div className="seg">{[1, 2, 3, 4].slice(0, spec.max_count).map((n) => <button key={n} className={count === n ? "on" : ""} onClick={() => setCount(n)}>{n}</button>)}</div>
-            </div>
-            {Object.keys(spec.qualities).length > 1 && (
-              <div>
-                <label className="f">Quality</label>
-                <div className="seg">
-                  {Object.entries(spec.qualities).map(([k, v]) => (
-                    <button key={k} className={quality === k ? "on" : ""} onClick={() => setQuality(k)} title={v.about}>
-                      {k === "turbo" ? <Lightning size={13} weight="fill" /> : <Sparkle size={13} weight="fill" />}{k === "turbo" ? "Turbo" : "Max"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {spec.transparent && (
-              <button className={`ghost ${transparent ? "" : "dim"}`} onClick={() => setTransparent(!transparent)} title="Transparent background (RGBA PNG): stickers, logos, cut-outs">
-                {transparent ? <CheckCircle size={15} weight="fill" /> : <StackSimple size={15} />}Transparent
-              </button>
-            )}
-          </div>
-          <details className="rail-more" style={{ borderTop: 0, padding: 0 }}>
-            <summary className="small" style={{ cursor: "pointer" }}>More settings</summary>
-            <div className="tiny faint" style={{ marginTop: 8 }}>The same seed and prompt reproduce an image; roll for a new one.</div>
-            <div className="row" style={{ gap: 8, alignItems: "flex-end", marginTop: 10 }}>
-              <div className="field" style={{ flex: 1, margin: 0 }}><label className="f" htmlFor="img-seed">Seed</label><input id="img-seed" type="number" value={seed} onChange={(e) => setSeed(+e.target.value)} /></div>
-              <button className="ghost" onClick={() => setSeed(Math.floor(Math.random() * 1e6))} title="New random seed"><DiceFive size={16} />Roll</button>
-            </div>
-          </details>
-
-          <button className="go" disabled={!status?.online || busy || prompt.trim().length < 3} onClick={generate} title={!status?.online ? "Start the GPU first" : prompt.trim().length < 3 ? "Write a prompt first" : undefined}>
-            <Sparkle size={18} weight="fill" />Generate{count > 1 ? ` ${count}` : ""}<span className="est">≈{fmtS(estS)}</span>
-          </button>
-          {(spec.license || !downloaded) && <p className="tiny dim" style={{ margin: 0 }}>{!downloaded ? <><DownloadSimple size={12} weight="bold" /> First run downloads the model</> : "About this model"} <Info>{!downloaded ? `First use downloads ~${spec.disk_gb} GB onto the GPU machine (once per runtime); a progress bar shows it landing. ` : ""}{spec.about}</Info></p>}
           {err && <p className="err" role="alert" style={{ margin: 0 }}>{err}</p>}
-        </div>
-
         <div className="feed">
           {pending.map((p) => (
             <div className="feed-group" key={p.key}>
@@ -311,10 +275,11 @@ export default function Images() {
             </div>
           ))}
           {!pending.length && !feed.length && (
-            <div className="stage-empty"><span className="e-ic" style={{ width: 48, height: 48, borderRadius: 14, display: "grid", placeItems: "center", background: "var(--surface)" }}><ImageSquare size={24} /></span><b>Your images appear here</b><span>Write a prompt and press Generate.</span></div>
+            <Empty icon={<ImageSquare size={20} />} title="Your images appear here">Write a prompt and press Generate.</Empty>
           )}
         </div>
-      </div>
+        </div>
+      </ToolPage>
 
       {open && (() => {
         const im = open.item.images![open.i];

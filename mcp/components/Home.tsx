@@ -22,8 +22,8 @@ const greeting = (h: number) => (h < 5 ? "Working late" : h < 12 ? "Good morning
 
 const TOOLS = [
   { href: "/voiceover", name: "Voiceover", art: <EngineArt engine="chatterbox" /> },
-  { href: "/voices?record=1", name: "Clone your voice", art: <EngineArt engine="qwen" /> },
-  { href: "/model", name: "Voice model", art: <VoiceGlyph name="myvoice" size={72} /> },
+  { href: "/voices/new", name: "Clone your voice", art: <EngineArt engine="qwen" /> },
+  { href: "/voices/professional", name: "Train your voice", art: <VoiceGlyph name="myvoice" size={72} /> },
   { href: "/clean-up", name: "Clean-up", art: <MicArt /> },
   { href: "/subtitles", name: "Subtitles", art: <EngineArt engine="whisper" /> },
   { href: "/images", name: "Images", art: <EngineArt engine="zimage" /> },
@@ -126,9 +126,9 @@ export default function Home() {
         <section>
           <div className="section-h"><h2>Create or clone a voice</h2></div>
           <div className="stack" style={{ gap: 4 }}>
-            <Link href="/voices?record=1" className="feature-row"><span className="fr-art"><Microphone size={26} weight="duotone" /></span><span><b>Clone your voice</b><span>Read a card for 20 seconds and use your voice right away.</span></span></Link>
-            <Link href="/model" className="feature-row"><span className="fr-art"><Brain size={26} weight="duotone" /></span><span><b>Train your voice model</b><span>Add recordings over time for the most natural read.</span></span></Link>
-            <Link href="/voices#revoice" className="feature-row"><span className="fr-art"><ArrowsClockwise size={26} weight="duotone" /></span><span><b>Re-voice a take</b><span>Turn a rough phone recording into your clean voice.</span></span></Link>
+            <Link href="/voices/new" className="feature-row"><span className="fr-art"><Microphone size={26} weight="duotone" /></span><span><b>Clone your voice</b><span>Read a script for 20 seconds and use your voice right away.</span></span></Link>
+            <Link href="/voices/professional" className="feature-row"><span className="fr-art"><Brain size={26} weight="duotone" /></span><span><b>Train your voice model</b><span>Add recordings over time for the most natural read.</span></span></Link>
+            <Link href="/voices/revoice" className="feature-row"><span className="fr-art"><ArrowsClockwise size={26} weight="duotone" /></span><span><b>Re-voice a take</b><span>Turn a rough phone recording into your clean voice.</span></span></Link>
             <Link href="/clean-up" className="feature-row"><span className="fr-art"><MagicWand size={26} weight="duotone" /></span><span><b>Clean up a recording</b><span>Noise and room echo out, mastered for the platform.</span></span></Link>
           </div>
           {workspace && (

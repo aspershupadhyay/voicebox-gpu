@@ -24,6 +24,7 @@ const config: NextConfig = {
       to("/generate", "/voiceover"), to("/studio", "/clean-up"), to("/image", "/images"), to("/health", "/gpu"),
       to("/content", "/posts"), to("/workspace", "/posts?view=board"), to("/calendar", "/posts?view=calendar"),
       to("/library", "/files"), to("/media", "/files?tab=uploads"), to("/board", "/posts?view=board"),
+      to("/model", "/voices/professional"),
     ];
   },
 };

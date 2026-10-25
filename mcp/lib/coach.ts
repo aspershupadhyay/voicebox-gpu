@@ -230,7 +230,7 @@ export async function nextScript(name: string, minutes = 8) {
   return {
     name, minutes: Math.round((words / 150) * 10) / 10, focus: focus.map((cat) => ({ cat, label: CAT_LABEL[cat], tip: CAT_TIP[cat] })),
     words_to_practise: a.words.slice(0, 5).map((w) => w.word), lines: picked,
-    how: "Read it in one or two sessions on the Voice model page (Add recordings → Read along) or record it anywhere and upload it. With Train automatically on, "
+    how: "Read it in one or two sessions on the Professional voice clone page (Voices) (Add recordings → Read along) or record it anywhere and upload it. With Train automatically on, "
       + `${RETRAIN_MINUTES}+ new minutes retrain the voice, and the new model only replaces the current one if it scores at least as well.`,
   };
 }
@@ -338,7 +338,7 @@ async function refreshGate(c: Coach) {
   if (done) Object.assign(g, done);
 }
 
-/** Buttons on the Voice model page: compare again, or use the new model anyway. */
+/** Buttons on the Professional voice clone page (Voices): compare again, or use the new model anyway. */
 export async function gateAction(name: string, action: "use" | "compare", job: string) {
   const c = await load(name);
   const g = c.gates.find((x) => x.job === job);

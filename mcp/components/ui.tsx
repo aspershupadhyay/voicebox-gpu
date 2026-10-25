@@ -6,6 +6,7 @@ import { CaretRight } from "@phosphor-icons/react";
 import Link from "next/link";
 import { cloneElement, isValidElement, useEffect, useId, useRef, useState } from "react";
 import { Info } from "./Info";
+import { Floating, useDismiss } from "./pop";
 
 /** Every page opens with this: the page's name as the H1, one short line under it, and at most two actions. */
 export function PageHeader({ title, eyebrow, sub, actions }: { title: React.ReactNode; eyebrow?: React.ReactNode; sub?: React.ReactNode; actions?: React.ReactNode }) {
@@ -96,7 +97,8 @@ export function Toggle({ on, set, title, about }: { on: boolean; set: (v: boolea
   );
 }
 
-/** A small popover menu anchored to its trigger. Escape or a click outside closes it; focus returns to the trigger. */
+/** A small popover menu anchored to its trigger, kept on screen. Escape or a click outside closes it; focus returns to
+ *  the trigger. */
 export function PopMenu({ trigger, children, align = "right", up = false, width }: {
   trigger: (p: { open: boolean; toggle: () => void; ref: React.RefObject<HTMLButtonElement | null> }) => React.ReactNode;
   children: (close: () => void) => React.ReactNode; align?: "left" | "right"; up?: boolean; width?: number;
@@ -105,22 +107,58 @@ export function PopMenu({ trigger, children, align = "right", up = false, width 
   const ref = useRef<HTMLButtonElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const close = () => { setOpen(false); ref.current?.focus(); };
+  useDismiss(open, () => setOpen(false), [ref, box]);
   useEffect(() => {
-    if (!open) return;
-    const k = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
-    window.addEventListener("keydown", k);
-    setTimeout(() => box.current?.querySelector<HTMLElement>("button, a")?.focus(), 0);
-    return () => window.removeEventListener("keydown", k);
+    if (open) setTimeout(() => box.current?.querySelector<HTMLElement>("button, a")?.focus(), 0);
   }, [open]);
   return (
-    <span style={{ position: "relative", display: "inline-flex" }}>
+    <>
       {trigger({ open, toggle: () => setOpen((o) => !o), ref })}
-      {open && (
-        <>
-          <div className="pop-scrim" onClick={() => setOpen(false)} />
-          <div ref={box} className="popmenu" role="menu" style={{ [align]: 0, [up ? "bottom" : "top"]: "calc(100% + 6px)", width }}>{children(close)}</div>
-        </>
-      )}
-    </span>
+      <Floating anchor={ref} open={open} boxRef={box} prefer={up ? "top" : "bottom"} align={align === "left" ? "start" : "end"} className="popmenu" role="menu" style={{ width }}>
+        {children(close)}
+      </Floating>
+    </>
+  );
+}
+
+/** The layout every tool page shares (Re-voice, Clean-up, Subtitles, Images): the header, an optional notice, then the
+ *  work on a canvas on the left and its settings in a panel on the right, with the one primary action at the panel's
+ *  foot. On phones the panel stacks under the canvas. */
+export function ToolPage({ title, sub, actions, notice, side, sideLabel = "Settings", children }: {
+  title: React.ReactNode; sub?: React.ReactNode; actions?: React.ReactNode; notice?: React.ReactNode; side: React.ReactNode; sideLabel?: string; children: React.ReactNode;
+}) {
+  return (
+    <>
+      <PageHeader title={title} sub={sub} actions={actions} />
+      {notice}
+      <div className="tool">
+        <div className="tool-main">{children}</div>
+        <aside className="tool-side" aria-label={sideLabel}>{side}</aside>
+      </div>
+    </>
+  );
+}
+
+/** One setting in a side panel: its label (wired with htmlFor), an optional ⓘ and a note on the right. */
+export function SideRow({ label, htmlFor, info, aside, children }: { label: React.ReactNode; htmlFor?: string; info?: React.ReactNode; aside?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="set-row">
+      <div className="sr-h"><span className="sr-l">{htmlFor ? <label htmlFor={htmlFor}>{label}</label> : label}{info && <Info label={typeof label === "string" ? label : undefined}>{info}</Info>}</span>{aside && <span className="aside">{aside}</span>}</div>
+      {children}
+    </div>
+  );
+}
+
+/** A big drop target for files: click to choose, or drop. */
+export function DropZone({ icon, title, hint, accept, multiple, onFiles }: { icon: React.ReactNode; title: string; hint?: string; accept: string; multiple?: boolean; onFiles: (f: File[]) => void }) {
+  const [over, setOver] = useState(false);
+  return (
+    <label className={`dropzone ${over ? "over" : ""}`} onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
+      onDrop={(e) => { e.preventDefault(); setOver(false); onFiles(Array.from(e.dataTransfer.files)); }}>
+      <span className="dz-ic" aria-hidden>{icon}</span>
+      <b>{title}</b>
+      {hint && <span>{hint}</span>}
+      <input type="file" accept={accept} multiple={multiple} hidden onChange={(e) => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+    </label>
   );
 }

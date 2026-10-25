@@ -29,7 +29,7 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
   on everything. Scores compare the script and what was heard in the same spoken form (sound-alike words and letters,
   not spelling), so "SQL" vs "sequel" or "Kubernetes" vs "Cubernetes" no longer swings the number. Best-of-N (2–4 takes)
   is still there for final renders.
-- **Your own model:** collect 30-60 minutes on the *Voice model* page (read-along or uploads; the worker cleans, cuts and
+- **Your own model:** collect 30-60 minutes on the *Professional voice clone* page (Voices) (read-along or uploads; the worker cleans, cuts and
   filters clips), press **Train my voice** to fine-tune Orpheus 3B on the GPU worker (saved to R2, no Hugging Face), use
   it as the `myvoice` engine, and benchmark it against your clones on unseen sentences. It's trained for **flow**: each
   sentence is voiced with the one before it as context, so a whole script sounds like one take, not a list of sentences.
@@ -50,7 +50,7 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
 - **Subtitles:** Whisper large-v3 with word timestamps → SRT / VTT / JSON, per line and for the whole timeline, plus a script-match score
   and a voice-match score for cloned voices.
 - **Dashboard:** `https://<app>/` (sign in with your account, or `MCP_TOKEN` for the studio only): Home, Voices, Posts
-  (board, calendar, list, gallery), Files, Voiceover, Voice model, Clean-up, Subtitles, Images, GPU & engines, Settings.
+  (board, calendar, list, gallery), Files, Voiceover (Script and Lines views), Voices (instant clone, professional clone, re-voice), Clean-up, Subtitles, Images, GPU & engines, Settings.
   Light and dark themes; installable as an app.
 - **MCP covers the whole dashboard:** voice, clean-up, re-voice, subtitles, images, library, settings, and the workspace
   (read the board and calendar, create and edit posts and scripts, comment, attach media, voice a post's script).

@@ -3,26 +3,27 @@
 The dashboard is a clean product UI in the family of ElevenLabs and Linear-style workspaces: a light sidebar, a white
 canvas, hairline borders, black primary buttons, soft tinted status pills, and nothing decorative. Read this before you
 build or change any screen. Tokens live in `mcp/app/globals.css`; the shared parts live in `mcp/components/ui.tsx`
-(`PageHeader`, `Field`, `StatCard`, `Empty`, `Notice`, `Toggle`, `PopMenu`), `Info.tsx` and `Shell.tsx`.
+(`PageHeader`, `Field`, `StatCard`, `Empty`, `Notice`, `Toggle`, `PopMenu`, `ToolPage`, `SideRow`, `DropZone`), `Info.tsx`, `pop.tsx` (`Select`, `useDismiss`) and `Shell.tsx`.
 
 ## Structure
 
-The studio has nine destinations, grouped by what you're doing, not by which backend stores the data:
+The sidebar has eight destinations, grouped by what you're doing, not by which backend stores the data:
 
 | Group | Page | Route | Job |
 |---|---|---|---|
 | — | Home | `/` | Greeting with the GPU's state, tool tiles, latest takes, ways to make a voice, what's due next |
-| — | Voices | `/voices` | Your voices and the built-in voices; clone your voice; re-voice a take |
+| — | Voices | `/voices` | Make a voice (three cards), then your voices and the built-in voices |
 | — | Posts | `/posts` | Every post as a Board, Calendar, List or Gallery, filtered by platform; the post drawer |
 | — | Files | `/files` | Generated (takes, subtitles, images, videos in R2) and Uploads (shared workspace files) |
-| Create | Voiceover | `/voiceover` | Write, pick a voice, generate |
-| Create | Voice model | `/model` | Collect recordings and train your own model |
-| Create | Clean-up, Subtitles, Images | `/clean-up`, `/subtitles`, `/images` | One tool each |
+| Create | Voiceover | `/voiceover` | Write, pick a voice, generate; Script and Lines views |
+| Create | Clean-up, Subtitles, Images | `/clean-up`, `/subtitles`, `/images` | One tool each, in the tool layout |
 | Studio | GPU & engines | `/gpu` | Start/stop the Colab GPU, engines, machine, worker, failures |
 | Studio | Settings | `/settings` | Defaults, security, MCP access |
 
-Old addresses redirect (`next.config.ts`). Add a page only when a capability has its own object and its own primary
-action; otherwise it's a view, tab or section of an existing page.
+Making a voice opens from the Voices cards: Instant voice clone (`/voices/new`), Professional voice clone (`/voices/professional`,
+your trained model) and Re-voice (`/voices/revoice`). Old addresses redirect (`next.config.ts`), `/model` included. Add a
+page only when a capability has its own object and its own primary action; otherwise it's a view, tab or section of an
+existing page.
 
 **One name per page.** The nav label, the route, the H1 and how the docs and MCP instructions refer to it all agree.
 
@@ -35,8 +36,13 @@ action; otherwise it's a view, tab or section of an existing page.
   the numbers help decide what to do next (Posts, GPU).
 - Then the content. Lists are rows inside one bordered container (`.lib-list`, `.erows`, `.table-wrap`), not a card per
   row. Cards (`.card`) group a form or a section; keep nesting to two levels.
-- Tool pages (Voiceover) use the full height: a writing canvas on the left and a settings panel with Settings / History
-  tabs on the right (`.tts`), with the generate bar at the bottom of the canvas.
+- Voiceover uses the full height: a writing canvas on the left (Script: one box; Lines: each line with its audio,
+  scores, 👍/👎 and Redo, plus the joined full take) and a settings panel with Settings / History tabs on the right.
+- Tool pages (Re-voice, Clean-up, Subtitles, Images) use `ToolPage`: the work on a canvas on the left (`DropZone`,
+  the recorder, results, an `Empty` state for where results land), settings in a panel on the right built from
+  `SideRow`, and the one primary action at the panel's foot (`.tool-go`).
+- Making a voice uses the voice art (`components/Orb.tsx`): a flat disc with a waveform inside a dotted arc that runs
+  from nothing to the best length of audio, with the minimum ticked.
 
 ## Colour
 
@@ -47,7 +53,10 @@ action; otherwise it's a view, tab or section of an existing page.
 - The primary button is solid ink (black in light, white in dark). Ghost buttons are white with a hairline border.
 - Status pills are soft tints with strong text: `ok` (green), `warn` (amber), `bad` (red), `blue`, `violet`, `grey`.
   Post stages always use the same tint: Ideas grey, In production amber, Review violet, Scheduled blue, Posted green.
-- Red means an error, a destructive action or something overdue. Green means live or done. No gradients or glows.
+- Red means an error, a destructive action or something overdue. Green means live or done.
+- Flat everywhere: no gradients, glows or gradient art, the logo included (seven white bars falling into a V on a
+  solid ink tile; it inverts in dark mode). `--brand` (violet) is only for text selection, checkmarks and native
+  controls' accent colour.
 
 ## Type
 
@@ -62,7 +71,10 @@ action; otherwise it's a view, tab or section of an existing page.
 - Don't disable a primary button without saying why next to it; better, keep it enabled and validate on submit with
   the message beside the field (`role="alert"`, `aria-invalid`).
 - Shortcuts use a modifier: ⌘K / Ctrl+K opens search, Alt+1–9 jumps to a page. No bare single-letter shortcuts.
-- Popovers and drawers close on Escape and return focus. Targets are at least 24px.
+- Never a native `<select>` (it shows the device's menu): use `Select` from `components/pop.tsx`, which floats in a
+  portal and stays on screen. `Info` tips, `PopMenu`s and `Select`s float the same way.
+- Every popup closes on Escape and on a click outside (`useDismiss`); drawers and dialogs close on their scrim.
+  Focus returns to the trigger. Targets are at least 24px.
 - Anything fixed or sticky at the bottom (`.sticky`, `.save-bar`, the generate bar, the job tray) clears the phone tab
   bar (`--tab-h`).
 

@@ -16,19 +16,20 @@ const issueText = (r: Review) => r.issues.map((i) => `sentence ${i.chunk}: ${[i.
 /** A trained voice (Your model, or a fine-tuned ft_ voice on Qwen3-TTS): its lines can be rated for the voice coach. */
 export const coached = (engine?: string, voice?: string) => engine === "myvoice" || (engine === "qwen" && !!voice?.startsWith("ft_"));
 
-/** Thumbs up / down for the voice coach: what you like and don't like steers what it asks you to record next. */
-function Rate({ jobId, line, voice }: { jobId: string; line: Line; voice: { engine: string; voice: string } }) {
+/** Thumbs up / down on a line. Kept per voice with the line's scores (lib/ratings.ts); for a trained voice the coach
+ *  also learns from it what to ask you to record next. */
+export function Rate({ jobId, line, voice, initial }: { jobId: string; line: Line; voice: { engine: string; voice: string }; initial?: number }) {
   const key = `vb-rate-${jobId}-${line.id}`;
   const [r, setR] = useState(0);
-  useEffect(() => { try { setR(Number(localStorage.getItem(key)) || 0); } catch {} }, [key]);
+  useEffect(() => { try { setR(initial ?? (Number(localStorage.getItem(key)) || 0)); } catch {} }, [key, initial]);
   const send = (v: number) => {
     const next = r === v ? 0 : v;
     setR(next);
     try { localStorage.setItem(key, String(next)); } catch {}
-    api("coach/rate", { body: { ...voice, job: jobId, line: line.id, rating: next, text: line.text, duration: line.duration } }).catch(() => setR(r));
+    api("coach/rate", { body: { ...voice, job: jobId, line: line.id, rating: next, text: line.text, duration: line.duration, match: line.match, sim: line.similarity } }).catch(() => setR(r));
   };
   return (
-    <span className="row" style={{ gap: 2 }} title="Rate this line: the voice coach learns what to fix">
+    <span className="row" style={{ gap: 2 }} title="Rate this line: your ratings are kept with its scores to steer this voice">
       <button className={`icon-btn ${r === 1 ? "on" : ""}`} aria-label="Sounds good" onClick={() => send(1)}><ThumbsUp size={14} weight={r === 1 ? "fill" : "regular"} /></button>
       <button className={`icon-btn ${r === -1 ? "on" : ""}`} aria-label="Sounds off" onClick={() => send(-1)}><ThumbsDown size={14} weight={r === -1 ? "fill" : "regular"} /></button>
     </span>

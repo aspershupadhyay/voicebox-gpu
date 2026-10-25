@@ -7,6 +7,7 @@ import { api } from "./api";
 import { Info } from "./Info";
 import { useDialog } from "./Dialog";
 import { useStatus } from "./Shell";
+import { Select } from "./pop";
 
 type Usage = { balance: number; rate: number; assignments: number; at: number };
 type Config = { gpu: string; idle_stop_min: number; ntfy_topic: string | null; remind_hours: number; low_units: number;
@@ -102,8 +103,8 @@ export default function GpuCard() {
                 <Lightning size={14} weight="fill" /> Start for training &amp; video · {c.config.heavy_gpu}<span className="dim">{rate(c.config.heavy_gpu)}</span></button>
             </div>
             <div className="row tiny dim" style={{ gap: 6, flexWrap: "wrap" }}>or
-              <select value={c.config.gpu} onChange={(e) => save({ gpu: e.target.value })} style={{ width: "auto" }}>
-                {GPUS.map(([g, l]) => <option key={g} value={g}>{l}{rate(g)}</option>)}</select>
+              <Select size="sm" label="GPU" value={c.config.gpu} onChange={(v) => save({ gpu: v })} style={{ width: "auto" }}
+                options={GPUS.map(([g, l]) => [g, `${l}${rate(g)}`] as const)} />
               <button className="ghost xs" disabled={!!busy} onClick={() => startWith({ gpu: c.config.gpu })}>Start this one</button>
               {c.config.high_ram ? "· high-RAM machine" : "· standard RAM"}
             </div>
@@ -115,20 +116,20 @@ export default function GpuCard() {
       <details><summary className="small"><Bell size={13} /> Reminders and auto-stop</summary>
         <div className="stack" style={{ gap: 10, marginTop: 10 }}>
           <label className="row small" style={{ gap: 8 }}>Voice work on
-            <select value={c.config.voice_gpu} onChange={(e) => save({ voice_gpu: e.target.value })} style={{ width: "auto" }}>
-              {GPUS.map(([g]) => <option key={g} value={g}>{g}{rate(g)}</option>)}</select>
+            <Select size="sm" label="GPU for voice" value={c.config.voice_gpu} onChange={(v) => save({ voice_gpu: v })} style={{ width: "auto" }}
+              options={GPUS.map(([g]) => [g, `${g}${rate(g)}`] as const)} />
             training &amp; video on
-            <select value={c.config.heavy_gpu} onChange={(e) => save({ heavy_gpu: e.target.value })} style={{ width: "auto" }}>
-              {GPUS.map(([g]) => <option key={g} value={g}>{g}{rate(g)}</option>)}</select></label>
+            <Select size="sm" label="GPU for training and video" value={c.config.heavy_gpu} onChange={(v) => save({ heavy_gpu: v })} style={{ width: "auto" }}
+              options={GPUS.map(([g]) => [g, `${g}${rate(g)}`] as const)} /></label>
           <label className="row small" style={{ gap: 8 }}>
             <input type="checkbox" checked={c.config.high_ram} onChange={(e) => save({ high_ram: e.target.checked })} style={{ width: "auto" }} />
             High-RAM machine <span className="tiny dim">(more RAM keeps more models warm for instant switching; the L4 comes in one size)</span></label>
           <label className="row small" style={{ gap: 8 }}>Remind me every
-            <select value={c.config.remind_hours} onChange={(e) => save({ remind_hours: Number(e.target.value) })} style={{ width: "auto" }}>
-              {[0, 1, 2, 3].map((h) => <option key={h} value={h}>{h ? `${h} h` : "never"}</option>)}</select> the GPU runs</label>
+            <Select size="sm" label="Remind me every" value={c.config.remind_hours} onChange={(v) => save({ remind_hours: v })} style={{ width: "auto" }}
+              options={[0, 1, 2, 3].map((h) => [h, h ? `${h} h` : "never"] as const)} /> the GPU runs</label>
           <label className="row small" style={{ gap: 8 }}>Stop the GPU after
-            <select value={c.config.idle_stop_min} onChange={(e) => save({ idle_stop_min: Number(e.target.value) })} style={{ width: "auto" }}>
-              {[0, 20, 30, 45, 60, 90, 120].map((m) => <option key={m} value={m}>{m ? `${m} min` : "never"}</option>)}</select> with nothing to do <span className="tiny dim">(GPUs started here)</span></label>
+            <Select size="sm" label="Stop the GPU after" value={c.config.idle_stop_min} onChange={(v) => save({ idle_stop_min: v })} style={{ width: "auto" }}
+              options={[0, 20, 30, 45, 60, 90, 120].map((m) => [m, m ? `${m} min` : "never"] as const)} /> with nothing to do <span className="tiny dim">(GPUs started here)</span></label>
           <label className="row small" style={{ gap: 8 }}>Warn me below
             <input type="number" value={c.config.low_units} min={0} style={{ width: 80 }} onChange={(e) => save({ low_units: Number(e.target.value) })} /> units</label>
           {c.config.ntfy_topic ? (

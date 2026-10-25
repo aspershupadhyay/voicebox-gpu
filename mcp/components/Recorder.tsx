@@ -12,8 +12,9 @@ import { addChunk, dropTake, finishTake, newTake, takeFile, useTakes, type Take 
 export type Recording = Awaited<ReturnType<typeof startRecording>>;
 
 /** Start the mic. scope names where the take is offered back after a refresh (e.g. "voices", "dataset:asper"). */
-export async function startRecording(scope = "recording", note?: string) {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+export async function startRecording(scope = "recording", note?: string, deviceId?: string) {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1,
+    ...(deviceId && deviceId !== "default" ? { deviceId: { exact: deviceId } } : {}) } });
   const mime = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
   const r = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 192000 } : undefined);
   const take = await newTake(scope, r.mimeType || mime || "audio/webm", note);
