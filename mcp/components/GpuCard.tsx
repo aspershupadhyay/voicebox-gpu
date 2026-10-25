@@ -17,7 +17,7 @@ type ColabStatus = { connected: boolean; email?: string | null; usage?: Usage | 
   session: Session | null; config: Config };
 const GPUS = [["A100", "A100 · 40-80 GB · fastest training"], ["L4", "L4 · 24 GB · cheapest, voice is fine"], ["H100", "H100 · 80 GB"], ["T4", "T4 · 16 GB · no Qwen fine-tune"], ["G4", "G4"]] as const;
 // as lib/colab.ts rateKey: L4 has one shape, the others are measured per standard / high-RAM machine
-const rateKey = (gpu: string, hm: boolean) => `${gpu}${hm && gpu !== "L4" ? " high RAM" : ""}`;
+const rateKey = (gpu: string, hm: boolean) => `${gpu}${hm ? " high RAM" : ""}`;
 const dur = (ms: number) => { const m = Math.round(ms / 60_000); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`; };
 
 export default function GpuCard() {
@@ -72,8 +72,11 @@ export default function GpuCard() {
   );
 
   const left = usage && usage.rate > 0 ? usage.balance / usage.rate : null;
-  const rate = (g: string) => { const r = c.config.rates?.[rateKey(g, c.config.high_ram)]; return r ? ` · ${r.toFixed(2)} units/h` : ""; };
-  const startWith = (body: Record<string, unknown>) => act("start", () => api("colab/start", { body }), "GPU starting: the worker comes online in a few minutes");
+  const rate = (g: string) => { const r = c.config.rates?.[rateKey(g, c.config.high_ram)] ?? c.config.rates?.[g]; return r ? ` · ${r.toFixed(2)} units/h` : ""; };
+  const startWith = (body: Record<string, unknown>) => act("start", async () => {
+    const r = await api<{ gpu: string; note?: string }>("colab/start", { body });
+    toast(r.note ? `${r.note}. The worker comes online in a few minutes` : `${r.gpu} starting: the worker comes online in a few minutes`, "ok");
+  });
   return (
     <div className="card">
       <div className="card-head"><h2>Colab GPU</h2><span className="dim tiny">{c.email ?? "Colab connected"}</span></div>

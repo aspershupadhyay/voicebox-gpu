@@ -25,8 +25,8 @@ export type Purpose = "voice" | "heavy";
 export type ColabConfig = { gpu: Gpu; idle_stop_min: number; ntfy_topic: string | null; remind_hours: number; low_units: number;
   high_ram: boolean; voice_gpu: Gpu; heavy_gpu: Gpu; rates: Record<string, number> };
 // L4 comes in one shape (it already has 53 GB of RAM); the others take shape=hm for the high-RAM machine
-const ONE_SHAPE: Gpu[] = ["L4"];
-export const rateKey = (gpu: string, highRam: boolean) => `${gpu}${highRam && !ONE_SHAPE.includes(gpu as Gpu) ? " high RAM" : ""}`;
+/** Rates are keyed by what Colab actually assigned (its machineShape), so no GPU's shapes are assumed here. */
+export const rateKey = (gpu: string, highRam: boolean) => `${gpu}${highRam ? " high RAM" : ""}`;
 export type ColabSession = { endpoint: string; gpu: string; started: number; by: "app" | "notebook"; worker_started?: number; notified_hours?: number;
   high_ram?: boolean; purpose?: Purpose | null;
   last_active?: number; stopped?: number; stop_reason?: string; low_warned?: boolean; usage?: Usage | null };
@@ -117,8 +117,10 @@ async function tun<T>(path: string, init: { method?: string; headers?: Record<st
   if (!r.ok) {
     const hint = r.status === 412 ? "too many runtimes are assigned already (stop one first)"
       : r.status === 503 ? "no GPU of that type is free right now: try another (L4 is usually available)"
-      : r.status === 403 ? "this Google account can't use that GPU (check your Colab plan)" : text.slice(0, 200);
-    throw new Error(`Colab ${r.status}: ${hint}`);
+      : r.status === 403 ? "this Google account can't use that GPU (check your Colab plan)"
+      : /^\s*</.test(text) ? (r.status === 400 ? "Colab doesn't offer that GPU and memory combination on this account" : `Colab answered with an error page (${text.match(/<title>([^<]*)/i)?.[1]?.trim() ?? "no details"})`)
+      : text.slice(0, 200);
+    throw Object.assign(new Error(`Colab ${r.status}: ${hint}`), { status: r.status });
   }
   return (text ? JSON.parse(text) : {}) as T;
 }
@@ -145,14 +147,38 @@ export async function stopRuntime(endpoint: string, reason = "stopped from the a
 }
 
 /** Ask Colab for a GPU runtime (same request as `colab new --gpu X`). */
-async function assign(gpu: Gpu, highRam: boolean) {
+async function assignOnce(gpu: Gpu, highRam: boolean) {
   const nbh = randomUUID().replace(/-/g, "_").padEnd(44, ".");
-  const q = `?nbh=${encodeURIComponent(nbh)}&variant=GPU&accelerator=${gpu}${highRam && !ONE_SHAPE.includes(gpu) ? "&shape=hm" : ""}`;
+  const q = `?nbh=${encodeURIComponent(nbh)}&variant=GPU&accelerator=${gpu}${highRam ? "&shape=hm" : ""}`;
   const first = await tun<{ token?: string; endpoint?: string; runtimeProxyInfo?: Proxy }>(`/assign${q}`);
   if (first.endpoint && first.runtimeProxyInfo) return first as { endpoint: string; runtimeProxyInfo: Proxy };
   if (!first.token) throw new Error("Colab didn't hand out an assignment token");
   const got = await tun<{ endpoint: string; runtimeProxyInfo: Proxy; accelerator: string }>(`/assign${q}`, { method: "POST", headers: { "X-Goog-Colab-Token": first.token } });
   return got;
+}
+
+/** Whatever GPU is picked, try to get one: the choice with high RAM, the same GPU in its standard shape when Colab
+ *  doesn't offer high RAM for it (a 400), then the other GPUs from your own settings when it isn't available at all
+ *  (400 / 403 / 503). Nothing about which GPU has which shapes is assumed; Colab's answer decides. */
+async function assign(choices: Gpu[], highRam: boolean, deadline: number) {
+  const tried: string[] = [];
+  let last: Error | null = null;
+  for (const gpu of [...new Set(choices)]) {
+    for (const hm of highRam ? [true, false] : [false]) {
+      if (Date.now() > deadline) break;
+      try {
+        const a = await assignOnce(gpu, hm);
+        return { ...a, gpu, high_ram: hm, tried };
+      } catch (e) {
+        const status = (e as { status?: number }).status;
+        last = e as Error;
+        tried.push(`${gpu}${hm ? " high RAM" : ""}: ${last.message.replace(/^Colab /, "")}`);
+        if (status === 412 || status === 401) throw e; // too many runtimes / signed out: another GPU won't help
+        if (hm && status !== 400) break; // not a shape problem: skip this GPU's standard shape
+      }
+    }
+  }
+  throw new Error(tried.length > 1 ? `no GPU could be assigned. Tried ${tried.join("; ")}` : last?.message ?? "no GPU could be assigned");
 }
 
 /** Python the worker's kernel runs: the notebook's two start cells, with the secrets passed in (no Colab Secrets here). */
@@ -264,13 +290,16 @@ export async function start(origin: string, gpu?: Gpu, opts: { purpose?: Purpose
   const highRam = typeof opts.high_ram === "boolean" ? opts.high_ram : cfg.high_ram;
   const have = await runtimes();
   if (have.length) throw new Error(`a runtime is already running (${have.map((r) => r.accelerator).join(", ")}): stop it first, or wait for the worker to come online`);
-  const a = await assign(want, highRam);
-  const s: ColabSession = { endpoint: a.endpoint, gpu: want, started: Date.now(), by: "app", notified_hours: 0, last_active: Date.now(),
-    high_ram: highRam && !ONE_SHAPE.includes(want), purpose: opts.purpose ?? null };
+  // the pick first, then the other GPUs you chose in settings, in case Colab can't give the pick right now
+  const a = await assign([want, cfg.gpu, cfg.voice_gpu, cfg.heavy_gpu], highRam, t0 + 25_000);
+  const s: ColabSession = { endpoint: a.endpoint, gpu: a.gpu, started: Date.now(), by: "app", notified_hours: 0, last_active: Date.now(),
+    high_ram: a.high_ram, purpose: opts.purpose ?? null };
   await putJson(SESSION, s);
   try {
     const r = await launch(a.runtimeProxyInfo, bootstrap(appOrigin(origin), process.env.COLAB_PREWARM ?? ""), t0 + 52_000);
-    return { ...s, kernel: r.kernel, output: r.output };
+    const note = a.gpu !== want ? `${want} wasn't available, so ${a.gpu} was started instead`
+      : highRam && !a.high_ram ? `${want} has no high-RAM machine on this account, so the standard one was started` : undefined;
+    return { ...s, kernel: r.kernel, output: r.output, ...(note ? { note } : {}) };
   } catch (e) {
     // a runtime without a worker only burns units: give it back
     await stopRuntime(a.endpoint, `the worker didn't start: ${(e as Error).message}`).catch(() => null);
