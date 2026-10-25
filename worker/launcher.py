@@ -97,7 +97,8 @@ def register(register_url, secret, url):
     that now redirects to the new one), so follow it here, keeping the Authorization header, and remember it."""
     h = health(secret)
     body = json.dumps({"url": url, "version": C.VERSION, "gpu": h["gpu"], "engines": h["engines"],
-                       "loaded": h["loaded"], "queue": h["queue"], "started_at": time.time() - h["uptime_s"]}).encode()
+                       "loaded": h["loaded"], "queue": h["queue"], "started_at": time.time() - h["uptime_s"],
+                       "running": len(h.get("running") or []), "last_active": h.get("last_active")}).encode()
     for _ in range(4):
         req = urllib.request.Request(register_url, data=body, method="POST",
                                      headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json",
