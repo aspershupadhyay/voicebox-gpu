@@ -5,7 +5,7 @@ source of truth for defaults and ranges (docs/API.md is generated from the same 
 """
 import os
 
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 HOME = os.environ.get("VOICEBOX_HOME", "/content/voicebox")
 VENVS = os.environ.get("VOICEBOX_VENVS", os.path.join(HOME, "venvs"))
 
@@ -399,6 +399,12 @@ def vllm_pool_gb(total_gb):
     if total_gb >= 20:
         return 12.0
     return 9.0
+
+
+def vllm_max_seqs(pool_gb):
+    """How many sentences vLLM may generate at once. Each one holds up to ~2.5k tokens of KV cache (~0.3 GB at 16 bit),
+    and vLLM only admits what its cache fits, so a big pool (80 GB card) can take twice the default 64."""
+    return 128 if pool_gb >= 24 else 64
 
 
 def python_for(engine):

@@ -216,7 +216,7 @@ def main():
 
     trainer = Grouped(model=model, train_dataset=ds, eval_dataset=eval_ds, callbacks=[Progress()], data_collator=collate, args=TrainingArguments(
         per_device_train_batch_size=bs, gradient_accumulation_steps=accum, num_train_epochs=epochs, remove_unused_columns=False,
-        dataloader_num_workers=2, learning_rate=float(cfg.get("learning_rate") or 2e-4), logging_steps=5, optim="adamw_8bit",
+        dataloader_num_workers=min(8, max(2, (os.cpu_count() or 4) // 2)), dataloader_pin_memory=True, learning_rate=float(cfg.get("learning_rate") or 2e-4), logging_steps=5, optim="adamw_8bit",
         weight_decay=0.01, lr_scheduler_type="cosine", seed=3407, output_dir=ckpts, report_to="none",
         fp16=not is_bfloat16_supported(), bf16=is_bfloat16_supported(), **opts, **pick))
     stats = trainer.train()

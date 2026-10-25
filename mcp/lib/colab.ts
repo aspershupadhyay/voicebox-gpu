@@ -19,8 +19,16 @@ const CONFIG = "colab/config.json";
 export const GPUS = ["A100", "L4", "H100", "T4", "G4"] as const;
 export type Gpu = (typeof GPUS)[number];
 
-export type ColabConfig = { gpu: Gpu; idle_stop_min: number; ntfy_topic: string | null; remind_hours: number; low_units: number };
+export type Purpose = "voice" | "heavy";
+// voice_gpu / heavy_gpu: what Start picks for voiceovers vs training and video; rates: the units an hour Colab really
+// charged, measured per runtime kind ("A100", "A100 high RAM") while it ran alone, so the choice rests on real prices.
+export type ColabConfig = { gpu: Gpu; idle_stop_min: number; ntfy_topic: string | null; remind_hours: number; low_units: number;
+  high_ram: boolean; voice_gpu: Gpu; heavy_gpu: Gpu; rates: Record<string, number> };
+// L4 comes in one shape (it already has 53 GB of RAM); the others take shape=hm for the high-RAM machine
+const ONE_SHAPE: Gpu[] = ["L4"];
+export const rateKey = (gpu: string, highRam: boolean) => `${gpu}${highRam && !ONE_SHAPE.includes(gpu as Gpu) ? " high RAM" : ""}`;
 export type ColabSession = { endpoint: string; gpu: string; started: number; by: "app" | "notebook"; worker_started?: number; notified_hours?: number;
+  high_ram?: boolean; purpose?: Purpose | null;
   last_active?: number; stopped?: number; stop_reason?: string; low_warned?: boolean; usage?: Usage | null };
 export type Usage = { balance: number; rate: number; assignments: number; at: number };
 
@@ -137,9 +145,9 @@ export async function stopRuntime(endpoint: string, reason = "stopped from the a
 }
 
 /** Ask Colab for a GPU runtime (same request as `colab new --gpu X`). */
-async function assign(gpu: Gpu) {
+async function assign(gpu: Gpu, highRam: boolean) {
   const nbh = randomUUID().replace(/-/g, "_").padEnd(44, ".");
-  const q = `?nbh=${encodeURIComponent(nbh)}&variant=GPU&accelerator=${gpu}`;
+  const q = `?nbh=${encodeURIComponent(nbh)}&variant=GPU&accelerator=${gpu}${highRam && !ONE_SHAPE.includes(gpu) ? "&shape=hm" : ""}`;
   const first = await tun<{ token?: string; endpoint?: string; runtimeProxyInfo?: Proxy }>(`/assign${q}`);
   if (first.endpoint && first.runtimeProxyInfo) return first as { endpoint: string; runtimeProxyInfo: Proxy };
   if (!first.token) throw new Error("Colab didn't hand out an assignment token");
@@ -208,13 +216,18 @@ export async function getSession() {
 
 export async function getConfig(): Promise<ColabConfig> {
   const c = await getJson<Partial<ColabConfig>>(CONFIG).catch(() => null);
-  return { gpu: "A100", idle_stop_min: 45, ntfy_topic: null, remind_hours: 1, low_units: 15, ...(c ?? {}) };
+  return { gpu: "A100", idle_stop_min: 45, ntfy_topic: null, remind_hours: 1, low_units: 15, high_ram: true, voice_gpu: "L4", heavy_gpu: "A100", rates: {}, ...(c ?? {}) };
 }
 
 export async function setConfig(patch: Partial<ColabConfig>) {
   const cur = await getConfig();
+  const pick = (g: unknown, d: Gpu) => (GPUS.includes(g as Gpu) ? (g as Gpu) : d);
   const next: ColabConfig = {
-    gpu: GPUS.includes(patch.gpu as Gpu) ? patch.gpu as Gpu : cur.gpu,
+    gpu: pick(patch.gpu, cur.gpu),
+    voice_gpu: pick(patch.voice_gpu, cur.voice_gpu),
+    heavy_gpu: pick(patch.heavy_gpu, cur.heavy_gpu),
+    high_ram: typeof patch.high_ram === "boolean" ? patch.high_ram : cur.high_ram,
+    rates: cur.rates,
     idle_stop_min: typeof patch.idle_stop_min === "number" ? Math.max(0, Math.min(600, Math.round(patch.idle_stop_min))) : cur.idle_stop_min,
     remind_hours: typeof patch.remind_hours === "number" ? Math.max(0, Math.min(12, patch.remind_hours)) : cur.remind_hours,
     low_units: typeof patch.low_units === "number" ? Math.max(0, Math.min(500, patch.low_units)) : cur.low_units,
@@ -228,14 +241,18 @@ export async function setConfig(patch: Partial<ColabConfig>) {
 export const appOrigin = (fallback?: string) =>
   process.env.APP_URL?.replace(/\/$/, "") || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : fallback ?? "");
 
-/** Start: a GPU runtime + the worker on it. Refuses while a worker is online or a runtime is already assigned. */
-export async function start(origin: string, gpu?: Gpu) {
+/** Start: a GPU runtime + the worker on it. Refuses while a worker is online or a runtime is already assigned.
+ *  purpose picks the GPU from settings (voice: voiceovers, an L4 by default; heavy: training and video, an A100); an
+ *  explicit gpu wins over both. */
+export async function start(origin: string, gpu?: Gpu, opts: { purpose?: Purpose; high_ram?: boolean } = {}) {
   const cfg = await getConfig();
-  const want = gpu && GPUS.includes(gpu) ? gpu : cfg.gpu;
+  const want = gpu && GPUS.includes(gpu) ? gpu : opts.purpose === "voice" ? cfg.voice_gpu : opts.purpose === "heavy" ? cfg.heavy_gpu : cfg.gpu;
+  const highRam = typeof opts.high_ram === "boolean" ? opts.high_ram : cfg.high_ram;
   const have = await runtimes();
   if (have.length) throw new Error(`a runtime is already running (${have.map((r) => r.accelerator).join(", ")}): stop it first, or wait for the worker to come online`);
-  const a = await assign(want);
-  const s: ColabSession = { endpoint: a.endpoint, gpu: want, started: Date.now(), by: "app", notified_hours: 0, last_active: Date.now() };
+  const a = await assign(want, highRam);
+  const s: ColabSession = { endpoint: a.endpoint, gpu: want, started: Date.now(), by: "app", notified_hours: 0, last_active: Date.now(),
+    high_ram: highRam && !ONE_SHAPE.includes(want), purpose: opts.purpose ?? null };
   await putJson(SESSION, s);
   try {
     const r = await launch(a.runtimeProxyInfo, bootstrap(appOrigin(origin), process.env.COLAB_PREWARM ?? ""));
@@ -279,6 +296,7 @@ export async function onHeartbeat(hb: { started_at?: number; queue?: number; run
   if (due || stale) {
     const u = await usage().catch(() => null);
     if (u) { s.usage = u; changed = true; }
+    if (u && u.assignments === 1 && u.rate > 0) await learnRate(u.rate).catch(() => null);
     if (due) {
       s.notified_hours = hours;
       const left = u && u.rate > 0 ? ` · about ${(u.balance / u.rate).toFixed(1)} h left at this rate` : "";
@@ -296,6 +314,16 @@ export async function onHeartbeat(hb: { started_at?: number; queue?: number; run
     return;
   }
   if (changed) await putJson(SESSION, s);
+}
+
+/** One runtime is running: what Colab charges for it is its rate (per kind of runtime, kept in settings). */
+async function learnRate(rate: number) {
+  const [r] = await runtimes();
+  if (!r) return;
+  const k = rateKey(r.accelerator, r.high_ram);
+  const cfg = await getConfig();
+  if (Math.abs((cfg.rates[k] ?? 0) - rate) < 0.01) return;
+  await putJson(CONFIG, { ...cfg, rates: { ...cfg.rates, [k]: rate } });
 }
 
 /** Everything the GPU card shows. */
