@@ -30,30 +30,26 @@ function MediaInner() {
   return (
     <div onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDrop(true); } }} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDrop(false); }}
       onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); setDrop(false); upload(e.dataTransfer.files); } }}>
-      <div className="head">
-        <div>
-          <div className="eyebrow">Workspace</div>
-          <h1>Every <em>file.</em></h1>
-          <p className="sub">{rows.length} files · {(total / 1e9).toFixed(2)} GB in Appwrite. Drop anything here; attach files to a post from the post itself.</p>
-        </div>
-        <button onClick={() => input.current?.click()}><UploadSimple size={15} weight="bold" /> Upload</button>
-        <input ref={input} type="file" multiple hidden onChange={(e) => { if (e.target.files?.length) upload(e.target.files); e.target.value = ""; }} />
+      <input ref={input} type="file" multiple hidden onChange={(e) => { if (e.target.files?.length) upload(e.target.files); e.target.value = ""; }} />
+      <div className="row between" style={{ marginBottom: 14 }}>
+        <span className="small dim">{rows.length} file{rows.length === 1 ? "" : "s"} · {(total / 1e9).toFixed(2)} GB shared · attach files to a post from the post itself</span>
+        <button className="sm" onClick={() => input.current?.click()}><UploadSimple size={15} weight="bold" />Upload</button>
       </div>
       <div className="filters">
-        <div className="seg">{KINDS.map((k) => <button key={k.id} className={kind === k.id ? "on" : ""} onClick={() => setKind(k.id)}>{k.label}</button>)}</div>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by file or post" style={{ flex: 1, minWidth: 180 }} />
+        <div className="seg" role="radiogroup" aria-label="Kind">{KINDS.map((k) => <button key={k.id} role="radio" aria-checked={kind === k.id} className={kind === k.id ? "on" : ""} onClick={() => setKind(k.id)}>{k.label}</button>)}</div>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by file or post" aria-label="Search uploads" style={{ flex: 1, minWidth: 180 }} />
       </div>
       <UploadList uploads={uploads} />
       {shown.length ? (
         <div className="media-grid">{shown.map((m) => (
           <div key={m.$id}>
             <MediaTile m={m} onOpen={() => setView(m)} />
-            {m.post_id && title[m.post_id] && <a className="tiny dim mt-post" href={`/workspace?post=${m.post_id}`}>{title[m.post_id]}</a>}
+            {m.post_id && title[m.post_id] && <a className="tiny dim mt-post" href={`/posts?post=${m.post_id}`}>{title[m.post_id]}</a>}
           </div>
         ))}</div>
       ) : (
         <div className={`drop ${drop ? "over" : ""}`} style={{ padding: "60px 20px" }} onClick={() => input.current?.click()}>
-          <UploadSimple size={26} />
+          <span className="d-ic"><UploadSimple size={22} /></span>
           <b>{rows.length ? "Nothing matches" : "Drop your first files"}</b>
           <span className="small dim">Images, videos up to 2 GB, audio, scripts. Your partner sees them the moment they land.</span>
         </div>
@@ -65,6 +61,7 @@ function MediaInner() {
   );
 }
 
+/** Shared uploads (thumbnails, B-roll, final cuts): the Uploads tab of Files. */
 export default function MediaLibrary() {
   return <Gate><MediaInner /></Gate>;
 }

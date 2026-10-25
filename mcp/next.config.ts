@@ -17,5 +17,14 @@ const config: NextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: SECURITY_HEADERS }];
   },
+  // the old page addresses (bookmarks, the MCP tools' links, the installed app) land on their new homes
+  async redirects() {
+    const to = (source: string, destination: string) => ({ source, destination, permanent: false });
+    return [
+      to("/generate", "/voiceover"), to("/studio", "/clean-up"), to("/image", "/images"), to("/health", "/gpu"),
+      to("/content", "/posts"), to("/workspace", "/posts?view=board"), to("/calendar", "/posts?view=calendar"),
+      to("/library", "/files"), to("/media", "/files?tab=uploads"), to("/board", "/posts?view=board"),
+    ];
+  },
 };
 export default config;

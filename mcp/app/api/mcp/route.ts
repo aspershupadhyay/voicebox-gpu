@@ -67,7 +67,7 @@ async function waitFor(id: string, seconds: number): Promise<Job> {
   if (job.status === "done") {
     try {
       const lib = await archiveWorkerJob(job as unknown as Parameters<typeof archiveWorkerJob>[0]);
-      if (lib) job = { ...job, library: { saved: true, dashboard: `/library#${lib.id}`, zip: `/api/zip/${lib.id}` } };
+      if (lib) job = { ...job, library: { saved: true, dashboard: `/files#${lib.id}`, zip: `/api/zip/${lib.id}` } };
     } catch (e) {
       job = { ...job, library: { saved: false, error: (e as Error).message } };
     }
@@ -461,7 +461,7 @@ const handler = createMcpHandler(
       "voice_dataset",
       {
         title: "Your voice dataset",
-        description: "Training data collected for the user's own voice model (Your model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-20 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. One dataset per person (name = that person's model name). Training: auto_train starts it as soon as the batch is stored (once 15+ minutes are collected; a voice that already has a model retrains once 15+ new minutes are in), else train_voice (or the Your model page's Train button) runs it on the GPU worker (about 1-2 h); the result is engine myvoice, voice = the dataset name.",
+        description: "Training data collected for the user's own voice model (Voice model page): sessions, clips, minutes (15 works, 30 good, 60 best). add_urls adds recordings (long audio/video of only the user speaking, any https link): the worker cleans them, cuts 2-20 s clips at sentence ends with Whisper, drops noisy/clipped/mis-timed ones. One dataset per person (name = that person's model name). Training: auto_train starts it as soon as the batch is stored (once 15+ minutes are collected; a voice that already has a model retrains once 15+ new minutes are in), else train_voice (or the Voice model page's Train button) runs it on the GPU worker (about 1-2 h); the result is engine myvoice, voice = the dataset name.",
         inputSchema: z.object({
           name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/).optional().describe("dataset name = whose voice (each person has their own, e.g. their first name); default me"),
           add_urls: z.array(z.string().url()).max(20).optional().describe("recordings to add"),
@@ -649,7 +649,7 @@ const handler = createMcpHandler(
       {
         title: "List saved voiceovers",
         description:
-          "Every finished job saved permanently in the dashboard library (survives the Colab runtime). Download with Bearer MCP_TOKEN: GET /api/zip/<id> (all lines) or /api/audio/<id>/<line>.wav.",
+          "Every finished job saved permanently in the dashboard's Files page (survives the Colab runtime). Download with Bearer MCP_TOKEN: GET /api/zip/<id> (all lines) or /api/audio/<id>/<line>.wav.",
         inputSchema: z.object({ limit: z.number().int().min(1).max(200).optional() }),
       },
       async ({ limit }) => {
@@ -738,7 +738,7 @@ const handler = createMcpHandler(
       id: p.$id, title: p.title, status: p.status, platforms: p.platforms,
       ...(tmap ? { goes_to: targetsOf(p, tmap).map((t) => ({ space: t.space, name: spaceName(t.space), status: t.status, due_at: t.due_at ?? null, link: t.link ?? null })) } : {}), due_at: p.due_at, owner: p.owner_name, assignee: p.assignee_name,
       voiceovers: p.jobs?.length ?? 0, script_words: p.script?.trim() ? p.script.trim().split(/\s+/).length : 0, updated: p.$updatedAt,
-      link: `/workspace?post=${p.$id}`,
+      link: `/posts?post=${p.$id}`,
     });
     const ws = async <T,>(fn: () => Promise<T>) => {
       if (!hasKey()) return { ...text("ERROR: the shared workspace is not configured on the server (APPWRITE_API_KEY)."), isError: true };
@@ -973,7 +973,7 @@ const handler = createMcpHandler(
       "2) Voice it: check worker_status (if offline, ask the user to run the Colab notebook), then voice_lines with post_id to voice a post's script and attach the result, or with lines for a one-off. The user's recorded voices (my_voices) work on qwen. Defaults come from get_settings.",
       "3) Before a long or term-heavy script, preview_pronunciation and add fixes via pronounce.",
       "4) A recording from a bad mic: clean_audio. A rough take the user performed: revoice into their clean voice. Subtitles for any file: transcribe. Stills and thumbnails: imagine, then add_media to put one on the post.",
-      "5) Long jobs return a job id: poll get_job (each call waits up to 45 s). Results are archived to the dashboard library; links expire after 6 h.",
+      "5) Long jobs return a job id: poll get_job (each call waits up to 45 s). Results are archived to the dashboard's Files page; links expire after 6 h.",
       "6) The user's own voice model: voice_dataset to see or grow the training data, then the training notebook; once trained it is engine myvoice with voice = that person's name (my_voices lists both people's). benchmark_voices compares it with their clones on held-out sentences. voice_coach shows how a trained voice is doing and writes the next recording script around its weak spots; recording it makes the voice more natural (retrains only go live when they beat the current model).",
       "Content spaces: each post goes to one or more spaces (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast), each with its own stage and publish time; cross-post by adding targets (update_post targets, merge). Files: upload_media (bytes) or add_media (a link); delete_media / delete_post only when asked.",
       "7) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",

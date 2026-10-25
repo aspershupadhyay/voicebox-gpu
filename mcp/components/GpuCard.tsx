@@ -49,11 +49,11 @@ export default function GpuCard() {
   const save = (patch: Partial<Config>) => act("config", () => api("colab/config", { body: patch }));
   const topic = () => `voicebox-${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 8)}`;
 
-  if (!c) return <div className="card"><div className="card-head"><h2>GPU</h2></div><p className="dim small" style={{ margin: 0 }}>{err || "Loading…"}</p></div>;
+  if (!c) return <div className="card"><div className="card-head"><h2>Colab GPU</h2></div><p className="dim small" style={{ margin: 0 }}>{err || "Loading…"}</p></div>;
 
   if (!c.connected) return (
     <div className="card">
-      <div className="card-head"><h2>GPU · connect Colab</h2><Info>Start and stop the GPU from here and see your compute units, no Colab tab needed.</Info></div>
+      <div className="card-head"><h2>Connect your Colab GPU</h2><Info label="Connect Colab">Start and stop the GPU from here and see your compute units, no Colab tab needed.</Info></div>
       <p className="dim small" style={{ marginTop: 0 }}>Sign in once with the Google account that has your Colab plan. It uses the same sign-in as Google&apos;s official Colab CLI;
         the token is stored encrypted on this server and only used to start, stop and read your Colab runtimes and balance.</p>
       {!authing ? <button onClick={begin}><Lightning size={14} weight="fill" /> Connect Colab</button> : (
@@ -75,9 +75,9 @@ export default function GpuCard() {
   const startWith = (body: Record<string, unknown>) => act("start", () => api("colab/start", { body }), "GPU starting: the worker comes online in a few minutes");
   return (
     <div className="card">
-      <div className="card-head"><h2>GPU</h2><span className="dim tiny">{c.email ?? "Colab connected"}</span></div>
+      <div className="card-head"><h2>Colab GPU</h2><span className="dim tiny">{c.email ?? "Colab connected"}</span></div>
       <div className="row" style={{ gap: 18, flexWrap: "wrap", alignItems: "flex-end" }}>
-        <div><div className="tiny dim">Compute units left</div><div style={{ fontSize: 28, fontWeight: 700 }}>{usage ? usage.balance.toFixed(1) : "—"}</div></div>
+        <div><div className="tiny dim">Compute units left</div><div className="num">{usage ? usage.balance.toFixed(1) : "—"}</div></div>
         <div><div className="tiny dim">Burning now</div><div className="mono">{usage ? `${usage.rate.toFixed(2)} / h` : "—"}</div></div>
         <div><div className="tiny dim">At this rate</div><div className="mono">{left != null ? `${left.toFixed(1)} h left` : usage ? "nothing running" : "—"}</div></div>
         {s && <div><div className="tiny dim">This session</div><div className="mono">{s.gpu} · {dur(Date.now() - s.started)}{s.last_active ? ` · idle ${dur(Date.now() - s.last_active)}` : ""}</div></div>}

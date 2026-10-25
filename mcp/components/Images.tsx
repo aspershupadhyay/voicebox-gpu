@@ -11,6 +11,7 @@ import FetchBar from "./FetchBar";
 import { PendingCard } from "./GenCard";
 import { GuideButton } from "./GuideDrawer";
 import { useStatus } from "./Shell";
+import { Notice, PageHeader } from "./ui";
 
 type Spec = { about: string; sizes: Record<string, [number, number]>; qualities: Record<string, { steps: number; about: string }>; disk_gb: number;
   max_count: number; edit?: boolean; max_refs?: number; transparent?: boolean; commercial?: boolean; license?: string; downloaded?: boolean };
@@ -161,22 +162,20 @@ export default function Images() {
 
   return (
     <>
-      <div className="head">
-        <div>
-          <div className="eyebrow">Imagine</div>
-          <h1>Say it, <em>see it.</em></h1>
-          <p className="sub">Stills, thumbnails and video start frames. <Info>Z-Image: fast photoreal. Qwen-Image: 2K, typography, edits and transparent PNGs.</Info></p>
-        </div>
-        <GuideButton engine={model} label="Prompting guide" />
-      </div>
-      {!status?.online && status && <div className="banner"><WarningCircle size={20} weight="duotone" color="var(--danger)" /><div><b>The GPU worker is offline.</b> <span className="dim">Run the Colab notebook; this page reconnects by itself.</span></div></div>}
+      <PageHeader title="Images" sub="Stills, thumbnails and video start frames from a prompt."
+        actions={<GuideButton engine={model} label="Prompting guide" />} />
+      {!status?.online && status && (
+        <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/gpu" className="btn sm">Start the GPU</Link>}>
+          <b>The GPU is off.</b> Write your prompt now; this page connects by itself once it&apos;s on.
+        </Notice>
+      )}
 
       <div className="studio">
         <div className="composer">
           <div className="model-pick">
             {MODELS.map((m) => (
-              <button key={m} className={`model-row ${model === m ? "on" : ""}`} onClick={() => setModel(m)}>
-                <span className="glyph">{m === "zimage" ? <Lightning size={20} weight="duotone" /> : <Sparkle size={20} weight="duotone" />}</span>
+              <button key={m} className={`model-row ${model === m ? "on" : ""}`} aria-pressed={model === m} onClick={() => setModel(m)}>
+                <span className="glyph">{m === "zimage" ? <Lightning size={19} /> : <Sparkle size={19} />}</span>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span className="row between"><b>{NAMES[m]}</b>
                     <span className={`dot ${status?.engines?.[m] === "ready" ? "ok" : ["loading", "installing"].includes(status?.engines?.[m] ?? "") ? "warn" : "off"}`} title={status?.engines?.[m] ?? "not loaded"} />
@@ -192,7 +191,7 @@ export default function Images() {
           {warming && <FetchBar f={warming} name={model} compact />}
 
           <div className="prompt-box">
-            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} spellCheck={false}
+            <textarea aria-label="Prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} spellCheck={false}
               onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") generate(); }}
               placeholder={refs.length ? "Say what to change or combine: “put the person from image 1 in the jacket from image 2”…" : "Describe the image: subject, setting, light, lens, style…"} />
             <div className="prompt-foot">
@@ -200,7 +199,7 @@ export default function Images() {
               <button className="quiet xs" onClick={() => setShowNeg(!showNeg)}><Prohibit size={13} />Avoid</button>
             </div>
           </div>
-          {showNeg && <input value={negative} onChange={(e) => setNegative(e.target.value)} placeholder="blurry, extra fingers, watermark…" />}
+          {showNeg && <input aria-label="Avoid" value={negative} onChange={(e) => setNegative(e.target.value)} placeholder="blurry, extra fingers, watermark…" />}
 
           {maxRefs > 0 && (
             <div>
@@ -251,18 +250,19 @@ export default function Images() {
             )}
           </div>
           <details className="rail-more" style={{ borderTop: 0, padding: 0 }}>
-            <summary>More <Info>The same seed and prompt reproduce an image; roll for a new one.</Info></summary>
+            <summary className="small" style={{ cursor: "pointer" }}>More settings</summary>
+            <div className="tiny faint" style={{ marginTop: 8 }}>The same seed and prompt reproduce an image; roll for a new one.</div>
             <div className="row" style={{ gap: 8, alignItems: "flex-end", marginTop: 10 }}>
-              <div className="field" style={{ flex: 1, margin: 0 }}><label className="f">Seed</label><input type="number" value={seed} onChange={(e) => setSeed(+e.target.value)} /></div>
+              <div className="field" style={{ flex: 1, margin: 0 }}><label className="f" htmlFor="img-seed">Seed</label><input id="img-seed" type="number" value={seed} onChange={(e) => setSeed(+e.target.value)} /></div>
               <button className="ghost" onClick={() => setSeed(Math.floor(Math.random() * 1e6))} title="New random seed"><DiceFive size={16} />Roll</button>
             </div>
           </details>
 
-          <button className="sig go" disabled={!status?.online || busy || prompt.trim().length < 3} onClick={generate}>
+          <button className="go" disabled={!status?.online || busy || prompt.trim().length < 3} onClick={generate} title={!status?.online ? "Start the GPU first" : prompt.trim().length < 3 ? "Write a prompt first" : undefined}>
             <Sparkle size={18} weight="fill" />Generate{count > 1 ? ` ${count}` : ""}<span className="est">≈{fmtS(estS)}</span>
           </button>
           {(spec.license || !downloaded) && <p className="tiny dim" style={{ margin: 0 }}>{!downloaded ? <><DownloadSimple size={12} weight="bold" /> First run downloads the model</> : "About this model"} <Info>{!downloaded ? `First use downloads ~${spec.disk_gb} GB onto the GPU machine (once per runtime); a progress bar shows it landing. ` : ""}{spec.about}</Info></p>}
-          {err && <p className="err" style={{ margin: 0 }}>{err}</p>}
+          {err && <p className="err" role="alert" style={{ margin: 0 }}>{err}</p>}
         </div>
 
         <div className="feed">
@@ -311,7 +311,7 @@ export default function Images() {
             </div>
           ))}
           {!pending.length && !feed.length && (
-            <div className="stage-empty"><ImageSquare size={30} /><b>Your images appear here</b><span>Write a prompt and press Generate.</span></div>
+            <div className="stage-empty"><span className="e-ic" style={{ width: 48, height: 48, borderRadius: 14, display: "grid", placeItems: "center", background: "var(--surface)" }}><ImageSquare size={24} /></span><b>Your images appear here</b><span>Write a prompt and press Generate.</span></div>
           )}
         </div>
       </div>

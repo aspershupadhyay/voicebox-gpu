@@ -8,14 +8,12 @@ organization). Voiceovers and voices stay in **R2**, which is also the backup fo
 
 | Page | What it's for |
 |---|---|
-| **Content** | Every post by where it goes. The sidebar has a space per format: YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast, with open/total counts. Each space has a List (stage, publish time, where else it goes, delete) and a Board by stage. **New** starts a post already in that space. |
-| **Board** | Posts by stage: Ideas → In production → Review → Scheduled → Posted. Drag cards between stages, press **N** for a new post, filter by platform or "Mine". Click a card for the full post. |
+| **Posts** | Every post, with summary cards (due this week, overdue, in production, shipped vs the weekly goal) and four views: **Board** by stage (Ideas → In production → Review → Scheduled → Posted; drag cards between stages), **Calendar** (drag a post onto a day; double-click a day to start one), **List** (stage and publish time editable inline) and **Gallery** (the week ahead plus cards grouped Up next / In the works / Ideas / Shipped). Filter by platform or format (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast) or Ideas, and by "Mine". **New post** starts one already in that format. **Activity** shows who did what. |
 | **Post** (drawer) | Title, stage, **Publish to** (one row per space, each with its own stage, publish time and live link; *Cross-post to…* adds another; the post's stage is its furthest-behind target, so it's Posted only when every target is), publish time, owner, script (with **Voiceover** → opens the voice page with the script loaded; the result is attached back to the post), caption with per-platform character counts, media, notes, discussion. Edits save as you type. |
-| **Calendar** | Month view. Drag a post onto a day to schedule it; double-click a day to start one there. |
-| **Media** | Every file either of you added: images, videos (up to 2 GB each), audio, docs. Drop files anywhere on the page. |
+| **Files → Uploads** | Every file either of you added: images, videos (up to 2 GB each), audio, docs. Drop files anywhere on the page. |
 
 Everything is live (Appwrite Realtime): when one of you moves a card, edits a script or comments, the other sees it within
-a second. The activity feed under the board says who did what.
+a second. **Activity** (top right of Posts) says who did what.
 
 ## Accounts
 
@@ -35,7 +33,7 @@ posts and comments belong to people.
 - **Phone:** open the dashboard in Safari (iPhone) or Chrome (Android) → Share / menu → **Add to Home Screen**.
 - **Desktop:** Chrome or Edge → the install icon in the address bar.
 
-It opens full-screen with a bottom tab bar on phones, and starts on the Board.
+It opens full-screen with a bottom tab bar on phones, and starts on Home.
 
 ## Storage and the R2 backup
 
