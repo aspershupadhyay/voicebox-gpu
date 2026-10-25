@@ -133,12 +133,14 @@ function JobCard({ j, open, selected, onSelect, onDelete, onSubtitle }: CardProp
       <div className="lc-head" onClick={() => setOpen(!isOpen)}>
         <Check selected={selected} onSelect={onSelect} />
         <CaretRight size={14} weight="bold" className={`chev ${isOpen ? "open" : ""}`} />
-        {asr ? <span className="thumb" style={{ color: "var(--glacier)" }}><ClosedCaptioning size={20} weight="duotone" /></span> : <VoiceGlyph name={j.voice || j.engine} size={40} active={playing >= 0} />}
+        {asr ? <span className="thumb" style={{ color: "var(--glacier)" }}><ClosedCaptioning size={20} weight="duotone" /></span>
+          : <button className={`lc-play ${playing >= 0 ? "on" : ""}`} aria-label={playing >= 0 ? "Stop" : "Play all"} onClick={(e) => { e.stopPropagation(); if (playing >= 0) setPlaying(-1); else playFrom(0); }}>
+              <VoiceGlyph name={j.voice || j.engine} size={40} active={playing >= 0} />
+              <span className="lc-play-ic">{playing >= 0 ? <Stop size={14} weight="fill" /> : <Play size={14} weight="fill" />}</span></button>}
         <div style={{ minWidth: 0 }}>
           <div className="lc-title">{j.label || <span className="quote-title">“{(j.results[0]?.text ?? j.id).replace(/<[^>]+>/g, "").slice(0, 70)}{(j.results[0]?.text?.length ?? 0) > 70 ? "…" : ""}”</span>}</div>
           <div className="lc-meta">
             {asr ? <span className="pill blue">subtitles</span> : <span className="pill">{j.engine} · {j.voice}</span>}
-            {j.style && !asr && <span className="pill">{j.style}</span>}
             {j.subs && !asr && <span className="pill blue">CC · {j.subs.cues}</span>}
             {j.match != null && <span className={`pill ${matchClass(j.match)}`}>{pct(j.match)} match</span>}
             {over > 0 && <span className="pill bad">{over} over window</span>}
@@ -146,9 +148,7 @@ function JobCard({ j, open, selected, onSelect, onDelete, onSubtitle }: CardProp
           </div>
         </div>
         <div className="lc-actions" onClick={(e) => e.stopPropagation()}>
-          {!asr && <button className={playing >= 0 ? "sig sm" : "ghost sm"} onClick={() => (playing >= 0 ? setPlaying(-1) : playFrom(0))}>
-            {playing >= 0 ? <><Stop size={13} weight="fill" />Stop</> : <><Play size={13} weight="fill" />Play all</>}</button>}
-          {!asr && !j.subs && <button className="ghost sm" onClick={onSubtitle}><Plus size={13} weight="bold" />Subtitles</button>}
+          {!asr && !j.subs && <button className="icon-btn" onClick={onSubtitle} title="Add subtitles" aria-label="Add subtitles"><ClosedCaptioning size={17} /></button>}
           {j.subs && <a className="btn quiet sm" href={fileUrl(j.id, "subtitles.srt", `${slug}.srt`)} title="Timeline subtitles">.srt</a>}
           <a className="icon-btn btn" href={`/api/zip/${j.id}`} title="Download everything (zip)" aria-label="Download zip"><FileZip size={17} /></a>
           <button className="icon-btn danger-h" onClick={onDelete} title="Delete" aria-label="Delete"><TrashSimple size={16} /></button>

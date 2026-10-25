@@ -3,7 +3,8 @@ import { ArrowRight, Broom, ClosedCaptioning, FilmSlate, FilmStrip, Fire, Kanban
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ago, api, fmtS, pct, type Job } from "./api";
-import { CassetteArt, EngineArt, LedMeter, VoiceGlyph } from "./art";
+import { CassetteArt, VoiceGlyph } from "./art";
+import { Info } from "./Info";
 import { useDialog } from "./Dialog";
 import FetchBar, { MODEL_NAMES } from "./FetchBar";
 import { fmtUptime, useStatus } from "./Shell";
@@ -85,98 +86,77 @@ export default function Overview() {
 
   return (
     <>
-      <div className="card hero reveal">
-        <div className="hl">
-          <svg className="ripples" viewBox="-100 -100 200 200" aria-hidden>
-            {[30, 50, 70, 90].map((r, i) => <circle key={r} r={r} fill="none" stroke={i === 0 ? "var(--signal)" : "var(--line2)"} strokeOpacity={i === 0 ? 0.5 : 1} />)}
-          </svg>
-          <div className="eyebrow">Studio overview</div>
-          <h1>{hello}<em>.</em></h1>
+      <div className="head">
+        <div>
+          <div className="eyebrow">Studio</div>
+          <h1>{hello.split(" ").slice(0, -1).join(" ")} <em>{hello.split(" ").slice(-1)[0]}.</em></h1>
           <p className="sub">{sentence}</p>
-          <div className="row" style={{ marginTop: 22 }}>
-            <Link href="/generate" className="btn sig"><Microphone size={16} weight="bold" />New voiceover</Link>
-            <Link href="/workspace" className="btn ghost"><Kanban size={16} />Open the board</Link>
-            <Link href="/subtitles" className="btn ghost"><ClosedCaptioning size={16} />Subtitle a file</Link>
-          </div>
         </div>
-        <div className="hr">
-          <div>
-            <div className="row between" style={{ marginBottom: 10 }}><span className="label">GPU memory</span><span className="mono small">{st?.gpu ? `${st.gpu.used_gb} / ${st.gpu.total_gb} GB` : "—"}</span></div>
-            <LedMeter value={vram} segments={28} label="GPU memory" />
-            <div className="row between tiny dim" style={{ marginTop: 8 }}><span>{st?.gpu?.name ?? "No GPU"}</span><span>{Math.round(vram * 100)}%</span></div>
-          </div>
-          <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            <div><div className="label">Uptime</div><div className="mono" style={{ fontSize: 18, marginTop: 4 }}>{st?.online ? fmtUptime(st.uptime_s) : "—"}</div></div>
-            <div><div className="label">Worker</div><div className="mono" style={{ fontSize: 18, marginTop: 4 }}>v{st?.version ?? "—"}</div></div>
-          </div>
-        </div>
-        <div className="readouts" style={{ gridColumn: "1 / -1" }}>
-          <div><div className="label">In the booth</div><div className="num" style={{ marginTop: 8 }}>{st?.online ? active.length : "—"}<small>{active.length ? `${active.filter((j) => j.status === "running").length} running` : "idle"}</small></div></div>
-          <div><div className="label">Library</div><div className="num" style={{ marginTop: 8 }}>{lib?.length ?? "…"}<small>items</small></div></div>
-          <div><div className="label">Voice recorded</div><div className="num" style={{ marginTop: 8 }}>{fmtS(audio)}</div></div>
+        <div className="row">
+          <Link href="/subtitles" className="btn ghost"><ClosedCaptioning size={16} />Subtitle a file</Link>
+          <Link href="/generate" className="btn sig"><Microphone size={16} weight="bold" />New voiceover</Link>
         </div>
       </div>
 
+      <div className="strip">
+        <div className="strip-cell wide">
+          <span className="k">GPU memory</span>
+          <span className="v">{st?.gpu ? <>{st.gpu.used_gb}<small> / {st.gpu.total_gb} GB</small></> : "—"}</span>
+          <span className="meter"><i style={{ width: `${Math.round(vram * 100)}%` }} /></span>
+        </div>
+        <div className="strip-cell"><span className="k">GPU</span><span className="v">{st?.gpu?.name?.replace("NVIDIA ", "").split("-")[0] ?? "—"}</span></div>
+        <div className="strip-cell"><span className="k">Up</span><span className="v">{st?.online ? fmtUptime(st.uptime_s) : "—"}</span></div>
+        <div className="strip-cell"><span className="k">In the booth</span><span className="v">{st?.online ? active.length : "—"}</span></div>
+        <div className="strip-cell"><span className="k">Library</span><span className="v">{lib?.length ?? "…"}</span></div>
+        <div className="strip-cell"><span className="k">Recorded</span><span className="v">{fmtS(audio)}</span></div>
+      </div>
+
       {active.length > 0 && (
-        <div className="card reveal" style={{ marginBottom: 18 }}>
-          <div className="card-head"><h2><span className="dot warn" />In the booth</h2></div>
+        <section className="sec">
+          <h2><span className="dot warn" />In the booth</h2>
           {active.map((j) => (
             <div key={j.id} style={{ marginBottom: 14 }}>
               <div className="row between small"><b>{j.label || `${j.engine} · ${j.voice}`}</b><span className="dim mono tiny">{j.progress.stage} · {j.progress.done}/{j.progress.total} · ~{fmtS(j.progress.eta_s)} left</span></div>
               <div className="bar thin live" style={{ marginTop: 8 }}><i style={{ width: `${Math.max(3, j.progress.fraction * 100)}%` }} /></div>
             </div>
           ))}
-        </div>
+        </section>
       )}
 
-      {(["voice", "visual"] as const).map((group) => (
-        <section key={group}>
-          <div className="row between" style={{ margin: "30px 0 14px" }}>
-            <h2 style={{ margin: 0 }} className="row">{group === "voice" ? "Voice engines" : "Image engines"}
-              {st?.mode === group && <span className="pill ok" style={{ marginLeft: 10 }}>on the GPU</span>}</h2>
-            <span className="dim small">{group === "voice"
-              ? "Load on first use, swap out when memory runs short, unload after " + (st?.idle_min ?? 10) + " idle minutes."
-              : "Only one group holds the GPU: rendering video unloads the voice engines, and the reverse."}</span>
-          </div>
-          <div className="modules">
-            {Object.keys(ENGINES).filter((n) => ENGINES[n].group === group).map((name) => {
-              const s = st?.engines?.[name];
-              const loading = s === "loading" || s === "installing";
-              const disk = st?.disk?.weights_gb?.[name];
-              return (
-                <div key={name} className={`card module ${s === "ready" ? "ready" : ""}`}>
-                  <div className="art"><EngineArt engine={name} live={s === "ready" || loading} /></div>
-                  <div className="body">
-                    <div className="row between">
-                      <span className="name">{MODEL_NAMES[name] ?? name}</span>
-                      <span className={`pill ${s === "ready" ? "ok" : loading ? "warn" : s === "error" ? "bad" : ""}`}>{s === "ready" ? "warm" : s ?? "—"}</span>
-                    </div>
-                    <div className="dim small">{ENGINES[name].role}</div>
-                    <div className="spec">
-                      <div><span>{group === "voice" ? "speaks" : "makes"}</span><b>{ENGINES[name].lang}</b></div>
-                      <div><span>memory</span><b>{ENGINES[name].mem}</b></div>
-                      <div><span>on disk</span><b>{disk ? `${disk} GB` : "not yet"}</b></div>
-                      <div><span>speed here</span><b>{speed(name, st?.rates?.[name])}</b></div>
-                    </div>
-                    {st?.fetch?.[name] && <FetchBar f={st.fetch[name]} name={name} compact />}
-                    {st?.engine_errors?.[name] && <div className="err tiny">{st.engine_errors[name].slice(0, 140)}</div>}
-                    <div className="foot">
-                      {s === "ready"
-                        ? <button className="ghost sm" disabled={busy === name} onClick={() => engine(name, "unload")}><Power size={14} />Unload</button>
-                        : <button className="ghost sm" disabled={!st?.online || busy === name || loading} onClick={() => engine(name, "load")}><Fire size={14} weight="duotone" />{loading ? "Loading…" : "Warm up"}</button>}
-                      <button className="quiet sm" disabled={!st?.online} onClick={() => showLogs(name)}><Terminal size={14} />Logs</button>
-                      {disk ? <button className="quiet sm" disabled={!st?.online || s === "ready" || loading} title="Delete the downloaded weights to free disk (downloads again on next use)" onClick={() => forget(name, disk)}><Broom size={14} />Free {Math.round(disk)} GB</button> : null}
-                    </div>
-                  </div>
+      <section className="sec">
+        <h2>Engines <Info>Engines load on first use and swap out when GPU memory runs short. Voice and image engines take turns on the GPU; a model that steps aside is parked in RAM and comes back in seconds.</Info></h2>
+        <div className="erows">
+          {Object.keys(ENGINES).map((name) => {
+            const s = st?.engines?.[name];
+            const loading = s === "loading" || s === "installing";
+            const disk = st?.disk?.weights_gb?.[name];
+            return (
+              <div key={name} className="erow">
+                <span className={`dot ${s === "ready" ? "ok" : s === "parked" ? "park" : loading ? "warn" : s === "error" ? "bad" : "off"}`} />
+                <div className="erow-name">
+                  <b>{MODEL_NAMES[name] ?? name}</b>
+                  <span>{ENGINES[name].role}</span>
+                  {st?.fetch?.[name] && <FetchBar f={st.fetch[name]} name={name} compact />}
+                  {st?.engine_errors?.[name] && <span className="err tiny">{st.engine_errors[name].slice(0, 140)}</span>}
                 </div>
-              );
-            })}
-          </div>
-        </section>
-      ))}
+                <span className="erow-meta mono">{ENGINES[name].lang}</span>
+                <span className="erow-meta mono">{ENGINES[name].mem}</span>
+                <span className="erow-state mono">{s === "ready" ? "warm" : s === "parked" ? "in RAM" : s ?? "—"}</span>
+                <span className="erow-act">
+                  {s === "ready" || s === "parked"
+                    ? <button className="icon-btn" title="Unload" disabled={busy === name} onClick={() => engine(name, "unload")}><Power size={15} /></button>
+                    : <button className="icon-btn" title={loading ? "Loading…" : "Warm up"} disabled={!st?.online || busy === name || loading} onClick={() => engine(name, "load")}><Fire size={15} weight="duotone" /></button>}
+                  <button className="icon-btn" title="Logs" disabled={!st?.online} onClick={() => showLogs(name)}><Terminal size={15} /></button>
+                  {disk ? <button className="icon-btn" title={`Free ${Math.round(disk)} GB of disk (downloads again on next use)`} disabled={!st?.online || s === "ready" || loading} onClick={() => forget(name, disk)}><Broom size={15} /></button> : null}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
-      <div className="card">
-        <div className="card-head"><h2>Recent takes</h2><Link href="/library" className="btn quiet sm">Open library <ArrowRight size={14} /></Link></div>
+      <section className="sec">
+        <div className="row between"><h2>Recent takes</h2><Link href="/library" className="btn quiet sm">Open library <ArrowRight size={14} /></Link></div>
         {lib === null && <div className="dim small">Loading…</div>}
         {lib?.length === 0 && (
           <div className="empty"><CassetteArt /><b>Nothing recorded yet</b><span>Your first take will show up here.</span><Link href="/generate" className="btn sig sm">Record a voiceover</Link></div>
@@ -197,7 +177,7 @@ export default function Overview() {
             </div>
           </Link>
         ))}
-      </div>
+      </section>
 
       {logs && (
         <>

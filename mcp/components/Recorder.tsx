@@ -142,10 +142,10 @@ export function VoiceSeed({ onClick, disabled, size = 184, label = "Start record
     const css = getComputedStyle(c);
     const tone = (n: string, d: string) => css.getPropertyValue(n).trim() || d;
     const strands = [
-      { col: tone("--mint", "#34c38f"), k: 3, sp: 0.55, ph: 0 },
-      { col: tone("--iris", "#6b8cff"), k: 5, sp: -0.4, ph: 1.7 },
-      { col: tone("--rosy", "#e8798f"), k: 7, sp: 0.3, ph: 3.1 },
-      { col: tone("--ember", "#f06a3c"), k: 4, sp: -0.65, ph: 4.4 },
+      { col: tone("--accent", "#1f7a57"), k: 3, sp: 0.55, ph: 0 },
+      { col: tone("--ink2", "#3b3b38"), k: 5, sp: -0.4, ph: 1.7 },
+      { col: tone("--dim", "#6e6e69"), k: 7, sp: 0.3, ph: 3.1 },
+      { col: tone("--faint", "#a3a39d"), k: 4, sp: -0.65, ph: 4.4 },
     ];
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let raf = 0, t = 0, last = performance.now();

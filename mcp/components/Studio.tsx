@@ -92,41 +92,38 @@ function CleanUp({ settings }: { settings: Settings | null }) {
   useResumeJob<Job>(["clean"], start);
   const r = job?.results[0];
   return (
-    <div className="card" style={{ marginTop: 16 }}>
-      <div className="card-head"><h2><Waveform size={18} weight="duotone" /> Studio clean-up</h2></div>
-      <p className="dim small" style={{ marginTop: 0 }}>
-        Upload any recording of yourself (laptop mic, phone, a noisy room, or a video), or record one right here. It measures the noise, the room echo and how much
-        of the voice the mic captured, runs only what that recording needs, and checks it still sounds like you. Same length as the
-        original, so it drops back onto your edit.
-      </p>
-      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, alignItems: "end" }}>
-        <div className="field" style={{ margin: 0 }}><label className="f">Recording (audio or video)</label>
-          <div className="seg" style={{ marginBottom: 6 }}>
-            <button className={src === "upload" ? "on" : ""} onClick={() => { setSrc("upload"); setFile(null); }}>Upload</button>
-            <button className={src === "record" ? "on" : ""} onClick={() => { setSrc("record"); setFile(null); }}>Record</button>
-          </div>
-          {src === "upload" && (
-            <label className="btn ghost sm" style={{ width: "100%", justifyContent: "flex-start", overflow: "hidden" }}>
-              <UploadSimple size={14} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file ? file.name : "Choose a file"}</span>
-              <input type="file" accept="audio/*,video/*" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-            </label>
-          )}</div>
-        <div className="field" style={{ margin: 0 }}><label className="f">Mode</label>
-          <select value={mode} onChange={(e) => setMode(e.target.value)}>
-            <option value="auto">Auto: measured per recording</option><option value="denoise">Denoise only: keep my exact tone</option><option value="enhance">Restore: rebuild a thin or echoey voice</option>
-          </select></div>
-        <div className="field" style={{ margin: 0 }}><label className="f">Publish for</label>
-          <select value={platform} onChange={(e) => setPlatform(e.target.value)}>
-            {[...PLATFORMS.map(([p, l]) => [p, l] as const), ["raw", "Raw (no mastering)"] as const].map(([p, l]) => <option key={p} value={p}>{l}</option>)}
-          </select></div>
+    <div className="stack" style={{ gap: 14 }}>
+      <div className="row between">
+        <div className="seg">
+          <button className={src === "upload" ? "on" : ""} onClick={() => { setSrc("upload"); setFile(null); }}>Upload</button>
+          <button className={src === "record" ? "on" : ""} onClick={() => { setSrc("record"); setFile(null); }}>Record</button>
+        </div>
+        <Info>It measures the noise, the room echo and how much of the voice the mic captured, runs only what the recording needs, and checks it still sounds like you. Same length as the original, so it drops back onto your edit.</Info>
+      </div>
+      {src === "upload" && !file && (
+        <label className="bigdrop" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) setFile(f); }}>
+          <UploadSimple size={26} />
+          <b>Drop a recording here</b>
+          <span>or click to choose · audio or video · laptop mic, phone, noisy room</span>
+          <input type="file" accept="audio/*,video/*" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        </label>
+      )}
+      <div className="optrow">
+        <label className="f">Mode <Info>Auto measures each recording. Denoise only keeps your exact tone. Restore rebuilds a thin or echoey voice.</Info></label>
+        <select value={mode} onChange={(e) => setMode(e.target.value)}>
+          <option value="auto">Auto</option><option value="denoise">Denoise only</option><option value="enhance">Restore</option>
+        </select>
+        <label className="f">Publish for</label>
+        <select value={platform} onChange={(e) => setPlatform(e.target.value)}>
+          {[...PLATFORMS.map(([p, l]) => [p, l] as const), ["raw", "Raw (no mastering)"] as const].map(([p, l]) => <option key={p} value={p}>{l}</option>)}
+        </select>
       </div>
       {src === "record" && <div style={{ marginTop: 12 }}><Recorder scope="clean-up" onReady={(f, fg) => { setFile(f); forget.current = fg ?? null; }} target={60} hint="Record, listen back, then press Clean it up. It's saved on this device as you go." /></div>}
       {src === "upload" && file && <div style={{ marginTop: 12 }}><FilePreview file={file} onRemove={() => setFile(null)} /></div>}
       {mode === "enhance" && (
         <div className="field" style={{ margin: "12px 0 0" }}>
-          <div className="row between"><label className="f" style={{ margin: 0 }}>Clean-up strength</label><span className="mono small">{strength.toFixed(2)}</span></div>
+          <div className="row between"><label className="f" style={{ margin: 0 }}>Clean-up strength <Info>Higher for noisy rooms and echo; lower keeps more of the original character.</Info></label><span className="mono small">{strength.toFixed(2)}</span></div>
           <input type="range" min={0.1} max={1} step={0.05} value={strength} style={rangeFill(strength, 0.1, 1)} onChange={(e) => setStrength(+e.target.value)} />
-          <div className="dim tiny">Higher for noisy rooms and echo; lower keeps more of the original character.</div>
         </div>
       )}
       <div className="row between" style={{ marginTop: 12 }}>
@@ -156,7 +153,7 @@ export default function Studio() {
       <div className="head">
         <div>
           <div className="eyebrow">Clean-up</div>
-          <h1>Bad mic in, <em>studio sound out.</em></h1>
+          <h1>Studio <em>sound.</em></h1>
           <p className="sub">A rough recording in, studio sound out. <Info>Noise and room echo out, detail back, mastered for the platform, same length so it stays in sync.</Info></p>
         </div>
         <Link className="btn ghost sm" href="/settings">Defaults</Link>

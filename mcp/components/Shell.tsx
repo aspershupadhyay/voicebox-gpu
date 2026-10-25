@@ -212,12 +212,12 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
         <div className="gpu-wrap">
         {gpuOpen && <><div className="gpu-scrim" onClick={() => setGpuOpen(false)} /><div className="gpu-pop"><GpuDetails status={status} busy={busy} vram={vram} /></div></>}
         <button className={`gpu-mini ${gpuOpen ? "on" : ""}`} aria-expanded={gpuOpen} onClick={() => setGpuOpen(!gpuOpen)} title="GPU details">
-          <span className={`dot ${status?.online ? (busy ? "warn" : "ok") : status ? "bad" : "off"}`} />
+          <span className={`onair ${status?.online ? "live" : ""}`} aria-hidden><i style={{ height: "55%" }} /><i style={{ height: "90%" }} /><i style={{ height: "40%" }} /><i style={{ height: "75%" }} /><i style={{ height: "50%" }} /></span>
           <span className="gm-text">
-            <b>{status ? (status.online ? (busy ? "Rendering" : "GPU online") : "GPU offline") : "Connecting"}</b>
+            <b>{status ? (status.online ? (busy ? "On air · rendering" : "On air") : "Off air") : "Tuning in"}</b>
             <span className="tiny faint">{status?.online
               ? `${status.gpu?.name?.replace("NVIDIA ", "") ?? ""}${status.mode ? ` · ${MODE[status.mode] ?? status.mode}` : ""} · ${Object.values(status.engines ?? {}).filter((x) => x === "ready").length} ready`
-              : status?.reason === "heartbeat stale" ? "Run the Colab notebook" : "Waiting for the worker"}</span>
+              : "Start the GPU from Health"}</span>
           </span>
           {status?.online ? <span className="gm-bar" aria-label="GPU memory"><i style={{ width: `${Math.round(vram * 100)}%` }} /></span> : <Cpu size={15} className="dim" />}
           <CaretUp size={12} className="dim gm-caret" />

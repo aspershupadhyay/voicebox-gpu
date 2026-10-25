@@ -62,7 +62,7 @@ function CalendarInner() {
       <div className="head">
         <div>
           <div className="eyebrow">Workspace</div>
-          <h1>Calendar. <em>What goes out, when.</em></h1>
+          <h1>The <em>calendar.</em></h1>
           <p className="sub">Drag a post onto a day to schedule it.</p>
         </div>
         <div className="row" style={{ gap: 6 }}>

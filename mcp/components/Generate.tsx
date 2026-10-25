@@ -1,13 +1,13 @@
 "use client";
-import { ArrowSquareOut, CaretDown, ClosedCaptioning, DownloadSimple, Eye, Flask, Microphone, Plus, SlidersHorizontal, Sparkle, Trophy, WarningCircle } from "@phosphor-icons/react";
+import { ArrowSquareOut, ClosedCaptioning, DownloadSimple, Eye, Flask, Microphone, Plus, SlidersHorizontal, Sparkle, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useResumeJob } from "./jobs";
 import { api, fmtS, pct, rangeFill, simClass, type Job, type MyVoice } from "./api";
 import { Info } from "./Info";
-import { EngineArt, StyleGlyph, VoiceGlyph } from "./art";
+import { VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
-import { GUIDES, KOKORO_LANG, LANGUAGES, QWEN_LANG } from "./guides";
+import { KOKORO_LANG, LANGUAGES, QWEN_LANG } from "./guides";
 import JobProgress from "./JobProgress";
 import LineRow, { coached } from "./LineRow";
 import { SampleButton, useSamples } from "./Sample";
@@ -79,7 +79,6 @@ export default function Generate() {
   const [takes, setTakes] = useState(1);
   const [lexicon, setLexicon] = useState(true);
   const [pronounce, setPronounce] = useState("");
-  const [showLex, setShowLex] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [script, setScript] = useState(SAMPLE);
   const [label, setLabel] = useState("");
@@ -241,147 +240,109 @@ export default function Generate() {
       {catErr && <p className="err">{catErr}</p>}
       {forPost && <div className="note-strip"><Link href={`/workspace?post=${forPost.$id}`}><b>{forPost.title}</b></Link><span className="dim">Voiceovers you make here are attached to this post{forPost.jobs?.length ? ` · ${forPost.jobs.length} so far` : ""}.</span></div>}
 
-      <div className="split">
-        <div className="stack" style={{ gap: 16 }}>
-          <div className="card">
-            <div className="card-head">
-              <h2>Script</h2>
-              <Info>One line per row. Or <span className="mono">id | text | seconds</span> per row, or paste a timeline TSV.</Info>
-            </div>
-            <div className="chips" style={{ marginBottom: 12 }}>
-              <span className="label" style={{ alignSelf: "center", marginRight: 4 }}>Insert</span>
-              {MARKS.map((t) => <button key={t} className="chip tag" title="Real silence, in seconds" onClick={() => insertTag(t)}>{t}</button>)}
-              {engine === "orpheus" && TAGS.map((t) => <button key={t} className="chip tag" onClick={() => insertTag(t)}>{t}</button>)}
-            </div>
-            <textarea ref={ta} value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false}
-              placeholder={lang === "hi" ? "यहाँ अपनी स्क्रिप्ट लिखें, हर पंक्ति एक लाइन…" : "Write your script here, one line per row…"} />
-            <div className="row between" style={{ marginTop: 10 }}>
-              <span className="dim small mono">{lines.length} line{lines.length === 1 ? "" : "s"} · {chars.toLocaleString()} chars · ≈ {fmtS(audioS)} of speech</span>
-              {lines.length > 0 && <button className="quiet xs" onClick={() => setPreview(!preview)}><Eye size={14} />{preview ? "Hide" : "Preview"} lines</button>}
-            </div>
-            {preview && (
-              <table className="table small" style={{ marginTop: 8 }}><tbody>
-                {lines.map((l, i) => (
-                  <tr key={l.id}><td className="mono dim" style={{ width: 50 }}>{l.id}</td><td>{l.text}
-                    {spoken[i] && spoken[i].replace(/ ⏸[\d.]+s/g, "") !== l.text && <div className="dim tiny">reads: {spoken[i]}</div>}</td>
-                    <td className="mono dim" style={{ whiteSpace: "nowrap" }}>≈{(l.text.length / 14.5).toFixed(1)}s{l.window ? ` / ${l.window}s` : ""}</td></tr>
-                ))}
-              </tbody></table>
-            )}
+      <div className="vo">
+        <div className="vo-script">
+          <div className="vo-bar">
+            <span className="vo-label">Script <Info>One line per row. Or <span className="mono">id | text | seconds</span> per row, or paste a timeline TSV.</Info></span>
+            <details className="menu">
+              <summary className="quiet xs btn"><Plus size={13} weight="bold" />Insert</summary>
+              <div className="menu-pop">
+                <span className="menu-h">Pauses</span>
+                {MARKS.map((t) => <button key={t} className="chip tag" onClick={() => insertTag(t)}>{t}</button>)}
+                {engine === "orpheus" && <><span className="menu-h">Sounds</span>{TAGS.map((t) => <button key={t} className="chip tag" onClick={() => insertTag(t)}>{t}</button>)}</>}
+              </div>
+            </details>
           </div>
-          <div className="card">
-            <div className="card-head"><h2>Engine</h2></div>
-            <div className="grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-              {TTS.map((n) => (
-                <button key={n} className={`pick engine-tile ${engine === n ? "on" : ""}`} onClick={() => { setEngine(n); setParams({}); }}>
-                  <span className="art"><EngineArt engine={n} live={engine === n} /></span>
-                  <span className="row between" style={{ marginTop: 10 }}><span className="t1" style={{ font: "600 17px var(--display)", letterSpacing: "-.02em" }}>{n === "myvoice" ? "Your model" : n[0].toUpperCase() + n.slice(1)}</span>
-                    <span className={`dot ${status?.engines?.[n] === "ready" ? "ok" : status?.engines?.[n] === "loading" || status?.engines?.[n] === "installing" ? "warn" : "off"}`} title={status?.engines?.[n] ?? ""} /></span>
-                  <span className="t2" style={{ display: "block" }}>{BLURB[n]}</span>
-                </button>
+          <textarea ref={ta} value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false} className="vo-text"
+            placeholder={lang === "hi" ? "यहाँ अपनी स्क्रिप्ट लिखें, हर पंक्ति एक लाइन…" : "Start writing, one line per row…"} />
+          <div className="vo-foot">
+            <span className="mono">{lines.length} line{lines.length === 1 ? "" : "s"} · {chars.toLocaleString()} chars · ≈ {fmtS(audioS)}</span>
+            {lines.length > 0 && <button className="quiet xs" onClick={() => setPreview(!preview)}><Eye size={14} />{preview ? "Hide" : "Preview"}</button>}
+          </div>
+          {preview && (
+            <table className="table small" style={{ marginTop: 8 }}><tbody>
+              {lines.map((l, i) => (
+                <tr key={l.id}><td className="mono dim" style={{ width: 50 }}>{l.id}</td><td>{l.text}
+                  {spoken[i] && spoken[i].replace(/ ⏸[\d.]+s/g, "") !== l.text && <div className="dim tiny">reads: {spoken[i]}</div>}</td>
+                  <td className="mono dim" style={{ whiteSpace: "nowrap" }}>≈{(l.text.length / 14.5).toFixed(1)}s{l.window ? ` / ${l.window}s` : ""}</td></tr>
               ))}
-            </div>
-            <p className="dim small" style={{ margin: "14px 0 0" }}>{GUIDES[engine].tagline}</p>
-          </div>
-          <div className="card flat sub-toggle">
-            <span className="thumb" style={{ color: "var(--glacier)" }}><ClosedCaptioning size={20} weight="duotone" /></span>
-            <div style={{ minWidth: 0 }}><b>Subtitles</b> <Info>Whisper large-v3 word timing. SRT, VTT and JSON, with a match score per line.</Info></div>
-            <GuideButton engine="whisper" label="How" />
-            <button className={`switch ${subtitles ? "on" : ""}`} onClick={() => setSubtitles(!subtitles)} aria-label="Subtitles" />
-          </div>
+            </tbody></table>
+          )}
         </div>
 
-        <div className="stack" style={{ gap: 16 }}>
-          <div className="card">
-            <div className="card-head"><h2>Delivery</h2></div>
-            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <aside className="vo-rail">
+          <section>
+            <div className="rail-h">Voice</div>
+            <div className="field">
+              <select value={engine} onChange={(e) => { setEngine(e.target.value as typeof engine); setParams({}); }} aria-label="Engine">
+                {TTS.map((n) => <option key={n} value={n}>{n === "myvoice" ? "Your model" : n[0].toUpperCase() + n.slice(1)} · {BLURB[n]}</option>)}
+              </select>
+            </div>
+            <div className="voices">
+              {[...voices.filter((v) => lively.includes(v)), ...voices.filter((v) => !lively.includes(v))].map((v) => {
+                const real = eng?.presets[v] && eng.presets[v] !== v ? eng.presets[v] : v;
+                const mv = myVoice(v);
+                const trained = engine === "myvoice" ? models?.find((m) => m.name === v) : undefined;
+                const kv = engine === "kokoro" ? kvoices.find((k) => k.voice === v) : engine === "qwen" ? qmodels.find((q) => q.voice === v) : undefined;
+                const sample = trained ? trained.sample_url ?? undefined : kv ? kv.sample_url ?? undefined : mv ? mv.url : samples?.voices[engine]?.[v]?.url;
+                return (
+                  <button key={v} className={`pick voice-pick ${voice === v ? "on" : ""} ${mv ? "mine" : ""}`} onClick={() => setVoice(v)} title={lively.includes(v) ? `liveliest for ${styles[style]?.label.toLowerCase()}` : undefined}>
+                    {lively.includes(v) && <Sparkle size={11} weight="fill" className="star" />}
+                    <span className="vplay"><SampleButton id={`gen/${engine}/${v}`} url={sample} size={22} label={mv?.label ?? v} /></span>
+                    <VoiceGlyph name={CLONERS.includes(engine) && !mv ? (v === "male" ? "dan" : "tara") : real} size={40} active={voice === v} />
+                    <span className="vn">{mv?.label ?? v}</span>
+                  </button>
+                );
+              })}
+              {CLONERS.includes(engine) && (
+                <Link href="/voices" className="pick voice-pick add-voice"><span className="plus"><Plus size={18} weight="bold" /></span><span className="vn">{mine.length ? "Record" : "Yours"}</span></Link>
+              )}
+            </div>
+            {!voices.length && <span className="dim small">No {engine} voices for this language.</span>}
+          </section>
+
+          <section>
+            <div className="rail-h">Delivery <Info>{styles[style]?.about ?? "How the read feels."}</Info></div>
+            <div className="seg full">
               {STYLE_ORDER.filter((k) => styles[k]).map((k) => (
-                <button key={k} className={`pick style-pick ${style === k ? "on" : ""}`} title={styles[k].about}
-                  onClick={() => { setStyle(k); setParams({}); setTempo(null); }}>
-                  <div className="t1">{styles[k].label}</div>
-                  <StyleGlyph style={k} active={style === k} />
-                </button>
+                <button key={k} className={style === k ? "on" : ""} onClick={() => { setStyle(k); setParams({}); setTempo(null); }}>{styles[k].label.split(/[ /]/)[0]}</button>
               ))}
             </div>
-            <p className="dim small" style={{ margin: "12px 0 0" }}>{styles[style]?.about}</p>
-            <div className="field" style={{ margin: "16px 0 0" }}>
-              <div className="row between" style={{ marginBottom: 4 }}><label className="f" style={{ margin: 0 }}>Pace <Info>Pitch-preserving, applied after the voice is generated. Stay within ±8% to keep it natural.</Info></label><span className="mono small">{effTempo.toFixed(2)}×</span></div>
-              <input type="range" min={0.85} max={1.2} step={0.01} value={effTempo} style={rangeFill(effTempo, 0.85, 1.2)} onChange={(e) => setTempo(+e.target.value)} />
-            </div>
-          </div>
+            <div className="row between" style={{ margin: "14px 0 4px" }}><label className="f" style={{ margin: 0 }}>Pace <Info>Pitch-preserving, applied after the voice is generated. Stay within ±8% to keep it natural.</Info></label><span className="mono small">{effTempo.toFixed(2)}×</span></div>
+            <input type="range" min={0.85} max={1.2} step={0.01} value={effTempo} style={rangeFill(effTempo, 0.85, 1.2)} onChange={(e) => setTempo(+e.target.value)} />
+          </section>
 
-          <div className="card">
-            <div className="card-head"><h2>Publish for</h2><Info>{plat ? `${plat.about}${plat.lufs != null ? " Broadcast voice chain: rumble cut, presence lift, de-ess, gentle compression." : ""}` : "Sets loudness mastering and the caption style for that platform."}</Info></div>
-            <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+          <section>
+            <div className="rail-h">Publish for <Info>{plat ? `${plat.about}${plat.lufs != null ? " Broadcast voice chain: rumble cut, presence lift, de-ess, gentle compression." : ""}` : "Sets loudness mastering and the caption style for that platform."}</Info></div>
+            <select value={platform} onChange={(e) => setPlatform(e.target.value)} aria-label="Platform">
               {PLATFORM_ORDER.filter((k) => !cat || platforms[k]).map((k) => (
-                <button key={k} className={`pick ${platform === k ? "on" : ""}`} title={platforms[k]?.about} onClick={() => setPlatform(k)} style={{ padding: "10px 8px" }}>
-                  <div className="t1" style={{ fontSize: 14 }}><span aria-hidden style={{ marginRight: 6, opacity: 0.7 }}>{PLATFORM_ICON[k]}</span>{platforms[k]?.label ?? k}</div>
-                  <div className="dim tiny mono">{platforms[k] ? (platforms[k].lufs != null ? `${platforms[k].lufs} LUFS` : "unmastered") : ""}</div>
-                </button>
+                <option key={k} value={k}>{platforms[k]?.label ?? k}{platforms[k] ? (platforms[k].lufs != null ? ` · ${platforms[k].lufs} LUFS` : " · unmastered") : ""}</option>
               ))}
-            </div>
+            </select>
+          </section>
 
-            <div className="field" style={{ margin: "16px 0 0" }}>
-              <div className="row between" style={{ marginBottom: 6 }}><label className="f" style={{ margin: 0 }}><Trophy size={13} weight="duotone" /> Best of</label>
-                <Info>{engine === "kokoro" ? "Kokoro gives the same take every time." : "Each sentence is voiced N times; Whisper checks every word" + (CLONERS.includes(engine) ? " and how much it sounds like the voice" : "") + " and keeps the best. N× slower: use it for the final render."}</Info></div>
+          <section>
+            <div className="rail-h">Quality</div>
+            <div className="row between"><span className="small">Best of <Info>{engine === "kokoro" ? "Kokoro gives the same take every time." : "Each sentence is voiced N times; Whisper checks every word" + (CLONERS.includes(engine) ? " and how much it sounds like the voice" : "") + " and keeps the best. N× slower: use it for the final render."}</Info></span>
               <div className="seg">
                 {Array.from({ length: cat?.max_takes ?? 4 }, (_, i) => i + 1).map((n) => (
                   <button key={n} className={nTakes === n ? "on" : ""} disabled={engine === "kokoro" && n > 1} onClick={() => setTakes(n)}>{n}×</button>
                 ))}
-              </div>
-            </div>
-            <div className="row between" style={{ marginTop: 14 }}>
-              <div style={{ minWidth: 0 }}><b className="small">Tech pronunciation</b> <Info>SQL → sequel, GPU → G-P-U, 16GB → 16 gigabytes; markdown and links cleaned.</Info></div>
-              <button className={`switch ${lexicon ? "on" : ""}`} onClick={() => setLexicon(!lexicon)} aria-label="Tech pronunciation" />
-            </div>
-            <button className="quiet xs" style={{ marginTop: 8 }} onClick={() => setShowLex(!showLex)}><CaretDown size={12} style={{ transform: showLex ? "rotate(180deg)" : "none", transition: "transform .2s" }} />Your pronunciations{Object.keys(parsePronounce(pronounce)).length ? ` (${Object.keys(parsePronounce(pronounce)).length})` : ""}</button>
-            {showLex && (
-              <textarea value={pronounce} onChange={(e) => setPronounce(e.target.value)} spellCheck={false} style={{ minHeight: 90, marginTop: 8 }}
-                placeholder={"One per line: word = how to say it\nKubernetes = koo-ber-net-eez\nYourBrand = your brand"} />
-            )}
-          </div>
+              </div></div>
+            <div className="row between" style={{ marginTop: 12 }}><span className="small">Subtitles <Info>Whisper large-v3 word timing. SRT, VTT and JSON, with a match score per line.</Info></span>
+              <button className={`switch ${subtitles ? "on" : ""}`} onClick={() => setSubtitles(!subtitles)} aria-label="Subtitles" /></div>
+            <div className="row between" style={{ marginTop: 12 }}><span className="small">Tech pronunciation <Info>SQL → sequel, GPU → G-P-U, 16GB → 16 gigabytes; markdown and links cleaned.</Info></span>
+              <button className={`switch ${lexicon ? "on" : ""}`} onClick={() => setLexicon(!lexicon)} aria-label="Tech pronunciation" /></div>
+          </section>
 
-          <div className="card">
-            <div className="card-head"><h2>Voice</h2></div>
-            <div className="field">
-              <label className="f">Language</label>
+          <details className="rail-more" open={advanced} onToggle={(e) => setAdvanced((e.target as HTMLDetailsElement).open)}>
+            <summary><SlidersHorizontal size={14} /> Advanced{(Object.keys(params).length > 0 || tempo != null) ? <span className="pill sig" style={{ marginLeft: 8 }}>edited</span> : null}</summary>
+            <div className="field" style={{ marginTop: 12 }}>
+              <label className="f">Language {engine === "orpheus" ? <Info>Orpheus speaks English only. Use Chatterbox for Hindi and 21 more languages.</Info> : engine === "qwen" ? <Info>Your voice can speak any of these, even ones you didn&apos;t record in. Hindi: use Chatterbox.</Info> : null}</label>
               <select value={lang} onChange={(e) => setLang(e.target.value)} disabled={engine === "orpheus"}>
                 {langs.map((l) => <option key={l.code} value={l.code}>{l.name}{l.script ? ` · ${l.script}` : ""}</option>)}
               </select>
-              {engine === "orpheus" && <div className="dim tiny" style={{ marginTop: 5 }}>Orpheus speaks English only. Use Chatterbox for Hindi and 21 more languages.</div>}
-              {engine === "qwen" && <div className="dim tiny" style={{ marginTop: 5 }}>Your voice can speak any of these, even ones you didn't record in. Hindi: use Chatterbox.</div>}
               {lang !== "en" && <div className="dim tiny" style={{ marginTop: 5 }}>Write in {LANGUAGES.find((l) => l.code === lang)?.script ?? "the language's own spelling"}, not romanised text.</div>}
-            </div>
-            <div className="field">
-              <div className="row between" style={{ marginBottom: 8 }}><label className="f" style={{ margin: 0 }}>Voice</label>
-                {lively.length > 0 && <span className="tiny dim"><Sparkle size={12} weight="fill" color="var(--sand)" /> liveliest for {styles[style]?.label.toLowerCase()}</span>}</div>
-              <div className="voices">
-                {[...voices.filter((v) => lively.includes(v)), ...voices.filter((v) => !lively.includes(v))].map((v) => {
-                  const real = eng?.presets[v] && eng.presets[v] !== v ? eng.presets[v] : v;
-                  const mv = myVoice(v);
-                  const trained = engine === "myvoice" ? models?.find((m) => m.name === v) : undefined;
-                  const kv = engine === "kokoro" ? kvoices.find((k) => k.voice === v) : engine === "qwen" ? qmodels.find((q) => q.voice === v) : undefined;
-                  const sample = trained ? trained.sample_url ?? undefined : kv ? kv.sample_url ?? undefined : mv ? mv.url : samples?.voices[engine]?.[v]?.url;
-                  return (
-                    <button key={v} className={`pick voice-pick ${voice === v ? "on" : ""} ${mv ? "mine" : ""}`} onClick={() => setVoice(v)}>
-                      {lively.includes(v) && <Sparkle size={12} weight="fill" className="star" />}
-                      <span className="vplay"><SampleButton id={`gen/${engine}/${v}`} url={sample} size={24} label={mv?.label ?? v} /></span>
-                      <VoiceGlyph name={CLONERS.includes(engine) && !mv ? (v === "male" ? "dan" : "tara") : real} size={46} active={voice === v} />
-                      <span className="vn">{mv?.label ?? v}</span>
-                      <span className="vs">{engine === "myvoice" ? "trained model" : kv ? (engine === "qwen" ? `${kv.name} · fine-tuned` : `${kv.name} in Kokoro`) : mv ? "your voice" : real !== v ? real : engine === "kokoro" ? KOKORO_LANG[v[0]] ?? "" : engine}</span>
-                    </button>
-                  );
-                })}
-                {CLONERS.includes(engine) && (
-                  <Link href="/voices" className="pick voice-pick add-voice">
-                    <span className="plus"><Plus size={20} weight="bold" /></span>
-                    <span className="vn">{mine.length ? "Record another" : "Record yours"}</span>
-                    <span className="vs">20 seconds</span>
-                  </Link>
-                )}
-              </div>
-              {engine === "qwen" && !mine.length && <div className="dim tiny" style={{ marginTop: 8 }}>Qwen shines with a recording of you. Until then it clones the female/male presets.</div>}
-              {!voices.length && <span className="dim small">No {engine} voices for this language.</span>}
             </div>
             {eng && Object.entries(eng.params).filter(([k]) => !((engine === "chatterbox" || engine === "qwen") && k === "language") && !(engine === "kokoro" && k === "lang")).map(([k, p]) => {
               const v = params[k] ?? styleParams[k] ?? p.default;
@@ -400,20 +361,17 @@ export default function Generate() {
                 </div>
               );
             })}
-            <div className="row between">
-              <button className="quiet xs" onClick={() => setAdvanced(!advanced)}><SlidersHorizontal size={14} />Output options<CaretDown size={12} style={{ transform: advanced ? "rotate(180deg)" : "none", transition: "transform .2s" }} /></button>
-              {(Object.keys(params).length > 0 || tempo != null) && <button className="quiet xs" onClick={() => { setParams({}); setTempo(null); }}>Reset to {styles[style]?.label ?? "style"}</button>}
+            <div className="field">
+              <label className="f">Your pronunciations <Info>One per line: word = how to say it.</Info></label>
+              <textarea value={pronounce} onChange={(e) => setPronounce(e.target.value)} spellCheck={false} style={{ minHeight: 80 }} placeholder={"Kubernetes = koo-ber-net-eez"} />
             </div>
-            {advanced && (
-              <div style={{ marginTop: 12 }}>
-                <label className="row small" style={{ gap: 8, marginBottom: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={post.trim} onChange={(e) => setPost({ ...post, trim: e.target.checked })} />Trim leading/trailing silence</label>
-                <select value={post.sample_rate} onChange={(e) => setPost({ ...post, sample_rate: +e.target.value })}>
-                  <option value={48000}>48 kHz · video</option><option value={44100}>44.1 kHz · music</option><option value={24000}>24 kHz</option><option value={0}>engine native</option>
-                </select>
-              </div>
-            )}
-          </div>
-        </div>
+            <label className="row small" style={{ gap: 8, marginBottom: 8 }}><input type="checkbox" style={{ width: "auto" }} checked={post.trim} onChange={(e) => setPost({ ...post, trim: e.target.checked })} />Trim leading/trailing silence</label>
+            <select value={post.sample_rate} onChange={(e) => setPost({ ...post, sample_rate: +e.target.value })} aria-label="Sample rate">
+              <option value={48000}>48 kHz · video</option><option value={44100}>44.1 kHz · music</option><option value={24000}>24 kHz</option><option value={0}>engine native</option>
+            </select>
+            {(Object.keys(params).length > 0 || tempo != null) && <button className="quiet xs" style={{ marginTop: 10 }} onClick={() => { setParams({}); setTempo(null); }}>Reset to {styles[style]?.label ?? "style"}</button>}
+          </details>
+        </aside>
       </div>
 
       <div className="sticky">

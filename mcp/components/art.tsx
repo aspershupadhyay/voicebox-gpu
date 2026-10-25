@@ -203,7 +203,7 @@ export function CaptionArt() {
     <svg viewBox="0 0 220 120" className="illus" aria-hidden>
       {Array.from({ length: 44 }, (_, i) => {
         const v = 0.25 + 0.75 * Math.abs(Math.sin(i * 0.55) * Math.sin(i * 0.17 + 1));
-        return <rect key={i} x={12 + i * 4.5} y={96 - v * 22} width="2.4" height={v * 22} rx="1.2" className="wbar" />;
+        return <rect key={i} x={q2(12 + i * 4.5)} y={q2(96 - v * 22)} width="2.4" height={q2(v * 22)} rx="1.2" className="wbar" />;
       })}
       <g className="float">
         <rect x="46" y="22" width="128" height="22" rx="6" className="ink panel-fill" />

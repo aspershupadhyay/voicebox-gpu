@@ -3,6 +3,18 @@
 The dashboard should feel like a quiet, hand-made instrument, not a template. Read this before you build or change any
 screen. The tokens live in `mcp/app/globals.css`; the shared parts live in `mcp/components/` (`Info`, `art.tsx`, `Shell`).
 
+## The idea
+
+The login page set the tone: a dark ink panel, a serif script reading itself, a REC timecode and an emerald current
+word. The whole studio carries it:
+
+- The sidebar is always warm ink (#0b0b0a), the studio's frame, in light and dark mode alike. Nav labels sit in
+  graphite on the ink, the active page is white with an emerald icon and a 2px emerald edge, section labels are mono
+  caps, and the GPU sits at the bottom as an "On air" module with a live five-bar meter.
+- Pages are bone paper. Every page opens with a mono eyebrow (emerald dot + label), a 52px Instrument Serif title
+  whose key word is emerald italic (`<h1>Write it, <em>hear it.</em></h1>`), one short subtitle line, and at most two
+  actions on the right.
+
 ## Feel
 
 - Calm and confident. The content (scripts, voices, takes) is the loudest thing on a page; the chrome stays quiet.
@@ -25,7 +37,8 @@ screen. The tokens live in `mcp/app/globals.css`; the shared parts live in `mcp/
 - Geist for the interface. Geist Mono only for numbers that move (timings, sizes, counters) and for code.
 - Instrument Serif (`--serif`, italic) is for display moments only: one word in a page title (`<h1>Write it,
   <em>hear it.</em></h1>`), the voice initials and the login script. Never use it for body text or labels.
-- Page titles are 30px semibold with tight tracking. Section headers (`h2`) are 14px. Eyebrows are 11px uppercase.
+- Page titles are 52px Instrument Serif (38px on phones), with the key word in emerald italic. Section labels and
+  eyebrows are 10.5px Geist Mono in uppercase with wide tracking. Card titles are 13px semibold.
 
 ## Text and explanations
 
@@ -35,6 +48,20 @@ screen. The tokens live in `mcp/app/globals.css`; the shared parts live in `mcp/
 - Labels say what a control does in a few words. Anything a first-time user might wonder about goes in `<Info>`.
   Anything they must know before they act goes in the label itself.
 - Don't add marketing copy, feature lists or "how it works" essays to working screens.
+
+## Structure
+
+- Give each page one job and one obvious action. Ask first what the page is for, and make that the biggest thing
+  on it: the script canvas on Voiceover, a big drop zone (`.bigdrop`) on Clean-up and Subtitles, the image stage on
+  Images.
+- Use fewer boxes. Lists are rows on the paper with hairline dividers (`.erow`, `.lib-card`, `.myvoice`), not cards.
+  Row actions are icon buttons that fade in on hover. A voice portrait doubles as the play button.
+- Settings for a tool live in one rail (`.vo-rail`): a few short sections (mono `.rail-h` labels), then the rarely
+  used dials folded into an "Advanced" `<details>`.
+- Unlabelled sections use `.sec` with a mono caps `h2`. Readouts use `.strip`: mono caps keys and serif values,
+  split by hairlines.
+- A paragraph that explains a feature becomes `How it works ⓘ` (`HowItWorks` in MyModel.tsx) or an `<Info>` next to
+  its label.
 
 ## Layout
 
