@@ -19,7 +19,7 @@ import { isCustomVoice, listMyVoices, refSync } from "@/lib/voices";
 import { SCOPE, verify } from "@/lib/oauth";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300; // starting a Colab GPU waits on the VM to boot (lib/colab.ts)
 
 const ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "myvoice"] as const;
 const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "myvoice", "whisper", "enhance", "zimage", "qwenimage"] as const;
