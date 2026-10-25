@@ -232,11 +232,14 @@ function Recorder({ onSaved }: { onSaved: (v: MyVoice) => void }) {
           <button className="quiet xs" onClick={() => setRead((read + 1) % READS.length)}><Shuffle size={13} />Another</button>
         </div>
         <p className="read-card">{READS[read]}</p>
-        <div className="tips">
-          {TIPS.map(([h, b]) => (
-            <div key={h} className="tip-row"><Lightbulb size={15} weight="duotone" /><div><b>{h}</b><span className="dim small">{b}</span></div></div>
-          ))}
-        </div>
+        <details className="tips-more">
+          <summary><Lightbulb size={14} weight="duotone" /> Recording tips</summary>
+          <div className="tips">
+            {TIPS.map(([h, b]) => (
+              <div key={h} className="tip-row"><div><b>{h}</b><span className="dim small">{b}</span></div></div>
+            ))}
+          </div>
+        </details>
       </div>
     </div>
   );
@@ -294,11 +297,7 @@ function Revoice({ mine }: { mine: MyVoice[] }) {
   const voices = [...mine.map((m) => [m.name, m.label] as const), ["female", "female preset"] as const, ["male", "male preset"] as const];
   return (
     <div className="card" style={{ marginTop: 14 }}>
-      <div className="card-head"><h2><ArrowsClockwise size={18} weight="duotone" /> Re-voice a take</h2><Info>Perform the line your way; it comes back in a clean studio voice.</Info></div>
-      <p className="dim small" style={{ marginTop: 0 }}>
-        Record yourself anywhere (a phone voice memo, a screen recording, a rough take) and get it back in your clean recorded voice.
-        Your timing, emphasis and emotion stay, so it lines up with the original video frame for frame. Up to 15 minutes.
-      </p>
+      <div className="card-head"><h2><ArrowsClockwise size={18} weight="duotone" /> Re-voice a take</h2><Info>Record yourself anywhere (a phone memo, a screen recording, a rough take) and get it back in your clean voice. Timing, emphasis and emotion stay, so it lines up with the video frame for frame. Up to 15 minutes.</Info></div>
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, alignItems: "end" }}>
         <div className="field" style={{ margin: 0 }}>
           <label className="f">Performance (audio or video)</label>
@@ -342,7 +341,7 @@ type Learnt = { jobs: number; usual_similarity?: number | null; best_temperature
 function Learned({ voice }: { voice: string }) {
   const [p, setP] = useState<Learnt | null>(null);
   useEffect(() => { api<Learnt>(`profile/qwen/${voice}`).then(setP).catch(() => {}); }, [voice]);
-  if (!p || !p.jobs) return <div className="tiny faint" style={{ marginTop: 8 }}>Learning: every reviewed voiceover teaches this voice its best settings.</div>;
+  if (!p || !p.jobs) return null;
   return (
     <div className="tiny dim" style={{ marginTop: 8 }}>
       Learned from {p.jobs} voiceover{p.jobs > 1 ? "s" : ""}
@@ -393,15 +392,15 @@ export default function Voices() {
               <div style={{ minWidth: 0 }}>
                 <div className="row" style={{ gap: 10 }}><b style={{ font: "600 19px var(--display)", letterSpacing: "-.02em" }}>{v.label}</b><span className="mono dim tiny">{v.name}</span><span className="dim tiny">{v.duration.toFixed(1)} s · {ago(v.created)}</span>
                   {v.enhanced && <span className="pill ok" title="Cleaned by the studio enhancer: noise and echo removed, detail restored">studio-enhanced</span>}</div>
-                <p className="dim small clamp2" style={{ margin: "4px 0 10px" }}>“{v.transcript}”</p>
+                <p className="dim small clamp2" style={{ margin: "4px 0 10px", fontFamily: "var(--serif)", fontStyle: "italic", fontSize: 16 }}>“{v.transcript}”</p>
                 {v.url && <Player src={v.url} compact />}
                 <Learned voice={v.name} />
                 {v.warnings?.map((w) => <div key={w} className="tiny" style={{ color: "var(--warn)", marginTop: 6 }}><WarningCircle size={12} /> {w}</div>)}
               </div>
-              <div className="stack" style={{ gap: 6 }}>
-                <Link className="btn sm" href={`/generate?engine=qwen&voice=${v.name}`}>Use with Qwen<ArrowRight size={13} /></Link>
-                <Link className="btn ghost sm" href={`/generate?engine=chatterbox&voice=${v.name}`}>Chatterbox</Link>
-                <button className="icon-btn danger-h" onClick={() => remove(v)} aria-label="Delete voice" style={{ alignSelf: "flex-end" }}><TrashSimple size={16} /></button>
+              <div className="row" style={{ gap: 4, alignSelf: "center" }}>
+                <Link className="btn quiet sm" href={`/generate?engine=chatterbox&voice=${v.name}`} title="Use with Chatterbox">Chatterbox</Link>
+                <Link className="btn sm" href={`/generate?engine=qwen&voice=${v.name}`}>Use<ArrowRight size={13} /></Link>
+                <button className="icon-btn danger-h" onClick={() => remove(v)} aria-label="Delete voice"><TrashSimple size={16} /></button>
               </div>
             </div>
           ))}
@@ -412,7 +411,7 @@ export default function Voices() {
 
       <div className="row between" style={{ marginTop: 34 }}>
         <h2 className="section-h" style={{ margin: 0 }}>Every voice, auditioned</h2>
-        {samples && <span className="dim tiny">{Object.values(samples.voices).reduce((s, v) => s + Object.keys(v).length, 0)} samples · the same line for every voice</span>}
+        <Info>Every voice reads the same line, so you can compare them fairly.</Info>
       </div>
       <div className="seg" style={{ margin: "14px 0 16px" }}>
         {ENGINES.map((e) => <button key={e.id} className={engine === e.id ? "on" : ""} onClick={() => setEngine(e.id)}>{e.name}<span className="dim tiny" style={{ marginLeft: 6 }}>{VOICES[e.id].length}</span></button>)}

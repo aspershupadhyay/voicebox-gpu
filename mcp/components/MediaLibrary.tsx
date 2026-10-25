@@ -33,7 +33,7 @@ function MediaInner() {
       <div className="head">
         <div>
           <div className="eyebrow">Workspace</div>
-          <h1>Media. <em>Every file, both of you.</em></h1>
+          <h1>Every <em>file.</em></h1>
           <p className="sub">{rows.length} files · {(total / 1e9).toFixed(2)} GB in Appwrite. Drop anything here; attach files to a post from the post itself.</p>
         </div>
         <button onClick={() => input.current?.click()}><UploadSimple size={15} weight="bold" /> Upload</button>

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { READ_ALONG } from "@/lib/readalong";
 import { api, fmtS, pct, simClass, matchClass, uploadFile, type Job, type MyVoice } from "./api";
 import { Info } from "./Info";
+import { VoiceGlyph } from "./art";
 import { useDialog } from "./Dialog";
 import JobProgress from "./JobProgress";
 import { useResumeJob } from "./jobs";
@@ -201,8 +202,8 @@ function Collect({ name, open, onClose, onAdded, script }: { name: string; open:
       </div>
       {tab === "read" ? (
         <>
-          <p className="dim small" style={{ marginTop: 0 }}>Record a session of 5-15 minutes at your natural YouTube pace. <kbd>space</kbd> moves to the next line,
-            <kbd>P</kbd> pauses and resumes (take a sip of water, the take waits). Stop when you&apos;re done: you listen first, nothing is sent until you add it.</p>
+          <HowItWorks>Record a session of 5-15 minutes at your natural YouTube pace. <kbd>space</kbd> moves to the next line,
+            <kbd>P</kbd> pauses and resumes (take a sip of water, the take waits). Stop when you&apos;re done: you listen first, nothing is sent until you add it.</HowItWorks>
           {!!script?.length && <p className="tiny" style={{ margin: "0 0 8px", color: "var(--ok)" }}>Reading the coach&apos;s script for {name}: aimed at what the voice is weakest at.</p>}
           <div className={`read-card big ${rec && !paused ? "live" : ""}`}>{LINES[i]}</div>
           <div className="row between" style={{ flexWrap: "wrap", gap: 10 }}>
@@ -226,9 +227,9 @@ function Collect({ name, open, onClose, onAdded, script }: { name: string; open:
         </>
       ) : (
         <>
-          <p className="dim small" style={{ marginTop: 0 }}>Long recordings of just you talking work great: raw voiceovers, podcast tracks, a video&apos;s audio. Pick as many as you like
+          <HowItWorks>Long recordings of just you talking work great: raw voiceovers, podcast tracks, a video&apos;s audio. Pick as many as you like
             (up to 20 per batch, 3 hours in all). With <b>Train automatically</b> on, {name} trains by itself once it has
-            15+ minutes, then retrains with every 15 new minutes (a retrain replaces the model only if it&apos;s better; you can close the tab, keep Colab running).</p>
+            15+ minutes, then retrains with every 15 new minutes (a retrain replaces the model only if it&apos;s better; you can close the tab, keep Colab running).</HowItWorks>
           <label className="drop slim" style={{ cursor: "pointer" }}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files).filter((f) => /^(audio|video)\//.test(f.type)); setPending((p) => [...p, ...fs.map((file) => ({ file }))]); }}>
@@ -320,16 +321,12 @@ function Train({ name, minutes, follow, head, engine, onTrained }: { name: strin
     <div className="card">
       {head}
       {qwen ? (
-        <p className="dim small" style={{ marginTop: 0 }}>
-          Fine-tunes Qwen3-TTS 1.7B on every clip of <b>{name}</b> (Qwen&apos;s own recipe): a voice that holds up over long scripts in 10 languages,
+        <HowItWorks>Fine-tunes Qwen3-TTS 1.7B on every clip of <b>{name}</b> (Qwen&apos;s own recipe): a voice that holds up over long scripts in 10 languages,
           beyond what a 20 s sample can carry. Needs an A100, L4 or A10 runtime (not the free T4); roughly 15-60 min. Then pick <b>ft_{name}</b> on
-          Qwen3-TTS in Voiceover. Keep Colab open until it finishes.
-        </p>
+          Qwen3-TTS in Voiceover. Keep Colab open until it finishes.</HowItWorks>
       ) : (
-        <p className="dim small" style={{ marginTop: 0 }}>
-          Learns <b>{name}</b> from every clip: pace, emphasis, how sentences flow. The most natural long English reads. About 1-2 h on the GPU
-          (other jobs wait); then pick <b>{name}</b> under <b>Your model</b> in Voiceover. Keep Colab open until it finishes.
-        </p>
+        <HowItWorks>Learns <b>{name}</b> from every clip: pace, emphasis, how sentences flow. The most natural long English reads. About 1-2 h on the GPU
+          (other jobs wait); then pick <b>{name}</b> under <b>Your model</b> in Voiceover. Keep Colab open until it finishes.</HowItWorks>
       )}
       {model && !busy && (
         <div className="stack" style={{ gap: 8, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
@@ -405,7 +402,7 @@ function Benchmark({ mine, name }: { mine: MyVoice[]; name: string }) {
   return (
     <div className="card">
       <div className="card-head"><h2>Benchmark</h2><Info>Every voice reads the same sentences and gets the same scoring.</Info></div>
-      <p className="dim small" style={{ marginTop: 0 }}>Use sentences you never recorded. Voice match is measured against your real recording; naturalness is a predicted MOS (1-5); speed is seconds of compute per second of audio.</p>
+      <HowItWorks>Use sentences you never recorded. Voice match is measured against your real recording; naturalness is a predicted MOS (1-5); speed is seconds of compute per second of audio.</HowItWorks>
       <div className="grid" style={{ gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)", gap: 14 }}>
         <textarea className="doc short" value={lines} onChange={(e) => setLines(e.target.value)} style={{ minHeight: 170, marginTop: 0 }} />
         <div className="stack" style={{ gap: 10 }}>
@@ -473,11 +470,9 @@ function KokoroVoice({ mine, name }: { mine: MyVoice[]; name: string }) {
   return (
     <div className="card">
       <div className="card-head"><h2>Find it in Kokoro</h2><Info>af_heart clarity, instant, runs on the CPU.</Info></div>
-      <p className="dim small" style={{ marginTop: 0 }}>
-        Kokoro is the tiny engine behind af_heart: crisp, steady and instant. This searches Kokoro&apos;s voice space for the mix of its voices that
+      <HowItWorks>Kokoro is the tiny engine behind af_heart: crisp, steady and instant. This searches Kokoro&apos;s voice space for the mix of its voices that
         sounds most like your recording (scored by the same voice match as the review), then checks it still speaks every word clearly.
-        It&apos;s the closest Kokoro can get to you, not a clone; your trained model copies you more exactly. About 10-15 minutes.
-      </p>
+        It&apos;s the closest Kokoro can get to you, not a clone; your trained model copies you more exactly. About 10-15 minutes.</HowItWorks>
       {have && !busy && (
         <div className="stack" style={{ gap: 8, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
           <div className="row between small" style={{ flexWrap: "wrap", gap: 8 }}><b>kv_{name}</b>
@@ -522,10 +517,8 @@ function EveryEngine({ name, minutes, mine, head, onMade }: { name: string; minu
   return (
     <div className="card">
       {head}
-      <p className="dim small" style={{ marginTop: 0 }}>
-        Ready in about a minute: picks the cleanest stretch of <b>{name}</b>&apos;s clips and saves it as the voice <b>{name}</b>. Then choose it in
-        Voiceover on Qwen3-TTS (best cloning, 10 languages) or Chatterbox (emotion, 23 languages, Hindi).
-      </p>
+      <HowItWorks>Ready in about a minute: picks the cleanest stretch of <b>{name}</b>&apos;s clips and saves it as the voice <b>{name}</b>. Then choose it in
+        Voiceover on Qwen3-TTS (best cloning, 10 languages) or Chatterbox (emotion, 23 languages, Hindi).</HowItWorks>
       <label className="row small" style={{ gap: 8 }}>Sample length
         <select value={cap} onChange={(e) => setCap(Number(e.target.value))} style={{ width: "auto" }}>
           {[20, 30, 45, 60].map((v) => <option key={v} value={v}>{v} s{v === 20 ? " (best for cloning)" : ""}</option>)}</select>
@@ -556,6 +549,11 @@ type CoachReport = { name: string; lines: number; rated_up: number; rated_down: 
   feedback?: { pairs: number; from_you: number; min: number; good: number } };
 type Script = { minutes: number; focus: { cat: string; label: string; tip: string }[]; words_to_practise: string[]; lines: { text: string; cat: string }[] };
 
+/** A long explanation, folded into an (i): the page stays quiet, the detail is one hover away. */
+function HowItWorks({ children }: { children: React.ReactNode }) {
+  return <div className="how">How it works <Info>{children}</Info></div>;
+}
+
 const GATE_TEXT: Record<Gate["stage"], string> = { comparing: "Comparing the new model with the current one…", promoted: "New model in use",
   kept: "Kept the current model", error: "Comparison didn't finish" };
 
@@ -571,11 +569,11 @@ function Coach({ name, trained, onRecord, onSwitched }: { name: string; trained:
   const [spell, setSpell] = useState<Record<string, string>>({});
   const load = useCallback(() => { api<CoachReport>(`coach/${name}`).then(setRep).catch(() => {}); }, [name]);
   useEffect(() => { setRep(null); setScript(null); load(); }, [load]);
-  const comparing = rep?.gates[0]?.stage === "comparing";
+  const comparing = rep?.gates?.[0]?.stage === "comparing";
   const was = useRef<string | undefined>(undefined);
   useEffect(() => {
     // while a comparison runs, look again every 20 s; when it settles, say what happened
-    const g = rep?.gates[0];
+    const g = rep?.gates?.[0];
     if (was.current === "comparing" && g && g.stage !== "comparing") { toast(g.note ?? GATE_TEXT[g.stage], g.stage === "promoted" ? "ok" : undefined); onSwitched(); }
     was.current = g?.stage;
     if (!comparing) return;
@@ -612,16 +610,14 @@ function Coach({ name, trained, onRecord, onSwitched }: { name: string; trained:
     } catch (e) { setErr((e as Error).message); }
   }
   const fb = rep?.feedback;
-  const g = rep?.gates[0];
+  const g = rep?.gates?.[0];
 
   return (
     <div className="card">
       <div className="card-head"><h2>Getting better</h2><Info>The more {name}&apos;s voice is used, the more it knows what to fix.</Info></div>
-      <p className="dim small" style={{ marginTop: 0 }}>
-        Every line {trained ? <b>{name}</b> : "a trained voice"} reads is checked: the words (Whisper), how much it sounds like you, how natural it sounds, and the
+      <HowItWorks>Every line {trained ? <b>{name}</b> : "a trained voice"} reads is checked: the words (Whisper), how much it sounds like you, how natural it sounds, and the
         delivery (flat pitch, rushing, odd pauses). Rate lines with 👍 / 👎 in Voiceover and the Library too. The weak spots become your next recording script;
-        with <b>Train automatically</b> on, {rep?.retrain_minutes ?? 15} new minutes retrain the voice, and the new model only replaces the current one if it scores at least as well.
-      </p>
+        with <b>Train automatically</b> on, {rep?.retrain_minutes ?? 15} new minutes retrain the voice, and the new model only replaces the current one if it scores at least as well.</HowItWorks>
       {!trained && <p className="small" style={{ color: "var(--warn)", margin: 0 }}>Train {name} first (above): the coach listens to a trained voice.</p>}
       {g && (
         <div className="stack" style={{ gap: 6, padding: "10px 0", borderTop: "1px solid var(--line)" }}>
@@ -686,9 +682,9 @@ function Coach({ name, trained, onRecord, onSwitched }: { name: string; trained:
             <span className="dim">{fb.pairs} of {fb.good} pairs{fb.from_you ? ` · ${fb.from_you} from your ratings` : ""}</span>
           </div>
           <div className="meter"><i style={{ width: `${Math.min(100, (fb.pairs / fb.good) * 100)}%` }} /></div>
-          <span className="tiny dim">Each time the review keeps one take of a sentence over another, that&apos;s a pair: the better take and the worse one.
+          <HowItWorks>Each time the review keeps one take of a sentence over another, that&apos;s a pair: the better take and the worse one.
             Your 👍 / 👎 count double. With {fb.min}+ pairs, a short polish (DPO, ~15-30 min of GPU) teaches the model to prefer the better takes;
-            the model check only switches to it if it scores at least as well.</span>
+            the model check only switches to it if it scores at least as well.</HowItWorks>
           <div className="row" style={{ gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
             <button className="ghost sm" onClick={() => rlhf("practice")} title="40 sentences × 3 takes each: a few minutes of GPU">Make practice takes</button>
             <button className="sm" onClick={() => rlhf("polish")} disabled={fb.pairs < fb.min} title={fb.pairs < fb.min ? `Needs ${fb.min} pairs` : undefined}>Polish with feedback <ArrowRight size={13} /></button>
@@ -775,7 +771,7 @@ export default function MyModel() {
       <div className="head">
         <div>
           <div className="eyebrow">Your model</div>
-          <h1>A voice that is <em>only you.</em></h1>
+          <h1>Only <em>you.</em></h1>
           <p className="sub">Pick a voice, add recordings, train it.</p>
         </div>
       </div>
@@ -785,8 +781,9 @@ export default function MyModel() {
           {voices.map((n) => {
             const p = people.find((x) => x.name === n);
             const m = models.find((x) => x.name === n);
-            return <button key={n} className={`quiet sm ${n === name ? "on" : ""}`} onClick={() => setName(n)}>
-              <b>{n}</b>&nbsp;<span className="dim tiny">{(p?.minutes ?? 0).toFixed(1)} min{m ? " · trained" : ""}</span></button>;
+            return <button key={n} className={`person ${n === name ? "on" : ""}`} onClick={() => setName(n)}>
+              <VoiceGlyph name={n} size={34} active={n === name} />
+              <span><b>{n}</b><span className="dim tiny mono">{(p?.minutes ?? 0).toFixed(1)} min{m ? " · trained" : ""}</span></span></button>;
           })}
           <span className="row" style={{ gap: 6 }}>
             <input value={fresh} placeholder="+ new voice name" style={{ width: 160 }}

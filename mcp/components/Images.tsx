@@ -223,9 +223,8 @@ export default function Images() {
           )}
 
           <div>
-            <label className="f">Aspect</label>
+            <label className="f">Aspect <span className="faint mono" style={{ fontWeight: 400, marginLeft: 6 }}>{w}×{h}</span></label>
             <div className="aspect-row">{Object.entries(spec.sizes).map(([a, [ww, hh]]) => <AspectChip key={a} a={a} w={ww} h={hh} on={aspect === a} onPick={() => setAspect(a)} />)}</div>
-            <div className="dim tiny mono" style={{ marginTop: 5 }}>{w}×{h}</div>
           </div>
 
           <div className="row" style={{ gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
@@ -251,16 +250,18 @@ export default function Images() {
               </button>
             )}
           </div>
-          <div className="row" style={{ gap: 8, alignItems: "flex-end" }}>
-            <div className="field" style={{ flex: 1, margin: 0 }}><label className="f">Seed</label><input type="number" value={seed} onChange={(e) => setSeed(+e.target.value)} /></div>
-            <button className="ghost" onClick={() => setSeed(Math.floor(Math.random() * 1e6))} title="New random seed"><DiceFive size={16} />Roll</button>
-          </div>
+          <details className="rail-more" style={{ borderTop: 0, padding: 0 }}>
+            <summary>More <Info>The same seed and prompt reproduce an image; roll for a new one.</Info></summary>
+            <div className="row" style={{ gap: 8, alignItems: "flex-end", marginTop: 10 }}>
+              <div className="field" style={{ flex: 1, margin: 0 }}><label className="f">Seed</label><input type="number" value={seed} onChange={(e) => setSeed(+e.target.value)} /></div>
+              <button className="ghost" onClick={() => setSeed(Math.floor(Math.random() * 1e6))} title="New random seed"><DiceFive size={16} />Roll</button>
+            </div>
+          </details>
 
           <button className="sig go" disabled={!status?.online || busy || prompt.trim().length < 3} onClick={generate}>
             <Sparkle size={18} weight="fill" />Generate{count > 1 ? ` ${count}` : ""}<span className="est">≈{fmtS(estS)}</span>
           </button>
-          {!downloaded && <p className="tiny" style={{ margin: 0, color: "var(--sand)" }}><DownloadSimple size={12} weight="bold" /> First use downloads ~{spec.disk_gb} GB onto the GPU machine (once per runtime); a progress bar shows it landing.</p>}
-          {spec.license && <p className="dim tiny" style={{ margin: 0 }}>{spec.about}</p>}
+          {(spec.license || !downloaded) && <p className="tiny dim" style={{ margin: 0 }}>{!downloaded ? <><DownloadSimple size={12} weight="bold" /> First run downloads the model</> : "About this model"} <Info>{!downloaded ? `First use downloads ~${spec.disk_gb} GB onto the GPU machine (once per runtime); a progress bar shows it landing. ` : ""}{spec.about}</Info></p>}
           {err && <p className="err" style={{ margin: 0 }}>{err}</p>}
         </div>
 
@@ -310,7 +311,7 @@ export default function Images() {
             </div>
           ))}
           {!pending.length && !feed.length && (
-            <div className="empty card"><ImageSquare size={40} weight="duotone" color="var(--glacier)" /><b>Nothing here yet</b><span className="dim small">Write a prompt and press Generate. Images appear here as they develop.</span></div>
+            <div className="stage-empty"><ImageSquare size={30} /><b>Your images appear here</b><span>Write a prompt and press Generate.</span></div>
           )}
         </div>
       </div>

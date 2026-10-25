@@ -156,7 +156,7 @@ function BoardInner() {
       <div className="head">
         <div>
           <div className="eyebrow">Workspace</div>
-          <h1>The board. <em>Everything you two are making.</em></h1>
+          <h1>The <em>board.</em></h1>
           <p className="sub">{loading ? "Loading…" : `${posts.length} post${posts.length === 1 ? "" : "s"} · ${week} due this week${late ? ` · ${late} overdue` : ""}. Drag cards between stages; press N for a new one.`}</p>
         </div>
         <div className="row" style={{ gap: 8 }}>
