@@ -200,8 +200,9 @@ function bootstrap(origin: string, prewarm: string) {
 }
 
 /** Start a kernel on the runtime and run the worker in it; returns once the kernel is busy with it (it keeps running).
- *  A fresh GPU VM can take well over 20 s to boot Python and pull the bundle, so any sign the kernel is running our code
- *  counts (it going busy on our request, or its first line); only a kernel that never takes the request is a failure. */
+ *  A kernel on a freshly booted VM silently drops messages until its channels are wired up, so (like Google's own
+ *  client, jupyter-kernel-client's wait_for_ready) we ask kernel_info once a second until it answers, and only then
+ *  send the code. Any sign the kernel is running it counts as started (busy on our request, or its first line). */
 export async function launch(proxy: Proxy, code: string, deadline = Date.now() + 45_000) {
   const headers = { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli", "Content-Type": "application/json" };
   const base = proxy.url.replace(/\/$/, "");
@@ -216,6 +217,10 @@ export async function launch(proxy: Proxy, code: string, deadline = Date.now() +
   const ws = new WebSocket(`${base.replace(/^http/, "ws")}/api/kernels/${kernel.id}/channels?colab-runtime-proxy-token=${encodeURIComponent(proxy.token)}`,
     { headers: { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli" } });
   const session = randomUUID(), msgId = randomUUID();
+  const msg = (id: string, type: string, content: object) => JSON.stringify({
+    header: { msg_id: id, username: "voicebox", session, msg_type: type, version: "5.3", date: new Date().toISOString() },
+    parent_header: {}, metadata: {}, channel: "shell", buffers: [], content });
+  let ready = false, poke: ReturnType<typeof setInterval> | null = null;
   const out: string[] = [];
   let busy = false; // the kernel has picked up our request: the worker code is running
   const kernelBusy = async () => {
@@ -226,18 +231,25 @@ export async function launch(proxy: Proxy, code: string, deadline = Date.now() +
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(async () => {
       if (out.length || busy || (await kernelBusy())) resolve();
-      else reject(new Error("the kernel never picked up the worker code"));
+      else reject(new Error(ready ? "the kernel took the worker code but never ran it" : "the kernel never answered (the runtime may still be booting)"));
     }, Math.max(12_000, deadline - Date.now()));
-    ws.on("open", () => ws.send(JSON.stringify({
-      header: { msg_id: msgId, username: "voicebox", session, msg_type: "execute_request", version: "5.3", date: new Date().toISOString() },
-      parent_header: {}, metadata: {}, channel: "shell", buffers: [],
-      content: { code, silent: false, store_history: true, user_expressions: {}, allow_stdin: false, stop_on_error: true },
-    })));
+    ws.on("open", () => {
+      const ask = () => { try { ws.send(msg(randomUUID(), "kernel_info_request", {})); } catch { /* retried next tick */ } };
+      ask();
+      poke = setInterval(ask, 1000);
+    });
     ws.on("message", (raw) => {
       let m: { msg_type?: string; header?: { msg_type: string }; parent_header?: { msg_id?: string }; content?: { text?: string; ename?: string; evalue?: string; execution_state?: string } };
       try { m = JSON.parse(raw.toString()); } catch { return; }
-      if (m.parent_header?.msg_id !== msgId) return;
       const t = m.header?.msg_type ?? m.msg_type;
+      if (t === "kernel_info_reply" && !ready) {
+        // the kernel is wired up: now the code goes through
+        ready = true;
+        if (poke) clearInterval(poke);
+        ws.send(msg(msgId, "execute_request", { code, silent: false, store_history: true, user_expressions: {}, allow_stdin: false, stop_on_error: true }));
+        return;
+      }
+      if (m.parent_header?.msg_id !== msgId) return;
       if (t === "stream" && m.content?.text) out.push(m.content.text);
       if (t === "status" && m.content?.execution_state === "busy") busy = true;
       if (t === "error") { clearTimeout(timer); reject(new Error(`the worker failed to start: ${m.content?.ename}: ${m.content?.evalue}`)); }
@@ -245,7 +257,7 @@ export async function launch(proxy: Proxy, code: string, deadline = Date.now() +
       if (out.join("").includes("starting")) { clearTimeout(timer); setTimeout(resolve, 1500); }
     });
     ws.on("error", (e) => { clearTimeout(timer); reject(e); });
-  }).finally(() => { try { ws.close(); } catch { /* the kernel keeps running without us */ } });
+  }).finally(() => { if (poke) clearInterval(poke); try { ws.close(); } catch { /* the kernel keeps running without us */ } });
   return { kernel: kernel.id, output: out.join("").slice(-1500) };
 }
 
