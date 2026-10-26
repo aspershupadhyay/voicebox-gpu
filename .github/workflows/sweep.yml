@@ -1,0 +1,23 @@
+# Every 10 min: stop a GPU the app started whose worker died (no heartbeat for 20 min), so a crashed Colab kernel
+# doesn't bill until Google reclaims the VM. The logic lives in mcp/lib/colab.ts (sweep); this only knocks.
+# One-time setup: repo Settings → Secrets and variables → Actions → New repository secret WORKER_SECRET (the same
+# value as on Vercel). Without it the run skips with a warning. (Vercel cron would do, but Hobby allows only daily.)
+name: Sweep dead GPUs
+on:
+  schedule: [{ cron: "*/10 * * * *" }]
+  workflow_dispatch:
+concurrency: { group: sweep, cancel-in-progress: true }
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
+    steps:
+      - name: Sweep
+        run: |
+          if [ -z "$WORKER_SECRET" ]; then echo "::warning::Add the WORKER_SECRET repository secret (see the top of this file)"; exit 0; fi
+          code=$(curl -s -o out.json -w '%{http_code}' -m 60 -X POST -H "Authorization: Bearer $WORKER_SECRET" \
+            https://voiceboxstudio.vercel.app/api/cron/sweep)
+          echo "$code $(cat out.json)"
+          [ "$code" = 200 ]
