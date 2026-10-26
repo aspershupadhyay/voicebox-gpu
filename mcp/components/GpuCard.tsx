@@ -34,6 +34,7 @@ export default function GpuCard() {
   const list = c?.runtimes && Array.isArray(c.runtimes) ? c.runtimes : [];
   const s = c?.session && !c.session.stopped ? c.session : null;
 
+  const [pick, setPick] = useState<string | null>(null);
   async function act(name: string, fn: () => Promise<unknown>, ok?: string) {
     setErr(""); setBusy(name);
     try { await fn(); if (ok) toast(ok, "ok"); } catch (e) { setErr((e as Error).message); }
@@ -106,9 +107,10 @@ export default function GpuCard() {
                 <Lightning size={14} weight="fill" /> Start for training &amp; video · {c.config.heavy_gpu}<span className="dim">{rate(c.config.heavy_gpu)}</span></button>
             </div>
             <div className="row tiny dim" style={{ gap: 6, flexWrap: "wrap" }}>or
-              <Select size="sm" label="GPU" value={c.config.gpu} onChange={(v) => save({ gpu: v })} style={{ width: "auto" }}
+              <Select size="sm" label="GPU" value={pick ?? c.config.gpu} onChange={(v) => { setPick(v); save({ gpu: v }); }} style={{ width: "auto" }}
                 options={GPUS.map(([g, l]) => [g, `${l}${rate(g)}`] as const)} />
-              <button className="ghost xs" disabled={!!busy} onClick={() => startWith({ gpu: c.config.gpu })}>Start this one</button>
+              {/* the GPU shown in the picker, not the saved setting (the save may still be on its way) */}
+              <button className="ghost xs" disabled={!!busy} onClick={() => startWith({ gpu: pick ?? c.config.gpu })}>Start {pick ?? c.config.gpu}</button>
               {c.config.high_ram ? "· high-RAM machine" : "· standard RAM"}
             </div>
             {c.session?.stopped && <span className="tiny dim">Last session: {c.session.gpu}, stopped {new Date(c.session.stopped).toLocaleString()}{c.session.stop_reason ? ` (${c.session.stop_reason})` : ""}.</span>}
