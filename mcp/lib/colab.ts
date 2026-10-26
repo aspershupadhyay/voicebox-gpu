@@ -204,7 +204,9 @@ function bootstrap(origin: string, prewarm: string) {
  *  client, jupyter-kernel-client's wait_for_ready) we ask kernel_info once a second until it answers, and only then
  *  send the code. Any sign the kernel is running it counts as started (busy on our request, or its first line). */
 export async function launch(proxy: Proxy, code: string, deadline = Date.now() + 45_000) {
-  const headers = { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli", "Content-Type": "application/json" };
+  // exactly what Google's client sends (google-colab-cli + jupyter-kernel-client): the proxy token as a header, as a
+  // bearer token, and on the websocket as ?token= with a ?session_id=
+  const headers = { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli", Authorization: `Bearer ${proxy.token}`, "Content-Type": "application/json" };
   const base = proxy.url.replace(/\/$/, "");
   let kernel: { id: string } | null = null;
   for (let i = 0; i < 6 && !kernel && Date.now() < deadline - 15_000; i++) { // a fresh VM takes a few seconds to accept kernels
@@ -214,9 +216,12 @@ export async function launch(proxy: Proxy, code: string, deadline = Date.now() +
   }
   if (!kernel) throw new Error("the runtime didn't start a Python kernel");
   const { default: WebSocket } = await import("ws");
-  const ws = new WebSocket(`${base.replace(/^http/, "ws")}/api/kernels/${kernel.id}/channels?colab-runtime-proxy-token=${encodeURIComponent(proxy.token)}`,
-    { headers: { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli" } });
   const session = randomUUID(), msgId = randomUUID();
+  const qs = new URLSearchParams({ session_id: session, token: proxy.token, "colab-runtime-proxy-token": proxy.token });
+  const ws = new WebSocket(`${base.replace(/^http/, "ws")}/api/kernels/${kernel.id}/channels?${qs}`,
+    { headers: { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli", Authorization: `Bearer ${proxy.token}` } });
+  // what the connection actually did, so a failure says why instead of guessing
+  const diag = { opened: false, frames: 0, types: new Set<string>(), closed: "" as string };
   const msg = (id: string, type: string, content: object) => JSON.stringify({
     header: { msg_id: id, username: "voicebox", session, msg_type: type, version: "5.3", date: new Date().toISOString() },
     parent_header: {}, metadata: {}, channel: "shell", buffers: [], content });
@@ -231,17 +236,24 @@ export async function launch(proxy: Proxy, code: string, deadline = Date.now() +
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(async () => {
       if (out.length || busy || (await kernelBusy())) resolve();
-      else reject(new Error(ready ? "the kernel took the worker code but never ran it" : "the kernel never answered (the runtime may still be booting)"));
+      else {
+        const seen = `websocket ${diag.opened ? "open" : "never opened"}, ${diag.frames} frame${diag.frames === 1 ? "" : "s"} back${diag.types.size ? ` (${[...diag.types].join(", ")})` : ""}${diag.closed ? `, closed ${diag.closed}` : ""}`;
+        reject(new Error(ready ? `the kernel took the worker code but never ran it (${seen})` : `the kernel never answered (${seen})`));
+      }
     }, Math.max(12_000, deadline - Date.now()));
+    ws.on("close", (code, why) => { diag.closed = `${code}${why?.length ? ` ${why.toString().slice(0, 80)}` : ""}`; });
     ws.on("open", () => {
+      diag.opened = true;
       const ask = () => { try { ws.send(msg(randomUUID(), "kernel_info_request", {})); } catch { /* retried next tick */ } };
       ask();
       poke = setInterval(ask, 1000);
     });
     ws.on("message", (raw) => {
       let m: { msg_type?: string; header?: { msg_type: string }; parent_header?: { msg_id?: string }; content?: { text?: string; ename?: string; evalue?: string; execution_state?: string } };
-      try { m = JSON.parse(raw.toString()); } catch { return; }
+      diag.frames++;
+      try { m = JSON.parse(raw.toString()); } catch { diag.types.add("binary"); return; }
       const t = m.header?.msg_type ?? m.msg_type;
+      if (t) diag.types.add(t);
       if (t === "kernel_info_reply" && !ready) {
         // the kernel is wired up: now the code goes through
         ready = true;
