@@ -73,7 +73,7 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [ ] Listen to a few of the cut training clips per session on Your model (the worker would push samples next to the zip)
 - [ ] Per-target caption overrides (X 280 vs Instagram 2200)
 - [ ] Teach trained voices non-verbal tags (laughs, breaths) from the recordings
-- [x] Streaming playback while a voiceover renders: Voiceover → Listen live plays every line in order as it is made (each line's first take, joined and mastered on the CPU beside the generation), for every engine including your trained voice and studio polish; the finished lines replace the previews. Not yet timed on a GPU
+- [x] Streaming playback while a voiceover renders: Voiceover shows the latest run as one take (the whole voiceover joined, like ElevenLabs); while it is made it plays by itself, every line in order as the worker makes it (each line's first take, joined and mastered on the CPU beside the generation), for every engine including your trained voice and studio polish. The per-line view is gone from the page. Not yet timed on a GPU
 - [ ] Speech super-resolution model (beyond Resemble Enhance) as the polish step; A/B with benchmark_voices
 - [ ] Add newer open TTS engines as benchmark candidates (e.g. Higgs Audio, VoxCPM, IndexTTS2) and let the scores pick
 - [ ] Full Kokoro / StyleTTS2 fine-tune on your clips (beyond the voicewalk mix)
