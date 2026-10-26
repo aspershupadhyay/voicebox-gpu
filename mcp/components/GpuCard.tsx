@@ -93,7 +93,7 @@ export default function GpuCard() {
           <div key={r.endpoint} className="row between small" style={{ gap: 8 }}>
             <span><span className={`dot ${status?.online ? "ok" : "warn"}`} style={{ marginRight: 6 }} /><b>{r.accelerator}</b> runtime{r.high_ram ? " · high RAM" : ""}
               {c.config.rates?.[rateKey(r.accelerator, r.high_ram)] ? <span className="dim"> · {c.config.rates[rateKey(r.accelerator, r.high_ram)].toFixed(2)} units/h</span> : null}
-              <span className="dim"> · {status?.online ? "worker online" : "worker starting (3-8 min)…"}</span></span>
+              <span className="dim"> · {status?.online ? "worker online" : "worker starting (about 2 min)…"}</span></span>
             <button className="ghost sm" disabled={!!busy} onClick={async () => { if (await confirm({ title: `Stop the ${r.accelerator} runtime?`, body: "Jobs on it stop and billing ends now. Models re-download on the next start.", confirm: "Stop", danger: true })) act("stop", () => api("colab/stop", { body: { endpoint: r.endpoint } }), "GPU stopped"); }}>
               <Stop size={13} weight="fill" /> Stop</button>
           </div>
