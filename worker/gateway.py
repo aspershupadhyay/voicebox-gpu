@@ -504,6 +504,17 @@ class Engines:
         p = self.procs.get(name)
         return bool(p and p.poll() is None and self.state[name] == "ready")
 
+    def fits_now(self, name):
+        """Can name serve right now without anything else leaving the GPU: running, or parked in RAM with room for its
+        share next to what's loaded (the streamed first line wakes Whisper only then, never mid-generation evictions)."""
+        if self.running(name):
+            return True
+        p = self.procs.get(name)
+        if name not in self.parked or not (p and p.poll() is None) or self.budget <= 0:
+            return False
+        used = sum(1.0 if n in self.parked else C.ENGINES[n]["gpu_gb"] for n in self.procs if n != name)
+        return used + C.ENGINES[name]["gpu_gb"] <= self.budget
+
     def ensure(self, name):
         with self.lock:
             p = self.procs.get(name)
@@ -2098,8 +2109,8 @@ def _best_take(c, base):
 
 def _stream_line(job, jdir, p, out, ref_path, stop, done):
     """Step 5, next to the generation: as soon as every take of the first line is on disk, review it, master it and
-    publish it (job results), so the dashboard plays it while the rest are still voiced. Only when Whisper is already
-    loaded (never load a model mid-generation) and only if the line passes the review; otherwise the normal path
+    publish it (job results), so the dashboard plays it while the rest are still voiced. Only when Whisper is loaded or
+    can wake beside the generation (nothing leaves the GPU for it) and only if the line passes the review; otherwise the normal path
     takes it, retries included. done gets the line's trials when it was published."""
     takes = job.get("takes", 1)
     entries = [(p, i, k, _take_params(p, k)) for i in range(len(p["chunks"])) for k in range(takes)]
@@ -2117,7 +2128,7 @@ def _publish_first(job, jdir, p, out, ref_path, entries, done):
     takes = job.get("takes", 1)
     pick, trials = None, []
     if takes > 1 or job.get("review"):
-        if not ENG.running("whisper"):
+        if not ENG.fits_now("whisper"):
             return
         if takes == 1:
             job["_no_mos"] = True  # as _review: naturalness only breaks ties between takes
