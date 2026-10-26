@@ -14,7 +14,7 @@ before it (its text and the audio just made for it) as the previous turn, so pit
 sentence into the next instead of resetting at every chunk. Chunks of one line then run in waves (first chunks of every
 line together, then the second ones...), still batched across lines.
 """
-import json, os
+import json, os, time
 from collections import OrderedDict
 import torch
 
@@ -27,6 +27,11 @@ TOKENS_PER_SEC = 86
 START_AI = 128261
 END_AI = 128262
 CTX_MAX = 1800  # longest previous chunk (codec tokens, ~20 s) used as context; train.py trains with the same bound
+# INFERENCE.md step 2 (gateway passes config.COMPILE_CODEC): fold SNAC's weight norm into plain weights (exact), compile it
+# for any length, and decode a wave's chunks together, sorted by length, instead of one at a time.
+COMPILE_CODEC = os.environ.get("VOICEBOX_COMPILE_CODEC", "0") == "1"
+CODEC_BATCH_S = 60  # most audio (padded) one batched decode makes: bounds its memory next to vLLM
+SAMPLES_PER_FRAME = 2048  # SNAC 24 kHz: one level-1 code (7 Orpheus tokens) = 2048 samples
 
 
 def token_budget(text, params):
@@ -55,6 +60,10 @@ class Engine:
         self.dev = "cuda" if torch.cuda.is_available() else "cpu"
         self.snac = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").to(self.dev)
         self.snac.train(False)
+        self.codec_s = 0.0  # time spent decoding codes to audio in the last synth_batch (reported to the job)
+        self.codec_batch = COMPILE_CODEC and self.dev == "cuda"
+        if self.codec_batch:
+            self._fast_codec()
         self.mode = "transformers"
         self.lora_req = None
         if self.dev == "cuda" and os.environ.get("ORPHEUS_BACKEND", "vllm") == "vllm":
@@ -152,8 +161,10 @@ class Engine:
         gen = [t for t in gen if t != END_AUDIO and t >= CODE_OFFSET]
         return gen[: (len(gen) // 7) * 7]
 
-    def _decode(self, gen):
-        gen = self._codes(gen)
+    @staticmethod
+    def _levels(gen):
+        """Orpheus tokens -> SNAC's three code levels (n, 2n and 4n codes for n frames of 7 tokens)."""
+        gen = Engine._codes(gen)
         n = len(gen)
         if n == 0:
             raise RuntimeError("Orpheus produced no audio tokens")
@@ -165,13 +176,70 @@ class Engine:
             l3.append(c[b + 2] - 2 * 4096); l3.append(c[b + 3] - 3 * 4096)
             l2.append(c[b + 4] - 4 * 4096)
             l3.append(c[b + 5] - 5 * 4096); l3.append(c[b + 6] - 6 * 4096)
-        codes = [torch.tensor(x).unsqueeze(0).clamp(0, 4095).to(self.dev) for x in (l1, l2, l3)]
+        return [torch.tensor(x).clamp(0, 4095) for x in (l1, l2, l3)]
+
+    def _decode(self, gen):
+        codes = [x.unsqueeze(0).to(self.dev) for x in self._levels(gen)]
         with torch.no_grad():
             audio = self.snac.decode(codes)
         return audio.squeeze().float().cpu().numpy(), 24000
 
+    def _fast_codec(self):
+        """Fold the weight norm (the same weights, computed once instead of on every call), compile the decoder for any
+        length and batch, and warm it so the first job doesn't pay for compiling. Eager if this torch can't compile."""
+        from torch.nn.utils import parametrize
+        t = time.time()
+        for mod in self.snac.decoder.modules():
+            if parametrize.is_parametrized(mod, "weight"):
+                parametrize.remove_parametrizations(mod, "weight", leave_parametrized=True)
+        try:
+            self.snac.decoder = torch.compile(self.snac.decoder, dynamic=True)
+            for b, n in ((2, 24), (3, 40), (1, 31)):  # varied batch and length: one dynamic graph covers them all
+                codes = [torch.zeros(b, n * 2 ** k, dtype=torch.long, device=self.dev) for k in range(3)]
+                with torch.inference_mode():
+                    self.snac.decode(codes)
+            print(f"[orpheus] codec compiled in {time.time() - t:.0f} s", flush=True)
+        except Exception as e:  # noqa: BLE001  the folded eager decoder still batches
+            self.snac.decoder = getattr(self.snac.decoder, "_orig_mod", self.snac.decoder)
+            print(f"[orpheus] codec compile unavailable ({type(e).__name__}: {e}); eager", flush=True)
+
+    def _decode_many(self, gens):
+        """Decode many chunks in a few batched calls: sorted by length so little is padded, each batch capped at
+        CODEC_BATCH_S of audio, each chunk trimmed back to its own length. Padding repeats the last code; it only
+        touches the last ~0.2 s, less than SNAC's own noise changes between two decodes of the same codes."""
+        out = [None] * len(gens)
+        lv = []
+        for j, g in enumerate(gens):
+            try:
+                lv.append((j, self._levels(g)))
+            except Exception as e:  # noqa: BLE001
+                out[j] = e
+        lv.sort(key=lambda x: len(x[1][0]))
+        cap = CODEC_BATCH_S * 24000 // SAMPLES_PER_FRAME
+        i = 0
+        while i < len(lv):
+            k = i + 1
+            while k < len(lv) and len(lv[k][1][0]) * (k + 1 - i) <= cap:  # the longest (last) sets the padded length
+                k += 1
+            group, i = lv[i:k], k
+            n = len(group[-1][1][0])
+            codes = [torch.stack([torch.cat([x[1][d], x[1][d][-1:].repeat(n * 2 ** d - len(x[1][d]))]) for x in group]).to(self.dev)
+                     for d in range(3)]
+            try:
+                with torch.inference_mode():
+                    audio = self.snac.decode(codes)[:, 0].float().cpu().numpy()
+                for r, (j, x) in enumerate(group):
+                    out[j] = (audio[r, : len(x[0]) * SAMPLES_PER_FRAME], 24000)
+            except torch.cuda.OutOfMemoryError:  # vLLM left less room than planned: one at a time, never fail
+                torch.cuda.empty_cache()
+                for j, x in group:
+                    with torch.inference_mode():
+                        out[j] = (self.snac.decode([y.unsqueeze(0).to(self.dev) for y in x])[0, 0].float().cpu().numpy(), 24000)
+        return out
+
     # ── generation
     def synth_batch(self, items):
+        self.codec_s = 0.0
         outs = [None] * len(items)
         made = {it.get("key") for it in items if it.get("key")}
         todo = list(range(len(items)))
@@ -212,13 +280,21 @@ class Engine:
             return
         lora = loras if any(loras) else None
         results = self.llm.generate(prompts, sps, use_tqdm=False, lora_request=lora)
-        for j, r in zip(ok, results):
-            gen = r.outputs[0].token_ids
-            try:
-                outs[j] = self._decode(gen)
-                self._remember(items[j], gen)
-            except Exception as e:  # noqa: BLE001
-                outs[j] = e
+        gens = [r.outputs[0].token_ids for r in results]
+        t = time.time()
+        if self.codec_batch:
+            for j, g, a in zip(ok, gens, self._decode_many(gens)):
+                outs[j] = a
+                if not isinstance(a, Exception):
+                    self._remember(items[j], g)
+        else:
+            for j, gen in zip(ok, gens):
+                try:
+                    outs[j] = self._decode(gen)
+                    self._remember(items[j], gen)
+                except Exception as e:  # noqa: BLE001
+                    outs[j] = e
+        self.codec_s += time.time() - t
 
     def _hf(self, item):
         p = item.get("params") or {}
