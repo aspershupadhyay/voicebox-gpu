@@ -340,6 +340,18 @@ export async function notify(title: string, body: string, tags = "computer") {
 
 /** Every worker heartbeat (once a minute): hourly reminders with the real balance, a low-balance warning, and
  *  stopping a runtime the app started once it has sat idle for idle_stop_min. Cheap when nothing is due. */
+/** Tell Colab the runtime is in use. An open notebook tab does this by itself; a GPU started from the app has no tab,
+ *  so without it Colab treats the runtime as idle and reclaims it mid-job (it did, ~20 min into a training run).
+ *  Same request as Google's CLI keep-alive daemon. A read timeout counts as done (Colab logs the activity first). */
+export async function keepAlive(endpoint: string) {
+  const u = new URL(`${COLAB}/tun/m/${encodeURIComponent(endpoint)}/keep-alive/`);
+  u.searchParams.set("authuser", "0");
+  const r = await fetch(u, { cache: "no-store", signal: AbortSignal.timeout(10_000),
+    headers: { "X-Colab-Tunnel": "Google", "X-Colab-Client-Agent": "colab-cli", Authorization: `Bearer ${await accessToken()}` } })
+    .catch((e: Error) => (e.name === "TimeoutError" ? null : Promise.reject(e)));
+  if (r && !r.ok) throw new Error(`keep-alive ${r.status}`);
+}
+
 export async function onHeartbeat(hb: { started_at?: number; queue?: number; running?: number; last_active?: number; gpu?: string }) {
   let s = await getSession();
   if (!(await getObj(TOKEN))) return;
@@ -351,6 +363,13 @@ export async function onHeartbeat(hb: { started_at?: number; queue?: number; run
     await putJson(SESSION, s);
   }
   if (!s || s.stopped) return;
+  // keep the runtime from being reclaimed as idle (every heartbeat = once a minute). A notebook-started worker has no
+  // endpoint on record: use the only runtime assigned, and remember it.
+  if (!s.endpoint) {
+    const rs = await runtimes().catch(() => []);
+    if (rs.length === 1) { s.endpoint = rs[0].endpoint; await putJson(SESSION, s); }
+  }
+  if (s.endpoint) await keepAlive(s.endpoint).catch((e) => console.warn("colab keep-alive failed:", (e as Error).message));
   const cfg = await getConfig();
   const now = Date.now();
   let changed = false;
