@@ -22,6 +22,11 @@ Every dashboard change follows `docs/DESIGN.md`. In short:
 
 Check light, dark and 390px width before you ship.
 
+## Inference work
+
+Speed-ups for the voice engines follow `docs/INFERENCE.md` (the plan, in order, with its rules: behind a flag, works
+on L4 and A100, measured before and after on a real GPU, same review scores). Tick `docs/ROADMAP.md` → Inference.
+
 ## Security
 
 - The dashboard is invite-only: see `mcp/lib/access.ts` and `mcp/lib/session.ts`.
