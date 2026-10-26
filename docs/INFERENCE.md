@@ -47,6 +47,12 @@ In `orpheus.py`, wrap the SNAC decoder in `torch.inference_mode()` and `torch.co
 (CUDA graphs), decode all chunks of a batch together (pad to the longest), and warm it once at load with the common
 lengths. Same for the codecs of `myvoice` (shares the Orpheus path). Flag `VOICEBOX_COMPILE_CODEC`. Expected: the
 fixed per-chunk overhead mostly gone; measurable on long scripts.
+Measured (2026-10-26, L4): **not worth turning on; the flag stays off.** The codec now reports its own time (the
+job's `codec` step): 1.2 s for 40 chunks (~30 ms each) of a 26 s best-of-4 job, ~0.3 s for 10. It's ~5% of a job and
+scales with the audio, so long scripts don't change the share. `VOICEBOX_COMPILE_CODEC=1` (weight norm folded,
+compiled for any length, wave-batched decode) is built and checked on CPU, but compiling took 61 s there: roughly a
+minute on every Orpheus cold load to save at most ~1 s a voiceover. Revisit only if the codec share grows (a much
+faster generator, e.g. after step 5b).
 
 ### 3. Batch the review
 The review (Whisper + voice match + naturalness) should score all takes of all chunks in one or two batched calls,
@@ -140,6 +146,8 @@ style's temperatures pinned):
   Orpheus best-of-4: match 0.999 both times; two lines picked take 1 instead of 2 or 3 because take 1 came out better
   this time (vLLM sampling varies a little between runs), not because a score was read differently.
 - Orpheus best-of-4 is now 1.6× best-of-1 (was 2.65×). Qwen best-of-4 is 2.7× (was 3.2×): its generation is the rest.
+- Step 2 check, same card, old codec path (`943477d45fe9`, Orpheus best-of-4): generating 14.7, codec 1.2,
+  listening 8.9, mastering 1.2, total 26.0 s. The codec is the smallest stage.
 - Orpheus generating was also faster in this run (11.7 s vs 20.1 s) without any change to it; compare the review
   column, not the totals, for this step's effect on Orpheus.
 - The benchmark runs taught the dashboard "learned" temperatures for these voices (Tara 0.7, Qwen female 0.9), which
