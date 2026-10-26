@@ -47,7 +47,9 @@ COMPILE_CODEC = os.environ.get("VOICEBOX_COMPILE_CODEC", "0") == "1"
 # guessed from repeats earlier in the sequence and checked in one forward pass (no extra model, same distribution);
 # "<method>:<model>" plugs in a trained proposer (e.g. an EAGLE head); "0" turns it off. VOICEBOX_SPEC_TOKENS sets how
 # many tokens are guessed a step. Read at engine load: a change needs an engine restart.
-SPEC = os.environ.get("VOICEBOX_SPEC", "ngram")
+# Measured on an L4: n-gram guesses rarely match audio codes (one request 54 -> 51 tokens/s) and checking them slows the
+# batch (10 lines generating 13.7 -> 21.8 s), so it stays off until a trained proposer exists (INFERENCE.md).
+SPEC = os.environ.get("VOICEBOX_SPEC", "0")
 # Step 6: right after the gateway starts, install these engines' venvs and download their weights (ENGINES[...]["prefetch"])
 # to disk in the background, one at a time, without loading anything on the GPU: on a fresh runtime the first voiceover
 # then skips the install and the download. Already there (a worker restart): nothing to do. "" turns it off.
