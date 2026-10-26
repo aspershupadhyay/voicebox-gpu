@@ -1165,8 +1165,11 @@ video.vplayer { width: 100%; border-radius: 12px; background: #000; display: blo
 .vo-gen { display: flex; align-items: center; gap: 10px; padding: 12px 14px; margin: 14px 0 4px; border: 1px solid var(--line2); border-radius: 14px; background: var(--surface); min-width: 0; animation: rise .25s var(--ease); }
 .vo-gen .vo-gen-play, .vo-gen .player { flex: 1; min-width: 0; }
 .vo-gen .vo-gen-acts { display: flex; gap: 2px; flex: none; }
-.vo-gen .vo-gen-bar { flex: 1; height: 4px; border-radius: 4px; background: var(--fill2); overflow: hidden; }
-.vo-gen .vo-gen-bar i { display: block; height: 100%; background: var(--ink); border-radius: 4px; transition: width .6s var(--ease); }
+.vo-gen .vo-bars { flex: 1; min-width: 80px; height: 38px; }
+.vo-gen .vo-bars svg { width: 100%; height: 100%; display: block; }
+.vo-gen .vo-bars rect { fill: var(--line3); transition: fill .2s; }
+.vo-gen .vo-bars rect.on { fill: var(--ink); }
+.vo-gen .vo-bars rect.todo { fill: var(--line3); }
 .insert-pop { display: flex; flex-direction: column; gap: 6px; padding: 4px; }
 @media (max-width: 640px) {
   .vline { grid-template-columns: minmax(0, 1fr); }

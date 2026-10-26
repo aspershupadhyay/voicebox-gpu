@@ -15,7 +15,7 @@ import { VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
 import { describeVoice, KOKORO_LANG, KOKORO_VOICES, LANGUAGES, ORPHEUS_VOICES, QWEN_LANG } from "./guides";
 import JobProgress from "./JobProgress";
-import Player from "./Player";
+import Player, { peaksFor } from "./Player";
 import { Select, useDismiss } from "./pop";
 import { SampleButton, useSamples } from "./Sample";
 import { useStatus } from "./Shell";
@@ -128,22 +128,41 @@ function Generation({ g }: { g: Gen }) {
   );
 }
 
+const BARS = 96;
+
 /** The voiceover being made, playing while it is made: each line as soon as the worker has it, in order (it waits
- *  quietly at a line that isn't made yet). Starts by itself; pause or stop any time. */
-function LiveGeneration({ job, order, onActive, onCancel }: { job: Job; order: string[]; onActive: (on: boolean) => void; onCancel: () => void }) {
+ *  quietly at a line that isn't made yet). Starts by itself; pause or stop any time. Drawn as one waveform: each
+ *  line's bars appear as it's made (dots until then), dark as it plays. */
+function LiveGeneration({ job, sent, onActive, onCancel }: { job: Job; sent: { id: string; text: string }[]; onActive: (on: boolean) => void; onCancel: () => void }) {
   const audio = useRef<HTMLAudioElement>(null);
   const [on, setOn] = useState(true); // auto-play: the first line plays as soon as it's made
   const [idx, setIdx] = useState(0);
+  const [pos, setPos] = useState(0); // 0..1 through the line playing
+  const [peaks, setPeaks] = useState<Record<string, number[]>>({});
   const urlOf = (id: string) => job.results.find((r) => r.id === id)?.url ?? job.live?.find((x) => x.id === id)?.url ?? null;
-  const total = Math.max(order.length, job.progress.total);
-  const cur = order[idx];
+  // a resumed job knows only the lines it has made: the rest are placeholders of average length
+  const order = useMemo(() => {
+    const known = sent.length ? sent : [...job.results.map((r) => ({ id: r.id, text: r.text ?? "" })), ...(job.live ?? []).map((x) => ({ id: x.id, text: "" }))];
+    const pad = Array.from({ length: Math.max(0, job.progress.total - known.length) }, (_, i) => ({ id: `?${i}`, text: "" }));
+    return [...known, ...pad];
+  }, [sent, job.results, job.live, job.progress.total]);
+  const total = order.length;
+  const cur = order[idx]?.id;
   const src = cur ? urlOf(cur) : null;
+  const readyKey = order.map((l) => (urlOf(l.id) ? l.id : "")).join(",");
+  useEffect(() => { // each line's own waveform, once it's made
+    for (const l of order) {
+      const u = urlOf(l.id);
+      if (u && !peaks[l.id]) peaksFor(u).then((p) => p && setPeaks((cur) => (cur[l.id] ? cur : { ...cur, [l.id]: p })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readyKey]);
   const start = (a: HTMLAudioElement, id: string, u: string) => { a.src = u; a.dataset.id = id; a.play().catch(() => setOn(false)); }; // blocked: press play
   useEffect(() => { onActive(on); }, [on, onActive]);
   useEffect(() => {
     const a = audio.current;
     if (!a || !on) return;
-    if (idx >= total) { setOn(false); setIdx(0); a.removeAttribute("data-id"); return; }
+    if (idx >= total) { setOn(false); setIdx(0); setPos(0); a.removeAttribute("data-id"); return; }
     if (src && a.dataset.id !== cur) start(a, cur, src); // the next line just arrived, or the last one ended
   }, [on, idx, src, cur, total]);
   useEffect(() => () => audio.current?.pause(), []);
@@ -154,6 +173,20 @@ function LiveGeneration({ job, order, onActive, onCancel }: { job: Job; order: s
     if (src && a.dataset.id === cur && a.src) a.play().catch(() => start(a, cur, src)); // resume, inside the click (Safari)
     else if (src) start(a, cur, src);
   }
+  // BARS slots shared out by each line's length
+  const weights = order.map((l) => Math.max(8, l.text.length || 60));
+  const sum = weights.reduce((x, y) => x + y, 0);
+  const bars: { h: number; made: boolean; played: boolean }[] = [];
+  let acc = 0;
+  order.forEach((l, li) => {
+    const from = Math.round((acc / sum) * BARS), to = Math.max(from + 1, Math.round(((acc + weights[li]) / sum) * BARS));
+    acc += weights[li];
+    const p = peaks[l.id];
+    for (let s = from; s < to && bars.length < BARS; s++) {
+      const f = (s - from + 0.5) / (to - from);
+      bars.push({ h: p ? p[Math.min(p.length - 1, Math.floor(f * p.length))] : 0, made: !!p, played: li < idx || (li === idx && f <= pos) });
+    }
+  });
   const making = ["queued", "running"].includes(job.status);
   return (
     <div className="vo-gen live">
@@ -161,13 +194,17 @@ function LiveGeneration({ job, order, onActive, onCancel }: { job: Job; order: s
         <button className={`pp ${on ? "on" : ""}`} onClick={toggle} aria-label={on ? "Pause" : "Play"}>
           {on ? <Pause size={16} weight="fill" /> : <Play size={16} weight="fill" />}
         </button>
-        <div className="vo-gen-bar" role="progressbar" aria-label="Generating" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(job.progress.fraction * 100)}>
-          <i style={{ width: `${Math.max(2, job.progress.fraction * 100)}%` }} />
+        <div className="vo-bars" role="progressbar" aria-label="Voiceover so far" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(job.progress.fraction * 100)}>
+          <svg viewBox={`0 0 ${BARS * 3} 40`} preserveAspectRatio="none" aria-hidden>
+            {bars.map((b, i) => b.made
+              ? <rect key={i} className={b.played ? "on" : ""} x={i * 3} y={20 - b.h * 19} width="1.9" height={Math.max(1, b.h * 38)} />
+              : i % 2 ? null : <rect key={i} className="todo" x={i * 3 + 0.4} y={19.2} width="1.1" height="1.6" />)}
+          </svg>
         </div>
       </div>
       {making && <div className="vo-gen-acts"><button className="icon-btn" onClick={() => { audio.current?.pause(); setOn(false); onCancel(); }} aria-label="Stop generating" title="Stop"><X size={16} /></button></div>}
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-      <audio ref={audio} onEnded={() => setIdx((i) => i + 1)} preload="auto" hidden />
+      <audio ref={audio} onEnded={() => { setIdx((i) => i + 1); setPos(0); }} onTimeUpdate={(e) => { const a = e.currentTarget; if (a.duration) setPos(a.currentTime / a.duration); }} preload="auto" hidden />
     </div>
   );
 }
@@ -193,7 +230,7 @@ export default function Voiceover() {
   const [label, setLabel] = useState("");
   const [job, setJob] = useState<Job | null>(null);
   const [gens, setGens] = useState<Gen[]>([]); // finished voiceovers, newest first
-  const [sent, setSent] = useState<string[]>([]); // the lines the running job is voicing
+  const [sent, setSent] = useState<{ id: string; text: string }[]>([]); // the lines the running job is voicing
   const [liveOn, setLiveOn] = useState(false); // listen live is playing: keep it on screen after the job ends
   const [err, setErr] = useState("");
   const [mine, setMine] = useState<MyVoice[]>([]);
@@ -319,7 +356,7 @@ export default function Voiceover() {
 
   async function submit() {
     setErr(""); setJob(null);
-    setSent(lines.map((l) => l.id));
+    setSent(lines.map((l) => ({ id: l.id, text: l.text })));
     const p = { ...params };
     if (engine === "chatterbox") p.language = lang;
     if (engine === "qwen") p.language = QWEN_LANG[lang] ?? "English";
@@ -344,7 +381,7 @@ export default function Voiceover() {
     }
   }
 
-  useResumeJob<Job>(["voice"], (j) => { setJob(j); setSent(j.results.map((r) => r.id)); timer.current = setTimeout(() => poll(j.id), 300); });
+  useResumeJob<Job>(["voice"], (j) => { setJob(j); setSent(j.results.map((r) => ({ id: r.id, text: r.text ?? "" }))); timer.current = setTimeout(() => poll(j.id), 300); });
   const running = !!job && (["queued", "running"].includes(job.status) || (job.status === "done" && !job.library));
   const blocked = !status ? "Connecting to the GPU…" : offline ? "Start the GPU to generate" : !lines.length ? "Write a line first" : running ? "Generating…" : "";
 
@@ -381,7 +418,7 @@ export default function Voiceover() {
             placeholder={lang === "hi" ? "यहाँ अपनी स्क्रिप्ट लिखें…" : "Start writing or paste your script."} />
 
           {job && (running || liveOn) && !["error", "cancelled"].includes(job.status)
-            ? <LiveGeneration key={job.id} job={job} order={sent.length ? sent : job.results.map((r) => r.id)} onActive={setLiveOn}
+            ? <LiveGeneration key={job.id} job={job} sent={sent} onActive={setLiveOn}
                 onCancel={() => api(`jobs/${job.id}/cancel`, { body: {} })} />
             : gens[0] && <Generation key={gens[0].job} g={gens[0]} />}
 

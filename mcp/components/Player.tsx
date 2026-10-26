@@ -9,7 +9,7 @@ const PEAKS = new Map<string, Promise<number[] | null>>();
 const BARS = 96;
 
 /** Decode once per URL (cached), reduce to BARS peak heights 0..1. Null when the audio can't be fetched/decoded. */
-function peaksFor(src: string): Promise<number[] | null> {
+export function peaksFor(src: string): Promise<number[] | null> {
   const key = src.split("?")[0];
   if (!PEAKS.has(key)) {
     PEAKS.set(key, (async () => {
