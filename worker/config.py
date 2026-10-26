@@ -52,8 +52,10 @@ COMPILE_CODEC = os.environ.get("VOICEBOX_COMPILE_CODEC", "0") == "1"
 SPEC = os.environ.get("VOICEBOX_SPEC", "0")
 # Step 6: right after the gateway starts, install these engines' venvs and download their weights (ENGINES[...]["prefetch"])
 # to disk in the background, one at a time, without loading anything on the GPU: on a fresh runtime the first voiceover
-# then skips the install and the download. Already there (a worker restart): nothing to do. "" turns it off.
-PREFETCH = [n.strip() for n in os.environ.get("VOICEBOX_PREFETCH", "qwen,orpheus,whisper").split(",") if n.strip()]
+# then skips the install and the download. Already there (a worker restart): nothing to do. "" turns it off. Whisper
+# first (every review needs it, and it's small), then your own voice (its cold load took 311 s on a fresh L4), then the
+# rest. It pauses while a job fetches anything, so it never slows a real job down.
+PREFETCH = [n.strip() for n in os.environ.get("VOICEBOX_PREFETCH", "whisper,myvoice,qwen,orpheus").split(",") if n.strip()]
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
 
 ENGINES = {
@@ -128,6 +130,7 @@ ENGINES = {
         "gpu_gb": 11.5,
         "chunk_chars": 260,
         "packages": "vllm snac soundfile peft",  # orpheus + peft (the transformers fallback merges your LoRA adapter)
+        "prefetch": [os.environ.get("ORPHEUS_MODEL", "unsloth/orpheus-3b-0.1-ft"), "hubertsiuzdak/snac_24khz"],
         "about": "Your own voice model: Orpheus 3B fine-tuned on 30-60 min of your recordings (Your model page: collect, then Train). "
                  "Same tags as Orpheus; with flow, a long script is voiced as one continuous take.",
         "voices": ["me"],

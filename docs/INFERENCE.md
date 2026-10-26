@@ -106,15 +106,48 @@ token). vLLM supports it (`speculative_config`): try n-gram first (no extra mode
 small draft (EAGLE head or a ~150-500M model trained on our own Orpheus outputs). Flag `VOICEBOX_SPEC`. Measure tokens
 per second for one request and the review scores; keep it only if the scores hold. Pairs with step 5: faster tokens
 plus streaming is what makes it feel instant.
+Built (2026-10-26): `VOICEBOX_SPEC` (`ngram`, `<method>:<model>` for a trained proposer, `0` off;
+`VOICEBOX_SPEC_TOKENS`, default 4), falling back to plain decoding if this vLLM can't start it. Jobs now report
+`decode`: codec tokens a second while vLLM decodes, and the speculative method in use.
+Measured on the L4 (Results): **n-gram is slower, so the flag stays off.** One request ran at 51 tokens a second
+against ~54 without it, and a 10-line voiceover spent 21.8 s generating instead of 13.7 s. Scores held. Orpheus's codes
+rarely repeat exactly, so the guesses miss, and checking 4 guesses for every sequence of a batch costs more than the
+hits save. What's left is a trained proposer: an EAGLE head (or a small draft) trained on Orpheus's own outputs and
+hidden states, which predicts the next codes instead of looking them up. Worth it for one request: the baseline shows
+one Orpheus sentence decodes at ~54 tokens a second on an L4, slower than real time (~86 a second), with the GPU
+~70% busy. It's a training project of its own (data from our own generations, an A100 run, vLLM's EAGLE loader).
 
 ### 6. Faster cold start
 The worker comes online in about 2 min (measured 2026-10-26 on an L4: ~90 s to the worker process, ~110 s online).
 Cache the `uv` environment and `cloudflared` on the runtime disk between restarts, start the tunnel in parallel with
 the gateway, and register as soon as the tunnel is up (engines load on first use anyway).
+Done (2026-10-26). The launcher downloads cloudflared in the background (kept on the runtime disk, with the venvs,
+across worker restarts), starts the tunnel beside the gateway instead of after it, skips the 3 s wait on a fresh runtime
+and registers as soon as the tunnel is up, before prewarming. Each phase is timed into `boot.json` (`/health` → `boot`).
+Measured on a fresh L4 started from the app: **online in ~68 s instead of ~110 s** (runtime assigned in 4 s, worker code
+running at 10 s, registered 64 s after the launcher started). The phases showed what was left: 51 s of the 64 went to
+reading settings, because an app start is a bare kernel with no notebook page to answer Colab Secrets, so each lookup
+of a missing secret waited for a timeout. App starts no longer ask (everything comes in the environment and the
+dashboard's worker-env), which should bring the start to ~20 s after the runtime is assigned; that run is still to
+measure on the next fresh start.
+The other half of a cold start was the first voiceover installing its engine and downloading its weights (Orpheus
+161 s, myvoice 311 s on a fresh runtime). `VOICEBOX_PREFETCH` (on, `whisper,myvoice,qwen,orpheus`) installs those venvs
+and downloads their weights to disk in the background after a start, one at a time, with nothing loaded on the GPU and
+nothing else deleted. It pauses while a job installs, downloads or loads anything (a download under way stops and
+resumes later). Measured: Qwen, Orpheus and Whisper were on disk 111 s after the gateway started; a restart with them
+already there takes 6 s.
 
 ### 7. Later, only if needed
 TensorRT-LLM for Orpheus (NVIDIA's engine; Baseten went from 7 to 16-24 real-time streams per H100 with it). Worth it
 for many simultaneous users; for two people it's a heavy setup for a modest single-take gain. Revisit after 1-6.
+Looked at after 1-6 (2026-10-26): **not built.** TensorRT-LLM compiles an engine per GPU model and per settings
+(L4, A100 40 and 80 GB would each need their own build), and Colab hands out a fresh machine each time, so the 10-20
+minute build would land on every cold start, or the built engines would have to be stored and pulled (~3-7 GB each).
+Its own install is several GB on top of vLLM, and LoRA voices (myvoice), sleep-mode parking and the step 5 streaming
+would all need redoing on it. What it buys is mostly throughput at many streams. What's still slow here is one
+request: one Orpheus sentence decodes at ~54 tokens a second on an L4, below real time. A trained proposer for step 5b
+targets that directly and keeps the vLLM path. Revisit TensorRT-LLM only with a fixed GPU (no Colab) and many
+listeners.
 
 ## Results
 
@@ -130,6 +163,7 @@ while the job ran, so it includes whatever else was resident (Whisper, the enhan
 | Step 3 · qwen (female) | L4 (22.5 GB) | 29.1 s | 29.1 s | 78.3 s | 10.9 GB | 0.999 / 0.949 (b1), 0.999 / 0.958 (b4) |
 | Step 5 · orpheus (tara) | L4 (22.5 GB) | ≤ 9.4 s | 17.5 s | — | 16.2 GB | 0.999 / — (b1) |
 | Step 5 · qwen (female) | L4 (22.5 GB) | ≤ 13 s | — | 88.5 s | 11.4 GB | 0.999 / 0.955 (b4) |
+| Step 5b, n-gram · orpheus (tara) | L4 (22.5 GB) | — | 25.6 s (was 17.6) | — | 16.4 GB | 0.999 / — (b1) |
 | Baseline · orpheus | A100 | | | | | |
 | Baseline · qwen | A100 | | | | | |
 
@@ -185,6 +219,11 @@ style's temperatures pinned):
   `c8b817c8e717` loading 8.0, generating 13.4, listening 3.4, total 26.7 s; on `4496cd1d7b2a` loading 0, generating
   11.0, listening 3.4, total 16.1 s. With it on, Whisper also stays loaded between voiceovers (never idle-unloaded,
   evicted last), so this wait only comes back after a restart.
+- Step 5b, n-gram speculative decoding (fresh L4 runtime, Orpheus warm, plain decoding first): one request (one
+  9.4 s sentence, review off) generated in 17.1 s plain `de2c021dbcbf` (~54 tokens a second) and in 18.4 s with n-gram
+  `332bba044b6f` (50.7). Ten lines best-of-1: plain `89cffd26e902` generating 13.7, codec 0.5, listening 2.1, total
+  17.6 s (match 0.992); n-gram `6c4218b4912a` generating 21.8, codec 0.5, listening 2.1, total 25.6 s (match 0.999).
+  Plain best-of-4 on the same runtime: `041849c67d67` generating 19.0, codec 2.1, listening 7.7, total 30.1 s.
 - Step 2 check, same card, old codec path (`943477d45fe9`, Orpheus best-of-4): generating 14.7, codec 1.2,
   listening 8.9, mastering 1.2, total 26.0 s. The codec is the smallest stage.
 - Orpheus generating was also faster in this run (11.7 s vs 20.1 s) without any change to it; compare the review
