@@ -84,6 +84,7 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [ ] 3. Batch the review (Whisper + voice match for all takes at once); best-of-4 ≈ best-of-1 time
 - [ ] 4. Use the whole big card (≥ 70 GB): bigger vLLM pool, review models kept resident
 - [ ] 5. Stream the first audio (per-line job events; Lines view plays line 1 while the rest generate)
+- [ ] 5b. Speculative decoding for Orpheus (n-gram first, then a small draft; vLLM `speculative_config`)
 - [ ] 6. Faster cold start (cache tools on the runtime, tunnel in parallel, register early)
 - [ ] 7. TensorRT-LLM for Orpheus: only if 1-6 aren't enough
 

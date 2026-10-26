@@ -63,6 +63,14 @@ Let the worker push each line (then each chunk) as soon as it's mastered: a job 
 line 1 while the rest generate. Mastering (loudness) needs the whole line, so stream per line first; per-chunk
 streaming with a fixed gain is a later option. Expected: first audio in about a second instead of after the whole job.
 
+### 5b. Speculative decoding for Orpheus
+Groq-style single-request speed on a GPU: a small draft guesses the next few audio tokens and Orpheus checks them all
+in one forward pass, so each step moves 2-3 tokens instead of 1 (same output distribution, fewer memory reads per
+token). vLLM supports it (`speculative_config`): try n-gram first (no extra model; audio codes repeat a lot), then a
+small draft (EAGLE head or a ~150-500M model trained on our own Orpheus outputs). Flag `VOICEBOX_SPEC`. Measure tokens
+per second for one request and the review scores; keep it only if the scores hold. Pairs with step 5: faster tokens
+plus streaming is what makes it feel instant.
+
 ### 6. Faster cold start
 The worker comes online in about 2 min (measured 2026-10-26 on an L4: ~90 s to the worker process, ~110 s online).
 Cache the `uv` environment and `cloudflared` on the runtime disk between restarts, start the tunnel in parallel with
