@@ -33,8 +33,8 @@ BATCH_REVIEW = os.environ.get("VOICEBOX_BATCH_REVIEW", "1") == "1"
 # Measured on an L4: the codec is ~5% of a job and compiling adds ~1 min to a cold load, so it stays off (INFERENCE.md).
 # Step 5: the first line of a voiceover is reviewed, mastered and published (job results) while the rest still generate,
 # so the dashboard can play it at once. Orpheus hands back chunks as vLLM finishes them; batch engines voice the first
-# line as their own first group. A job can still ask with stream (true / false).
-STREAM = os.environ.get("VOICEBOX_STREAM", "0") == "1"
+# line as their own first group. A job can still ask with stream (true / false); VOICEBOX_STREAM=0 turns it off.
+STREAM = os.environ.get("VOICEBOX_STREAM", "1") == "1"
 COMPILE_CODEC = os.environ.get("VOICEBOX_COMPILE_CODEC", "0") == "1"
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
 
