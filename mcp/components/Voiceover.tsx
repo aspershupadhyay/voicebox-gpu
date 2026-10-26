@@ -101,7 +101,7 @@ function History({ refreshKey }: { refreshKey: string | null }) {
   );
 }
 
-type Take = { job: string; r: JobResult; audio: string; engine: string; voice: string };
+type Take = { job: string; r: JobResult; audio: string; engine: string; voice: string; live?: boolean }; // live: still on the worker, the job is running
 
 /** Replace the text of the i-th voiced line in the script, keeping comments, blank rows and "id | text | window". */
 function withLine(src: string, i: number, text: string) {
@@ -197,7 +197,7 @@ function LinesView({ lines, spoken, takes, pending, ratings, blocked, onEdit, on
                     {t.r.diff && (t.r.diff.missed.length > 0 || t.r.diff.added.length > 0) && <span className="small dim">{t.r.diff.missed.length > 0 ? `not heard: ${t.r.diff.missed.join(" ")}` : `extra: ${t.r.diff.added.join(" ")}`}</span>}
                     <span className="grow" />
                     <Rate jobId={t.job} line={t.r} voice={{ engine: t.engine, voice: t.voice }} initial={ratings[`${t.job}/${l.id}`]} />
-                    <a className="icon-btn" href={fileUrl(t.job, `${l.id}.wav`, `${slug}-${l.id}.wav`)} aria-label={`Download line ${i + 1}`} title="Download WAV"><DownloadSimple size={15} /></a>
+                    {!t.live && <a className="icon-btn" href={fileUrl(t.job, `${l.id}.wav`, `${slug}-${l.id}.wav`)} aria-label={`Download line ${i + 1}`} title="Download WAV"><DownloadSimple size={15} /></a>}
                   </div>
                 </>
               )}
@@ -253,6 +253,7 @@ export default function Voiceover() {
   const samples = useSamples();
   const ta = useRef<HTMLTextAreaElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const live = useRef(new Set<string>()); // job/line pairs already shown while their job ran
   const loaded = useRef(false);
   const [forPost, setForPost] = useState<Post | null>(null);
 
@@ -359,12 +360,21 @@ export default function Voiceover() {
     api<{ lines?: Record<string, number> }>(`ratings/${j.engine}/${j.voice}?job=${j.id}`).then((x) => setRatings((cur) => ({ ...cur, ...Object.fromEntries(Object.entries(x.lines ?? {}).map(([k, v]) => [`${j.id}/${k}`, v])) }))).catch(() => {});
   }
 
+  /** Lines a running job has already finished (the worker streams the first one): playable now, from the worker. */
+  function keepLive(j: Job) {
+    const fresh = j.results.filter((r) => r.url && !live.current.has(`${j.id}/${r.id}`));
+    if (!fresh.length) return;
+    fresh.forEach((r) => live.current.add(`${j.id}/${r.id}`));
+    setTakes((cur) => ({ ...cur, ...Object.fromEntries(fresh.map((r) => [r.id, { job: j.id, r, audio: r.url!, engine: j.engine, voice: j.voice, live: true }])) }));
+  }
+
   async function poll(id: string) {
     try {
       const j = await api<Job>(`jobs/${id}`);
       setJob(j);
       if (j.library) api<{ results: { id: string; audio: string }[] }>(`library/${id}`).then((l) => keep(j, l)).catch(() => keep(j, null));
-      if (["queued", "running"].includes(j.status) || (j.status === "done" && !j.library)) timer.current = setTimeout(() => poll(id), 1500);
+      else if (j.status === "running") keepLive(j);
+      if (["queued", "running"].includes(j.status) || (j.status === "done" && !j.library)) timer.current = setTimeout(() => poll(id), j.status === "running" ? 1000 : 1500);
     } catch (e) {
       setErr((e as Error).message);
       timer.current = setTimeout(() => poll(id), 4000);
@@ -401,7 +411,7 @@ export default function Voiceover() {
 
   useResumeJob<Job>(["voice"], (j) => { setJob(j); setSent(j.results.map((r) => r.id)); timer.current = setTimeout(() => poll(j.id), 300); });
   const running = !!job && (["queued", "running"].includes(job.status) || (job.status === "done" && !job.library));
-  const pending = new Set(running ? sent : []);
+  const pending = new Set(running ? sent.filter((id) => !job?.results.some((r) => r.id === id)) : []); // a streamed line plays already
   const slug = (label || `${engine}-${voice}`).replace(/[^A-Za-z0-9._-]/g, "_");
   const blocked = !status ? "Connecting to the GPU…" : offline ? "Start the GPU to generate" : !lines.length ? "Write a line first" : running ? "Generating…" : "";
 

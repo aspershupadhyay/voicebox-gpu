@@ -32,6 +32,9 @@ CTX_MAX = 1800  # longest previous chunk (codec tokens, ~20 s) used as context; 
 COMPILE_CODEC = os.environ.get("VOICEBOX_COMPILE_CODEC", "0") == "1"
 CODEC_BATCH_S = 60  # most audio (padded) one batched decode makes: bounds its memory next to vLLM
 SAMPLES_PER_FRAME = 2048  # SNAC 24 kHz: one level-1 code (7 Orpheus tokens) = 2048 samples
+# INFERENCE.md step 5 (gateway passes config.STREAM): hand back each chunk the moment vLLM finishes it (synth_batch's
+# emit), so the gateway can play the first line while the rest are still generating. Same batch, same sampling.
+STREAM = os.environ.get("VOICEBOX_STREAM", "0") == "1"
 
 
 def token_budget(text, params):
@@ -238,8 +241,10 @@ class Engine:
         return out
 
     # ── generation
-    def synth_batch(self, items):
+    def synth_batch(self, items, emit=None):
+        """emit(j, audio): called for each chunk as soon as it's ready (step 5); the return value has them all too."""
         self.codec_s = 0.0
+        self.emit = emit if STREAM else None
         outs = [None] * len(items)
         made = {it.get("key") for it in items if it.get("key")}
         todo = list(range(len(items)))
@@ -279,6 +284,8 @@ class Engine:
         if not ok:
             return
         lora = loras if any(loras) else None
+        if self.emit and self._vllm_stream(items, ok, prompts, sps, loras, outs):
+            return
         results = self.llm.generate(prompts, sps, use_tqdm=False, lora_request=lora)
         gens = [r.outputs[0].token_ids for r in results]
         t = time.time()
@@ -295,6 +302,45 @@ class Engine:
                 except Exception as e:  # noqa: BLE001
                     outs[j] = e
         self.codec_s += time.time() - t
+
+    def _vllm_stream(self, items, ok, prompts, sps, loras, outs):
+        """The loop LLM.generate runs inside, driven here so each chunk is decoded and handed on (emit) the moment it
+        finishes instead of when the whole batch does. False (and nothing queued) if this vLLM doesn't offer it."""
+        eng = getattr(self.llm, "llm_engine", None)
+        if eng is None or not all(hasattr(eng, a) for a in ("add_request", "step", "has_unfinished_requests")):
+            return False
+        ids = {}
+        try:
+            from vllm.sampling_params import RequestOutputKind  # as LLM.generate: only the finished output, not every step's
+            for sp in sps:
+                sp.output_kind = RequestOutputKind.FINAL_ONLY
+        except ImportError:
+            pass
+        try:
+            for j, pr, sp, lr in zip(ok, prompts, sps, loras):
+                rid = f"vb{j}-{time.time_ns()}"
+                eng.add_request(rid, pr, sp, lora_request=lr)
+                ids[rid] = j
+        except Exception as e:  # noqa: BLE001  an engine API this code doesn't know: take back what was queued
+            print(f"[orpheus] streaming unavailable ({type(e).__name__}: {e}); whole batch at once", flush=True)
+            if ids and hasattr(eng, "abort_request"):
+                eng.abort_request(list(ids))
+            return False
+        while eng.has_unfinished_requests():
+            for r in eng.step():
+                if not r.finished or r.request_id not in ids:
+                    continue
+                j, gen = ids.pop(r.request_id), r.outputs[0].token_ids
+                t = time.time()
+                try:
+                    outs[j] = self._decode(gen)
+                    self._remember(items[j], gen)
+                except Exception as e:  # noqa: BLE001
+                    outs[j] = e
+                self.codec_s += time.time() - t
+                if not isinstance(outs[j], Exception):
+                    self.emit(j, outs[j])
+        return True
 
     def _hf(self, item):
         p = item.get("params") or {}

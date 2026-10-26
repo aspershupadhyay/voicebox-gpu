@@ -540,7 +540,8 @@ class Engines:
                        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
                        # Colab sets the notebook's inline plot backend, which an engine's own venv can't load: matplotlib
                        # then refuses to import (Resemble Enhance imports pyplot and died loading). Engines never show plots.
-                       "MPLBACKEND": "Agg", "VOICEBOX_COMPILE_CODEC": "1" if C.COMPILE_CODEC else "0"}
+                       "MPLBACKEND": "Agg", "VOICEBOX_COMPILE_CODEC": "1" if C.COMPILE_CODEC else "0",
+                       "VOICEBOX_STREAM": "1" if C.STREAM else "0"}
                 p = subprocess.Popen([py, os.path.join(HERE, "engine_host.py"), "--engine", name,
                                       "--port", str(C.ENGINES[name]["port"])], stdout=logf, stderr=logf, env=env, cwd=HERE,
                                      start_new_session=True)  # own process group: stop() also kills vLLM's children
@@ -1088,7 +1089,8 @@ def _voice_setup(job, body, lines):
                 "models": _models(body.get("models")), "kvoices": _models(body.get("kvoices")),
                 "lexicon": body.get("lexicon", True) is not False, "pronounce": _pronounce(body.get("pronounce")),
                 "takes": 1 if engine == "kokoro" else max(1, min(C.MAX_TAKES, int(body.get("takes") or 1))),
-                "review_batch": body["review_batch"] if isinstance(body.get("review_batch"), bool) else C.BATCH_REVIEW})
+                "review_batch": body["review_batch"] if isinstance(body.get("review_batch"), bool) else C.BATCH_REVIEW,
+                "stream": body["stream"] if isinstance(body.get("stream"), bool) else C.STREAM})
     _platform(job, body, style_post)
     if engine == "myvoice" and "enhance" not in (body.get("post") or {}):
         job["post"]["enhance"] = "auto"  # 24 kHz codec -> 44.1 kHz studio air, kept only when it listens better
@@ -1826,14 +1828,29 @@ def run_tts(job):
         return os.path.join(jdir, f"{p['ln']['id']}.c{i}.t{k}.wav")
 
     first = [(p, i, k, _take_params(p, k)) for p in plans for i in range(len(p["chunks"])) for k in range(takes)]
-    _generate(job, first, out, ref_path, ref_text, order, len(plans))
+    # step 5: publish the first line while the rest generate (not with studio polish, which needs the GPU's enhancer,
+    # nor a trained voice, whose takes are kept whole as preference pairs)
+    streamed, watcher, stop = {}, None, threading.Event()
+    if job.get("stream") and len(plans) > 1 and not job["post"].get("enhance") and engine != "myvoice":
+        job["_stream_line"] = plans[0]
+        watcher = threading.Thread(target=_stream_line, args=(job, jdir, plans[0], out, ref_path, stop, streamed), daemon=True)
+        watcher.start()
+    try:
+        _generate(job, first, out, ref_path, ref_text, order, len(plans))
+    finally:
+        job.pop("_stream_line", None)
+        if watcher:
+            stop.set()  # the files are all there now (or the job failed): it finishes what it started
+            watcher.join()
+    rest = [p for p in plans if not ("trials" in streamed and p is plans[0])]
 
     if takes == 1 and not job.get("review"):  # fast path: no listening pass
-        _assemble_all(job, jdir, [(p, [out(p, i, 0) for i in range(len(p["chunks"]))], None) for p in plans])
+        _assemble_all(job, jdir, [(p, [out(p, i, 0) for i in range(len(p["chunks"]))], None) for p in rest])
     else:
-        picks = _review(job, plans, out, ref_path, ref_text, order)
+        picks = _review(job, rest, out, ref_path, ref_text, order)
+        job["trials"] = (streamed.get("trials", []) + job.get("trials", []))[:2000]
         _assemble_all(job, jdir, [(p, [out(p, i, picks[p["ln"]["id"]]["take"][i]) for i in range(len(p["chunks"]))], picks[p["ln"]["id"]])
-                                  for p in plans])
+                                  for p in rest])
         for x in os.listdir(jdir):  # the takes that lost
             if re.search(r"\.c\d+\.t\d+\.wav$", x):
                 os.remove(os.path.join(jdir, x))
@@ -1932,8 +1949,9 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
         # vLLM schedules its own batches (continuous batching over the KV cache): hand it the whole job at once.
         # Qwen batches on plain transformers, where memory grows with the batch: 8 at a time.
         size = (int(os.environ.get("ORPHEUS_MAX_SEQS", "64")) if eng in ("orpheus", "myvoice") else 8) if ENG.batch.get(eng) else 1
-        for b in range(0, len(mine), size):
-            group = mine[b:b + size]
+        head = [w for w in mine if w[0] is job.get("_stream_line")] if size > 1 and eng not in ("orpheus", "myvoice") else []
+        rest = [w for w in mine if not any(w is h for h in head)]  # streaming: the first line goes first, on its own
+        for group in ([head] if head else []) + [rest[b:b + size] for b in range(0, len(rest), size)]:
             items = [{"text": p["chunks"][i][1], "voice": p["voice_arg"], "params": params, "ref_path": ref_path,
                       "ref_text": ref_text, "out_path": out(p, i, k), "lora": p.get("lora"), **_flow(job, p, i, k),
                       # a trained voice's takes keep their codec tokens: the winner and loser become a preference pair
@@ -2010,20 +2028,26 @@ def _assemble(job, jdir, p, paths, pick=None, timed=True):
     job["results"].append(r)
 
 
-def _listen(job, paths, ref_path):
-    """Whisper + voice match (+ naturalness when available) for a set of takes."""
+def _listen(job, paths, ref_path, side=False):
+    """Whisper + voice match (+ naturalness when available) for a set of takes. side: called next to a running
+    generation (the streamed first line): Whisper must already be loaded, and the job's progress is left alone."""
     import soundfile as sf
-    stage = job["stage"]
-    _prepare(job, "whisper")
-    job["stage"] = stage
+
+    def unit(est, fn, label):
+        return fn() if side else _run_unit(job, est, fn, label)
+    if not side:
+        stage = job["stage"]
+        _prepare(job, "whisper")
+        job["stage"] = stage
     durs = [sf.info(x).duration for x in paths]
     heard = []
-    if job.get("review_batch"):  # every take in one text-only call (INFERENCE.md step 3)
+    if job.get("review_batch") or side:  # every take in one text-only call (INFERENCE.md step 3)
         audio_s = sum(durs)
         t0 = time.time()
-        heard = _run_unit(job, RATES["listen"] * audio_s + 2, lambda: ENG.transcribe(paths, job.get("language"), words=False),
-                          f"listening back: {len(paths)} take{'s' if len(paths) > 1 else ''} at once")
-        learn_rate("listen", time.time() - t0, audio_s)
+        heard = unit(RATES["listen"] * audio_s + 2, lambda: ENG.transcribe(paths, job.get("language"), words=False),
+                     f"listening back: {len(paths)} take{'s' if len(paths) > 1 else ''} at once")
+        if not side:
+            learn_rate("listen", time.time() - t0, audio_s)
     else:
         for b in range(0, len(paths), 4):
             batch = paths[b:b + 4]
@@ -2035,7 +2059,7 @@ def _listen(job, paths, ref_path):
     sims = [None] * len(paths)
     if ref_path:
         try:
-            sims = _run_unit(job, 0.3 * len(paths) + 5, lambda: ENG.similarity(ref_path, paths), "comparing with your voice")
+            sims = unit(0.3 * len(paths) + 5, lambda: ENG.similarity(ref_path, paths), "comparing with your voice")
         except Cancelled:
             raise
         except Exception as e:  # noqa: BLE001  a missing voice-match model only costs the similarity half of the score
@@ -2043,7 +2067,7 @@ def _listen(job, paths, ref_path):
     mos = [None] * len(paths)
     if not job.get("_no_mos"):
         try:
-            mos = _run_unit(job, 0.15 * len(paths) + 3, lambda: ENG.mos(paths), "rating naturalness")
+            mos = unit(0.15 * len(paths) + 3, lambda: ENG.mos(paths), "rating naturalness")
         except Cancelled:
             raise
         except Exception:  # noqa: BLE001  UTMOS is a tie-breaker; carry on without it (and don't retry every round)
@@ -2053,6 +2077,70 @@ def _listen(job, paths, ref_path):
         a, _ = sf.read(x, dtype="float32", always_2d=False)
         clip.append(float((abs(a) > 0.995).mean()) if len(a) else 0.0)
     return [{"heard": h["text"], "sim": s, "mos": m, "dur": d, "clip": c} for h, s, m, d, c in zip(heard, sims, mos, durs, clip)]
+
+
+def _score_takes(entries, stats, cands):
+    """Fold what the listening pass heard into cands: (line id, chunk) -> {take: stats + script match}."""
+    for (p, i, k, params), st in zip(entries, stats):
+        text, said, _ = p["chunks"][i]
+        t = quality.score_text(text, st["heard"], said)
+        cands.setdefault((p["ln"]["id"], i), {})[k] = {**st, "text": t["score"], "missed": t["missed"], "added": t["added"],
+                                                      "temperature": params.get("temperature"), "seed": params.get("seed")}
+
+
+def _best_take(c, base):
+    """The winning take of one chunk and its score (script match first, then voice, naturalness, length, clipping)."""
+    med = sorted(v["dur"] for v in c.values())[len(c) // 2]
+    rank = {k: quality.take_score(v["text"], v["sim"], base, v["mos"], v["dur"], med, v["clip"]) for k, v in c.items()}
+    k = max(rank, key=rank.get)
+    return k, rank[k]
+
+
+def _stream_line(job, jdir, p, out, ref_path, stop, done):
+    """Step 5, next to the generation: as soon as every take of the first line is on disk, review it, master it and
+    publish it (job results), so the dashboard plays it while the rest are still voiced. Only when Whisper is already
+    loaded (never load a model mid-generation) and only if the line passes the review; otherwise the normal path
+    takes it, retries included. done gets the line's trials when it was published."""
+    takes = job.get("takes", 1)
+    entries = [(p, i, k, _take_params(p, k)) for i in range(len(p["chunks"])) for k in range(takes)]
+    while not all(os.path.exists(out(p, i, k)) for p, i, k, _ in entries):
+        if stop.is_set():
+            return
+        time.sleep(0.1)
+    try:
+        _publish_first(job, jdir, p, out, ref_path, entries, done)
+    except Exception:  # noqa: BLE001  the normal path voices it then
+        traceback.print_exc()
+
+
+def _publish_first(job, jdir, p, out, ref_path, entries, done):
+    takes = job.get("takes", 1)
+    pick, trials = None, []
+    if takes > 1 or job.get("review"):
+        if not ENG.running("whisper"):
+            return
+        if takes == 1:
+            job["_no_mos"] = True  # as _review: naturalness only breaks ties between takes
+        cands, base = {}, (job.get("profile") or {}).get("sim_base")
+        gate = {**quality.REVIEW, **(job.get("review_gate") or {})}
+        _score_takes(entries, _listen(job, [out(p, i, k) for p, i, k, _ in entries], ref_path, side=True), cands)
+        chosen, texts, sims, moss = [], [], [], []
+        for i in range(len(p["chunks"])):
+            k, _ = _best_take(cands[(p["ln"]["id"], i)], base)
+            v = cands[(p["ln"]["id"], i)][k]
+            if quality.failed(v["text"], v["sim"], base, gate):
+                return  # needs re-voicing: the normal review does that once the batch is done
+            chosen.append(k)
+            texts.append(v["text"] or 0)
+            sims += [v["sim"]] if v["sim"] is not None else []
+            moss += [v["mos"]] if v["mos"] is not None else []
+            trials += [{"engine": p["engine"], "temperature": vv["temperature"], "text": vv["text"], "sim": vv["sim"],
+                        "mos": vv["mos"], "picked": kk == k} for kk, vv in cands[(p["ln"]["id"], i)].items()]
+        pick = {"take": chosen, "match": round(sum(texts) / len(texts), 3), "similarity": round(sum(sims) / len(sims), 3) if sims else None,
+                "mos": round(sum(moss) / len(moss), 2) if moss else None, "review": {"retried": 0, "fixed": 0, "issues": []}}
+    _assemble(job, jdir, p, [out(p, i, pick["take"][i] if pick else 0) for i in range(len(p["chunks"]))], pick, timed=False)
+    done["trials"] = trials
+    log(f"job {job['id']} streamed line {p['ln']['id']} after {time.time() - job['started']:.1f} s")
 
 
 def _review(job, plans, out, ref_path, ref_text, order):
@@ -2069,19 +2157,10 @@ def _review(job, plans, out, ref_path, ref_text, order):
 
     def score_all(entries):
         job["stage"] = "choosing"
-        stats = _listen(job, [out(p, i, k) for p, i, k, _ in entries], ref_path)
-        for (p, i, k, params), st in zip(entries, stats):
-            text, said, _ = p["chunks"][i]
-            t = quality.score_text(text, st["heard"], said)
-            cands.setdefault((p["ln"]["id"], i), {})[k] = {**st, "text": t["score"], "missed": t["missed"], "added": t["added"],
-                                                          "temperature": params.get("temperature"), "seed": params.get("seed")}
+        _score_takes(entries, _listen(job, [out(p, i, k) for p, i, k, _ in entries], ref_path), cands)
 
     def best(key):
-        c = cands[key]
-        med = sorted(v["dur"] for v in c.values())[len(c) // 2]
-        rank = {k: quality.take_score(v["text"], v["sim"], base, v["mos"], v["dur"], med, v["clip"]) for k, v in c.items()}
-        k = max(rank, key=rank.get)
-        return k, rank[k]
+        return _best_take(cands[key], base)
 
     takes = job.get("takes", 1)
     score_all([(p, i, k, _take_params(p, k)) for p in plans for i in range(len(p["chunks"])) for k in range(takes)])
@@ -3340,7 +3419,7 @@ def _progress(job):
 def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
                                  "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup",
-                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method", "lane", "review_batch")}
+                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method", "lane", "review_batch", "stream")}
     v["resources"] = job_resources(job)
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]

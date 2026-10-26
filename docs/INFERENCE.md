@@ -74,6 +74,14 @@ Let the worker push each line (then each chunk) as soon as it's mastered: a job 
 (`GET /jobs/<id>/events`, server-sent events through the dashboard proxy, auth as today) and, in the Lines view, play
 line 1 while the rest generate. Mastering (loudness) needs the whole line, so stream per line first; per-chunk
 streaming with a fixed gain is a later option. Expected: first audio in about a second instead of after the whole job.
+Built (2026-10-26, `VOICEBOX_STREAM`, off until measured): the first line of a voiceover is reviewed, mastered and
+published in the job's results while the rest still generate. Orpheus drives vLLM's step loop and hands back each chunk
+the moment it finishes (same batch, same sampling, `generate()` if this vLLM lacks the API); batch engines (Qwen) voice
+the first line as their own first group. The line is published only if it passes the review and Whisper is already
+loaded; otherwise it takes the normal path, retries included. Not for studio polish (`post.enhance`) or myvoice (its
+takes are kept whole as preference pairs). The Lines view plays a running job's finished lines from the worker link
+and swaps in the archived copy when the job is done. Delivery is the existing job poll (every 1 s while running), not
+server-sent events: it adds at most a second, and SSE through Vercel would need a long-lived function per job.
 
 ### 5b. Speculative decoding for Orpheus
 Groq-style single-request speed on a GPU: a small draft guesses the next few audio tokens and Orpheus checks them all

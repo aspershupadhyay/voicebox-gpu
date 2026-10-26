@@ -18,7 +18,7 @@ GET  /ready        -> {"ready": true, "batch": bool, "parked": bool}
 Only binds to 127.0.0.1: the gateway is the only thing that talks to engines.
 Everything runs under __main__ so engines that spawn worker processes (vLLM) can re-import this file safely.
 """
-import argparse, importlib, json, os, sys, threading, time, traceback
+import argparse, importlib, inspect, json, os, sys, threading, time, traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -149,15 +149,27 @@ def main():
                     if self.path == "/synth_batch":
                         items = req["items"]
                         if hasattr(engine, "synth_batch"):
-                            outs = engine.synth_batch(items)
+                            saved = set()
+
+                            def save(j, out):
+                                """Write one chunk; atomically, so the gateway (watching for the first line) never
+                                reads half a file. Engines that stream call it as each chunk finishes."""
+                                it = items[j]
+                                part = it["out_path"][:-4] + ".part.wav"
+                                sf.write(part, out[0], out[1])
+                                os.replace(part, it["out_path"])
+                                if it.get("codes_path") and it.get("key") in getattr(engine, "recent", {}):
+                                    json.dump(engine.recent[it["key"]][1], open(it["codes_path"], "w"))  # for preference pairs
+                                saved.add(j)
+                            streams = "emit" in inspect.signature(engine.synth_batch).parameters
+                            outs = engine.synth_batch(items, emit=save) if streams else engine.synth_batch(items)
                             res = []
-                            for it, out in zip(items, outs):
+                            for j, (it, out) in enumerate(zip(items, outs)):
                                 if isinstance(out, Exception):
                                     res.append({"error": f"{type(out).__name__}: {out}"})
                                 else:
-                                    sf.write(it["out_path"], out[0], out[1])
-                                    if it.get("codes_path") and it.get("key") in getattr(engine, "recent", {}):
-                                        json.dump(engine.recent[it["key"]][1], open(it["codes_path"], "w"))  # for preference pairs
+                                    if j not in saved:
+                                        save(j, out)
                                     res.append({"duration": len(out[0]) / out[1], "sample_rate": out[1]})
                             # seconds spent turning codes into audio (Orpheus / myvoice): the job's "codec" step
                             return self._send(200, {"results": res, "codec_s": round(getattr(engine, "codec_s", 0.0), 3)})
