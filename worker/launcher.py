@@ -88,7 +88,7 @@ def start_tunnel(cf):
 
 def health(secret):
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}/health", headers={"Authorization": f"Bearer {secret}"})
-    with urllib.request.urlopen(req, timeout=10) as r:
+    with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read())
 
 
@@ -177,27 +177,40 @@ def main():
 
     last_status = ""
     while True:
-        if gw.poll() is not None:
-            log("gateway died; restarting")
-            gw = start_gateway(secret)
-        if tunnel.poll() is not None:
-            log("tunnel died; reopening")
-            tunnel, url = start_tunnel(cf)
-            log(f"new public URL {url}")
-        if register_url:
-            try:
-                register_url = register(register_url, secret, url)
-                status = "registered"
-            except Exception as e:
-                status = f"register failed: {e}"
-        else:
-            status = "no REGISTER_URL set (MCP can't find this worker)"
+        try:
+            gw, tunnel, url, register_url, last_status = tick(gw, tunnel, url, register_url, last_status, secret, cf)
+        except Exception as e:  # noqa: BLE001  never let one bad minute end the loop: no heartbeat = the GPU gets reclaimed
+            log(f"heartbeat loop: {type(e).__name__}: {e}")
+        time.sleep(60)
+
+
+def tick(gw, tunnel, url, register_url, last_status, secret, cf):
+    """One minute of the watch loop: restart what died, heartbeat (which keeps the Colab runtime alive), log a line.
+    A busy gateway (training uses every core) can answer /health slowly; that must never stop the heartbeats."""
+    if gw.poll() is not None:
+        log("gateway died; restarting")
+        gw = start_gateway(secret)
+    if tunnel.poll() is not None:
+        log("tunnel died; reopening")
+        tunnel, url = start_tunnel(cf)
+        log(f"new public URL {url}")
+    if register_url:
+        try:
+            register_url = register(register_url, secret, url)
+            status = "registered"
+        except Exception as e:
+            status = f"register failed: {e}"
+    else:
+        status = "no REGISTER_URL set (MCP can't find this worker)"
+    try:
         h = health(secret)
         line = f"{status} · engines {h['engines']} · queue {h['queue']} · VRAM {h['gpu']['used_gb']}/{h['gpu']['total_gb']} GB"
-        if line != last_status:
-            log(line)
-            last_status = line
-        time.sleep(60)
+    except Exception as e:  # noqa: BLE001
+        line = f"{status} · health check slow ({type(e).__name__})"
+    if line != last_status:
+        log(line)
+        last_status = line
+    return gw, tunnel, url, register_url, last_status
 
 
 if __name__ == "__main__":

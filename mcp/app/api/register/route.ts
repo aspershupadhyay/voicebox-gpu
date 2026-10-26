@@ -28,5 +28,7 @@ export async function POST(req: Request) {
   // GPU from the app: hourly reminders, low-balance warning, idle auto-stop (no-op unless Colab is connected)
   await import("@/lib/colab").then((c) => c.onHeartbeat({ started_at: Number(b.started_at ?? 0), queue: Number(b.queue ?? 0),
     running: Number(b.running ?? 0), last_active: Number(b.last_active ?? 0), gpu: b.gpu?.name })).catch((e) => console.error("colab heartbeat", e));
+  // a training run the last runtime didn't finish (the GPU went away) starts again here, from its checkpoint
+  await import("@/lib/datasets").then((d) => d.resumeTraining(Math.round(Number(b.started_at ?? 0)))).catch((e) => console.error("resume training", e));
   return Response.json({ ok: true });
 }

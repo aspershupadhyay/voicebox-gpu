@@ -28,6 +28,7 @@ import glob, hashlib, io, json, os, random, re, shutil, sys, time, urllib.reques
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lexicon import speakable  # noqa: E402
+from resume import Resume  # noqa: E402
 
 BASE = "unsloth/orpheus-3b-0.1-ft"  # ungated mirror of canopylabs/orpheus-3b-0.1-ft, also what the orpheus engine serves
 OFF = 128266
@@ -196,8 +197,22 @@ def main():
             report("training", state.global_step, state.max_steps, loss=loss,
                    detail=f"step {state.global_step} of {state.max_steps}" + (f" · loss {loss:.3f}" if loss is not None else ""))
 
+    # every epoch is saved (with its optimizer state) and uploaded as it lands, so a GPU that goes away mid-run costs
+    # at most one epoch: the job started again downloads the checkpoints and carries on (resume.py)
     ckpts = os.path.join(work, "outputs")
-    pick = {"eval_strategy": "epoch", "save_strategy": "epoch", "save_only_model": True, "per_device_eval_batch_size": bs} if eval_ds else {"save_strategy": "no"}
+    pick = {"eval_strategy": "epoch", "per_device_eval_batch_size": bs} if eval_ds else {}
+    pick["save_strategy"] = "epoch"
+    saver = Resume(cfg)
+    resumed = saver.fetch(ckpts)
+    last = sorted(glob.glob(os.path.join(ckpts, "checkpoint-*")), key=lambda d: int(d.rsplit("-", 1)[1])) if resumed else []
+
+    class Save(TrainerCallback):
+        def on_save(self, args, state, control, **kw):
+            now = f"checkpoint-{state.global_step}"
+            # older epochs only need their weights (for the listening test); the optimizer goes with the newest
+            heavy = ("optimizer.pt", "scheduler.pt", "rng_state.pth", "scaler.pt")
+            saver.push(ckpts, {"epoch": round(state.epoch or 0), "step": state.global_step},
+                       skip=lambda p: os.path.basename(p) in heavy and os.path.basename(os.path.dirname(p)) != now)
     # Transformers 5 dropped group_by_length and warmup_ratio (the train venv installs the latest): use them where they
     # exist, else group lengths with our own sampler and give the warmup as steps, so both versions train the same way
     import inspect
@@ -214,12 +229,14 @@ def main():
                 return super()._get_train_sampler(*a, **k)
             return LengthGroupedSampler(bs * accum, lengths=lengths)
 
-    trainer = Grouped(model=model, train_dataset=ds, eval_dataset=eval_ds, callbacks=[Progress()], data_collator=collate, args=TrainingArguments(
+    trainer = Grouped(model=model, train_dataset=ds, eval_dataset=eval_ds, callbacks=[Progress(), Save()], data_collator=collate, args=TrainingArguments(
         per_device_train_batch_size=bs, gradient_accumulation_steps=accum, num_train_epochs=epochs, remove_unused_columns=False,
         dataloader_num_workers=min(8, max(2, (os.cpu_count() or 4) // 2)), dataloader_pin_memory=True, learning_rate=float(cfg.get("learning_rate") or 2e-4), logging_steps=5, optim="adamw_8bit",
         weight_decay=0.01, lr_scheduler_type="cosine", seed=3407, output_dir=ckpts, report_to="none",
         fp16=not is_bfloat16_supported(), bf16=is_bfloat16_supported(), **opts, **pick))
-    stats = trainer.train()
+    if last:
+        report("training", detail=f"resuming from step {resumed.get('step')} (epoch {resumed.get('epoch')})")
+    stats = trainer.train(resume_from_checkpoint=last[-1] if last else None)
     evals = [round(h["eval_loss"], 4) for h in trainer.state.log_history if "eval_loss" in h]
     trainer = None  # the optimizer's memory back for listening
     torch.cuda.empty_cache()
@@ -293,6 +310,7 @@ def main():
                "best_epoch": best_epoch, "eval_loss": evals, "listening": listen, "steps": stats.global_step, "batch": bs,
                "loss": round(float(stats.training_loss), 4), "speaker": speaker, "base": BASE, "sample": sample},
               open(os.path.join(out, "result.json"), "w"))
+    saver.wait()
     report("done")
 
 

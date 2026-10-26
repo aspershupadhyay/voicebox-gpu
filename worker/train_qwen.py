@@ -14,6 +14,8 @@ Needs a bf16 GPU (Ampere or newer: A100, L4, A10) and ~25 GB free: it trains eve
 import glob, json, os, shutil, subprocess, sys, time, urllib.request, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from resume import Resume  # noqa: E402
 BASE = os.environ.get("QWEN_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
 TEST_LINE = "Hey, welcome back to the channel. Today we're breaking down how Kubernetes actually schedules your containers."
 
@@ -70,12 +72,24 @@ def main():
     bs = 2
     per_epoch = -(-len(rows) // bs)
     sft_prog = os.path.join(work, "sft.json")
+    # the weights after every epoch go to storage as they land; a run started again carries on from there (resume.py)
+    rdir = os.path.join(work, "resume")
+    saver = Resume(cfg)
+    resumed = saver.fetch(rdir)
+    pushed = (resumed or {}).get("epoch", 0)
     p = subprocess.Popen([sys.executable, "sft_12hz.py", "--init_model_path", base_dir, "--output_model_path", os.path.join(work, "out"),
                           "--train_jsonl", codes, "--batch_size", str(bs), "--lr", str(cfg.get("learning_rate") or 2e-5),
-                          "--num_epochs", str(epochs), "--speaker_name", name, "--progress", sft_prog], cwd=ft)
+                          "--num_epochs", str(epochs), "--speaker_name", name, "--progress", sft_prog, "--resume_dir", rdir], cwd=ft)
     loss = None
     while p.poll() is None:
         time.sleep(5)
+        try:
+            e = json.load(open(os.path.join(rdir, "epoch.json")))["epoch"]
+            if e > pushed:
+                pushed = e
+                saver.push(rdir, {"epoch": e}, skip=lambda f: f.endswith(".tmp"))
+        except (OSError, ValueError, KeyError):
+            pass
         try:
             s = json.load(open(sft_prog))
         except Exception:  # noqa: BLE001
@@ -109,6 +123,7 @@ def main():
     json.dump({"engine": "qwen", "clips": len(rows), "minutes": round(minutes, 2), "epochs": epochs, "steps": epochs * per_epoch,
                "batch": bs, "loss": round(loss or 0.0, 4), "speaker": name, "base": BASE, "sample": sample},
               open(os.path.join(out, "result.json"), "w"))
+    saver.wait()
     shutil.rmtree(work, ignore_errors=True)
     report("done")
 

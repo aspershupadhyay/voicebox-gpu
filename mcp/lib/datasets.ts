@@ -49,11 +49,60 @@ export async function datasetManifest(name: string) {
 }
 
 /** The worker body for a train job on everything collected for name: every session travels as a signed link. */
-export async function trainJobBody(name: string, label?: string, engine: "orpheus" | "qwen" = "orpheus") {
+export async function trainJobBody(name: string, label?: string, engine: "orpheus" | "qwen" = "orpheus", tries = 0) {
   const d = await datasetManifest(name);
   if (!d.clips) throw new Error(`${name} has no clips yet: add recordings first`);  // any amount trains; 15+ min sounds right
-  return { kind: "train", name, engine, parts: d.parts.map((p) => ({ url: p.url })), minutes: d.minutes,
-    label: label ?? (engine === "qwen" ? `Fine-tune Qwen3-TTS · ${name}` : `Train your voice · ${name}`) };
+  label = label ?? (engine === "qwen" ? `Fine-tune Qwen3-TTS · ${name}` : `Train your voice · ${name}`);
+  const k = `${RESUME}${name}/${engine}`;
+  await putJson(`${k}.pending.json`, { name, engine, label, boot: 0, tries, at: Date.now() } satisfies PendingTrain);
+  const resume = { get: await presign(`${k}.zip`, "GET", 24 * 3600), put: await presign(`${k}.zip`, "PUT", 24 * 3600),
+    state: await presign(`${k}.state.json`, "PUT", 24 * 3600) };
+  return { kind: "train", name, engine, parts: d.parts.map((p) => ({ url: p.url })), minutes: d.minutes, label, resume };
+}
+
+// Training that survives the GPU going away (worker/resume.py): resume/<name>/<engine>.zip is the newest checkpoint,
+// .pending.json a run that hasn't finished (and on which runtime it ran), .state.json what the worker said at the end.
+// A runtime that dies mid-run leaves .pending.json behind: the next runtime's heartbeat starts the run again and the
+// trainer carries on from the checkpoint.
+const RESUME = "resume/";
+const MAX_RESTARTS = 5;
+type PendingTrain = { name: string; engine: "orpheus" | "qwen"; label: string; boot: number; tries: number; at: number };
+
+/** Every worker heartbeat: note which runtime a pending run is on; on a new runtime, start an interrupted run again. */
+export async function resumeTraining(boot: number) {
+  const keys = (await listObjs(RESUME)).map((o) => o.key).filter((k) => k.endsWith(".pending.json"));
+  if (!keys.length || !boot) return;
+  const same = (b: number) => Math.abs(b - boot) < 120;  // started_at wobbles by a second between heartbeats
+  let jobs: { kind: string; voice: string; status: string }[] | null = null;
+  const running = async (name: string) => {
+    jobs ??= (await call<{ jobs: typeof jobs }>("/jobs")).jobs ?? [];
+    return jobs!.some((j) => j.kind === "train" && j.voice === name && ["queued", "running"].includes(j.status));
+  };
+  for (const key of keys) {
+    const p = await getJson<PendingTrain>(key);
+    if (!p) continue;
+    const base = key.slice(0, -".pending.json".length);
+    const end = await getJson<{ state: string; t: number }>(`${base}.state.json`).catch(() => null);
+    if (end && end.t * 1000 > p.at) {  // finished, cancelled or failed for good: nothing to resume
+      await delObjs([key, ...(end.state === "done" ? [`${base}.zip`] : [])]);
+      continue;
+    }
+    if (await running(p.name)) {
+      if (!same(p.boot)) await putJson(key, { ...p, boot });
+      continue;
+    }
+    if (!p.boot) {  // never seen running: the submit failed or the worker hasn't picked it up yet
+      if (Date.now() - p.at > 15 * 60_000) await delObjs([key]);
+      continue;
+    }
+    if (same(p.boot)) continue;  // this runtime ran it and it's gone without a word: leave it to the person
+    if (p.tries >= MAX_RESTARTS) { await delObjs([key]); continue; }
+    const t = await call<{ id: string }>("/jobs", { body: await trainJobBody(p.name, p.label, p.engine, p.tries + 1) });
+    await putJson(key, { ...p, boot, tries: p.tries + 1, at: Date.now() });
+    console.log(`resumed training ${p.name} (${p.engine}) as ${t.id} on the new runtime`);
+    const { notify } = await import("./colab");
+    await notify("Training resumed", `${p.name}'s ${p.engine} training picked up where it stopped, on the new GPU.`, "repeat").catch(() => null);
+  }
 }
 
 /** A stored batch sent with auto_train: start training on the whole dataset once, if there's enough and none is running.
