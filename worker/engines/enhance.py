@@ -80,62 +80,14 @@ class Engine:
                 torch.cuda.empty_cache()
         return out.float().cpu().numpy(), int(osr)
 
-    @torch.inference_mode()
     def enhance_batch(self, items):
-        """Studio polish for many files at once -> [(audio, sr) | Exception]. Clips up to 30 s (a voiceover's lines) of
-        the same settings go through the model together, grouped by length and as many at once as the free memory
-        takes: the model works on (batch, time) and normalises each clip on its own, and the padding at the end is
-        trimmed off, so each comes out as it would alone. Anything else goes the one-file way."""
-        import soundfile as sf
-        import torch.nn.functional as F
-        from torchaudio.functional import resample
-        from resemble_enhance.inference import remove_weight_norm_recursively
-        out = [None] * len(items)
-        model, sr = self.model, self.model.hp.wav_rate
-        remove_weight_norm_recursively(model)
-        wavs = {}
-        for j, it in enumerate(items):
-            p = it.get("params") or {}
-            if p.get("mode") == "denoise":
-                continue
-            a, isr = sf.read(it["src_path"], dtype="float32", always_2d=False)
-            if a.ndim > 1:
-                a = a.mean(axis=1)
-            w = resample(torch.from_numpy(a), orig_freq=isr, new_freq=sr, lowpass_filter_width=64, rolloff=0.9475937167399596,
-                         resampling_method="sinc_interp_kaiser", beta=14.769656459379492)
-            if w.shape[-1] <= 30 * sr and w.numel():
-                wavs[j] = w
-        by_cfg = {}
-        for j in wavs:
-            p = items[j].get("params") or {}
-            by_cfg.setdefault((int(p.get("steps", 48)), max(0.0, min(1.0, float(p.get("strength", 0.6))))), []).append(j)
-        for (steps, lambd), js in by_cfg.items():
-            model.configurate_(nfe=steps, solver="midpoint", lambd=lambd, tau=0.5)
-            js.sort(key=lambda j: wavs[j].shape[-1])
-            free = torch.cuda.mem_get_info()[0] / 2**30 if self.dev == "cuda" else 0
-            bs = int(max(1, min(16, (free - 1.5) // 1.5))) if self.dev == "cuda" else 1
-            k = 0
-            while k < len(js):
-                group = js[k:k + bs]
-                try:
-                    n = max(wavs[j].shape[-1] for j in group) + 441
-                    peaks = [wavs[j].abs().max().clamp(min=1e-7) for j in group]
-                    x = torch.stack([F.pad(wavs[j] / pk, (0, n - wavs[j].shape[-1])) for j, pk in zip(group, peaks)]).to(self.dev)
-                    y = model(x).float().cpu()
-                    for row, j, pk in zip(y, group, peaks):
-                        out[j] = ((row[: wavs[j].shape[-1]] * pk).numpy(), sr)
-                    k += len(group)
-                except torch.cuda.OutOfMemoryError:
-                    if bs == 1:
-                        raise
-                    bs = max(1, bs // 2)
-                finally:
-                    if self.dev == "cuda":
-                        torch.cuda.empty_cache()
-        for j, it in enumerate(items):  # denoise-only, long or empty files: the one-file way
-            if out[j] is None:
-                try:
-                    out[j] = self.enhance(it["src_path"], it.get("params") or {})
-                except Exception as e:  # noqa: BLE001
-                    out[j] = e
+        """Studio polish for many files -> [(audio, sr) | Exception], one after another. Batching them through the
+        model was measured slower on an L4 (37 lines: 107 s vs 88 s one at a time): its flow-matching steps already
+        keep the GPU busy, and padding clips to a shared length only adds work."""
+        out = []
+        for it in items:
+            try:
+                out.append(self.enhance(it["src_path"], it.get("params") or {}))
+            except Exception as e:  # noqa: BLE001
+                out.append(e)
         return out

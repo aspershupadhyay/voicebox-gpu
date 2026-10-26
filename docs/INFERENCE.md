@@ -258,6 +258,20 @@ style's temperatures pinned):
 - The benchmark runs taught the dashboard "learned" temperatures for these voices (Tara 0.7, Qwen female 0.9), which
   it adds to every job; `bench_voice.py` now pins the style's temperatures so runs stay comparable.
 
+- Trained voice (myvoice, flow), same 37-line script (9,177 characters, 56 chunks, ~9 min of audio), neutral style,
+  review + subtitles + studio polish "auto", warm runtime, timings without the model load:
+  - before, one flow chain in waves (`e1a5b408e51a`): generating 1041.0 s at 45 tokens/s, listening 13.9, enhancing
+    90.7, mastering 8.3, subtitles 113.8; ~1282 s in all. Slower than real time: nothing to play early.
+  - flow chains of up to 4 lines side by side, each chunk queued the moment its predecessor finishes (#68,
+    `ae30668af2b0`): generating 196.2 s at 234 tokens/s (**5.3×**), listening 18.4, enhancing 88.1, mastering 7.8,
+    subtitles 117.2. Lines 1-5 playable ~80 s into generating, all 37 by ~190 s (faster than real time once going).
+    Match 0.971-1.0 per chunk, as before (0.996 overall then).
+  - plus the voice model parked after generating, batched polish and batched word-timed subtitles (#69,
+    `2068ca0af590`): generating 189.2 s (245 tokens/s), listening 17.7, enhancing 106.8, mastering 7.5, subtitles
+    107.5; match 0.996, every line ≥ 0.971. Subtitles a little faster; polish slower batched (flow-matching already
+    keeps the GPU busy, padding adds work), so the enhancer went back to one line at a time.
+  - what's left after generation is polish (~90 s) and subtitles (~110 s): both bound by GPU compute, not batching.
+
 ## Sources
 
 - Baseten, Inference Engineering, TTS models: https://www.baseten.co/inference-engineering/book/06-modalities/tts-models/
