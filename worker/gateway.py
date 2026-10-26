@@ -2041,40 +2041,58 @@ def run_tts(job):
         job["_stream_line"] = plans[0]
         watcher = threading.Thread(target=_stream_line, args=(job, jdir, plans[0], out, ref_path, stop, streamed), daemon=True)
         watcher.start()
+    # listen live: every line's first take, playable the moment it is made, for every engine (_live_preview)
+    live_stop = threading.Event()
+    live = threading.Thread(target=_live_preview, args=(job, jdir, plans, out, live_stop), daemon=True) \
+        if job.get("stream") and len(plans) > 1 else None
+    if live:
+        live.start()
     try:
-        _generate(job, first, out, ref_path, ref_text, order, len(plans))
-    finally:
-        job.pop("_stream_line", None)
-        if watcher:
-            stop.set()  # the files are all there now (or the job failed): it finishes what it started
-            watcher.join()
-    rest = [p for p in plans if not ("trials" in streamed and p is plans[0])]
-
-    if takes == 1 and not job.get("review"):  # fast path: no listening pass
-        _assemble_all(job, jdir, [(p, [out(p, i, 0) for i in range(len(p["chunks"]))], None) for p in rest])
-    else:
-        picks = _review(job, rest, out, ref_path, ref_text, order)
-        job["trials"] = (streamed.get("trials", []) + job.get("trials", []))[:2000]
-        _assemble_all(job, jdir, [(p, [out(p, i, picks[p["ln"]["id"]]["take"][i]) for i in range(len(p["chunks"]))], picks[p["ln"]["id"]])
-                                  for p in rest])
-        for x in os.listdir(jdir):  # the takes that lost
-            if re.search(r"\.c\d+\.t\d+\.wav$", x):
-                os.remove(os.path.join(jdir, x))
-    job["results"].sort(key=lambda r: order[r["id"]])
-    for x in os.listdir(jdir):  # codec tokens of takes no review looked at
-        if x.endswith(".codes.json"):
-            os.remove(os.path.join(jdir, x))
-
-    if job["subtitles"]:
         try:
-            subtitle_tts(job, jdir)
-        except Cancelled:
-            raise
-        except Exception as e:  # the voiceover is done; don't lose it over subtitles
-            traceback.print_exc()
-            job["warnings"].append(f"subtitles failed ({type(e).__name__}); audio is saved, run subtitles again from the Library")
-            for r in job["results"]:
-                r.pop("words", None); r.pop("subs", None)
+            _generate(job, first, out, ref_path, ref_text, order, len(plans))
+        finally:
+            job.pop("_stream_line", None)
+            if watcher:
+                stop.set()  # the files are all there now (or the job failed): it finishes what it started
+                watcher.join()
+        rest = [p for p in plans if not ("trials" in streamed and p is plans[0])]
+
+        if takes == 1 and not job.get("review"):  # fast path: no listening pass
+            _assemble_all(job, jdir, [(p, [out(p, i, 0) for i in range(len(p["chunks"]))], None) for p in rest])
+        else:
+            picks = _review(job, rest, out, ref_path, ref_text, order)
+            job["trials"] = (streamed.get("trials", []) + job.get("trials", []))[:2000]
+            _assemble_all(job, jdir, [(p, [out(p, i, picks[p["ln"]["id"]]["take"][i]) for i in range(len(p["chunks"]))], picks[p["ln"]["id"]])
+                                      for p in rest])
+            for x in os.listdir(jdir):  # the takes that lost
+                if re.search(r"\.c\d+\.t\d+\.wav$", x):
+                    os.remove(os.path.join(jdir, x))
+        job["results"].sort(key=lambda r: order[r["id"]])
+        for x in os.listdir(jdir):  # codec tokens of takes no review looked at
+            if x.endswith(".codes.json"):
+                os.remove(os.path.join(jdir, x))
+
+        if job["subtitles"]:
+            try:
+                subtitle_tts(job, jdir)
+            except Cancelled:
+                raise
+            except Exception as e:  # the voiceover is done; don't lose it over subtitles
+                traceback.print_exc()
+                job["warnings"].append(f"subtitles failed ({type(e).__name__}); audio is saved, run subtitles again from the Library")
+                for r in job["results"]:
+                    r.pop("words", None); r.pop("subs", None)
+    finally:
+        if live:
+            live_stop.set()
+            live.join(timeout=30)
+        job.pop("live", None)  # the finished lines replace the previews
+        for x in os.listdir(jdir) if os.path.isdir(jdir) else []:
+            if x.endswith((".live.wav", ".liveraw.wav")):
+                try:
+                    os.remove(os.path.join(jdir, x))
+                except OSError:
+                    pass
 
 
 def _save_pairs(job, plans, cands, best, out):
@@ -2324,6 +2342,36 @@ def _best_take(c, base):
     rank = {k: quality.take_score(v["text"], v["sim"], base, v["mos"], v["dur"], med, v["clip"]) for k, v in c.items()}
     k = max(rank, key=rank.get)
     return k, rank[k]
+
+
+def _live_preview(job, jdir, plans, out, stop):
+    """Listen live: each line's first take, joined and mastered (no review, no studio polish) as soon as all its chunks
+    are on disk, in script order, so the dashboard can play a voiceover while it is still being made (a trained voice
+    with flow makes its lines one after another, so they arrive in order). CPU only, beside the generation; never
+    touches the takes, the review or the results. The finished lines replace these when the job is done."""
+    import soundfile as sf
+    live = job.setdefault("live", [])
+    for p in plans:
+        lid = p["ln"]["id"]
+        paths = [out(p, i, 0) for i in range(len(p["chunks"]))]
+        while not all(os.path.exists(x) for x in paths):
+            if stop.is_set() or any(r["id"] == lid for r in job["results"]):  # finished already (the streamed first line)
+                break
+            time.sleep(0.2)
+        else:
+            raw, dst = os.path.join(jdir, f"{lid}.liveraw.wav"), os.path.join(jdir, f"{lid}.live.wav")
+            try:
+                _join_chunks(paths, raw, [c[2] for c in p["chunks"]], [c[1] for c in p["chunks"]])
+                postprocess(raw, dst, job["post"])
+                live.append({"id": lid, "duration": round(sf.info(dst).duration, 2)})
+            except Exception as e:  # noqa: BLE001  the final assembly took a take first: that line plays when done
+                log(f"job {job['id']} live preview of line {lid} skipped ({type(e).__name__}: {e})")
+            finally:
+                if os.path.exists(raw):
+                    os.remove(raw)
+            continue
+        if stop.is_set():
+            return
 
 
 def _stream_line(job, jdir, p, out, ref_path, stop, done):
@@ -3781,6 +3829,9 @@ def job_view(job, urls=True):
                      if job.get("started") else 0}
     if job["status"] == "queued":
         v["queue_position"] = _queue_of(job).index(job["id"]) + 1 if job["id"] in _queue_of(job) else 0
+    if job.get("live") and urls:  # listen live: lines made but not finished yet (_live_preview)
+        done = {r["id"] for r in job["results"]}
+        v["live"] = [{**x, "url": sign(f"/files/{job['id']}/{x['id']}.live.wav")} for x in list(job["live"]) if x["id"] not in done]
     res = []
     for r in job["results"]:
         r = {k: val for k, val in r.items() if k != "words"} if urls else dict(r)
@@ -4058,7 +4109,7 @@ class Handler(BaseHTTPRequestHandler):
     def _file(self, u):
         if not check_sig(u.path, parse_qs(u.query)):
             return self._json(403, {"error": "bad or expired signature"})
-        m = re.match(r"^/files/([a-f0-9]{12})(?:/([A-Za-z0-9_\-]{1,64}(?:\.subs)?\.(?:wav|srt|vtt|json)|video\.mp4|poster\.jpg|source\.jpg|image-\d{1,2}\.png|thumb-\d{1,2}\.jpg)|\.zip)$", u.path)
+        m = re.match(r"^/files/([a-f0-9]{12})(?:/([A-Za-z0-9_\-]{1,64}(?:\.subs|\.live)?\.(?:wav|srt|vtt|json)|video\.mp4|poster\.jpg|source\.jpg|image-\d{1,2}\.png|thumb-\d{1,2}\.jpg)|\.zip)$", u.path)
         if not m:
             return self._json(404, {"error": "not found"})
         path = os.path.join(JOBS_DIR, m.group(1), m.group(2)) if m.group(2) else os.path.join(JOBS_DIR, f"{m.group(1)}.zip")

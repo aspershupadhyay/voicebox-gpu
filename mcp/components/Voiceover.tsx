@@ -1,22 +1,20 @@
 "use client";
 // Voiceover: write on a clean canvas, pick the voice and settings in the panel on the right, press Generate.
-// Two views of the same script: Script (one box to paste and write in) and Lines (each line on its own, with what the
-// voice will actually read, its audio, its scores and a 👍/👎, and a button to redo just that line). Every generated
-// line is kept, and the lines are joined into one full take you can play and download.
+// Below the script, the latest run as one take: the whole voiceover (the lines are voiced, checked and
+// mastered one by one on the worker, then joined), playing by itself while it is still being made.
 // Every take lands in Files with word-timed subtitles. From a post (?post=) the script loads and the result is attached
 // back to the post; from Voices (?engine=&voice=) the voice is preselected.
-import { ArrowClockwise, ArrowSquareOut, CaretDown, CaretUp, ClosedCaptioning, DownloadSimple, Microphone, Plus, Power, SlidersHorizontal, Sparkle, WarningCircle } from "@phosphor-icons/react";
+import { ArrowSquareOut, CaretDown, CaretUp, ClosedCaptioning, DownloadSimple, Microphone, Pause, Play, Plus, Power, SlidersHorizontal, Sparkle, WarningCircle, X } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useResumeJob } from "./jobs";
-import { ago, api, fileUrl, fmtS, matchClass, pct, rangeFill, simClass, type Job, type JobResult, type MyVoice } from "./api";
+import { ago, api, fileUrl, fmtS, rangeFill, type Job, type MyVoice } from "./api";
 import { decode, joinWav } from "./audio";
 import { Info } from "./Info";
 import { VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
 import { describeVoice, KOKORO_LANG, KOKORO_VOICES, LANGUAGES, ORPHEUS_VOICES, QWEN_LANG } from "./guides";
 import JobProgress from "./JobProgress";
-import { Rate } from "./LineRow";
 import Player from "./Player";
 import { Select, useDismiss } from "./pop";
 import { SampleButton, useSamples } from "./Sample";
@@ -101,116 +99,75 @@ function History({ refreshKey }: { refreshKey: string | null }) {
   );
 }
 
-type Take = { job: string; r: JobResult; audio: string; engine: string; voice: string; live?: boolean }; // live: still on the worker, the job is running
+type Gen = { job: string; ids: string[]; engine: string; voice: string; label?: string; subs?: boolean; at: number }; // a finished voiceover
+const GENS_KEY = "vb-gens"; // the latest one is shown
 
-/** Replace the text of the i-th voiced line in the script, keeping comments, blank rows and "id | text | window". */
-function withLine(src: string, i: number, text: string) {
-  const rows = src.split("\n");
-  let n = -1;
-  for (let k = 0; k < rows.length; k++) {
-    const l = rows[k].trimEnd();
-    if (!l.trim() || l.startsWith("#")) continue;
-    if (++n !== i) continue;
-    const tsv = l.split("\t");
-    if (tsv.length >= 4) { tsv[3] = text; rows[k] = tsv.join("\t"); }
-    else { const bar = l.split(" | "); if (bar.length >= 2) { bar[1] = text; rows[k] = bar.join(" | "); } else rows[k] = text; }
-    break;
-  }
-  return rows.join("\n");
-}
-
-const needsLook = (r: JobResult) => (r.match != null && r.match < 0.9) || (r.similarity != null && r.similarity < 0.86) || r.fits === false || !!r.review?.issues.length;
-
-/** Every voiced line joined into one take, in script order, built in the browser from the line files. */
-function FullTake({ parts, name, jobs }: { parts: { job: string; id: string }[]; name: string; jobs: string[] }) {
+/** One finished voiceover as a single take: its lines joined in script order (in the browser, from the line files). */
+function Generation({ g }: { g: Gen }) {
   const [url, setUrl] = useState<string | null>(null);
-  const [state, setState] = useState<"idle" | "building" | "error">("idle");
-  const key = parts.map((p) => `${p.job}/${p.id}`).join(",");
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (!parts.length) return;
     let gone = false, made: string | null = null;
-    setState("building");
-    Promise.all(parts.map((p) => decode(fileUrl(p.job, `${p.id}.wav`)))).then((bufs) => {
+    Promise.all(g.ids.map((id) => decode(fileUrl(g.job, `${id}.wav`)))).then((bufs) => {
       if (gone) return;
       made = URL.createObjectURL(joinWav(bufs, 0.35));
-      setUrl(made); setState("idle");
-    }).catch(() => !gone && setState("error"));
+      setUrl(made);
+    }).catch(() => !gone && setFailed(true));
     return () => { gone = true; if (made) URL.revokeObjectURL(made); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [g.job, g.ids]);
+  const name = (g.label || `${g.engine}-${g.voice}`).replace(/[^A-Za-z0-9._-]/g, "_");
   return (
-    <div className="fulltake">
-      <div className="ft-head">
-        <div><b>Full take</b><span className="dim small"> · {parts.length} line{parts.length === 1 ? "" : "s"} joined</span></div>
-        <div className="row" style={{ gap: 6 }}>
-          {jobs.length === 1 && <a className="btn ghost sm" href={`/api/zip/${jobs[0]}`}><DownloadSimple size={14} />All files</a>}
-          {url && <a className="btn sm" href={url} download={`${name}.wav`}><DownloadSimple size={14} weight="bold" />Download</a>}
-        </div>
+    <div className="vo-gen">
+      <div className="vo-gen-play">{url ? <Player src={url} compact /> : <span className="small dim">{failed ? "Couldn't load this one. It's in Files." : "Loading…"}</span>}</div>
+      <div className="vo-gen-acts">
+        {g.subs && <a className="icon-btn" href={`/api/file/${g.job}/subtitles.srt?download&name=${name}.srt`} aria-label="Download subtitles (.srt)" title="Subtitles (.srt)"><ClosedCaptioning size={16} /></a>}
+        <Link className="icon-btn" href={`/files#${g.job}`} aria-label="Open in Files" title="Open in Files"><ArrowSquareOut size={16} /></Link>
+        {url && <a className="icon-btn" href={url} download={`${name}.wav`} aria-label="Download" title="Download WAV"><DownloadSimple size={16} /></a>}
       </div>
-      {url ? <Player src={url} /> : <div className="small dim">{state === "error" ? "Couldn't join the lines. Each line can still be played and downloaded below." : "Joining the lines…"}</div>}
     </div>
   );
 }
 
-function LinesView({ lines, spoken, takes, pending, ratings, blocked, onEdit, onRedo, onAdd, slug }: {
-  lines: ParsedLine[]; spoken: string[]; takes: Record<string, Take>; pending: Set<string>; ratings: Record<string, number>; blocked: string;
-  onEdit: (i: number, text: string) => void; onRedo: (l: ParsedLine) => void; onAdd: () => void; slug: string;
-}) {
-  const done = lines.map((l) => takes[l.id]).filter(Boolean);
-  const avg = (xs: (number | null | undefined)[]) => { const v = xs.filter((x): x is number => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
-  const m = avg(done.map((t) => t.r.match)), sim = avg(done.map((t) => t.r.similarity));
-  const look = done.filter((t) => needsLook(t.r)).length;
-  const longest = Math.max(0.1, ...done.map((t) => t.r.duration));
+/** The voiceover being made, playing while it is made: each line as soon as the worker has it, in order (it waits
+ *  quietly at a line that isn't made yet). Starts by itself; pause or stop any time. */
+function LiveGeneration({ job, order, onActive, onCancel }: { job: Job; order: string[]; onActive: (on: boolean) => void; onCancel: () => void }) {
+  const audio = useRef<HTMLAudioElement>(null);
+  const [on, setOn] = useState(true); // auto-play: the first line plays as soon as it's made
+  const [idx, setIdx] = useState(0);
+  const urlOf = (id: string) => job.results.find((r) => r.id === id)?.url ?? job.live?.find((x) => x.id === id)?.url ?? null;
+  const total = Math.max(order.length, job.progress.total);
+  const cur = order[idx];
+  const src = cur ? urlOf(cur) : null;
+  const start = (a: HTMLAudioElement, id: string, u: string) => { a.src = u; a.dataset.id = id; a.play().catch(() => setOn(false)); }; // blocked: press play
+  useEffect(() => { onActive(on); }, [on, onActive]);
+  useEffect(() => {
+    const a = audio.current;
+    if (!a || !on) return;
+    if (idx >= total) { setOn(false); setIdx(0); a.removeAttribute("data-id"); return; }
+    if (src && a.dataset.id !== cur) start(a, cur, src); // the next line just arrived, or the last one ended
+  }, [on, idx, src, cur, total]);
+  useEffect(() => () => audio.current?.pause(), []);
+  function toggle() {
+    const a = audio.current!;
+    if (on) { a.pause(); setOn(false); return; }
+    setOn(true);
+    if (src && a.dataset.id === cur && a.src) a.play().catch(() => start(a, cur, src)); // resume, inside the click (Safari)
+    else if (src) start(a, cur, src);
+  }
+  const making = ["queued", "running"].includes(job.status);
   return (
-    <div className="vlines">
-      {done.length > 0 && (
-        <div className="vl-sum" role="status">
-          <span><b>{done.length}</b> of {lines.length} voiced</span>
-          {m != null && <span className={`pill ${matchClass(m)}`} title="How closely Whisper heard your script (95%+ is good)">script match {pct(m)}</span>}
-          {sim != null && <span className={`pill ${simClass(sim)}`} title="How much it sounds like the voice's recording (86%+ = same speaker)">voice match {pct(sim)}</span>}
-          {look > 0 && <span className="pill warn">{look} to check</span>}
+    <div className="vo-gen live">
+      <div className="player compact">
+        <button className={`pp ${on ? "on" : ""}`} onClick={toggle} aria-label={on ? "Pause" : "Play"}>
+          {on ? <Pause size={16} weight="fill" /> : <Play size={16} weight="fill" />}
+        </button>
+        <div className="vo-gen-bar" role="progressbar" aria-label="Generating" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(job.progress.fraction * 100)}>
+          <i style={{ width: `${Math.max(2, job.progress.fraction * 100)}%` }} />
         </div>
-      )}
-      {lines.map((l, i) => {
-        const t = takes[l.id];
-        const stale = t && (t.r.text ?? "").replace(/\s+/g, " ").trim() !== l.text.replace(/\s+/g, " ").trim();
-        const reads = spoken[i] && spoken[i].replace(/ ⏸[\d.]+s/g, "") !== l.text ? spoken[i] : "";
-        return (
-          <div key={l.id} className={`vline ${t ? "has" : ""} ${t && needsLook(t.r) ? "look" : ""}`}>
-            <span className="vl-n" aria-hidden>{i + 1}</span>
-            <div className="vl-body">
-              <label className="sr-only" htmlFor={`vl-${l.id}`}>Line {i + 1}</label>
-              <textarea id={`vl-${l.id}`} className="vl-text" rows={Math.max(1, Math.ceil(l.text.length / 72))} value={l.text} spellCheck={false}
-                onChange={(e) => onEdit(i, e.target.value.replace(/\n/g, " "))} />
-              {reads && <div className="vl-reads">Reads: {reads}</div>}
-              {pending.has(l.id) && <div className="vl-wait"><span className="spin" aria-hidden />Generating…</div>}
-              {t && !pending.has(l.id) && (
-                <>
-                  <Player src={t.audio} duration={t.r.duration} scale={t.r.duration / longest} />
-                  <div className="vl-meta">
-                    {stale && <span className="pill warn">edited · redo to update</span>}
-                    {t.r.match != null && <span className={`pill ${matchClass(t.r.match)}`} title={t.r.heard ? `Whisper heard: “${t.r.heard}”` : "How closely Whisper heard the script"}>match {pct(t.r.match)}</span>}
-                    {t.r.similarity != null && <span className={`pill ${simClass(t.r.similarity)}`} title="Voice match vs the recording (86%+ = same speaker)">voice {pct(t.r.similarity)}</span>}
-                    {t.r.fits === false && <span className="pill bad">over {t.r.window}s</span>}
-                    {t.r.review && t.r.review.fixed > 0 && <span className="pill ok" title="The review heard a sentence miss and re-voiced it">fixed {t.r.review.fixed}</span>}
-                    {t.r.takes && t.r.takes.n > 1 && <span className="pill">best of {t.r.takes.n}</span>}
-                    {t.r.diff && (t.r.diff.missed.length > 0 || t.r.diff.added.length > 0) && <span className="small dim">{t.r.diff.missed.length > 0 ? `not heard: ${t.r.diff.missed.join(" ")}` : `extra: ${t.r.diff.added.join(" ")}`}</span>}
-                    <span className="grow" />
-                    <Rate jobId={t.job} line={t.r} voice={{ engine: t.engine, voice: t.voice }} initial={ratings[`${t.job}/${l.id}`]} />
-                    {!t.live && <a className="icon-btn" href={fileUrl(t.job, `${l.id}.wav`, `${slug}-${l.id}.wav`)} aria-label={`Download line ${i + 1}`} title="Download WAV"><DownloadSimple size={15} /></a>}
-                  </div>
-                </>
-              )}
-            </div>
-            <div className="vl-side">
-              <span className="mono tiny dim">{t && !stale ? fmtS(t.r.duration) : `≈${(l.text.length / 14.5).toFixed(1)}s`}</span>
-              <button className="ghost xs" onClick={() => onRedo(l)} disabled={!!blocked || pending.has(l.id)} title={blocked || (t ? "Voice this line again" : "Voice just this line")}>
-                <ArrowClockwise size={13} />{t ? "Redo" : "Voice"}</button>
-            </div>
-          </div>
-        );
-      })}
-      <button className="quiet sm" onClick={onAdd} style={{ alignSelf: "flex-start" }}><Plus size={14} />Add a line</button>
+      </div>
+      {making && <div className="vo-gen-acts"><button className="icon-btn" onClick={() => { audio.current?.pause(); setOn(false); onCancel(); }} aria-label="Stop generating" title="Stop"><X size={16} /></button></div>}
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <audio ref={audio} onEnded={() => setIdx((i) => i + 1)} preload="auto" hidden />
     </div>
   );
 }
@@ -234,11 +191,10 @@ export default function Voiceover() {
   const [advanced, setAdvanced] = useState(false);
   const [script, setScript] = useState(SAMPLE);
   const [label, setLabel] = useState("");
-  const [view, setView] = useState<"script" | "lines">("script");
   const [job, setJob] = useState<Job | null>(null);
-  const [takes, setTakes] = useState<Record<string, Take>>({}); // the latest audio of each line, across jobs
-  const [ratings, setRatings] = useState<Record<string, number>>({});
+  const [gens, setGens] = useState<Gen[]>([]); // finished voiceovers, newest first
   const [sent, setSent] = useState<string[]>([]); // the lines the running job is voicing
+  const [liveOn, setLiveOn] = useState(false); // listen live is playing: keep it on screen after the job ends
   const [err, setErr] = useState("");
   const [mine, setMine] = useState<MyVoice[]>([]);
   const [mineLoaded, setMineLoaded] = useState(false);
@@ -253,7 +209,6 @@ export default function Voiceover() {
   const samples = useSamples();
   const ta = useRef<HTMLTextAreaElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const live = useRef(new Set<string>()); // job/line pairs already shown while their job ran
   const loaded = useRef(false);
   const [forPost, setForPost] = useState<Post | null>(null);
 
@@ -261,7 +216,7 @@ export default function Voiceover() {
     const s = JSON.parse(localStorage.getItem("vb-gen2") || "{}");
     if (s.engine) setEngine(s.engine); if (s.voice) setVoice(s.voice); if (s.script) setScript(s.script);
     if (s.params) setParams(s.params); if (s.style) setStyle(s.style); if (s.lang) setLang(s.lang); if (s.subtitles !== undefined) setSubtitles(s.subtitles);
-    if (s.view === "lines") setView("lines");
+    try { setGens((JSON.parse(localStorage.getItem(GENS_KEY) || "[]") as Gen[]).slice(0, 1)); } catch { /* none kept */ }
     if (s.platform) setPlatform(s.platform); if (s.takes) setNBest(s.takes); if (s.lexicon !== undefined) setLexicon(s.lexicon); if (s.pronounce) setPronounce(s.pronounce);
     // deep links from the Voices page: /voiceover?engine=qwen&voice=<name>
     const q = new URLSearchParams(location.search);
@@ -283,7 +238,7 @@ export default function Voiceover() {
     loaded.current = true;
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, []);
-  useEffect(() => { if (loaded.current) localStorage.setItem("vb-gen2", JSON.stringify({ engine, voice, script, params, style, lang, subtitles, platform, takes: nBest, lexicon, pronounce, view })); }, [engine, voice, script, params, style, lang, subtitles, platform, nBest, lexicon, pronounce, view]);
+  useEffect(() => { if (loaded.current) localStorage.setItem("vb-gen2", JSON.stringify({ engine, voice, script, params, style, lang, subtitles, platform, takes: nBest, lexicon, pronounce })); }, [engine, voice, script, params, style, lang, subtitles, platform, nBest, lexicon, pronounce]);
   useEffect(() => { if (status?.online && !cat) api<Catalogue>("voices").then(setCat).catch((e) => setCatErr(e.message)); }, [status?.online, cat]);
 
   const eng = cat?.engines[engine];
@@ -291,16 +246,6 @@ export default function Voiceover() {
   const styleParams: Record<string, number> = styles[style]?.params?.[engine] ?? {};
   const effTempo = tempo ?? styles[style]?.post_by_engine?.[engine]?.tempo ?? styles[style]?.post?.tempo ?? 1;
   const lines = useMemo(() => parse(script), [script]);
-  const [spoken, setSpoken] = useState<string[]>([]);
-  useEffect(() => {  // what the voice will actually read (tech terms, your dictionary, [pause] markers): worker dry run, no GPU
-    if (view !== "lines" || !status?.online || !lines.length) return;
-    const t = setTimeout(() => {
-      api<{ lines: { parts: { spoken: string; pause_after: number | null }[] }[] }>("speakable", { body: { lines: lines.slice(0, 200).map((l) => l.text), lexicon, pronounce: parsePronounce(pronounce) } })
-        .then((r) => setSpoken(r.lines.map((l) => l.parts.map((p) => p.spoken + (p.pause_after ? ` ⏸${p.pause_after}s` : "")).join(" "))))
-        .catch(() => setSpoken([]));
-    }, 500);
-    return () => clearTimeout(t);
-  }, [view, status?.online, lines, lexicon, pronounce]);
   const lively = styles[style]?.voices?.[engine] ?? [];
   const chars = lines.reduce((s, l) => s + l.text.length, 0);
   const langs = LANGUAGES.filter((l) => l.engines.includes(engine));
@@ -350,30 +295,21 @@ export default function Voiceover() {
     requestAnimationFrame(() => { el.focus(); const p = a + pad.length + tag.length + 1; el.setSelectionRange(p, p); });
   }
 
-  /** A finished job's lines become the current take of each line (a redo replaces just its line). */
-  function keep(j: Job, lib: { results: { id: string; audio: string }[] } | null) {
-    setTakes((cur) => {
-      const next = { ...cur };
-      for (const r of j.results) next[r.id] = { job: j.id, r, audio: lib?.results.find((x) => x.id === r.id)?.audio ?? fileUrl(j.id, `${r.id}.wav`), engine: j.engine, voice: j.voice };
+  /** A finished, archived job becomes the newest Generation. */
+  function addGen(j: Job) {
+    setGens((cur) => {
+      if (cur.some((g) => g.job === j.id) || !j.results.length) return cur;
+      const next = [{ job: j.id, ids: j.results.map((r) => r.id), engine: j.engine, voice: j.voice, label: j.label, subs: !!j.subs, at: Date.now() }, ...cur].slice(0, 1);
+      try { localStorage.setItem(GENS_KEY, JSON.stringify(next)); } catch { /* storage off: this session only */ }
       return next;
     });
-    api<{ lines?: Record<string, number> }>(`ratings/${j.engine}/${j.voice}?job=${j.id}`).then((x) => setRatings((cur) => ({ ...cur, ...Object.fromEntries(Object.entries(x.lines ?? {}).map(([k, v]) => [`${j.id}/${k}`, v])) }))).catch(() => {});
-  }
-
-  /** Lines a running job has already finished (the worker streams the first one): playable now, from the worker. */
-  function keepLive(j: Job) {
-    const fresh = j.results.filter((r) => r.url && !live.current.has(`${j.id}/${r.id}`));
-    if (!fresh.length) return;
-    fresh.forEach((r) => live.current.add(`${j.id}/${r.id}`));
-    setTakes((cur) => ({ ...cur, ...Object.fromEntries(fresh.map((r) => [r.id, { job: j.id, r, audio: r.url!, engine: j.engine, voice: j.voice, live: true }])) }));
   }
 
   async function poll(id: string) {
     try {
       const j = await api<Job>(`jobs/${id}`);
       setJob(j);
-      if (j.library) api<{ results: { id: string; audio: string }[] }>(`library/${id}`).then((l) => keep(j, l)).catch(() => keep(j, null));
-      else if (j.status === "running") keepLive(j);
+      if (j.library) addGen(j);
       if (["queued", "running"].includes(j.status) || (j.status === "done" && !j.library)) timer.current = setTimeout(() => poll(id), j.status === "running" ? 1000 : 1500);
     } catch (e) {
       setErr((e as Error).message);
@@ -381,17 +317,16 @@ export default function Voiceover() {
     }
   }
 
-  async function submit(only?: ParsedLine[]) {
+  async function submit() {
     setErr(""); setJob(null);
-    setView("lines");
-    setSent((only ?? lines).map((l) => l.id));
+    setSent(lines.map((l) => l.id));
     const p = { ...params };
     if (engine === "chatterbox") p.language = lang;
     if (engine === "qwen") p.language = QWEN_LANG[lang] ?? "English";
     try {
       const j = await api<Job>("jobs", {
         body: {
-          engine, voice, style, lines: only ?? lines, params: p, label: label || undefined, subtitles, language: lang,
+          engine, voice, style, lines, params: p, label: label || undefined, subtitles, language: lang,
           platform, takes: nTakes, lexicon, pronounce: parsePronounce(pronounce),
           post: { trim: post.trim, normalize_dbfs: -3, sample_rate: post.sample_rate || null, ...(tempo != null ? { tempo } : {}) },
         },
@@ -411,8 +346,6 @@ export default function Voiceover() {
 
   useResumeJob<Job>(["voice"], (j) => { setJob(j); setSent(j.results.map((r) => r.id)); timer.current = setTimeout(() => poll(j.id), 300); });
   const running = !!job && (["queued", "running"].includes(job.status) || (job.status === "done" && !job.library));
-  const pending = new Set(running ? sent.filter((id) => !job?.results.some((r) => r.id === id)) : []); // a streamed line plays already
-  const slug = (label || `${engine}-${voice}`).replace(/[^A-Za-z0-9._-]/g, "_");
   const blocked = !status ? "Connecting to the GPU…" : offline ? "Start the GPU to generate" : !lines.length ? "Write a line first" : running ? "Generating…" : "";
 
   return (
@@ -437,61 +370,37 @@ export default function Voiceover() {
               <VoiceGlyph name={CLONERS.includes(engine) && !myVoice(voice) ? (voice === "male" ? "dan" : "tara") : realName(voice)} size={22} active={running} />
               {voiceLabel(voice)} <span className="dim">· {NAME[engine]}</span>
             </button>
-            <div className="seg" role="radiogroup" aria-label="View">
-              <button role="radio" aria-checked={view === "script"} className={view === "script" ? "on" : ""} onClick={() => setView("script")}>Script</button>
-              <button role="radio" aria-checked={view === "lines"} className={view === "lines" ? "on" : ""} onClick={() => setView("lines")}>Lines{Object.keys(takes).length ? <span className="count">{lines.filter((l) => takes[l.id]).length}/{lines.length}</span> : null}</button>
-            </div>
             <span className="grow" />
             <GuideButton engine={engine} />
           </div>
 
-          {job && running && <JobProgress job={job} onCancel={() => api(`jobs/${job.id}/cancel`, { body: {} })} />}
           {job && !running && ["error", "cancelled"].includes(job.status) && <JobProgress job={job} />}
 
-          {view === "script" ? (
-            <>
-              <label htmlFor="vo-script" className="sr-only">Script, one line per row</label>
-              <textarea id="vo-script" ref={ta} value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false} className="tts-text"
-                placeholder={lang === "hi" ? "यहाँ अपनी स्क्रिप्ट लिखें, हर पंक्ति एक लाइन…" : "Start writing or paste your script. One line per row; each line becomes its own take."} />
-            </>
-          ) : (() => {
-            const parts = lines.filter((l) => takes[l.id] && (takes[l.id].r.text ?? "").replace(/\s+/g, " ").trim() === l.text.replace(/\s+/g, " ").trim()).map((l) => ({ job: takes[l.id].job, id: l.id }));
-            return (
-              <>
-                {parts.length > 0 && !running && <FullTake parts={parts} name={slug} jobs={[...new Set(parts.map((p) => p.job))]} />}
-                {lines.length ? (
-                  <LinesView lines={lines} spoken={spoken} takes={takes} pending={pending} ratings={ratings} blocked={blocked} slug={slug}
-                    onEdit={(i, text) => setScript(withLine(script, i, text))} onRedo={(l) => submit([l])}
-                    onAdd={() => { setScript(`${script.replace(/\s+$/, "")}\nNew line`); }} />
-                ) : <p className="small dim">No lines yet. Switch to Script and paste or write one.</p>}
-              </>
-            );
-          })()}
+          <label htmlFor="vo-script" className="sr-only">Script</label>
+          <textarea id="vo-script" ref={ta} value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false} className="tts-text"
+            placeholder={lang === "hi" ? "यहाँ अपनी स्क्रिप्ट लिखें…" : "Start writing or paste your script."} />
+
+          {job && (running || liveOn) && !["error", "cancelled"].includes(job.status)
+            ? <LiveGeneration key={job.id} job={job} order={sent.length ? sent : job.results.map((r) => r.id)} onActive={setLiveOn}
+                onCancel={() => api(`jobs/${job.id}/cancel`, { body: {} })} />
+            : gens[0] && <Generation key={gens[0].job} g={gens[0]} />}
 
           <div className="tts-foot tts-gen-bar">
             <span className="tts-status"><span className={`dot ${status?.online ? (ready ? "ok" : "off") : status ? "bad" : "off"}`} />
               {!status ? "Connecting" : offline ? "GPU off" : ready ? `${NAME[engine]} warm` : `${NAME[engine]} loads on first use`}</span>
-            {view === "script" && (
-              <PopMenu align="left" up width={300} trigger={({ toggle, ref, open }) => <button ref={ref} className="ghost sm" onClick={toggle} aria-expanded={open}><Plus size={14} weight="bold" />Insert</button>}>
-                {(close) => (
-                  <div className="insert-pop">
-                    <span className="pm-h">Pauses</span>
-                    <div className="chips">{MARKS.map((t) => <button key={t} className="chip tag" onClick={() => { insertTag(t); close(); }}>{t}</button>)}</div>
-                    {engine === "orpheus" && <><span className="pm-h">Sounds</span><div className="chips">{TAGS.map((t) => <button key={t} className="chip tag" onClick={() => { insertTag(t); close(); }}>{t}</button>)}</div></>}
-                  </div>
-                )}
-              </PopMenu>
-            )}
-            <span className="count">{lines.length} line{lines.length === 1 ? "" : "s"} · {chars.toLocaleString()} characters · ≈{fmtS(audioS)}{status?.online ? ` · ready in ≈${fmtS(estS)}` : ""}</span>
-            {job?.library && !running && (
-              <span className="row" style={{ gap: 4 }}>
-                <Link className="icon-btn" href={`/files#${job.id}`} aria-label="Open in Files" title="Open in Files"><ArrowSquareOut size={16} /></Link>
-                {job.subs && <a className="icon-btn" href={`/api/file/${job.id}/subtitles.srt?download&name=${slug}.srt`} aria-label="Download subtitles (.srt)" title="Subtitles (.srt)"><ClosedCaptioning size={16} /></a>}
-              </span>
-            )}
+            <PopMenu align="left" up width={300} trigger={({ toggle, ref, open }) => <button ref={ref} className="ghost sm" onClick={toggle} aria-expanded={open}><Plus size={14} weight="bold" />Insert</button>}>
+              {(close) => (
+                <div className="insert-pop">
+                  <span className="pm-h">Pauses</span>
+                  <div className="chips">{MARKS.map((t) => <button key={t} className="chip tag" onClick={() => { insertTag(t); close(); }}>{t}</button>)}</div>
+                  {engine === "orpheus" && <><span className="pm-h">Sounds</span><div className="chips">{TAGS.map((t) => <button key={t} className="chip tag" onClick={() => { insertTag(t); close(); }}>{t}</button>)}</div></>}
+                </div>
+              )}
+            </PopMenu>
+            <span className="count">{chars.toLocaleString()} characters · ≈{fmtS(audioS)}{status?.online ? ` · ready in ≈${fmtS(estS)}` : ""}</span>
             {offline
               ? <Link href="/gpu" className="btn"><Power size={15} weight="bold" />Start the GPU</Link>
-              : <button disabled={!!blocked} onClick={() => submit()} title={blocked || undefined}><Microphone size={16} weight="bold" />{running ? "Generating…" : Object.keys(takes).length ? "Generate all again" : "Generate speech"}</button>}
+              : <button disabled={!!blocked} onClick={() => submit()} title={blocked || undefined}><Microphone size={16} weight="bold" />{running ? "Generating…" : gens.length ? "Generate again" : "Generate speech"}</button>}
           </div>
           {err && <p className="err" role="alert">{err}</p>}
         </div>

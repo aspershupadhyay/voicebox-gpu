@@ -91,6 +91,7 @@ export type Job = {
   review?: boolean; profile?: { sim_base: number | null; learned: Record<string, number> } | null;
   myvoice?: MyVoice | null; platform?: string; captions?: string; takes?: number; mode?: string; similarity?: number | null;
   scenes?: { id: string; text: string; start: number; seconds: number; prompt?: string | null; match?: number | null; animated?: boolean }[];
+  live?: { id: string; duration: number; url: string }[]; // listen live: lines made but not finished yet
 };
 export type MyVoice = { name: string; label: string; transcript: string; duration: number; version: string; created: number; warnings?: string[]; url?: string; level_db?: number; enhanced?: boolean };
 export type Samples = { text: Record<string, string>; voices: Record<string, Record<string, { duration: number; url: string }>> };
