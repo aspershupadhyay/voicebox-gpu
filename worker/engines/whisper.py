@@ -123,10 +123,35 @@ class Engine:
         return out
 
     def transcribe_batch(self, paths, language=None):
-        """One file at a time, its 30 s windows decoded in a batch sized to the free GPU memory."""
-        out = []
-        for p in paths:
-            a = load_16k(p)
+        """Word-timed. Clips up to 30 s (a voiceover's lines) go through the pipeline together, as many at once as the
+        free GPU memory takes (one 30 s window each, so batching doesn't change what it hears); longer files one at a
+        time, their 30 s windows decoded in a batch sized to the free GPU memory."""
+        audio = [load_16k(p) for p in paths]
+        out = [None] * len(paths)
+        short = [i for i, a in enumerate(audio) if len(a) <= 30 * 16000]
+        if len(short) > 1 and self.dev == "cuda":
+            free = torch.cuda.mem_get_info()[0] / 2**30
+            bs = int(max(1, min(16, len(short), (free - 2.0) // 3.5)))
+            k = 0
+            while k < len(short):
+                group = short[k:k + bs]
+                try:
+                    with torch.inference_mode():
+                        res = self.pipe([{"raw": audio[i], "sampling_rate": 16000} for i in group], return_timestamps="word",
+                                        batch_size=len(group), generate_kwargs=self._gen(language))
+                    for i, o in zip(group, res):
+                        out[i] = self._words(o, len(audio[i]) / 16000, language)
+                    k += len(group)
+                except torch.cuda.OutOfMemoryError:  # another engine took memory meanwhile: halve the batch, never fail
+                    if bs == 1:
+                        raise
+                    bs = max(1, bs // 2)
+                finally:
+                    torch.cuda.empty_cache()
+        for i, p in enumerate(paths):
+            if out[i] is not None:
+                continue
+            a = audio[i]
             bs = self._batch(len(a) / 16000)
             while True:
                 try:
@@ -141,7 +166,7 @@ class Engine:
                 finally:
                     if self.dev == "cuda":
                         torch.cuda.empty_cache()
-            out.append(self._words(o, len(a) / 16000, language))
+            out[i] = self._words(o, len(a) / 16000, language)
         return out
 
     def transcribe(self, path, language=None, prompt=None):

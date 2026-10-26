@@ -10,6 +10,7 @@ POST /transcribe   {"paths": [...], "language"?, "prompt"?, "words"?} -> {"resul
 POST /similarity   {"ref", "paths": [...]} -> {"scores": [cosine, ...]}            (whisper host: speaker match)
 POST /mos          {"paths": [...]} -> {"scores": [1-5, ...]}                     (whisper host: predicted naturalness)
 POST /enhance      {"src_path", "out_path", "params"} -> {"duration", "sample_rate"}     (enhance host: studio clean-up)
+POST /enhance_batch {"items": [{"src_path", "out_path", "params"}]} -> {"results": [...]}   (many lines at once)
 POST /revoice      {"src_path", "ref_path", "out_path"} -> {"duration", "sample_rate"}  (chatterbox host: voice conversion)
 POST /video        {"prompt", "width", "height", "num_frames", "fps", "steps", "seed", "out_path", "progress_path", ...}
                    -> {"frames", "width", "height", "fps", "duration", "has_audio"}
@@ -222,6 +223,18 @@ def main():
                         audio, sr = engine.enhance(req["src_path"], req.get("params") or {})
                         sf.write(req["out_path"], audio, sr)
                         return self._send(200, {"duration": len(audio) / sr, "sample_rate": sr})
+                    if self.path == "/enhance_batch":  # studio polish for a voiceover's lines at once
+                        items = req["items"]
+                        res = []
+                        outs = engine.enhance_batch(items) if hasattr(engine, "enhance_batch") else \
+                            [engine.enhance(it["src_path"], it.get("params") or {}) for it in items]
+                        for it, o in zip(items, outs):
+                            if isinstance(o, Exception):
+                                res.append({"error": f"{type(o).__name__}: {o}"})
+                                continue
+                            sf.write(it["out_path"], o[0], o[1])
+                            res.append({"duration": len(o[0]) / o[1], "sample_rate": o[1]})
+                        return self._send(200, {"results": res})
                     if self.path == "/revoice":
                         audio, sr = engine.revoice(req["src_path"], req["ref_path"])
                         sf.write(req["out_path"], audio, sr)

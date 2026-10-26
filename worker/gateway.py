@@ -411,6 +411,13 @@ class Engines:
         log(f"stopping {name}: {why}")
         self.stop(name)
 
+    def park_for_post(self, name):
+        """A voiceover's generation is done and the review, studio polish and subtitles come next: park the voice
+        engine in RAM (it wakes in about a second) so Whisper and the enhancer get its GPU memory and batch wider."""
+        with self.lock:
+            if self.running(name) and not self.inflight[name] and name not in self.resident and self._can_park(name):
+                self._park_or_stop(name, "its voiceover is generated; the review, polish and subtitles get the GPU")
+
     def _wake(self, name):
         t = time.time()
         self._call(name, "/wake", {}, timeout=300)
@@ -801,6 +808,10 @@ class Engines:
 
     def enhance(self, payload):
         return self._post("enhance", "/enhance", payload)
+
+    def enhance_batch(self, items):
+        """Studio polish for many files in one call (clips up to 30 s go through the model together)."""
+        return self._post("enhance", "/enhance_batch", {"items": items})["results"]
 
     def video(self, name, payload):
         return self._post(name, "/video", payload, timeout=3 * 60 * 60)
@@ -1636,6 +1647,66 @@ def _studio_output(job, path):
     return out
 
 
+def _studio_outputs(job, paths):
+    """_studio_output for a whole voiceover: every line through the enhancer in one batched call, then ("auto") one
+    voice-match check per line and one naturalness call for all. Was a line at a time: 37 lines spent 88 s polishing."""
+    import soundfile as sf
+    mode = job["post"].get("enhance")
+    if not mode or job.get("_no_polish") or not paths:
+        return paths
+    outs = [x[:-4] + ".enh.wav" for x in paths]
+    params = C.resolve_params("enhance", {"mode": "enhance", "strength": float(job["post"].get("enhance_strength", 0.3))})
+    stage = job["stage"]
+    try:
+        _prepare(job, "enhance")
+        job["stage"] = "enhancing"
+        dur = sum(sf.info(x).duration for x in paths)
+        t0 = time.time()
+        res = _run_unit(job, RATES["enhance"] * dur + 2, lambda: ENG.enhance_batch(
+            [{"src_path": a, "out_path": b, "params": params} for a, b in zip(paths, outs)]), f"studio polish: {len(paths)} lines at once")
+        learn_rate("enhance", time.time() - t0, max(dur, 1.0))
+    except Cancelled:
+        raise
+    except Exception as e:  # noqa: BLE001
+        traceback.print_exc()
+        msg = f"studio enhance unavailable ({type(e).__name__}: {str(e)[:120]}); used the standard clean-up"
+        if msg not in job["warnings"]:
+            job["warnings"].append(msg)
+        return paths
+    finally:
+        job["stage"] = stage
+    ok = [i for i, r in enumerate(res) if "error" not in r and os.path.exists(outs[i])]
+    keep = set(ok)
+    if mode == "auto" and ok:
+        try:
+            _prepare(job, "whisper")
+            job["stage"] = "enhancing"
+            sims = {i: ENG.similarity(paths[i], [outs[i]])[0] for i in ok}
+            mos = ENG.mos([x for i in ok for x in (paths[i], outs[i])])
+            keep = {i for n, i in enumerate(ok) if sims[i] >= 0.9 and (mos[2 * n + 1] is None or mos[2 * n] is None or mos[2 * n + 1] >= mos[2 * n] - 0.05)}
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001  can't judge them: keep the takes as generated
+            log(f"polish check failed ({type(e).__name__}: {e})")
+            keep = set()
+        finally:
+            job["stage"] = stage
+        if len(keep) < len(paths):
+            note = "studio polish skipped on some lines: it changed the voice or sounded less natural"
+            if note not in job["warnings"]:
+                job["warnings"].append(note)
+    final = []
+    for i, (a, b) in enumerate(zip(paths, outs)):
+        if i in keep:
+            os.remove(a)
+            final.append(b)
+        else:
+            if os.path.exists(b):
+                os.remove(b)
+            final.append(a)
+    return final
+
+
 def smart_clean(job, src, dst, prefer=None):
     """Adaptive clean-up (cleanup.run): measure, run only what the recording needs (DeepFilterNet noise removal on the
     CPU, Resemble Enhance restoration on the GPU), then check it still sounds like the same person. Returns the
@@ -2056,6 +2127,8 @@ def run_tts(job):
                 stop.set()  # the files are all there now (or the job failed): it finishes what it started
                 watcher.join()
         rest = [p for p in plans if not ("trials" in streamed and p is plans[0])]
+        if C.ENGINES[engine].get("gpu_gb") and len(plans) >= 4 and (job["subtitles"] or job["post"].get("enhance") or job.get("review")):
+            ENG.park_for_post(engine)  # its GPU memory goes to the review, the polish and the subtitles (bigger batches)
 
         if takes == 1 and not job.get("review"):  # fast path: no listening pass
             _assemble_all(job, jdir, [(p, [out(p, i, 0) for i in range(len(p["chunks"]))], None) for p in rest])
@@ -2233,7 +2306,8 @@ def _assemble_all(job, jdir, items):
     # studio polish is GPU work (the enhancer, then the voice check), one line after another; it used to take the
     # CPU mastering with it, so a 19-line voiceover mastered one line at a time (76 s). Now: polish in order, then
     # master every line at once.
-    raws = [_line_raw(job, jdir, p, paths) for p, paths, _ in items] if job["post"].get("enhance") else [None] * len(items)
+    raws = _studio_outputs(job, [_line_raw(job, jdir, p, paths, polish=False) for p, paths, _ in items]) \
+        if job["post"].get("enhance") else [None] * len(items)
     if workers < 2:
         for (p, paths, pick), raw in zip(items, raws):
             _assemble(job, jdir, p, paths, pick, raw=raw)
@@ -2245,7 +2319,7 @@ def _assemble_all(job, jdir, items):
     _time(job, "mastering", time.time() - t0)
 
 
-def _line_raw(job, jdir, p, paths):
+def _line_raw(job, jdir, p, paths, polish=True):
     """A line's chunks joined with the asked-for gaps (and studio-polished when asked): the WAV mastering starts from."""
     ln = p["ln"]
     raw = os.path.join(jdir, f"{ln['id']}.raw.wav")
@@ -2253,7 +2327,7 @@ def _line_raw(job, jdir, p, paths):
     for x in paths:
         if os.path.exists(x):
             os.remove(x)
-    return _studio_output(job, raw)
+    return _studio_output(job, raw) if polish else raw
 
 
 def _assemble(job, jdir, p, paths, pick=None, timed=True, raw=None):
