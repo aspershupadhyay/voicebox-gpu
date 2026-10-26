@@ -68,6 +68,13 @@ so its best-of-4 stays generation-bound (2.7× best-of-1); batching Qwen's takes
 On cards ≥ 70 GB: raise `vllm_pool_gb` (e.g. 45-50 GB) and `max_num_seqs`, and keep Whisper, the voice-match model
 and the enhancer resident next to it instead of parking them, so a voiceover with review never loads anything
 mid-job. Derive it from total VRAM, not the GPU name; keep the current numbers for smaller cards.
+Built (2026-10-26), two flags measured separately. `VOICEBOX_WHOLE_CARD`: 70 GB+ cards give vLLM 48 GB (was 30)
+and 256 sentences at once (was 128); smaller cards unchanged. `VOICEBOX_RESIDENT_REVIEW`, every card: Whisper (with
+the voice-match and naturalness models) and, on 70 GB+, the enhancer stay resident: never idle-unloaded, evicted last
+(step 5 found the L4 parking Whisper and Orpheus to load Qwen when Orpheus alone made room), and preloaded in the
+background at the start of a voiceover when they fit beside it without moving anything off the GPU. A running engine's
+`ensure` no longer waits on the engine lock, which a load holds for its whole duration. Colab's A100s are usually the
+40 GB model, so `WHOLE_CARD` waits for an 80 GB card to measure on; `RESIDENT_REVIEW` is measured on the L4.
 
 ### 5. Stream the first audio
 Let the worker push each line (then each chunk) as soon as it's mastered: a job event stream
