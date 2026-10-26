@@ -21,22 +21,34 @@ export async function call<T = unknown>(path: string, init: { method?: string; b
     const { withModels } = await import("./voicemodel");
     init = { ...init, body: await withModels(init.body as Record<string, unknown>) };
   }
-  const r = await fetch(w.url + path, {
-    method: init.method ?? (init.body ? "POST" : "GET"),
-    headers: { Authorization: `Bearer ${process.env.WORKER_SECRET}`, "Content-Type": "application/json" },
-    body: init.body ? JSON.stringify(init.body) : undefined,
-    signal: AbortSignal.timeout(init.timeoutMs ?? 25_000),
-    cache: "no-store",
-  });
-  const text = await r.text();
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    data = { error: text.slice(0, 300) };
+  const method = init.method ?? (init.body ? "POST" : "GET");
+  // Cloudflare answers for the worker when it can't reach it (restarting, tunnel reconnecting) with an HTML page:
+  // 530 / 1033 = the tunnel isn't connected (the request never reached the worker), 502-504 = it didn't answer.
+  // Reads try again briefly; a POST only on 530, where it certainly never arrived (no job is ever sent twice).
+  for (let attempt = 0; ; attempt++) {
+    const r = await fetch(w.url + path, {
+      method,
+      headers: { Authorization: `Bearer ${process.env.WORKER_SECRET}`, "Content-Type": "application/json" },
+      body: init.body ? JSON.stringify(init.body) : undefined,
+      signal: AbortSignal.timeout(init.timeoutMs ?? 25_000),
+      cache: "no-store",
+    });
+    const text = await r.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
+    if (r.ok && data !== null) return data as T;
+    const edge = data === null && [502, 503, 504, 530].includes(r.status);
+    if (edge && attempt < 2 && (method === "GET" || r.status === 530)) {
+      await new Promise((res) => setTimeout(res, 3000 * (attempt + 1)));
+      continue;
+    }
+    if (edge) throw new Error(`worker ${r.status}: the worker isn't reachable right now (restarting, or its tunnel is reconnecting); try again in a minute`);
+    throw new Error(`worker ${r.status}: ${(data as { error?: string } | null)?.error ?? text.slice(0, 300)}`);
   }
-  if (!r.ok) throw new Error(`worker ${r.status}: ${(data as { error?: string }).error ?? text.slice(0, 300)}`);
-  return data as T;
 }
 
 export function safeEqual(a: string, b: string) {

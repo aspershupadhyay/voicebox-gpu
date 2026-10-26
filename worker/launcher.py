@@ -108,6 +108,28 @@ def start_tunnel(cf):
     raise RuntimeError("tunnel failed; see " + logpath)
 
 
+def clear_processes(patterns):
+    """Kill processes by command line, then whatever still holds the GPU (vLLM's EngineCore doesn't match the
+    names). Returns how many were killed."""
+    killed = 0
+    for pat in patterns:
+        killed += subprocess.call(["pkill", "-9", "-f", pat]) == 0
+    try:
+        pids = subprocess.check_output(["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"], text=True).split()
+        for pid in pids:
+            if pid.isdigit() and int(pid) != os.getpid():
+                killed += subprocess.call(["kill", "-9", pid]) == 0
+    except Exception:  # noqa: BLE001
+        pass
+    return killed
+
+
+HUNG_MIN = 10  # minutes of /health not answering before a living gateway counts as hung
+HUNG_BUSY_MIN = 30  # the same while a job was running (training can starve it of CPU; never kill a run that's fine)
+HEALTH_FAILS = [0]
+WAS_BUSY = [False]  # a job was running at the last answer
+
+
 def health(secret):
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}/health", headers={"Authorization": f"Bearer {secret}"})
     with urllib.request.urlopen(req, timeout=30) as r:
@@ -191,19 +213,8 @@ def main():
     ensure_tools()
     mark("tools")
     # a previous run in this runtime may have left processes behind (e.g. after "interrupt" + re-run)
-    killed = 0
-    for pat in ("gateway.py", "engine_host.py", "cloudflared tunnel"):
-        killed += subprocess.call(["pkill", "-f", pat]) == 0
-    # engines spawn children (vLLM's EngineCore) that don't match those names: free the GPU completely
-    try:
-        pids = subprocess.check_output(["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"], text=True).split()
-        for pid in pids:
-            if pid.isdigit() and int(pid) != os.getpid():
-                killed += subprocess.call(["kill", "-9", pid]) == 0
-    except Exception:
-        pass
-    if killed:  # let the port and the GPU memory go; a fresh runtime has nothing to wait for
-        time.sleep(3)
+    if clear_processes(("gateway.py", "engine_host.py", "cloudflared tunnel")):
+        time.sleep(3)  # let the port and the GPU memory go; a fresh runtime has nothing to wait for
     # the gateway and the tunnel start side by side: cloudflared connects to Cloudflare while the gateway imports, and
     # forwards requests once the gateway listens
     gw = spawn_gateway(secret)
@@ -257,8 +268,18 @@ def main():
 def tick(gw, tunnel, url, register_url, last_status, secret, cf):
     """One minute of the watch loop: restart what died, heartbeat (which keeps the Colab runtime alive), log a line.
     A busy gateway (training uses every core) can answer /health slowly; that must never stop the heartbeats."""
+    limit = HUNG_BUSY_MIN if WAS_BUSY[0] else HUNG_MIN
+    if gw.poll() is None and HEALTH_FAILS[0] >= limit:
+        # alive but not answering (a deadlock): the dashboard sees it offline and nothing would ever recover it
+        log(f"gateway hasn't answered for {limit} min: restarting it and its engines")
+        gw.kill()
+        gw.wait()
+        clear_processes(("engine_host.py",))
+        time.sleep(3)
+        HEALTH_FAILS[0] = 0
     if gw.poll() is not None:
         log("gateway died; restarting")
+        clear_processes(("engine_host.py",))  # its engines live in their own sessions and would keep the GPU
         gw = start_gateway(secret)
     if tunnel.poll() is not None:
         log("tunnel died; reopening")
@@ -274,9 +295,12 @@ def tick(gw, tunnel, url, register_url, last_status, secret, cf):
         status = "no REGISTER_URL set (MCP can't find this worker)"
     try:
         h = health(secret)
+        HEALTH_FAILS[0] = 0
+        WAS_BUSY[0] = bool(h.get("running"))
         line = f"{status} · engines {h['engines']} · queue {h['queue']} · VRAM {h['gpu']['used_gb']}/{h['gpu']['total_gb']} GB"
     except Exception as e:  # noqa: BLE001
-        line = f"{status} · health check slow ({type(e).__name__})"
+        HEALTH_FAILS[0] += 1
+        line = f"{status} · health check slow ({type(e).__name__}, {HEALTH_FAILS[0]} min)"
     if line != last_status:
         log(line)
         last_status = line
