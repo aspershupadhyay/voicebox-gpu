@@ -330,8 +330,9 @@ export default function Voiceover() {
   const subsReady = status?.engines?.whisper === "ready";
   const nTakes = engine === "kokoro" ? 1 : nBest;
   const whisperRate = status?.rates?.whisper ?? RATE.whisper;
+  const listenRate = status?.rates?.listen ?? whisperRate; // the batched review (text only), learned on the worker
   const estS = rate * chars * nTakes + (ready ? 0 : LOAD_S[engine]) + (subtitles ? whisperRate * audioS + (subsReady ? 0 : LOAD_S.whisper) : 0)
-    + (nTakes > 1 ? whisperRate * audioS * nTakes + (subtitles || subsReady ? 0 : LOAD_S.whisper) : 0) + 4;
+    + (nTakes > 1 ? listenRate * audioS * nTakes + (subtitles || subsReady ? 0 : LOAD_S.whisper) : 0) + 4;
   const platforms: Record<string, Platform> = cat?.platforms ?? {};
   const plat = platforms[platform];
   const realName = (v: string) => (eng?.presets[v] && eng.presets[v] !== v ? eng.presets[v] : v);
@@ -549,7 +550,7 @@ export default function Voiceover() {
 
             <div className="set-row">
               <div className="sr-h">Quality</div>
-              <div className="set-line"><span>Best of <Info label="Best of">{engine === "kokoro" ? "Kokoro gives the same take every time." : "Each sentence is voiced N times; Whisper checks every word" + (CLONERS.includes(engine) ? " and how much it sounds like the voice" : "") + " and keeps the best. N× slower: use it for the final render."}</Info></span>
+              <div className="set-line"><span>Best of <Info label="Best of">{engine === "kokoro" ? "Kokoro gives the same take every time." : "Each sentence is voiced N times; Whisper checks every word" + (CLONERS.includes(engine) ? " and how much it sounds like the voice" : "") + " and keeps the best. " + (engine === "orpheus" ? "Orpheus voices the takes together, so best of 4 takes about 1.5× as long as one." : "Each take is voiced on its own, so it takes up to N× as long: use it for the final render.")}</Info></span>
                 <div className="seg" role="radiogroup" aria-label="Best of">
                   {Array.from({ length: cat?.max_takes ?? 4 }, (_, i) => i + 1).map((n) => (
                     <button key={n} role="radio" aria-checked={nTakes === n} className={nTakes === n ? "on" : ""} disabled={engine === "kokoro" && n > 1} onClick={() => setNBest(n)}>{n}×</button>

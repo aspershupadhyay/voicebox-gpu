@@ -53,6 +53,10 @@ The review (Whisper + voice match + naturalness) should score all takes of all c
 not one per take. Whisper runs on `transformers` (`worker/engines/whisper.py`): pass all takes to its pipeline in one call with a
 `batch_size` from the card's free memory (or try faster-whisper's batched pipeline if it measures faster). This is what makes best-of-4 cost about the same as best-of-1, since generation is already batched. Update the
 dashboard's "N× slower" hint (Voiceover → Best of) to the measured cost.
+Done (2026-10-26): `VOICEBOX_BATCH_REVIEW`, on by default. Whisper hears every take of a job in one text-only call
+(the review never read the word timestamps it was asking for); clips over 30 s keep the word-timed path. The review is
+about 10× faster on the L4 with identical scores (Results). Still open: Qwen voices takes one batch of lines at a time,
+so its best-of-4 stays generation-bound (2.7× best-of-1); batching Qwen's takes is the follow-up.
 
 ### 4. Use the whole big card
 On cards ≥ 70 GB: raise `vllm_pool_gb` (e.g. 45-50 GB) and `max_num_seqs`, and keep Whisper, the voice-match model
@@ -92,6 +96,8 @@ while the job ran, so it includes whatever else was resident (Whisper, the enhan
 |---|---|---|---|---|---|---|
 | Baseline · orpheus (tara) | L4 (22.5 GB) | 47.4 s | 47.4 s | 125.8 s | 18.2 GB | 0.993 / — (b1), 0.999 / — (b4) |
 | Baseline · qwen (female) | L4 (22.5 GB) | 55.4 s | 55.4 s | 177.3 s | 11.4 GB | 0.999 / 0.949 (b1), 0.999 / 0.958 (b4) |
+| Step 3 · orpheus (tara) | L4 (22.5 GB) | 15.7 s | 15.7 s | 25.2 s | 16.9 GB | 0.993 / — (b1), 0.999 / — (b4) |
+| Step 3 · qwen (female) | L4 (22.5 GB) | 29.1 s | 29.1 s | 78.3 s | 10.9 GB | 0.999 / 0.949 (b1), 0.999 / 0.958 (b4) |
 | Baseline · orpheus | A100 | | | | | |
 | Baseline · qwen | A100 | | | | | |
 
@@ -117,6 +123,27 @@ What the baseline says:
   total (step 5).
 - **Cold loads on a fresh runtime**: Orpheus 161 s (mostly the 7 GB download), Qwen 71 s. Step 6 territory.
 - No sentence needed a retry in any run, so the review cost above is the floor, not inflated by re-voicing.
+
+Step 3, batched review (L4, same runtime and script as the baseline, worker 3.3.0 + `VOICEBOX_BATCH_REVIEW`, the tech
+style's temperatures pinned):
+
+| Case | Generating | Listening (review) | Mastering | Total | Before | Job |
+|---|---|---|---|---|---|---|
+| orpheus best-of-1 | 11.7 | 2.7 | 1.3 | 15.7 | 47.4 | `7217c09fdc7a` |
+| orpheus best-of-4 | 15.7 | 8.2 | 1.2 | 25.2 | 125.8 | `d10fe0b0d2c3` |
+| qwen best-of-1 | 25.4 | 2.5 | 1.1 | 29.1 | 55.4 | `994034b27011` |
+| qwen best-of-4 | 67.8 | 9.3 | 1.1 | 78.3 | 177.3 | `ea50ddb6bb93` |
+
+- **Review 26 s → 2.6 s for 10 takes, 104 s → 9 s for 40**, on both engines.
+- **Same output.** Qwen (its takes come out the same for the same seed): every one of the 40 takes scored exactly as before
+  (match and voice match) and every line picked the same take. Orpheus best-of-1: the same scores line for line.
+  Orpheus best-of-4: match 0.999 both times; two lines picked take 1 instead of 2 or 3 because take 1 came out better
+  this time (vLLM sampling varies a little between runs), not because a score was read differently.
+- Orpheus best-of-4 is now 1.6× best-of-1 (was 2.65×). Qwen best-of-4 is 2.7× (was 3.2×): its generation is the rest.
+- Orpheus generating was also faster in this run (11.7 s vs 20.1 s) without any change to it; compare the review
+  column, not the totals, for this step's effect on Orpheus.
+- The benchmark runs taught the dashboard "learned" temperatures for these voices (Tara 0.7, Qwen female 0.9), which
+  it adds to every job; `bench_voice.py` now pins the style's temperatures so runs stay comparable.
 
 ## Sources
 
