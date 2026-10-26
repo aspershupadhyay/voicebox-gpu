@@ -2950,7 +2950,8 @@ def make_train_job(body):
     job = _base_job("train", body)
     ft = "qwen" if body.get("engine") == "qwen" else "orpheus"  # which model learns the voice
     job.update({"voice": str(body.get("name") or "me")[:64], "lines": [], "engine": "qwen" if ft == "qwen" else "myvoice", "parts": parts,
-                "speaker": "me", "epochs": body.get("epochs"), "learning_rate": body.get("learning_rate"), "train_engine": ft})
+                "speaker": "me", "epochs": body.get("epochs"), "learning_rate": body.get("learning_rate"), "train_engine": ft,
+                "resume": _resume_links(body.get("resume"))})
     if ft == "qwen":
         if not ID_RE.match(job["voice"]):
             raise ValueError("name: letters, digits, - or _")
@@ -2964,6 +2965,19 @@ def make_train_job(body):
     epochs = job["epochs"] or (10 if minutes < 5 else 6 if minutes < 15 else 4 if minutes < 40 else 3)  # as train.py
     job["est_total"] = 300 + clips * 0.4 + clips / 4 * epochs * TRAIN_STEP_S * 1.4 + 120 + (0 if os.path.exists(_train_python()) else C.TRAIN_INSTALL_S)
     return _enqueue(job)
+
+
+def _resume_links(r):
+    """Signed links for the training checkpoint (resume.py): get, put and state, each https or left out."""
+    r = r if isinstance(r, dict) else {}
+    return {k: r[k] for k in ("get", "put", "state") if isinstance(r.get(k), str) and r[k].startswith("https://")}
+
+
+def _train_over(job, ok):
+    """The run is over for good (finished, cancelled or failed in the trainer): the dashboard stops restarting it."""
+    if job.get("resume"):
+        from resume import mark
+        threading.Thread(target=mark, args=({"resume": job["resume"]}, "done" if ok else "failed"), daemon=True).start()
 
 
 def make_dpo_job(body):
@@ -3013,7 +3027,7 @@ def run_train_qwen(job):
         open(marker, "w").close()
     cfg = os.path.join(jdir, "train.json")
     json.dump({"parts": job["parts"], "name": job["voice"], "epochs": job.get("epochs"), "learning_rate": job.get("learning_rate"),
-               "work": os.path.join(jdir, "work"), "out": jdir, "progress": prog}, open(cfg, "w"))
+               "work": os.path.join(jdir, "work"), "out": jdir, "progress": prog, "resume": job.get("resume")}, open(cfg, "w"))
     job["stage"] = "training"
     env = {**os.environ, "HF_HOME": cache_dir("qwen"), "TOKENIZERS_PARALLELISM": "false", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
            "MPLBACKEND": "Agg", "PATH": os.path.dirname(py) + os.pathsep + os.environ.get("PATH", "")}
@@ -3024,9 +3038,11 @@ def run_train_qwen(job):
                 import signal
                 os.killpg(p.pid, signal.SIGKILL)
                 p.wait()
+                _train_over(job, False)
                 raise Cancelled()
             time.sleep(2)
     shutil.rmtree(os.path.join(jdir, "work"), ignore_errors=True)
+    _train_over(job, p.returncode == 0)
     if p.returncode != 0:
         raise RuntimeError(f"fine-tuning stopped (exit {p.returncode}); the trainer's last lines are under the Train card")
     job["train"] = json.load(open(os.path.join(jdir, "result.json")))
@@ -3070,7 +3086,7 @@ def run_train(job):
     else:
         json.dump({"parts": job["parts"], "speaker": job["speaker"], "epochs": job.get("epochs"), "learning_rate": job.get("learning_rate"),
                    "work": os.path.join(jdir, "work"), "out": jdir, "progress": prog,
-                   "cache": os.path.join(C.MYVOICE_DIR, "codes")}, open(cfg, "w"))
+                   "cache": os.path.join(C.MYVOICE_DIR, "codes"), "resume": job.get("resume")}, open(cfg, "w"))
     job["stage"] = "training"
     env = {**os.environ, "HF_HOME": cache_dir("myvoice"), "TOKENIZERS_PARALLELISM": "false", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
            "MPLBACKEND": "Agg"}
@@ -3081,9 +3097,11 @@ def run_train(job):
                 import signal
                 os.killpg(p.pid, signal.SIGKILL)
                 p.wait()
+                _train_over(job, False)
                 raise Cancelled()
             time.sleep(2)
     shutil.rmtree(os.path.join(jdir, "work"), ignore_errors=True)
+    _train_over(job, p.returncode == 0)
     if p.returncode != 0:
         raise RuntimeError(f"training stopped (exit {p.returncode}); see the train log on the Engines page")
     job["train"] = json.load(open(os.path.join(jdir, "result.json")))

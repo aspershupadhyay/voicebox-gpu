@@ -16,7 +16,8 @@
 #
 # Vendored from QwenLM/Qwen3-TTS finetuning/ for the Voicebox worker (train_qwen.py runs it). Changes: attention is
 # FlashAttention-2 only when it's installed (else SDPA), no tensorboard tracker, a --progress JSON file, and only the
-# last epoch is saved (each checkpoint is a full ~4 GB model).
+# last epoch is saved as a checkpoint (each is a full ~4 GB model), and --resume_dir: the weights after every epoch, so
+# a run cut short (the GPU went away) carries on from the last finished epoch (a fresh optimizer; train_qwen.py uploads it).
 import argparse
 import json
 import os
@@ -44,6 +45,7 @@ def train():
     parser.add_argument("--num_epochs", type=int, default=3)
     parser.add_argument("--speaker_name", type=str, default="speaker_test")
     parser.add_argument("--progress", type=str, default="")
+    parser.add_argument("--resume_dir", type=str, default="")
     args = parser.parse_args()
 
     accelerator = Accelerator(gradient_accumulation_steps=4, mixed_precision="bf16")
@@ -73,6 +75,14 @@ def train():
     dataset = TTSDataset(train_data, qwen3tts.processor, config)
     train_dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=dataset.collate_fn)
 
+    start_epoch = 0
+    rdir = args.resume_dir
+    if rdir and os.path.exists(os.path.join(rdir, "epoch.json")):
+        start_epoch = json.load(open(os.path.join(rdir, "epoch.json")))["epoch"]
+        qwen3tts.model.load_state_dict(torch.load(os.path.join(rdir, "model.pt"), map_location="cpu", weights_only=True))
+        target_speaker_embedding = torch.load(os.path.join(rdir, "spk.pt"), map_location="cpu", weights_only=True).to(qwen3tts.model.device)
+        accelerator.print(f"resuming after epoch {start_epoch}")
+
     optimizer = AdamW(qwen3tts.model.parameters(), lr=args.lr, weight_decay=0.01)
 
     model, optimizer, train_dataloader = accelerator.prepare(
@@ -82,7 +92,7 @@ def train():
     num_epochs = args.num_epochs
     model.train()
 
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(model):
 
@@ -139,6 +149,18 @@ def train():
             if step % 10 == 0:
                 accelerator.print(f"Epoch {epoch} | Step {step} | Loss: {loss.item():.4f}")
                 report(epoch=epoch, epochs=num_epochs, step=step, steps=len(train_dataloader), loss=round(loss.item(), 4))
+
+        if rdir and accelerator.is_main_process and epoch < num_epochs - 1:
+            os.makedirs(rdir, exist_ok=True)
+            weights = {k: v.detach().to("cpu") for k, v in accelerator.unwrap_model(model).state_dict().items()}
+            torch.save(weights, os.path.join(rdir, "model.pt.tmp"))
+            torch.save(target_speaker_embedding.detach().cpu(), os.path.join(rdir, "spk.pt.tmp"))
+            os.replace(os.path.join(rdir, "model.pt.tmp"), os.path.join(rdir, "model.pt"))
+            os.replace(os.path.join(rdir, "spk.pt.tmp"), os.path.join(rdir, "spk.pt"))
+            with open(os.path.join(rdir, "epoch.json.tmp"), "w") as f:
+                json.dump({"epoch": epoch + 1}, f)
+            os.replace(os.path.join(rdir, "epoch.json.tmp"), os.path.join(rdir, "epoch.json"))
+            del weights
 
         if accelerator.is_main_process and epoch == num_epochs - 1:
             output_dir = os.path.join(args.output_model_path, "checkpoint-final")
