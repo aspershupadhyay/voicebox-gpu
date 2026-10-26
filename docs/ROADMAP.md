@@ -101,4 +101,4 @@ Weak points that could fail a job or leave the worker stuck, found reading the w
 - [x] Studio polish no longer makes mastering serial (a 19-line voiceover spent 76 s "mastering")
 - [x] Downloads take http(s) links only; the usage file is written atomically
 - [x] The dashboard says "the worker isn't reachable" instead of quoting Cloudflare's HTML, and retries reads (never resends a job that may have arrived)
-- [ ] A runtime whose worker died entirely (kernel crash) bills until Colab reclaims it: a scheduled sweep on the dashboard (Vercel cron) could stop app-started runtimes with no heartbeat for 20 min
+- [x] A runtime whose worker died entirely (kernel crash) no longer bills until Colab reclaims it: a sweep every 10 min (GitHub Actions, `sweep.yml`; Vercel Hobby cron is daily only) and every GPU card load stop an app-started runtime with no heartbeat for 20 min. Needs the `WORKER_SECRET` repo secret

@@ -6,6 +6,7 @@
 //   - the worker: a Jupyter kernel on the runtime (its proxy URL + token) runs the notebook's own start cells, so the
 //     worker heartbeats this dashboard exactly as if the notebook had been run. The busy kernel keeps the VM alive.
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import { loadWorker } from "./registry";
 import { delObjs, getJson, getObj, putJson, putObj } from "./store";
 
 const COLAB = "https://colab.research.google.com";
@@ -436,6 +437,29 @@ export async function onHeartbeat(hb: { started_at?: number; queue?: number; run
   if (changed) await putJson(SESSION, s);
 }
 
+/** No heartbeat for this long from a runtime the app started: the worker died with its kernel (a crash, an OOM kill).
+ *  Idle auto-stop runs on heartbeats, so a dead worker would bill until Colab reclaims the VM. Boot takes about a
+ *  minute and the worker heartbeats every minute, so 20 min of silence is never a slow start. */
+export const DEAD_MIN = 20;
+
+/** Stop the app-started runtime if its worker went silent. Runs from the scheduled sweep (/api/cron/sweep) and each
+ *  time the GPU card loads; cheap when there is nothing to do (Colab is only asked once the worker looks dead). */
+export async function sweep(now = Date.now()) {
+  const s = await getSession();
+  if (!s || s.stopped || s.by !== "app" || !s.endpoint) return { action: "none", reason: "no runtime started from the app" };
+  if (!(await getObj(TOKEN))) return { action: "none", reason: "Colab isn't connected" };
+  const rec = await loadWorker().catch(() => null);
+  const quiet = Math.round((now - Math.max(s.started, rec?.last_seen ?? 0)) / 60_000); // a record older than the start is the last runtime's
+  if (quiet < DEAD_MIN) return { action: "none", reason: `last heard from ${quiet} min ago` };
+  if (!(await runtimes()).some((r) => r.endpoint === s.endpoint)) {
+    await putJson(SESSION, { ...s, stopped: now, stop_reason: "Colab took the runtime back" });
+    return { action: "closed", reason: "Colab had already taken the runtime back" };
+  }
+  await stopRuntime(s.endpoint, `no heartbeat for ${quiet} min (the worker died)`);
+  await notify("GPU stopped", `${s.gpu} stopped: its worker went silent ${quiet} min ago (crashed?), so it was only burning units.`, "skull");
+  return { action: "stopped", reason: `no heartbeat for ${quiet} min` };
+}
+
 /** One runtime is running: what Colab charges for it is its rate (per kind of runtime, kept in settings). */
 async function learnRate(rate: number) {
   const [r] = await runtimes();
@@ -449,6 +473,7 @@ async function learnRate(rate: number) {
 /** Everything the GPU card shows. */
 export async function status() {
   const s = await stored().catch(() => null);
+  if (s) await sweep().catch((e) => console.warn("colab sweep failed:", (e as Error).message));
   const [session, config] = await Promise.all([getSession(), getConfig()]);
   if (!s) return { connected: false, session, config };
   const [u, list] = await Promise.all([usage().catch((e: Error) => ({ error: e.message })), runtimes().catch((e: Error) => ({ error: e.message }))]);
