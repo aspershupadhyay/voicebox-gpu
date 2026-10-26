@@ -3315,6 +3315,8 @@ def run_eagle(job):
            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True", "MPLBACKEND": "Agg"}
     head = os.path.join(out, "head")
     stages = [("gen", None), ("train", None), ("bench", None)] + [("bench", {"model": head, "k": k}) for k in job["ks"]]
+    if ENG.budget > 0 and shutil.disk_usage(HOME).free / 1e9 < 20:
+        raise RuntimeError("not enough disk for the draft's data and model (needs ~20 GB free)")
     bench_errors = {}
     for i, (stage, spec) in enumerate(stages):
         if stage == "gen" and os.path.exists(os.path.join(out, "gen.json")):
@@ -3349,8 +3351,9 @@ def run_eagle(job):
     if os.path.isdir(head):
         shutil.copytree(head, keep)
         with zipfile.ZipFile(os.path.join(jdir, "eagle.zip"), "w", zipfile.ZIP_STORED) as z:  # for the dashboard to keep
-            for f in os.listdir(head):
-                z.write(os.path.join(head, f), f)
+            for f in os.listdir(keep):
+                z.write(os.path.join(keep, f), f)
+        shutil.rmtree(head, ignore_errors=True)  # ~1.2 GB: the kept copy and the zip are enough
     k = int(best["name"].rsplit("k", 1)[1]) if best else None
     if adopt:
         json.dump({"job": job["id"], "path": keep, "k": k, "at": time.time()}, open(os.path.join(EAGLE_DIR, "current.json"), "w"))
@@ -3836,7 +3839,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, catalogue())
         if u.path == "/jobs":
             return self._json(200, {"jobs": [job_view(j, urls=False) for j in reversed(JOBS.values())][:30]})
-        m = re.match(r"^/logs/([a-z0-9]+)$", u.path)
+        m = re.match(r"^/logs/([a-z0-9-]+)$", u.path)
         if m and (m.group(1) in C.ENGINES or m.group(1) in ("gateway", "tunnel", "train", "eagle-gen", "eagle-train", "eagle-install")):
             names = [f"{m.group(1)}.log", f"{m.group(1)}-install.log"]
             n = min(400, int(parse_qs(u.query).get("n", ["120"])[0]))
