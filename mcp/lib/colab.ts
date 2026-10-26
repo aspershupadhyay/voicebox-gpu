@@ -352,6 +352,38 @@ export async function keepAlive(endpoint: string) {
   if (r && !r.ok) throw new Error(`keep-alive ${r.status}`);
 }
 
+/** Colab keeps a runtime on kernel activity it sees through its tunnel; Google's own CLI dropped the keep-alive ping
+ *  for exactly that reason (Sept 2026), and a GPU started here was still reclaimed ~20 min into training with the ping.
+ *  An open notebook tab is that activity; a GPU started from the app has no tab, so every heartbeat does what a tab
+ *  does: lists the kernels and says hello to the worker's kernel over its websocket, through the tunnel. */
+export async function touchKernel(endpoint: string) {
+  const r = await tun<{ assignments?: Listed[] }>("/assignments");
+  const proxy = r.assignments?.find((x) => x.endpoint === endpoint)?.runtimeProxyInfo;
+  if (!proxy) return;
+  const headers = { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli", Authorization: `Bearer ${proxy.token}` };
+  const base = proxy.url.replace(/\/$/, "");
+  await fetch(`${base}/api/sessions`, { headers, signal: AbortSignal.timeout(10_000) }).catch(() => null);
+  const k = await fetch(`${base}/api/kernels`, { headers, signal: AbortSignal.timeout(10_000) }).catch(() => null);
+  const kernels = k?.ok ? ((await k.json().catch(() => [])) as { id: string }[]) : [];
+  if (!kernels.length) return;
+  const { default: WebSocket } = await import("ws");
+  const session = randomUUID();
+  const qs = new URLSearchParams({ session_id: session, token: proxy.token, "colab-runtime-proxy-token": proxy.token });
+  const ws = new WebSocket(`${base.replace(/^http/, "ws")}/api/kernels/${kernels[0].id}/channels?${qs}`, { headers });
+  await new Promise<void>((resolve) => {
+    const done = setTimeout(resolve, 6000); // the kernel is busy running the worker: a reply is a bonus, the visit counts
+    ws.on("open", () => {
+      for (const channel of ["control", "shell"]) {
+        ws.send(JSON.stringify({ header: { msg_id: randomUUID(), username: "voicebox", session, msg_type: "kernel_info_request", version: "5.3",
+          date: new Date().toISOString() }, parent_header: {}, metadata: {}, channel, buffers: [], content: {} }));
+      }
+    });
+    ws.on("message", () => { clearTimeout(done); resolve(); });
+    ws.on("error", () => { clearTimeout(done); resolve(); });
+  });
+  try { ws.close(); } catch { /* gone already */ }
+}
+
 export async function onHeartbeat(hb: { started_at?: number; queue?: number; running?: number; last_active?: number; gpu?: string }) {
   let s = await getSession();
   if (!(await getObj(TOKEN))) return;
@@ -369,7 +401,10 @@ export async function onHeartbeat(hb: { started_at?: number; queue?: number; run
     const rs = await runtimes().catch(() => []);
     if (rs.length === 1) { s.endpoint = rs[0].endpoint; await putJson(SESSION, s); }
   }
-  if (s.endpoint) await keepAlive(s.endpoint).catch((e) => console.warn("colab keep-alive failed:", (e as Error).message));
+  if (s.endpoint) {
+    await keepAlive(s.endpoint).catch((e) => console.warn("colab keep-alive failed:", (e as Error).message));
+    await touchKernel(s.endpoint).catch((e) => console.warn("colab kernel touch failed:", (e as Error).message));
+  }
   const cfg = await getConfig();
   const now = Date.now();
   let changed = false;
