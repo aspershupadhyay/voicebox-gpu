@@ -1162,6 +1162,8 @@ video.vplayer { width: 100%; border-radius: 12px; background: #000; display: blo
 .vl-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; padding-top: 6px; }
 .fulltake { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border: 1px solid var(--line2); border-radius: 14px; background: var(--fill); margin: 6px 0 4px; }
 .ft-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.liveplay { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border: 1px solid var(--line2); border-radius: 14px; background: var(--fill); margin: 6px 0 4px; animation: rise .25s var(--ease); }
+.liveplay .lp-text { flex: 1; min-width: 0; font-size: 13px; }
 .insert-pop { display: flex; flex-direction: column; gap: 6px; padding: 4px; }
 @media (max-width: 640px) {
   .vline { grid-template-columns: minmax(0, 1fr); }

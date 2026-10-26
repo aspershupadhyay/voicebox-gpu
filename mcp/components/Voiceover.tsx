@@ -5,7 +5,7 @@
 // line is kept, and the lines are joined into one full take you can play and download.
 // Every take lands in Files with word-timed subtitles. From a post (?post=) the script loads and the result is attached
 // back to the post; from Voices (?engine=&voice=) the voice is preselected.
-import { ArrowClockwise, ArrowSquareOut, CaretDown, CaretUp, ClosedCaptioning, DownloadSimple, Microphone, Plus, Power, SlidersHorizontal, Sparkle, WarningCircle } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowSquareOut, CaretDown, CaretUp, ClosedCaptioning, DownloadSimple, Microphone, Pause, Play, Plus, Power, SlidersHorizontal, Sparkle, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useResumeJob } from "./jobs";
@@ -152,6 +152,49 @@ function FullTake({ parts, name, jobs }: { parts: { job: string; id: string }[];
   );
 }
 
+/** Listen live: plays a voiceover line by line while it is still being made (each line's first take as soon as the
+ *  worker has it, then the finished line once reviewed), waiting at a line that isn't made yet. */
+function LivePlayer({ job, order, onActive }: { job: Job; order: string[]; onActive: (on: boolean) => void }) {
+  const audio = useRef<HTMLAudioElement>(null);
+  const [on, setOn] = useState(false);
+  const [idx, setIdx] = useState(0);
+  const urlOf = (id: string) => job.results.find((r) => r.id === id)?.url ?? job.live?.find((x) => x.id === id)?.url ?? null;
+  const ready = order.filter((id) => urlOf(id)).length;
+  const cur = order[idx];
+  const src = cur ? urlOf(cur) : null;
+  const start = (a: HTMLAudioElement, id: string, url: string) => { a.src = url; a.dataset.id = id; a.play().catch(() => setOn(false)); };
+  useEffect(() => { onActive(on); }, [on, onActive]);
+  useEffect(() => {
+    const a = audio.current;
+    if (!a || !on) return;
+    if (idx >= order.length) { setOn(false); setIdx(0); return; }
+    if (src && a.dataset.id !== cur) start(a, cur, src); // the next line just arrived, or the last one ended
+  }, [on, idx, src, cur, order.length]);
+  useEffect(() => () => audio.current?.pause(), []);
+  function toggle() {
+    const a = audio.current!;
+    if (on) { a.pause(); setOn(false); return; }
+    setOn(true);
+    if (src && a.dataset.id === cur && a.src) a.play().catch(() => start(a, cur, src)); // resume (inside the click: Safari); a preview gone since: the finished line
+    else if (src) start(a, cur, src);
+  }
+  const waiting = on && !src;
+  return (
+    <div className="liveplay" role="region" aria-label="Listen live">
+      <button className="btn sm" onClick={toggle} aria-label={on ? "Pause" : "Listen live"}>
+        {on ? <Pause size={14} weight="fill" /> : <Play size={14} weight="fill" />}{on ? "Pause" : idx ? "Resume" : "Listen live"}
+      </button>
+      <div className="lp-text">
+        <b>{waiting ? `Waiting for line ${idx + 1}…` : on ? `Line ${idx + 1} of ${order.length}` : "Listen while it's made"}</b>
+        <span className="dim small"> · {ready} of {order.length} ready{on && !waiting ? "" : ", plays in order"}</span>
+      </div>
+      {idx > 0 && !on && <button className="btn ghost sm" onClick={() => { audio.current?.removeAttribute("data-id"); setIdx(0); }}>From the top</button>}
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <audio ref={audio} onEnded={() => setIdx((i) => i + 1)} preload="auto" hidden />
+    </div>
+  );
+}
+
 function LinesView({ lines, spoken, takes, pending, ratings, blocked, onEdit, onRedo, onAdd, slug }: {
   lines: ParsedLine[]; spoken: string[]; takes: Record<string, Take>; pending: Set<string>; ratings: Record<string, number>; blocked: string;
   onEdit: (i: number, text: string) => void; onRedo: (l: ParsedLine) => void; onAdd: () => void; slug: string;
@@ -239,6 +282,7 @@ export default function Voiceover() {
   const [takes, setTakes] = useState<Record<string, Take>>({}); // the latest audio of each line, across jobs
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const [sent, setSent] = useState<string[]>([]); // the lines the running job is voicing
+  const [liveOn, setLiveOn] = useState(false); // listen live is playing: keep it on screen after the job ends
   const [err, setErr] = useState("");
   const [mine, setMine] = useState<MyVoice[]>([]);
   const [mineLoaded, setMineLoaded] = useState(false);
@@ -446,6 +490,7 @@ export default function Voiceover() {
           </div>
 
           {job && running && <JobProgress job={job} onCancel={() => api(`jobs/${job.id}/cancel`, { body: {} })} />}
+          {job && (running || liveOn) && job.status !== "error" && job.status !== "cancelled" && sent.length > 1 && <LivePlayer key={job.id} job={job} order={sent} onActive={setLiveOn} />}
           {job && !running && ["error", "cancelled"].includes(job.status) && <JobProgress job={job} />}
 
           {view === "script" ? (
