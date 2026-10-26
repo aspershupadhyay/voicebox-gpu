@@ -80,7 +80,7 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 
 ## Inference (plan in docs/INFERENCE.md; one PR per step, measured on a real GPU, behind a flag)
 - [ ] 1. Baseline benchmark script (`scripts/bench_voice.py`) and numbers on L4 and A100 (script and L4 numbers done 2026-10-26; A100 still to run)
-- [ ] 2. Compile the SNAC codec (`torch.compile` + CUDA graphs, batched decode)
+- [x] 2. Compile the SNAC codec (`torch.compile` + CUDA graphs, batched decode): measured, not adopted. The codec is ~5% of a job (1.2 s of 26 s on L4) and compiling costs ~1 min per cold load; built behind `VOICEBOX_COMPILE_CODEC`, left off
 - [x] 3. Batch the review (Whisper + voice match for all takes at once); best-of-4 ≈ best-of-1 time (L4: review ~10× faster, Orpheus best-of-4 1.6× best-of-1; Qwen's takes still voiced one batch at a time)
 - [ ] 4. Use the whole big card (≥ 70 GB): bigger vLLM pool, review models kept resident
 - [ ] 5. Stream the first audio (per-line job events; Lines view plays line 1 while the rest generate)
