@@ -184,6 +184,7 @@ while the job ran, so it includes whatever else was resident (Whisper, the enhan
 | Step 5 · orpheus (tara) | L4 (22.5 GB) | ≤ 9.4 s | 17.5 s | — | 16.2 GB | 0.999 / — (b1) |
 | Step 5 · qwen (female) | L4 (22.5 GB) | ≤ 13 s | — | 88.5 s | 11.4 GB | 0.999 / 0.955 (b4) |
 | Step 5b, n-gram · orpheus (tara) | L4 (22.5 GB) | — | 25.6 s (was 17.6) | — | 16.4 GB | 0.999 / — (b1) |
+| Qwen batch 16 · qwen (female) | L4 (22.5 GB) | — | — | 64.5 s (was 91.8) | 15.7 GB | 0.999 / 0.958 (b4) |
 | Baseline · orpheus | A100 | | | | | |
 | Baseline · qwen | A100 | | | | | |
 
@@ -244,6 +245,12 @@ style's temperatures pinned):
   `332bba044b6f` (50.7). Ten lines best-of-1: plain `89cffd26e902` generating 13.7, codec 0.5, listening 2.1, total
   17.6 s (match 0.992); n-gram `6c4218b4912a` generating 21.8, codec 0.5, listening 2.1, total 25.6 s (match 0.999).
   Plain best-of-4 on the same runtime: `041849c67d67` generating 19.0, codec 2.1, listening 7.7, total 30.1 s.
+- Qwen batch size (follow-up to step 3, `config.qwen_batch`: 16 lines a batch on an L4, was a fixed 8; same runtime,
+  Qwen warm, temperature pinned at 0.85, seed 7): best-of-4 `f4c6a9f756a5` (batch 8) generating 81.7, listening 8.8,
+  total 91.8 s; `d8b7492b3e33` (batch 16) generating 54.4, listening 8.8, total 64.5 s: **30% faster**. Match 0.999
+  both, voice match 0.957 vs 0.958 on average, peak VRAM 11.4 → 15.7 GB (with Whisper beside it). On by default; a
+  batch that runs out of memory halves itself (#63). This run was also the first on the GPU with #63's reliability
+  changes in place.
 - Step 2 check, same card, old codec path (`943477d45fe9`, Orpheus best-of-4): generating 14.7, codec 1.2,
   listening 8.9, mastering 1.2, total 26.0 s. The codec is the smallest stage.
 - Orpheus generating was also faster in this run (11.7 s vs 20.1 s) without any change to it; compare the review
