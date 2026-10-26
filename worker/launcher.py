@@ -41,6 +41,10 @@ def ensure_tools():
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "numpy", "scipy", "soundfile"])
     if subprocess.call(["which", "uv"], stdout=subprocess.DEVNULL) != 0:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "uv"])
+
+
+def fetch_cloudflared():
+    """cloudflared from the runtime disk (kept in HOME/bin across worker restarts), downloaded once per runtime."""
     cf = os.path.join(HOME, "bin", "cloudflared")
     if subprocess.call(["which", "cloudflared"], stdout=subprocess.DEVNULL) == 0:
         return "cloudflared"
@@ -48,17 +52,25 @@ def ensure_tools():
         os.makedirs(os.path.dirname(cf), exist_ok=True)
         arch = "arm64" if platform.machine() in ("aarch64", "arm64") else "amd64"
         url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{arch}"
-        urllib.request.urlretrieve(url, cf)
-        os.chmod(cf, 0o755)
+        urllib.request.urlretrieve(url, cf + ".part")
+        os.chmod(cf + ".part", 0o755)
+        os.replace(cf + ".part", cf)  # a download cut off by a restart never passes for the real thing
     return cf
 
 
 def start_gateway(secret):
+    return wait_gateway(spawn_gateway(secret), secret)
+
+
+def spawn_gateway(secret):
     env = {**os.environ, "WORKER_SECRET": secret, "VOICEBOX_HOME": HOME}
     logf = open(os.path.join(HOME, "logs", "gateway.log"), "a")
-    p = subprocess.Popen([sys.executable, os.path.join(HERE, "gateway.py"), "--port", str(PORT)],
-                         stdout=logf, stderr=subprocess.STDOUT, env=env, cwd=HERE)
-    for _ in range(60):
+    return subprocess.Popen([sys.executable, os.path.join(HERE, "gateway.py"), "--port", str(PORT)],
+                            stdout=logf, stderr=subprocess.STDOUT, env=env, cwd=HERE)
+
+
+def wait_gateway(p, secret):
+    for _ in range(120):
         try:
             urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{PORT}/health",
                                                           headers={"Authorization": f"Bearer {secret}"}), timeout=2)
@@ -66,7 +78,7 @@ def start_gateway(secret):
         except Exception:
             if p.poll() is not None:
                 raise RuntimeError("gateway exited; see " + os.path.join(HOME, "logs", "gateway.log"))
-            time.sleep(1)
+            time.sleep(0.5)
     raise RuntimeError("gateway did not start")
 
 
@@ -75,14 +87,14 @@ def start_tunnel(cf):
     logf = open(logpath, "w")
     p = subprocess.Popen([cf, "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{PORT}"],
                          stdout=logf, stderr=subprocess.STDOUT)
-    for _ in range(90):
+    for _ in range(180):
         m = re.search(r"https://[a-z0-9\-]+\.trycloudflare\.com", open(logpath).read())
         if m:
             open(os.path.join(HOME, "public_url"), "w").write(m.group(0))
             return p, m.group(0)
         if p.poll() is not None:
             break
-        time.sleep(1)
+        time.sleep(0.5)
     raise RuntimeError("tunnel failed; see " + logpath)
 
 
@@ -118,7 +130,23 @@ def register(register_url, secret, url):
     raise RuntimeError(f"too many redirects registering at {register_url}")
 
 
+BOOT = {}  # step 6: seconds from launcher start to each phase, written to HOME/boot.json (the gateway's /health shows it)
+T0 = time.time()
+
+
+def mark(phase):
+    BOOT[phase] = round(time.time() - T0, 1)
+    try:
+        json.dump({"phases": BOOT, "at": T0}, open(os.path.join(HOME, "boot.json"), "w"))
+    except OSError:
+        pass
+
+
 def main():
+    # cloudflared downloads while the settings are read and old processes cleared: it's needed only once the gateway runs
+    cf_box = {}
+    cf_thread = threading.Thread(target=lambda: cf_box.update(cf=fetch_cloudflared()), daemon=True)
+    cf_thread.start()
     secret = setting("WORKER_SECRET")
     register_url = setting("REGISTER_URL")
     if not secret or len(secret) < 24:
@@ -148,24 +176,54 @@ def main():
     if os.environ.get("MY_VOICE_MODEL"):
         log(f"your voice model: {os.environ['MY_VOICE_MODEL']}")
     log("Hugging Face token: " + ("set" if os.environ.get("HF_TOKEN") else "none (big downloads may be rate-limited; add HF_TOKEN in Colab Secrets)"))
-    cf = ensure_tools()
+    ensure_tools()
+    mark("settings")
     # a previous run in this runtime may have left processes behind (e.g. after "interrupt" + re-run)
+    killed = 0
     for pat in ("gateway.py", "engine_host.py", "cloudflared tunnel"):
-        subprocess.call(["pkill", "-f", pat])
+        killed += subprocess.call(["pkill", "-f", pat]) == 0
     # engines spawn children (vLLM's EngineCore) that don't match those names: free the GPU completely
     try:
         pids = subprocess.check_output(["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"], text=True).split()
         for pid in pids:
             if pid.isdigit() and int(pid) != os.getpid():
-                subprocess.call(["kill", "-9", pid])
+                killed += subprocess.call(["kill", "-9", pid]) == 0
     except Exception:
         pass
-    time.sleep(3)
-    gw = start_gateway(secret)
+    if killed:  # let the port and the GPU memory go; a fresh runtime has nothing to wait for
+        time.sleep(3)
+    # the gateway and the tunnel start side by side: cloudflared connects to Cloudflare while the gateway imports, and
+    # forwards requests once the gateway listens
+    gw = spawn_gateway(secret)
+    cf_thread.join()
+    cf = cf_box.get("cf") or fetch_cloudflared()  # the background download failed: once more, in the open
+    mark("cloudflared")
+    tunnel_box = {}
+
+    def open_tunnel():
+        try:
+            tunnel_box["t"] = start_tunnel(cf)
+        except Exception as e:  # noqa: BLE001
+            tunnel_box["err"] = e
+    tunnel_thread = threading.Thread(target=open_tunnel, daemon=True)
+    tunnel_thread.start()
+    gw = wait_gateway(gw, secret)
+    mark("gateway")
     h = health(secret)
     log(f"gateway up · GPU {h['gpu']['name']} {h['gpu']['total_gb']} GB · VRAM budget {h['vram_budget_gb']} GB")
-    tunnel, url = start_tunnel(cf)
+    tunnel_thread.join()
+    if "t" not in tunnel_box:
+        raise tunnel_box.get("err") or RuntimeError("tunnel failed")
+    tunnel, url = tunnel_box["t"]
+    mark("tunnel")
     log(f"public URL {url}")
+    if register_url:  # register now, not after prewarming: the dashboard shows the worker online from this moment
+        try:
+            register_url = register(register_url, secret, url)
+            mark("registered")
+            log(f"registered {BOOT['registered']} s after the launcher started ({BOOT})")
+        except Exception as e:  # noqa: BLE001  the heartbeat loop keeps trying
+            log(f"first register failed: {e}")
 
     for name in filter(None, (setting("PREWARM", "") or "").split(",")):
         name = name.strip()

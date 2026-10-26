@@ -76,9 +76,9 @@ def main():
     if first:
         j, secs = run({"kind": "clean", "url": first, "cleanup": "enhance", "platform": "raw"})
         warn = [w for w in j.get("warnings", []) if "enhance unavailable" in w]
-        steps = ((j.get("results") or [{}])[0].get("cleanup") or {}).get("steps") or []
+        steps = ((j.get("results") or [{}])[0].get("cleanup") or {}).get("steps") or []  # step names (older workers: dicts)
         ok = j["status"] == "done" and not warn
-        report("clean-up · Resemble Enhance", ok, f"steps {[s['step'] for s in steps]} in {secs:.0f} s" if ok else (warn[0] if warn else j.get("error") or j["status"]), "enhance")
+        report("clean-up · Resemble Enhance", ok, f"steps {[s if isinstance(s, str) else s.get('step') for s in steps]} in {secs:.0f} s" if ok else (warn[0] if warn else j.get("error") or j["status"]), "enhance")
     if not a.quick:
         j, secs = run({"engine": "kokoro", "voice": "male", "lines": [{"id": f"l{i}", "text": t} for i, t in enumerate(LONG)], "review": False, "platform": "raw"})
         if j["status"] == "done":

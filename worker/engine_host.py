@@ -3,7 +3,8 @@
   python engine_host.py --engine orpheus --port 8103
 
 POST /synth        {"text", "voice", "params", "ref_path"?, "ref_text"?, "out_path"} -> {"duration", "sample_rate"}
-POST /synth_batch  {"items": [<synth payload>, ...]} -> {"results": [{"duration", "sample_rate"} | {"error"}], "codec_s"?}
+POST /synth_batch  {"items": [<synth payload>, ...]} -> {"results": [{"duration", "sample_rate"} | {"error"}], "codec_s"?, "gen_tokens"?,
+                   "gen_s"?, "spec"?}
 POST /transcribe   {"paths": [...], "language"?, "prompt"?, "words"?} -> {"results": [{"text", "words", "duration"}]}
                        words: false = text only, short clips batched (the review); words stay []
 POST /similarity   {"ref", "paths": [...]} -> {"scores": [cosine, ...]}            (whisper host: speaker match)
@@ -172,7 +173,9 @@ def main():
                                         save(j, out)
                                     res.append({"duration": len(out[0]) / out[1], "sample_rate": out[1]})
                             # seconds spent turning codes into audio (Orpheus / myvoice): the job's "codec" step
-                            return self._send(200, {"results": res, "codec_s": round(getattr(engine, "codec_s", 0.0), 3)})
+                            return self._send(200, {"results": res, "codec_s": round(getattr(engine, "codec_s", 0.0), 3),
+                                                   "gen_tokens": getattr(engine, "gen_tokens", 0),
+                                                   "gen_s": round(getattr(engine, "gen_s", 0.0), 3), "spec": getattr(engine, "spec", None)})
                         res = []
                         for it in items:
                             try:
