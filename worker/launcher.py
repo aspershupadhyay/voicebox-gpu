@@ -210,6 +210,8 @@ def tick(gw, tunnel, url, register_url, last_status, secret, cf):
     if line != last_status:
         log(line)
         last_status = line
+    else:  # a quiet kernel looks idle to Colab: one short line a minute is output, i.e. activity, without the noise
+        print(f"\r[voicebox] alive {time.strftime('%H:%M')}", end="", flush=True)
     return gw, tunnel, url, register_url, last_status
 
 
