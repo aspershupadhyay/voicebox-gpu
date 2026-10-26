@@ -161,6 +161,7 @@ const handler = createMcpHandler(
           lines: z.array(line).min(1).max(1000).optional().describe("required unless post_id is given"),
           post_id: POST_ID.optional().describe("workspace post: voice its script and attach the result to it"),
           review: z.boolean().optional().describe("listen back and re-voice sentences that missed (default on)"),
+          review_batch: z.boolean().optional().describe("benchmarking only: true = the review hears every take in one batched call, false = four at a time (default: the worker's setting)"),
           subtitles: z.boolean().optional().describe("also make word-timed subtitles with Whisper large-v3"),
           language: z.string().max(8).optional().describe("ISO code for Whisper/Chatterbox, e.g. en, hi; omit to auto-detect"),
           style: z.enum(["tech", "hype", "narrator", "neutral"]).optional().describe("delivery style; default tech"),

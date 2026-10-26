@@ -22,6 +22,11 @@ PARK_MIN = float(os.environ.get("VOICEBOX_PARK_MIN", "60"))   # a model parked i
 RAM_RESERVE_GB = 16.0                                          # never park when it would leave less RAM free than this
 NO_PARK = {"wan", "wan14", "ltx", "animate"}                   # video engines that page themselves in and out (cpu offload)
 DISK_RESERVE_GB = 12.0                                         # keep this much disk free; evict old weights first
+
+# Inference speed-ups (docs/INFERENCE.md): each behind a flag, default on only once measured on a real GPU.
+# Step 3: the review hears every take of a voiceover in one batched, text-only Whisper call instead of four word-timed
+# files at a time. A job can still ask for either path with review_batch (bench_voice.py --batch-review on|off).
+BATCH_REVIEW = os.environ.get("VOICEBOX_BATCH_REVIEW", "0") == "1"
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
 
 ENGINES = {
@@ -355,6 +360,7 @@ def style_settings(style, engine):
 
 # Speed priors (seconds of compute per character / per second of audio), refined live by the gateway.
 RATE_PRIORS = {"kokoro": 0.004, "chatterbox": 0.06, "orpheus": 0.03, "myvoice": 0.03, "whisper": 0.06, "qwen": 0.05,
+               "listen": 0.06,  # the batched review (text only), seconds per second of takes
                "revoice": 0.25, "enhance": 0.4,  # per second of audio  # Chatterbox VC: seconds per second of performance
                # video: seconds per (step x frame x megapixel), x2 when CFG doubles the passes
                "wan": 0.3, "ltx": 0.35, "wan14": 1.2,

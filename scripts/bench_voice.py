@@ -10,6 +10,7 @@ isn't timed; --cold times it instead.
   scripts/bench_voice.py                              # orpheus + qwen, best-of-1 and best-of-4
   scripts/bench_voice.py --engines orpheus --takes 4 --runs 3
   scripts/bench_voice.py --label "step 2: compiled codec"   # the name of the row in the Results table
+  scripts/bench_voice.py --batch-review off --label Baseline  # A/B a flagged step on the same card
 
 Prints one Results row per engine for docs/INFERENCE.md and writes every number to bench/<date>-<gpu>.json.
 """
@@ -110,6 +111,7 @@ def main():
     ap.add_argument("--voice", help="override the voice (e.g. a trained myvoice name)")
     ap.add_argument("--no-review", action="store_true", help="skip the listening pass (best-of-1 only)")
     ap.add_argument("--cold", action="store_true", help="no warm-up job: model loading counts in the first case")
+    ap.add_argument("--batch-review", choices=["on", "off"], help="force the batched review (step 3) on or off; default: the worker's setting")
     ap.add_argument("--label", default="Baseline", help="the step this run measures (first column of the Results row)")
     ap.add_argument("--out", help="JSON file for every number (default bench/<date>-<gpu>.json)")
     a = ap.parse_args()
@@ -135,6 +137,8 @@ def main():
         # everything explicit, so the dashboard's settings (subtitles, platform) can't change what's measured
         common = {"engine": eng, "voice": voice, "style": "tech", "params": {"seed": SEED}, "review": not a.no_review,
                   "subtitles": False, "platform": "youtube"}
+        if a.batch_review:
+            common["review_batch"] = a.batch_review == "on"
         if not a.cold:
             print(f"{eng}: warming up", flush=True)
             w, _ = run_job(base, h, {**common, "lines": lines[:1], "takes": 1, "review": False, "label": f"bench · {eng} warm-up"})

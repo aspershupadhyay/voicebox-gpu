@@ -86,6 +86,42 @@ class Engine:
         free = torch.cuda.mem_get_info()[0] / 2**30
         return int(max(1, min(8, (free - 2.0) // 3.5, seconds // 30 + 1)))
 
+    def _text_batch(self, n):
+        """How many short clips to decode at once when only the text is wanted: no word timestamps means no
+        cross-attention maps kept, so a clip costs well under 0.5 GB; the batch follows the free memory, capped at 16."""
+        if self.dev != "cuda":
+            return 1
+        free = torch.cuda.mem_get_info()[0] / 2**30
+        return int(max(1, min(16, n, (free - 2.0) // 0.5)))
+
+    def transcribe_text(self, paths, language=None):
+        """Text only, for the review: every clip up to 30 s goes through one batched pipeline call (Whisper pads each
+        to a 30 s window anyway, so batching doesn't change what it hears). Longer clips take the word-timed path."""
+        audio = [load_16k(p) for p in paths]
+        out = [None] * len(paths)
+        short = [i for i, a in enumerate(audio) if len(a) <= 30 * 16000]
+        bs = self._text_batch(len(short))
+        while short:
+            try:
+                with torch.inference_mode():
+                    res = self.pipe([{"raw": audio[i], "sampling_rate": 16000} for i in short], batch_size=bs,
+                                    generate_kwargs=self._gen(language))
+                for i, o in zip(short, res):
+                    out[i] = {"text": o["text"].strip(), "words": [], "duration": round(len(audio[i]) / 16000, 3),
+                              "language": language or "auto"}
+                break
+            except torch.cuda.OutOfMemoryError:  # another engine took memory meanwhile: halve the batch, never fail
+                if bs == 1:
+                    raise
+                bs = max(1, bs // 2)
+            finally:
+                if self.dev == "cuda":
+                    torch.cuda.empty_cache()
+        rest = [i for i in range(len(paths)) if out[i] is None]
+        for i, r in zip(rest, self.transcribe_batch([paths[i] for i in rest], language)):
+            out[i] = r
+        return out
+
     def transcribe_batch(self, paths, language=None):
         """One file at a time, its 30 s windows decoded in a batch sized to the free GPU memory."""
         out = []

@@ -608,8 +608,9 @@ class Engines:
     def synth_batch(self, name, items):
         return self._post(name, "/synth_batch", {"items": items})["results"]
 
-    def transcribe(self, paths, language=None):
-        return self._post("whisper", "/transcribe", {"paths": paths, "language": language})["results"]
+    def transcribe(self, paths, language=None, words=True):
+        """words=False: text only, short clips decoded together in one batch (the review)."""
+        return self._post("whisper", "/transcribe", {"paths": paths, "language": language, "words": words})["results"]
 
     def similarity(self, ref_path, paths):
         """Speaker-embedding cosine of each file vs the reference (WavLM SV, ~0.86+ = same speaker)."""
@@ -1082,7 +1083,8 @@ def _voice_setup(job, body, lines):
                 "subtitles": bool(body.get("subtitles")), "ref": body.get("ref") if isinstance(body.get("ref"), dict) else None,
                 "models": _models(body.get("models")), "kvoices": _models(body.get("kvoices")),
                 "lexicon": body.get("lexicon", True) is not False, "pronounce": _pronounce(body.get("pronounce")),
-                "takes": 1 if engine == "kokoro" else max(1, min(C.MAX_TAKES, int(body.get("takes") or 1)))})
+                "takes": 1 if engine == "kokoro" else max(1, min(C.MAX_TAKES, int(body.get("takes") or 1))),
+                "review_batch": body["review_batch"] if isinstance(body.get("review_batch"), bool) else C.BATCH_REVIEW})
     _platform(job, body, style_post)
     if engine == "myvoice" and "enhance" not in (body.get("post") or {}):
         job["post"]["enhance"] = "auto"  # 24 kHz codec -> 44.1 kHz studio air, kept only when it listens better
@@ -1092,7 +1094,7 @@ def _voice_setup(job, body, lines):
         job["warnings"].append("learned settings for this voice: " + ", ".join(f"{k} {v}" for k, v in learned.items()))
     chars = sum(len(l["text"]) for l in clean)
     job["est_total"] = (RATES[engine] * chars * job["takes"] + (RATES["whisper"] * chars / 14 if job["subtitles"] else 0)
-                        + (RATES["whisper"] * chars / 14 * job["takes"] if job["takes"] > 1 or job["review"] else 0))
+                        + (RATES["listen" if job["review_batch"] else "whisper"] * chars / 14 * job["takes"] if job["takes"] > 1 or job["review"] else 0))
 
 
 def _models(given):
@@ -2006,13 +2008,20 @@ def _listen(job, paths, ref_path):
     job["stage"] = stage
     durs = [sf.info(x).duration for x in paths]
     heard = []
-    for b in range(0, len(paths), 4):
-        batch = paths[b:b + 4]
-        audio_s = sum(durs[b:b + 4])
+    if job.get("review_batch"):  # every take in one text-only call (INFERENCE.md step 3)
+        audio_s = sum(durs)
         t0 = time.time()
-        heard += _run_unit(job, RATES["whisper"] * audio_s, lambda: ENG.transcribe(batch, job.get("language")),
-                           f"listening back: {b + 1}–{b + len(batch)} of {len(paths)}")
-        learn_rate("whisper", time.time() - t0, audio_s)
+        heard = _run_unit(job, RATES["listen"] * audio_s + 2, lambda: ENG.transcribe(paths, job.get("language"), words=False),
+                          f"listening back: {len(paths)} take{'s' if len(paths) > 1 else ''} at once")
+        learn_rate("listen", time.time() - t0, audio_s)
+    else:
+        for b in range(0, len(paths), 4):
+            batch = paths[b:b + 4]
+            audio_s = sum(durs[b:b + 4])
+            t0 = time.time()
+            heard += _run_unit(job, RATES["whisper"] * audio_s, lambda: ENG.transcribe(batch, job.get("language")),
+                               f"listening back: {b + 1}–{b + len(batch)} of {len(paths)}")
+            learn_rate("whisper", time.time() - t0, audio_s)
     sims = [None] * len(paths)
     if ref_path:
         try:
@@ -3321,7 +3330,7 @@ def _progress(job):
 def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
                                  "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup",
-                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method", "lane")}
+                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method", "lane", "review_batch")}
     v["resources"] = job_resources(job)
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
