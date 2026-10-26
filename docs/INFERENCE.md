@@ -75,6 +75,11 @@ the voice-match and naturalness models) and, on 70 GB+, the enhancer stay reside
 background at the start of a voiceover when they fit beside it without moving anything off the GPU. A running engine's
 `ensure` no longer waits on the engine lock, which a load holds for its whole duration. Colab's A100s are usually the
 40 GB model, so `WHOLE_CARD` waits for an 80 GB card to measure on; `RESIDENT_REVIEW` is measured on the L4.
+Measured (L4, Results): with Whisper unloaded, a best-of-1 voiceover went from 26.7 s (8.0 s of it waiting for
+Whisper to load before the review) to 16.1 s (Whisper preloaded beside the generation, no wait), same scores.
+`RESIDENT_REVIEW` is on by default; `WHOLE_CARD` stays off until an 80 GB card can be measured. Open: in that cold
+case the streamed first line still waits for the normal review, because Whisper is mid-preload when line 1 finishes;
+the watcher could wait for the preload instead of skipping.
 
 ### 5. Stream the first audio
 Let the worker push each line (then each chunk) as soon as it's mastered: a job event stream
@@ -175,6 +180,11 @@ style's temperatures pinned):
   because Whisper had been parked: publishing early changes nothing in the result. That run is why the watcher now
   wakes a parked Whisper when it fits beside the generation (`fits_now`). Cost: Qwen's line 1 is an extra small batch
   (~3 s on a ~85 s job); Orpheus's step loop is the same loop `generate()` runs.
+- Step 4, review models resident (same L4 runtime, Orpheus warm, Whisper unloaded first, i.e. a voiceover after
+  Whisper idled out; its weights in the RAM cache, so its load is the 8 s warm case, 26-100 s from disk): off
+  `c8b817c8e717` loading 8.0, generating 13.4, listening 3.4, total 26.7 s; on `4496cd1d7b2a` loading 0, generating
+  11.0, listening 3.4, total 16.1 s. With it on, Whisper also stays loaded between voiceovers (never idle-unloaded,
+  evicted last), so this wait only comes back after a restart.
 - Step 2 check, same card, old codec path (`943477d45fe9`, Orpheus best-of-4): generating 14.7, codec 1.2,
   listening 8.9, mastering 1.2, total 26.0 s. The codec is the smallest stage.
 - Orpheus generating was also faster in this run (11.7 s vs 20.1 s) without any change to it; compare the review
