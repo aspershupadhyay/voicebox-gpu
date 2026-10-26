@@ -20,13 +20,23 @@ HOME = C.HOME
 os.makedirs(os.path.join(HOME, "logs"), exist_ok=True)
 
 
+# Colab Secrets answer only with a notebook page open: started from the app (VOICEBOX_STARTED_BY=app, a bare kernel),
+# each lookup of a missing secret waited for a timeout (51 s of a 64 s start), so the app's start never asks, and a
+# notebook start stops asking after the first failure.
+USERDATA = {"ok": os.environ.get("VOICEBOX_STARTED_BY") != "app"}
+
+
 def setting(name, default=None):
     if os.environ.get(name):
         return os.environ[name]
+    if not USERDATA["ok"]:
+        return default
     try:
         from google.colab import userdata  # type: ignore
         return userdata.get(name)
-    except Exception:
+    except Exception as e:  # noqa: BLE001
+        if type(e).__name__ not in ("SecretNotFoundError", "NotebookAccessError"):  # no answer at all: stop asking
+            USERDATA["ok"] = False
         return default
 
 
@@ -159,6 +169,7 @@ def main():
     for k in wanted:
         if not os.environ.get(k) and setting(k):
             os.environ[k] = setting(k)
+    mark("secrets")
     if register_url and not all(os.environ.get(k) for k in wanted):
         try:  # or from the dashboard, which keeps them in its own env (deploy-mcp.sh pushes HF_TOKEN from .secrets.local)
             req = urllib.request.Request(register_url.rsplit("/api/", 1)[0] + "/api/worker-env", headers={"Authorization": f"Bearer {secret}"})
@@ -176,8 +187,9 @@ def main():
     if os.environ.get("MY_VOICE_MODEL"):
         log(f"your voice model: {os.environ['MY_VOICE_MODEL']}")
     log("Hugging Face token: " + ("set" if os.environ.get("HF_TOKEN") else "none (big downloads may be rate-limited; add HF_TOKEN in Colab Secrets)"))
+    mark("worker-env")
     ensure_tools()
-    mark("settings")
+    mark("tools")
     # a previous run in this runtime may have left processes behind (e.g. after "interrupt" + re-run)
     killed = 0
     for pat in ("gateway.py", "engine_host.py", "cloudflared tunnel"):

@@ -461,10 +461,12 @@ class Engines:
 
     def prefetch(self, name):
         """Step 6: install name's venv and download its weights to disk (nothing on the GPU), so its first load is
-        just a load. Skipped when it's already loaded or there's no disk to spare."""
+        just a load. Skipped when it's already loaded or there's no disk to spare. It gives way to real work: while a job
+        installs or downloads an engine, the prefetch waits (a download under way stops and resumes where it was)."""
         if name in self.procs or not C.ENGINES[name].get("prefetch"):
             return
         t = time.time()
+        self._wait_for_quiet(name)
         py = self._install(name)
         if self.state.get(name) == "installing" and name not in self.procs:
             self._set(name, "idle")
@@ -475,8 +477,30 @@ class Engines:
         code = ("import sys; from huggingface_hub import snapshot_download\n"
                 "for r in sys.argv[1:]: snapshot_download(r, ignore_patterns=['*.msgpack', '*.h5', '*.ot', '*.onnx', '*.gguf', 'original/*'])")
         with open(os.path.join(LOGS_DIR, f"{name}-prefetch.log"), "a") as logf:
-            subprocess.run([py, "-c", code, *C.ENGINES[name]["prefetch"]], check=True, stdout=logf, stderr=logf, env=env)
+            while True:
+                self._wait_for_quiet(name)
+                if name in self.procs:
+                    return  # a job loaded it meanwhile: its own load fetched what was missing
+                p = subprocess.Popen([py, "-c", code, *C.ENGINES[name]["prefetch"]], stdout=logf, stderr=logf, env=env)
+                while p.poll() is None and not self._others_fetching(name):
+                    time.sleep(1)
+                if p.poll() is None:  # a job needs the network and the disk now: stop, pick up again after it
+                    p.terminate()
+                    p.wait()
+                    log(f"prefetch of {name} paused for a job's download")
+                    continue
+                if p.returncode:
+                    raise RuntimeError(f"download failed (exit {p.returncode}); see {name}-prefetch.log")
+                break
         log(f"prefetched {name} (venv + weights on disk) in {time.time() - t:.0f} s")
+
+    def _others_fetching(self, name):
+        """A job is installing, downloading or loading another engine (its live progress is in self.fetch)."""
+        return any(n != name for n in list(self.fetch))
+
+    def _wait_for_quiet(self, name):
+        while self._others_fetching(name):
+            time.sleep(2)
 
     def _switch_group(self, name):
         if not C.ENGINES[name]["gpu_gb"]:
