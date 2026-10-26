@@ -157,9 +157,9 @@ async function assignOnce(gpu: Gpu, highRam: boolean) {
   return got;
 }
 
-/** Whatever GPU is picked, try to get one: the choice with high RAM, the same GPU in its standard shape when Colab
- *  doesn't offer high RAM for it (a 400), then the other GPUs from your own settings when it isn't available at all
- *  (400 / 403 / 503). Nothing about which GPU has which shapes is assumed; Colab's answer decides. */
+/** Get exactly the GPU that was picked: with high RAM, or in its standard shape when Colab doesn't offer high RAM
+ *  for it (a 400). Never a different GPU: if Colab can't give this one, the error says why. Nothing about which GPU
+ *  has which shapes is assumed; Colab's answer decides. */
 async function assign(choices: Gpu[], highRam: boolean, deadline: number) {
   const tried: string[] = [];
   let last: Error | null = null;
@@ -178,7 +178,7 @@ async function assign(choices: Gpu[], highRam: boolean, deadline: number) {
       }
     }
   }
-  throw new Error(tried.length > 1 ? `no GPU could be assigned. Tried ${tried.join("; ")}` : last?.message ?? "no GPU could be assigned");
+  throw new Error(tried.length > 1 ? `Colab couldn't give a ${choices[0]}. Tried ${tried.join("; ")}` : last?.message ?? `Colab couldn't give a ${choices[0]}`);
 }
 
 /** Python the worker's kernel runs: the notebook's two start cells, with the secrets passed in (no Colab Secrets here). */
@@ -314,15 +314,14 @@ export async function start(origin: string, gpu?: Gpu, opts: { purpose?: Purpose
   const highRam = typeof opts.high_ram === "boolean" ? opts.high_ram : cfg.high_ram;
   const have = await runtimes();
   if (have.length) throw new Error(`a runtime is already running (${have.map((r) => r.accelerator).join(", ")}): stop it first, or wait for the worker to come online`);
-  // the pick first, then the other GPUs you chose in settings, in case Colab can't give the pick right now
-  const a = await assign([want, cfg.gpu, cfg.voice_gpu, cfg.heavy_gpu], highRam, t0 + 60_000);
+  // only the GPU that was picked: starting a different one (and billing for it) is never our call
+  const a = await assign([want], highRam, t0 + 60_000);
   const s: ColabSession = { endpoint: a.endpoint, gpu: a.gpu, started: Date.now(), by: "app", notified_hours: 0, last_active: Date.now(),
     high_ram: a.high_ram, purpose: opts.purpose ?? null };
   await putJson(SESSION, s);
   try {
     const r = await launch(a.runtimeProxyInfo, bootstrap(appOrigin(origin), process.env.COLAB_PREWARM ?? ""), t0 + 270_000);
-    const note = a.gpu !== want ? `${want} wasn't available, so ${a.gpu} was started instead`
-      : highRam && !a.high_ram ? `${want} has no high-RAM machine on this account, so the standard one was started` : undefined;
+    const note = highRam && !a.high_ram ? `${want} has no high-RAM machine on this account, so the standard one was started` : undefined;
     return { ...s, kernel: r.kernel, output: r.output, ...(note ? { note } : {}) };
   } catch (e) {
     // a runtime without a worker only burns units: give it back
