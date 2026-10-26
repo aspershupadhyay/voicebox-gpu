@@ -540,7 +540,7 @@ class Engines:
                        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
                        # Colab sets the notebook's inline plot backend, which an engine's own venv can't load: matplotlib
                        # then refuses to import (Resemble Enhance imports pyplot and died loading). Engines never show plots.
-                       "MPLBACKEND": "Agg"}
+                       "MPLBACKEND": "Agg", "VOICEBOX_COMPILE_CODEC": "1" if C.COMPILE_CODEC else "0"}
                 p = subprocess.Popen([py, os.path.join(HERE, "engine_host.py"), "--engine", name,
                                       "--port", str(C.ENGINES[name]["port"])], stdout=logf, stderr=logf, env=env, cwd=HERE,
                                      start_new_session=True)  # own process group: stop() also kills vLLM's children
@@ -605,8 +605,12 @@ class Engines:
     def synth(self, name, payload):
         return self._post(name, "/synth", payload)
 
-    def synth_batch(self, name, items):
-        return self._post(name, "/synth_batch", {"items": items})["results"]
+    def synth_batch(self, name, items, timing=None):
+        """timing: a dict that gets the engine's codec seconds (Orpheus / myvoice), when it reports them."""
+        r = self._post(name, "/synth_batch", {"items": items})
+        if timing is not None:
+            timing["codec"] = r.get("codec_s") or 0.0
+        return r["results"]
 
     def transcribe(self, paths, language=None, words=True):
         """words=False: text only, short clips decoded together in one batch (the review)."""
@@ -1943,7 +1947,13 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
             elif job.get("takes", 1) > 1:
                 label += f" · {job['takes']} takes each"
             t0 = time.time()
-            res = _run_unit(job, RATES[eng] * chars, lambda: ENG.synth_batch(eng, items), label)
+            spent = {}
+            res = _run_unit(job, RATES[eng] * chars, lambda: ENG.synth_batch(eng, items, spent), label)
+            if spent.get("codec"):  # show the codec as its own step: move its seconds out of generating / re-voicing
+                t = job["timings"]
+                step = STEP.get(job["stage"], job["stage"])
+                t[step] = round(t.get(step, 0.0) - spent["codec"], 2)
+                t["codec"] = round(t.get("codec", 0.0) + spent["codec"], 2)
             if not ENG.batch.get(eng) or len(items) > 1:
                 learn_rate(eng, time.time() - t0, chars)
             errs = [r["error"] for r in res if "error" in r]

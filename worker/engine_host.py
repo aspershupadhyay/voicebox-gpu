@@ -3,7 +3,7 @@
   python engine_host.py --engine orpheus --port 8103
 
 POST /synth        {"text", "voice", "params", "ref_path"?, "ref_text"?, "out_path"} -> {"duration", "sample_rate"}
-POST /synth_batch  {"items": [<synth payload>, ...]} -> {"results": [{"duration", "sample_rate"} | {"error"}]}
+POST /synth_batch  {"items": [<synth payload>, ...]} -> {"results": [{"duration", "sample_rate"} | {"error"}], "codec_s"?}
 POST /transcribe   {"paths": [...], "language"?, "prompt"?, "words"?} -> {"results": [{"text", "words", "duration"}]}
                        words: false = text only, short clips batched (the review); words stay []
 POST /similarity   {"ref", "paths": [...]} -> {"scores": [cosine, ...]}            (whisper host: speaker match)
@@ -159,7 +159,8 @@ def main():
                                     if it.get("codes_path") and it.get("key") in getattr(engine, "recent", {}):
                                         json.dump(engine.recent[it["key"]][1], open(it["codes_path"], "w"))  # for preference pairs
                                     res.append({"duration": len(out[0]) / out[1], "sample_rate": out[1]})
-                            return self._send(200, {"results": res})
+                            # seconds spent turning codes into audio (Orpheus / myvoice): the job's "codec" step
+                            return self._send(200, {"results": res, "codec_s": round(getattr(engine, "codec_s", 0.0), 3)})
                         res = []
                         for it in items:
                             try:

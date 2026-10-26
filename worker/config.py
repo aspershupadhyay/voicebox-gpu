@@ -28,6 +28,9 @@ DISK_RESERVE_GB = 12.0                                         # keep this much 
 # files at a time (VOICEBOX_BATCH_REVIEW=0 brings back the old path). A job can still ask for either path with
 # review_batch (bench_voice.py --batch-review on|off).
 BATCH_REVIEW = os.environ.get("VOICEBOX_BATCH_REVIEW", "1") == "1"
+# Step 2: Orpheus / myvoice decode audio with SNAC folded, compiled for any length and batched per wave instead of one
+# chunk at a time (engines/orpheus.py). Read by the engine at load: a change needs an engine restart.
+COMPILE_CODEC = os.environ.get("VOICEBOX_COMPILE_CODEC", "0") == "1"
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
 
 ENGINES = {
