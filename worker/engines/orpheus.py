@@ -35,6 +35,22 @@ SAMPLES_PER_FRAME = 2048  # SNAC 24 kHz: one level-1 code (7 Orpheus tokens) = 2
 # INFERENCE.md step 5 (gateway passes config.STREAM): hand back each chunk the moment vLLM finishes it (synth_batch's
 # emit), so the gateway can play the first line while the rest are still generating. Same batch, same sampling.
 STREAM = os.environ.get("VOICEBOX_STREAM", "0") == "1"
+# INFERENCE.md step 5b (gateway passes config.SPEC): speculative decoding. A cheap proposer guesses the next few codec
+# tokens and Orpheus checks them all in one forward pass, so a step can move several tokens instead of one. Rejection
+# sampling keeps the output distribution the same. "ngram" proposes from repeats earlier in the sequence (no extra model);
+# "<method>:<model>" (e.g. "eagle:/path/to/head", "draft:org/model") uses a trained proposer that shares the vocabulary.
+SPEC = os.environ.get("VOICEBOX_SPEC", "0")
+SPEC_TOKENS = int(os.environ.get("VOICEBOX_SPEC_TOKENS", "4"))
+
+
+def spec_config():
+    """vLLM's speculative_config for SPEC, or None for plain decoding."""
+    if SPEC in ("", "0", "off"):
+        return None
+    if SPEC == "ngram":
+        return {"method": "ngram", "num_speculative_tokens": SPEC_TOKENS, "prompt_lookup_max": 4, "prompt_lookup_min": 2}
+    method, _, model = SPEC.partition(":")
+    return {"method": method, "model": model, "num_speculative_tokens": SPEC_TOKENS}
 
 
 def token_budget(text, params):
@@ -64,10 +80,12 @@ class Engine:
         self.snac = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").to(self.dev)
         self.snac.train(False)
         self.codec_s = 0.0  # time spent decoding codes to audio in the last synth_batch (reported to the job)
+        self.gen_tokens, self.gen_s = 0, 0.0  # codec tokens vLLM made in the last synth_batch, and its seconds (codec excluded)
         self.codec_batch = COMPILE_CODEC and self.dev == "cuda"
         if self.codec_batch:
             self._fast_codec()
         self.mode = "transformers"
+        self.spec = None  # the speculative decoding actually running (SPEC, if this vLLM took it)
         self.lora_req = None
         if self.dev == "cuda" and os.environ.get("ORPHEUS_BACKEND", "vllm") == "vllm":
             try:
@@ -81,9 +99,23 @@ class Engine:
                 kw = dict(model=MODEL, dtype="bfloat16" if has_bf16() else "float16", gpu_memory_utilization=util,
                           max_model_len=8192, enable_prefix_caching=True, max_num_seqs=int(os.environ.get("ORPHEUS_MAX_SEQS", "64")), **lora)
 
+                spec = spec_config()
+
                 def build(**q):
                     """Sleep mode lets the gateway park this engine in RAM (llm.sleep) when another model needs the GPU,
-                    and wake it in seconds instead of a cold start; without it, parking falls back to stopping."""
+                    and wake it in seconds instead of a cold start; without it, parking falls back to stopping.
+                    Speculative decoding the same way: if this vLLM can't start it with these settings, plain decoding."""
+                    nonlocal spec
+                    if spec:
+                        try:
+                            return build_plain(speculative_config=spec, **q)
+                        except Exception as e:  # noqa: BLE001
+                            print(f"[orpheus] speculative decoding unavailable ({type(e).__name__}: {e})", flush=True)
+                            spec = None
+                            torch.cuda.empty_cache()
+                    return build_plain(**q)
+
+                def build_plain(**q):
                     if os.environ.get("ORPHEUS_SLEEP", "1") != "0":
                         try:
                             return LLM(enable_sleep_mode=True, **q, **kw)
@@ -106,6 +138,9 @@ class Engine:
                     self.lora_req = LoRARequest("myvoice", 1, LORA)
                 self.tok = self.llm.get_tokenizer()
                 self.mode = "vllm"
+                self.spec = SPEC if spec else None
+                if spec:
+                    print(f"[orpheus] speculative decoding: {SPEC}, {SPEC_TOKENS} tokens a step", flush=True)
             except Exception as e:  # noqa: BLE001
                 print(f"[orpheus] vLLM unavailable ({type(e).__name__}: {e}); using transformers", flush=True)
         if self.mode == "transformers":
@@ -244,6 +279,7 @@ class Engine:
     def synth_batch(self, items, emit=None):
         """emit(j, audio): called for each chunk as soon as it's ready (step 5); the return value has them all too."""
         self.codec_s = 0.0
+        self.gen_tokens, self.gen_s = 0, 0.0
         self.emit = emit if STREAM else None
         outs = [None] * len(items)
         made = {it.get("key") for it in items if it.get("key")}
@@ -284,10 +320,14 @@ class Engine:
         if not ok:
             return
         lora = loras if any(loras) else None
+        t0, c0 = time.time(), self.codec_s
         if self.emit and self._vllm_stream(items, ok, prompts, sps, loras, outs):
+            self.gen_s += time.time() - t0 - (self.codec_s - c0)
             return
         results = self.llm.generate(prompts, sps, use_tqdm=False, lora_request=lora)
         gens = [r.outputs[0].token_ids for r in results]
+        self.gen_s += time.time() - t0
+        self.gen_tokens += sum(len(g) for g in gens)
         t = time.time()
         if self.codec_batch:
             for j, g, a in zip(ok, gens, self._decode_many(gens)):
@@ -331,6 +371,7 @@ class Engine:
                 if not r.finished or r.request_id not in ids:
                     continue
                 j, gen = ids.pop(r.request_id), r.outputs[0].token_ids
+                self.gen_tokens += len(gen)
                 t = time.time()
                 try:
                     outs[j] = self._decode(gen)

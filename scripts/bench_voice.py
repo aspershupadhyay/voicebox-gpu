@@ -87,7 +87,8 @@ def measure(st, first):
             "vram_peak_gb": (st.get("resources") or {}).get("vram_peak_gb"),
             "audio_s": round(sum(r.get("duration") or 0 for r in res), 1),
             "match": mean(t.get("match") for t in takes), "similarity": mean(t.get("similarity") for t in takes),
-            "retried": sum(((r.get("review") or {}).get("retried") or 0) for r in res)}
+            "retried": sum(((r.get("review") or {}).get("retried") or 0) for r in res),
+            "decode": st.get("decode")}  # Orpheus: codec tokens a second while vLLM decoded, and the speculative decoding
 
 
 def summarise(runs):
@@ -162,6 +163,7 @@ def main():
                 print(f"  {eng} best-of-{n} #{k + 1}: {m['status']} first line {fmt(m['first_line_s'], ' s')}, "
                       f"total {fmt(m['wall_s'], ' s')} for {m['audio_s']} s of audio, VRAM {fmt(m['vram_peak_gb'], ' GB')}, "
                       f"match {fmt(m['match'])} voice {fmt(m['similarity'])} · {m['timings']}"
+                      + (f" · {m['decode']['tokens_per_s']} tok/s ({m['decode'].get('spec') or 'no spec'})" if m["decode"] else "")
                       + (f" · {m['error']}" if m["error"] else ""), flush=True)
             report["engines"][eng]["cases"][f"best-of-{n}"] = {"summary": summarise(runs), "runs": runs}
 

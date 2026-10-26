@@ -43,6 +43,15 @@ STREAM = os.environ.get("VOICEBOX_STREAM", "1") == "1"
 WHOLE_CARD = os.environ.get("VOICEBOX_WHOLE_CARD", "0") == "1"
 RESIDENT_REVIEW = os.environ.get("VOICEBOX_RESIDENT_REVIEW", "1") == "1"  # VOICEBOX_RESIDENT_REVIEW=0: plain LRU
 COMPILE_CODEC = os.environ.get("VOICEBOX_COMPILE_CODEC", "0") == "1"
+# Step 5b: speculative decoding for Orpheus / myvoice (engines/orpheus.py). "ngram": the next few codec tokens are
+# guessed from repeats earlier in the sequence and checked in one forward pass (no extra model, same distribution);
+# "<method>:<model>" plugs in a trained proposer (e.g. an EAGLE head); "0" turns it off. VOICEBOX_SPEC_TOKENS sets how
+# many tokens are guessed a step. Read at engine load: a change needs an engine restart.
+SPEC = os.environ.get("VOICEBOX_SPEC", "ngram")
+# Step 6: right after the gateway starts, install these engines' venvs and download their weights (ENGINES[...]["prefetch"])
+# to disk in the background, one at a time, without loading anything on the GPU: on a fresh runtime the first voiceover
+# then skips the install and the download. Already there (a worker restart): nothing to do. "" turns it off.
+PREFETCH = [n.strip() for n in os.environ.get("VOICEBOX_PREFETCH", "qwen,orpheus,whisper").split(",") if n.strip()]
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
 
 ENGINES = {
@@ -96,6 +105,7 @@ ENGINES = {
         "gpu_gb": 11.5,  # vLLM pool (ORPHEUS_VRAM_GB, default 9) + SNAC decoder + CUDA context
         "chunk_chars": 260,  # sentences are grouped up to this size, then batched together on vLLM
         "packages": "vllm snac soundfile",
+        "prefetch": [os.environ.get("ORPHEUS_MODEL", "unsloth/orpheus-3b-0.1-ft"), "hubertsiuzdak/snac_24khz"],
         "about": "Orpheus 3B on vLLM. Most human-sounding; inline tags <laugh> <chuckle> <sigh> <cough> <sniffle> <groan> <yawn> <gasp>.",
         "voices": ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"],
         "presets": {"female": "tara", "male": "dan"},
@@ -138,6 +148,8 @@ ENGINES = {
         "port": 8105,
         "gpu_gb": 4.0,  # large-v3-turbo fp16 weights (1.6 GB) + batched 30 s windows, voice match and naturalness models
         "packages": "torch transformers accelerate soundfile scipy",
+        "prefetch": [os.environ.get("WHISPER_MODEL", "openai/whisper-large-v3-turbo"),
+                     os.environ.get("VOICE_MATCH_MODEL", "microsoft/wavlm-base-plus-sv")],
         "about": "Whisper large-v3-turbo (OpenAI). Large-v3 accuracy with a 4-layer decoder: several times faster subtitles, review and dataset cuts. Word-level timestamps, 99 languages.",
         "voices": [],
         "presets": {},
@@ -171,6 +183,7 @@ ENGINES = {
         "chunk_chars": 400,
         "clone": True,  # voices are reference recordings (yours, or the female/male presets)
         "packages": "qwen-tts soundfile",
+        "prefetch": [os.environ.get("QWEN_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")],
         "apt": "sox",
         "about": "Qwen3-TTS 1.7B Base (Alibaba, Apache-2.0). Best voice cloning: a 10-20 s recording of you becomes your voice. 10 languages (no Hindi: use Chatterbox).",
         "voices": ["female", "male", "<any reference name>"],

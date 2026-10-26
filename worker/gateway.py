@@ -10,7 +10,7 @@ valid ?exp=&sig= signature (so download links can be handed to tools that can't 
 """
 import argparse, base64, hashlib, hmac, json, os, re, shutil, subprocess, sys, threading, time, traceback, uuid
 import urllib.error, urllib.request, zipfile
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -313,6 +313,7 @@ class Engines:
         self.batch = {}
         self.errors = {}
         self.fetch = {}   # name -> live download / load progress while installing or loading
+        self.install_lock = defaultdict(threading.Lock)  # one venv install per engine at a time
         self.loads = {}   # name -> the last start: seconds from launch to ready, and whether its weights were in RAM
         self.parked = {}  # name -> when it was parked in RAM (its process lives on, off the GPU)
         self.lock = threading.RLock()
@@ -437,6 +438,10 @@ class Engines:
         self.fetch.pop(name, None)
 
     def _install(self, name):
+        with self.install_lock[name]:  # a step 6 prefetch may be installing this venv right now: wait for it
+            return self._install_once(name)
+
+    def _install_once(self, name):
         py = C.python_for(name)
         if os.path.exists(py):
             return py
@@ -453,6 +458,25 @@ class Engines:
             subprocess.run(f'uv pip install --python {py} -q --no-deps {C.ENGINES[name]["nodeps"]}', shell=True, check=True,
                            stdout=logf, stderr=logf)
         return py
+
+    def prefetch(self, name):
+        """Step 6: install name's venv and download its weights to disk (nothing on the GPU), so its first load is
+        just a load. Skipped when it's already loaded or there's no disk to spare."""
+        if name in self.procs or not C.ENGINES[name].get("prefetch"):
+            return
+        t = time.time()
+        py = self._install(name)
+        if self.state.get(name) == "installing" and name not in self.procs:
+            self._set(name, "idle")
+        have = dir_gb(cache_dir(name), max_age=0) if os.path.isdir(cache_dir(name)) else 0.0
+        if shutil.disk_usage(HOME).free / 1e9 < max(0.0, C.ENGINES[name].get("disk_gb", 0) - have) + C.DISK_RESERVE_GB:
+            return log(f"not prefetching {name}: short of disk (a prefetch never deletes other weights)")
+        env = {**os.environ, "HF_HOME": cache_dir(name), "HF_HUB_ENABLE_HF_TRANSFER": "0"}
+        code = ("import sys; from huggingface_hub import snapshot_download\n"
+                "for r in sys.argv[1:]: snapshot_download(r, ignore_patterns=['*.msgpack', '*.h5', '*.ot', '*.onnx', '*.gguf', 'original/*'])")
+        with open(os.path.join(LOGS_DIR, f"{name}-prefetch.log"), "a") as logf:
+            subprocess.run([py, "-c", code, *C.ENGINES[name]["prefetch"]], check=True, stdout=logf, stderr=logf, env=env)
+        log(f"prefetched {name} (venv + weights on disk) in {time.time() - t:.0f} s")
 
     def _switch_group(self, name):
         if not C.ENGINES[name]["gpu_gb"]:
@@ -589,7 +613,7 @@ class Engines:
                        # Colab sets the notebook's inline plot backend, which an engine's own venv can't load: matplotlib
                        # then refuses to import (Resemble Enhance imports pyplot and died loading). Engines never show plots.
                        "MPLBACKEND": "Agg", "VOICEBOX_COMPILE_CODEC": "1" if C.COMPILE_CODEC else "0",
-                       "VOICEBOX_STREAM": "1" if C.STREAM else "0"}
+                       "VOICEBOX_STREAM": "1" if C.STREAM else "0", "VOICEBOX_SPEC": C.SPEC}
                 p = subprocess.Popen([py, os.path.join(HERE, "engine_host.py"), "--engine", name,
                                       "--port", str(C.ENGINES[name]["port"])], stdout=logf, stderr=logf, env=env, cwd=HERE,
                                      start_new_session=True)  # own process group: stop() also kills vLLM's children
@@ -655,10 +679,12 @@ class Engines:
         return self._post(name, "/synth", payload)
 
     def synth_batch(self, name, items, timing=None):
-        """timing: a dict that gets the engine's codec seconds (Orpheus / myvoice), when it reports them."""
+        """timing: a dict that gets the engine's codec seconds and decode speed (Orpheus / myvoice: tokens made, their
+        seconds, the speculative decoding in use), when it reports them."""
         r = self._post(name, "/synth_batch", {"items": items})
         if timing is not None:
             timing["codec"] = r.get("codec_s") or 0.0
+            timing.update({k: r[k] for k in ("gen_tokens", "gen_s", "spec") if k in r})
         return r["results"]
 
     def transcribe(self, paths, language=None, words=True):
@@ -2024,6 +2050,11 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
                 step = STEP.get(job["stage"], job["stage"])
                 t[step] = round(t.get(step, 0.0) - spent["codec"], 2)
                 t["codec"] = round(t.get("codec", 0.0) + spent["codec"], 2)
+            if spent.get("gen_tokens"):  # step 5b: codec tokens a second of vLLM decoding, over the whole job
+                d = job.setdefault("decode", {"tokens": 0, "secs": 0.0})
+                d["tokens"] += spent["gen_tokens"]
+                d["secs"] = round(d["secs"] + spent.get("gen_s", 0.0), 2)
+                d.update(tokens_per_s=round(d["tokens"] / max(d["secs"], 1e-3), 1), spec=spent.get("spec"))
             if not ENG.batch.get(eng) or len(items) > 1:
                 learn_rate(eng, time.time() - t0, chars)
             errs = [r["error"] for r in res if "error" in r]
@@ -2160,15 +2191,17 @@ def _stream_line(job, jdir, p, out, ref_path, stop, done):
             return
         time.sleep(0.1)
     try:
-        _publish_first(job, jdir, p, out, ref_path, entries, done)
+        _publish_first(job, jdir, p, out, ref_path, entries, done, stop)
     except Exception:  # noqa: BLE001  the normal path voices it then
         traceback.print_exc()
 
 
-def _publish_first(job, jdir, p, out, ref_path, entries, done):
+def _publish_first(job, jdir, p, out, ref_path, entries, done, stop):
     takes = job.get("takes", 1)
     pick, trials = None, []
     if takes > 1 or job.get("review"):
+        while "whisper" in ENG.preloading and not stop.is_set():  # step 4's preload is under way: worth the wait
+            time.sleep(0.2)
         if not ENG.fits_now("whisper"):
             return
         if takes == 1:
@@ -3470,7 +3503,7 @@ def _progress(job):
 
 def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
-                                 "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup",
+                                 "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup", "decode",
                                  "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method", "lane", "review_batch", "stream")}
     v["resources"] = job_resources(job)
     if job["kind"] in ("video", "image"):
@@ -3544,8 +3577,21 @@ def lanes():
     return out
 
 
+BOOT_PREFETCH = {}  # step 6: how long this gateway's prefetch took
+
+
+def boot_info():
+    """Step 6: when each phase of the worker's start finished, in seconds after the launcher started (launcher.py),
+    and how long the gateway's prefetch of the voice engines took."""
+    try:
+        b = json.load(open(os.path.join(HOME, "boot.json")))
+    except (OSError, ValueError):
+        b = {}
+    return {**b, "prefetch": {"engines": C.PREFETCH, **BOOT_PREFETCH}} if (b or C.PREFETCH) else None
+
+
 def health():
-    return {"ok": True, "version": C.VERSION, "uptime_s": int(time.time() - STARTED), "gpu": gpu_info(),
+    return {"ok": True, "version": C.VERSION, "uptime_s": int(time.time() - STARTED), "gpu": gpu_info(), "boot": boot_info(),
             "ram": mem_info(), "disk": disk_info(), "mode": ENG.mode, "idle_unload_s": ENG.idle_left(), "idle_min": C.IDLE_MIN, "fetch": ENG.fetch,
             "vram_budget_gb": round(ENG.budget, 1), "engines": ENG.state, "engine_errors": ENG.errors,
             "loaded": list(ENG.procs), "queue": len(QUEUE) + len(CPU_QUEUE), "rates": RATES, "lanes": lanes(),
@@ -3764,6 +3810,20 @@ class Handler(BaseHTTPRequestHandler):
             shutil.copyfileobj(f, self.wfile)
 
 
+def prefetch_all():
+    """Step 6: the voice engines' venvs and weights onto the disk, one at a time, right after a start (config.PREFETCH)."""
+    t = time.time()
+    for name in C.PREFETCH:
+        if name not in C.ENGINES:
+            continue
+        try:
+            ENG.prefetch(name)
+        except Exception as e:  # noqa: BLE001  the first job that needs it installs and downloads it the usual way
+            log(f"couldn't prefetch {name} ({type(e).__name__}: {e})")
+    if C.PREFETCH:
+        BOOT_PREFETCH["done_s"] = round(time.time() - t, 1)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8000)
@@ -3775,6 +3835,7 @@ def main():
     threading.Thread(target=worker_loop, args=(CPU_QUEUE,), daemon=True).start()
     os.environ["VOICEBOX_PORT"] = str(a.port)
     run_selfcheck("start", delay=20)
+    threading.Thread(target=prefetch_all, daemon=True).start()
     log(f"voicebox gateway {C.VERSION} on {a.host}:{a.port} · GPU {gpu_info()['name']} · VRAM budget {ENG.budget:.1f} GB")
     ThreadingHTTPServer((a.host, a.port), Handler).serve_forever()
 
