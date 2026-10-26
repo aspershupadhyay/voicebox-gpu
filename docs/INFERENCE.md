@@ -116,6 +116,26 @@ hits save. What's left is a trained proposer: an EAGLE head (or a small draft) t
 hidden states, which predicts the next codes instead of looking them up. Worth it for one request: the baseline shows
 one Orpheus sentence decodes at ~54 tokens a second on an L4, slower than real time (~86 a second), with the GPU
 ~70% busy. It's a training project of its own (data from our own generations, an A100 run, vLLM's EAGLE loader).
+Trained and measured (2026-10-26, L4, job `b80135aaaf98`, `gpu` action `train_draft`): **the EAGLE draft is slower
+too, so it isn't used.** The job voiced 6000 WikiText sentences in all eight voices (4.1M codec tokens, 31 min), trained
+an EAGLE-1 head on Orpheus's hidden states (2 epochs, 736 steps, 33 min) and benchmarked vLLM plain against the head on
+held-out lines:
+
+| Codec tokens a second | Plain | Draft, 2 guesses | 3 guesses | 4 guesses |
+|---|---|---|---|---|
+| One request | **55.3** | 38.3 | 34.9 | 30.4 |
+| 10 lines together | **254** | 182 | 184 | 158 |
+| 40 together | **780** | 728 | 597 | 533 |
+
+The head learned (Orpheus's top token matched 28.7% of the time on held-out audio, from 0%) and vLLM loaded and ran it
+without errors, but only ~17% of its guesses would be accepted at the served temperature (0.65). With that, a step
+moves about 1.2 tokens, and drafting plus checking costs more than that saves: even one request lost 30%. Speculation
+would need well over half its guesses accepted on this card to break even. Audio codes are far less predictable than
+text, so this is a property of the task more than of the draft; more data would raise acceptance only modestly. The
+job's gate did its work (it switches a head on only if one request gets 10% faster without slowing ten lines), so
+nothing changed for voiceovers. `VOICEBOX_SPEC=auto` stays the default and picks up a head only if a later run beats
+plain decoding; the trainer now also reports the ceiling (Orpheus's own top probability at the served temperature),
+which says how far any draft could go.
 
 ### 6. Faster cold start
 The worker comes online in about 2 min (measured 2026-10-26 on an L4: ~90 s to the worker process, ~110 s online).

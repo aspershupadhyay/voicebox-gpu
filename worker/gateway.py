@@ -3799,7 +3799,7 @@ def job_view(job, urls=True):
                 r["json_url"] = sign(f"/files/{job['id']}/{r['id']}.subs.json")
         res.append(r)
     v["results"] = res
-    if urls and job["status"] == "done" and job["kind"] not in ("video", "reference", "dataset", "train", "voicewalk"):
+    if urls and job["status"] == "done" and job["kind"] not in ("video", "reference", "dataset", "train", "voicewalk", "eagle"):
         v["zip_url"] = sign(f"/files/{job['id']}.zip")
         if job.get("subs"):
             v["subs_urls"] = {ext: sign(f"/files/{job['id']}/subtitles.{ext}") for ext in ("srt", "vtt", "json")}
