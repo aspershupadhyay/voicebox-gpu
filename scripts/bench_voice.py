@@ -38,6 +38,9 @@ SCRIPT = [
 ]
 VOICES = {"orpheus": "tara", "qwen": "female", "chatterbox": "female", "myvoice": None, "kokoro": "af_heart"}
 SEED = 7
+# The tech style's temperatures, pinned: the dashboard sends what each voice has learned from past reviews (benchmark
+# runs included), and that would quietly change the settings between two runs.
+TEMPERATURE = {"orpheus": 0.65, "qwen": 0.85, "myvoice": 0.5, "chatterbox": 0.8}
 
 
 def env():
@@ -135,7 +138,8 @@ def main():
     for eng in engines:
         voice = a.voice or VOICES.get(eng)
         # everything explicit, so the dashboard's settings (subtitles, platform) can't change what's measured
-        common = {"engine": eng, "voice": voice, "style": "tech", "params": {"seed": SEED}, "review": not a.no_review,
+        params = {"seed": SEED, **({"temperature": TEMPERATURE[eng]} if eng in TEMPERATURE else {})}
+        common = {"engine": eng, "voice": voice, "style": "tech", "params": params, "review": not a.no_review,
                   "subtitles": False, "platform": "youtube"}
         if a.batch_review:
             common["review_batch"] = a.batch_review == "on"
