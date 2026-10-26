@@ -128,6 +128,7 @@ export async function GET(req: Request, ctx: Ctx) {
         const myvoice = job.status === "done" ? await archiveReference(job as unknown as RefJob) : null;
         return Response.json({ ...job, myvoice });
       }
+      if (job.kind === ("eagle" as string)) return Response.json(job); // a draft model, not audio: nothing for the Library
       const lib = job.status === "done" ? await archiveWorkerJob(job) : null;
       return Response.json({ ...job, library: lib });
     }
