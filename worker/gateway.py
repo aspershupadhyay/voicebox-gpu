@@ -323,6 +323,8 @@ class Engines:
         os.environ.setdefault("ORPHEUS_MAX_SEQS", str(C.vllm_max_seqs(pool)))
         for n in ("orpheus", "myvoice"):
             C.ENGINES[n]["gpu_gb"] = pool + 2.5  # + SNAC decoder + CUDA context
+        self.resident = C.resident_engines(self.budget + 1.5)  # step 4: the review's models stay loaded
+        self.preloading = set()
         threading.Thread(target=self._reaper, daemon=True).start()
 
     def _set(self, name, state):
@@ -348,7 +350,7 @@ class Engines:
             time.sleep(20)
             busy = any(j["status"] == "running" for j in list(JOBS.values()))
             for n, left in self.idle_left().items():
-                if left <= 0 and not busy and n not in self.parked:
+                if left <= 0 and not busy and n not in self.parked and n not in self.resident:
                     log(f"unloading {n}: idle for {C.IDLE_MIN:g} min")
                     self.stop(n)
             for n, at in list(self.parked.items()):  # parked models give their RAM back after a while, or when RAM runs low
@@ -491,6 +493,7 @@ class Engines:
         used = lambda: sum(1.0 if n in self.parked else C.ENGINES[n]["gpu_gb"] for n in self.procs if n != name)
         while used() + need > self.budget:
             live = [n for n in self.procs if n != name and C.ENGINES[n]["gpu_gb"] > 0 and n not in self.parked and not self.inflight[n]]
+            live.sort(key=lambda n: n in self.resident)  # oldest first, the review's models last (stable sort keeps LRU)
             victim = live[0] if live else next((n for n in self.procs if n != name and n in self.parked), None)
             if not victim:
                 return
@@ -510,12 +513,46 @@ class Engines:
         if self.running(name):
             return True
         p = self.procs.get(name)
-        if name not in self.parked or not (p and p.poll() is None) or self.budget <= 0:
+        if name not in self.parked or not (p and p.poll() is None):
             return False
-        used = sum(1.0 if n in self.parked else C.ENGINES[n]["gpu_gb"] for n in self.procs if n != name)
+        return self._room_for(name)
+
+    def _room_for(self, name):
+        """name's share of the GPU fits next to everything loaded now (a parked engine keeps ~1 GB)."""
+        if self.budget <= 0:
+            return False
+        used = sum(1.0 if n in self.parked else C.ENGINES[n]["gpu_gb"] for n in list(self.procs) if n != name)
         return used + C.ENGINES[name]["gpu_gb"] <= self.budget
 
+    def preload(self, name):
+        """Step 4: load (or wake) a resident engine in the background while a job generates, so its stage never waits
+        for it. Only when it fits beside what's loaded: it never moves anything else off the GPU."""
+        if name not in self.resident or name in self.preloading or self.running(name) or not self._room_for(name):
+            return
+        p = self.procs.get(name)
+        if p and p.poll() is None and name not in self.parked:
+            return  # already loading
+        self.preloading.add(name)
+
+        def go():
+            try:
+                t = time.time()
+                self.ensure(name)
+                log(f"preloaded {name} beside the running job in {time.time() - t:.0f} s")
+            except Exception as e:  # noqa: BLE001  the stage that needs it loads it the usual way
+                log(f"couldn't preload {name} ({type(e).__name__}: {e})")
+            finally:
+                self.preloading.discard(name)
+        threading.Thread(target=go, daemon=True).start()
+
     def ensure(self, name):
+        if self.running(name):  # loaded: don't wait on the lock while another engine loads (a step 4 preload holds it)
+            if self.lock.acquire(blocking=False):
+                try:
+                    self.procs.move_to_end(name)
+                finally:
+                    self.lock.release()
+            return
         with self.lock:
             p = self.procs.get(name)
             if p and p.poll() is None:
@@ -1956,6 +1993,10 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
     for eng in dict.fromkeys(w[0]["engine"] for w in wanted):
         mine = [w for w in wanted if w[0]["engine"] == eng]
         _prepare(job, eng)
+        if job.get("review") or job.get("takes", 1) > 1 or job.get("subtitles"):
+            ENG.preload("whisper")  # step 4: the review's model loads beside the generation, not after it
+        if job["post"].get("enhance"):
+            ENG.preload("enhance")
         job["stage"] = "generating" if job["stage"] != "fixing" else "fixing"
         # vLLM schedules its own batches (continuous batching over the KV cache): hand it the whole job at once.
         # Qwen batches on plain transformers, where memory grows with the batch: 8 at a time.

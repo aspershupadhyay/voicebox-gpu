@@ -35,6 +35,13 @@ BATCH_REVIEW = os.environ.get("VOICEBOX_BATCH_REVIEW", "1") == "1"
 # so the dashboard can play it at once. Orpheus hands back chunks as vLLM finishes them; batch engines voice the first
 # line as their own first group. A job can still ask with stream (true / false); VOICEBOX_STREAM=0 turns it off.
 STREAM = os.environ.get("VOICEBOX_STREAM", "1") == "1"
+# Step 4, two parts that are measured separately:
+# WHOLE_CARD: on 70 GB+ cards the vLLM pool grows from 30 to 48 GB and takes 256 sentences at once.
+# RESIDENT_REVIEW: on every card the review models (Whisper with its voice-match and naturalness models; the enhancer
+# too on 70 GB+) stay resident: never unloaded for idling, evicted last, and loaded in the background at the start of a
+# voiceover when they fit beside it, so the review never waits for a load. Off: the plain LRU of before.
+WHOLE_CARD = os.environ.get("VOICEBOX_WHOLE_CARD", "0") == "1"
+RESIDENT_REVIEW = os.environ.get("VOICEBOX_RESIDENT_REVIEW", "0") == "1"
 COMPILE_CODEC = os.environ.get("VOICEBOX_COMPILE_CODEC", "0") == "1"
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
 
@@ -407,11 +414,12 @@ QWENFT_DIR = os.path.join(HOME, "qwenft")  # fine-tuned Qwen3-TTS voices (models
 QWENFT_PACKAGES = "accelerate librosa"  # on top of the qwen engine's venv, for train_qwen.py
 
 
-def vllm_pool_gb(total_gb):
+def vllm_pool_gb(total_gb, whole=None):
     """GPU memory for the vLLM engines (weights ~6.5 GB + KV cache). More cache = more sentences generated at once, so
-    bigger cards get more, but always leave room for Whisper (review) next to it: a 24 GB L4 keeps both loaded."""
+    bigger cards get more, but always leave room for Whisper (review) next to it: a 24 GB L4 keeps both loaded.
+    whole (WHOLE_CARD): an 80 GB card gives vLLM 48 GB and still keeps Whisper, the enhancer and Qwen beside it."""
     if total_gb >= 70:
-        return 30.0
+        return 48.0 if (WHOLE_CARD if whole is None else whole) else 30.0
     if total_gb >= 38:
         return 18.0
     if total_gb >= 20:
@@ -421,8 +429,17 @@ def vllm_pool_gb(total_gb):
 
 def vllm_max_seqs(pool_gb):
     """How many sentences vLLM may generate at once. Each one holds up to ~2.5k tokens of KV cache (~0.3 GB at 16 bit),
-    and vLLM only admits what its cache fits, so a big pool (80 GB card) can take twice the default 64."""
-    return 128 if pool_gb >= 24 else 64
+    and vLLM only admits what its cache fits, so a big pool (80 GB card) can take twice the default 64. A typical
+    sentence holds ~600 tokens (~70 MB), so the 48 GB pool of WHOLE_CARD fits 256 at once: a 60-line script at best-of-4
+    in one batch."""
+    return 256 if pool_gb >= 40 else 128 if pool_gb >= 24 else 64
+
+
+def resident_engines(total_gb, on=None):
+    """RESIDENT_REVIEW: the engines a voiceover's review needs, kept loaded (never idle-unloaded, evicted last)."""
+    if not (RESIDENT_REVIEW if on is None else on):
+        return set()
+    return {"whisper"} | ({"enhance"} if total_gb >= 70 else set())
 
 
 def python_for(engine):
