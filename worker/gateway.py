@@ -1213,8 +1213,10 @@ def _enqueue(job):
         JOBS[job["id"]] = job
         _queue_of(job).append(job["id"])
         QCOND.notify_all()
-    while len(JOBS) > 300:
-        JOBS.popitem(last=False)
+    if len(JOBS) > 300:  # forget the oldest finished jobs; never one that's still queued or running
+        done = [j for j, x in list(JOBS.items()) if x["status"] not in ("queued", "running")]
+        for j in done[:len(JOBS) - 300]:
+            JOBS.pop(j, None)
     return job
 
 
@@ -3962,7 +3964,8 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"^/logs/([a-z0-9-]+)$", u.path)
         if m and (m.group(1) in C.ENGINES or m.group(1) in ("gateway", "tunnel", "train", "eagle-gen", "eagle-train", "eagle-install")):
             names = [f"{m.group(1)}.log", f"{m.group(1)}-install.log"]
-            n = min(400, int(parse_qs(u.query).get("n", ["120"])[0]))
+            n = parse_qs(u.query).get("n", ["120"])[0]
+            n = min(400, int(n)) if n.isdigit() else 120
             text = ""
             for name in names:
                 path = os.path.join(LOGS_DIR, name)
