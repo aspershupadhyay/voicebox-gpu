@@ -64,6 +64,7 @@ async function waitFor(id: string, seconds: number): Promise<Job> {
       : await (await import("@/lib/voicemodel")).archiveModel(job as unknown as Parameters<typeof import("@/lib/voicemodel").archiveModel>[0]).catch((e: Error) => ({ error: e.message }));
     return { ...job, model: model ?? { saved: false, note: "still uploading the model; call get_job again in a minute" } } as Job;
   }
+  if ((job.kind as string) === "eagle") return job; // a draft model, not audio: nothing for the Library
   if (job.status === "done") {
     try {
       const lib = await archiveWorkerJob(job as unknown as Parameters<typeof archiveWorkerJob>[0]);
@@ -357,9 +358,11 @@ const handler = createMcpHandler(
       "gpu",
       {
         title: "Control the Colab GPU",
-        description: "The GPU without opening Colab (Colab is connected on the Health page). Actions: status (default): compute units left, hourly burn, runtimes assigned, the current session, settings. start: assign a Colab GPU and launch the worker on it; it shows online in worker_status in about 2 min. Pick by purpose: voice (voiceovers, subtitles, clean-up: settings voice_gpu, an L4 by default, far cheaper and plenty for them) or heavy (training, RLHF polish, video: settings heavy_gpu, an A100); or name gpu (A100 / L4 / H100 / T4 / G4) outright; high_ram true/false overrides the setting. status shows rates: the units an hour Colab really charged per runtime kind. stop: release a runtime (endpoint, default the current session's; with nothing else known, the only runtime assigned) and billing stops at once. restart_worker: restart the worker process on the running GPU (keeps the runtime; force: true even while a job runs). update_worker: fetch the newest worker code and restart with it (worker 3.1.0+). selfcheck: run the worker's quick self-check (results in worker_status.selfcheck). settings: change gpu (default for start without a purpose), voice_gpu, heavy_gpu, high_ram, idle_stop_min (0 = never; stops a GPU started from the app after that many idle minutes), remind_hours (0 = never), low_units (warn below), ntfy (on / off: phone push via the ntfy app). notify_test: send a test push.",
+        description: "The GPU without opening Colab (Colab is connected on the Health page). Actions: status (default): compute units left, hourly burn, runtimes assigned, the current session, settings. start: assign a Colab GPU and launch the worker on it; it shows online in worker_status in about 2 min. Pick by purpose: voice (voiceovers, subtitles, clean-up: settings voice_gpu, an L4 by default, far cheaper and plenty for them) or heavy (training, RLHF polish, video: settings heavy_gpu, an A100); or name gpu (A100 / L4 / H100 / T4 / G4) outright; high_ram true/false overrides the setting. status shows rates: the units an hour Colab really charged per runtime kind. stop: release a runtime (endpoint, default the current session's; with nothing else known, the only runtime assigned) and billing stops at once. restart_worker: restart the worker process on the running GPU (keeps the runtime; force: true even while a job runs). update_worker: fetch the newest worker code and restart with it (worker 3.1.0+). selfcheck: run the worker's quick self-check (results in worker_status.selfcheck). train_draft: train an EAGLE draft for Orpheus (faster single-request decoding): voices sentences (default 6000) for its data, trains it, then benchmarks Orpheus plain vs with the draft; it's switched on only if it measured faster. Takes the whole GPU (~45-60 min on an L4); returns a job id for get_job. settings: change gpu (default for start without a purpose), voice_gpu, heavy_gpu, high_ram, idle_stop_min (0 = never; stops a GPU started from the app after that many idle minutes), remind_hours (0 = never), low_units (warn below), ntfy (on / off: phone push via the ntfy app). notify_test: send a test push.",
         inputSchema: z.object({
-          action: z.enum(["status", "start", "stop", "restart_worker", "update_worker", "selfcheck", "settings", "notify_test"]).optional(),
+          action: z.enum(["status", "start", "stop", "restart_worker", "update_worker", "selfcheck", "train_draft", "settings", "notify_test"]).optional(),
+          sentences: z.number().int().min(500).max(30000).optional().describe("train_draft: sentences voiced for its data (default 6000)"),
+          epochs: z.number().int().min(1).max(5).optional().describe("train_draft: passes over the data (default 2)"),
           gpu: z.enum(["A100", "L4", "H100", "T4", "G4"]).optional(),
           purpose: z.enum(["voice", "heavy"]).optional(),
           high_ram: z.boolean().optional(),
@@ -373,7 +376,7 @@ const handler = createMcpHandler(
           ntfy: z.enum(["on", "off"]).optional(),
         }),
       },
-      async ({ action, gpu, purpose, high_ram, voice_gpu, heavy_gpu, endpoint, force, idle_stop_min, remind_hours, low_units, ntfy }) => {
+      async ({ action, gpu, purpose, high_ram, voice_gpu, heavy_gpu, endpoint, force, idle_stop_min, remind_hours, low_units, ntfy, sentences, epochs }) => {
         try {
           const colab = await import("@/lib/colab");
           if (action === "start") return text({ ...(await colab.start(colab.appOrigin(), gpu, { purpose, high_ram })), next: "The worker comes online in about 2 min: check worker_status." });
@@ -389,6 +392,7 @@ const handler = createMcpHandler(
           if (action === "restart_worker") return text(await call("/admin/restart", { body: { force: !!force } }));
           if (action === "update_worker") return text(await call("/admin/update", { body: { url: `${colab.appOrigin()}/api/bundle` }, timeoutMs: 55_000 }));
           if (action === "selfcheck") return text(await call("/selfcheck", { body: {} }));
+          if (action === "train_draft") return text(await call("/jobs", { body: { kind: "eagle", sentences, epochs, label: "Orpheus draft (EAGLE)" } }));
           if (action === "notify_test") return text({ sent: await colab.notify("Voicebox test", "Notifications work: GPU reminders arrive here.", "bell") });
           if (action === "settings") {
             const cur = await colab.getConfig();

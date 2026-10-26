@@ -44,7 +44,19 @@ SPEC_TOKENS = int(os.environ.get("VOICEBOX_SPEC_TOKENS", "4"))
 
 
 def spec_config():
-    """vLLM's speculative_config for SPEC, or None for plain decoding."""
+    """vLLM's speculative_config for SPEC, or None for plain decoding. "auto": the EAGLE draft a train job measured
+    faster on this worker (eagle/current.json, written by the gateway's eagle job), if there is one."""
+    global SPEC, SPEC_TOKENS
+    if SPEC == "auto":
+        if LORA or MULTI_LORA:  # trained voices (myvoice): the draft learned base Orpheus, and LoRA + drafts is fragile
+            return None
+        try:
+            cur = json.load(open(os.path.join(os.environ.get("VOICEBOX_HOME", "/content/voicebox"), "eagle", "current.json")))
+            if not os.path.isfile(os.path.join(cur["path"], "config.json")):
+                return None
+            SPEC, SPEC_TOKENS = f"eagle:{cur['path']}", int(cur.get("k") or SPEC_TOKENS)
+        except (OSError, ValueError, KeyError):
+            return None
     if SPEC in ("", "0", "off"):
         return None
     if SPEC == "ngram":

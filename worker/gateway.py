@@ -1145,6 +1145,8 @@ def make_job(body):
         return make_train_job(body)
     if body.get("kind") == "voicewalk":
         return make_voicewalk_job(body)
+    if body.get("kind") == "eagle":
+        return make_eagle_job(body)
     job = _base_job("tts", body)
     _voice_setup(job, body, body.get("lines") or [])
     return _enqueue(job)
@@ -3264,6 +3266,103 @@ def run_train_qwen(job):
     log(f"job {job['id']} fine-tuned Qwen3-TTS as ft_{job['voice']}: {job['train']}")
 
 
+EAGLE_DIR = os.path.join(HOME, "eagle")  # trained draft heads (<job>/) and current.json: the one the Orpheus engine uses
+
+
+def make_eagle_job(body):
+    """Train an EAGLE draft head for Orpheus (train_eagle.py, step 5b): sentences to voice for its data (default 6000),
+    epochs (default 2), ks: how many guesses a step to benchmark (default 2, 3, 4). The whole GPU, like training a voice."""
+    job = _base_job("eagle", body)
+    n = int(body.get("sentences") or 6000)
+    ks = [int(k) for k in (body.get("ks") or [2, 3, 4]) if 1 <= int(k) <= 8][:4]
+    job.update({"voice": "", "lines": [], "engine": "orpheus", "sentences": max(500, min(30000, n)),
+                "epochs": max(1, min(5, int(body.get("epochs") or 2))), "ks": ks or [3]})
+    # L4: ~1500 codec tokens/s voicing, ~2 s a training step of 12k tokens, ~70 s per benchmark load; ~350 tokens a sentence
+    toks = job["sentences"] * 350
+    job["est_total"] = 120 + toks / 1500 + toks / 12000 * job["epochs"] * 2.0 + 90 * (1 + len(job["ks"]))
+    return _enqueue(job)
+
+
+def _stage_tail(name, n=15):
+    try:
+        return "".join(open(os.path.join(LOGS_DIR, f"eagle-{name}.log"), errors="replace").readlines()[-n:]).strip()
+    except OSError:
+        return ""
+
+
+def run_eagle(job):
+    """Voice data, train the head, then benchmark Orpheus on vLLM plain and with the head (each k). The head becomes
+    the engine's (EAGLE_DIR/current.json) only if it made one request at least 10% faster and lost no more than 5% on
+    ten lines together; otherwise it's kept on disk and reported, and the engine stays as it was."""
+    jdir = os.path.join(JOBS_DIR, job["id"])
+    out = os.path.join(jdir, "eagle")
+    os.makedirs(out, exist_ok=True)
+    prog = os.path.join(jdir, "progress.json")
+    job["progress_file"] = prog
+    t0 = time.time()
+    job["cur"] = {"t0": t0, "est": job["est_total"], "label": ""}
+    for name in list(ENG.procs):
+        log(f"stopping {name}: training the Orpheus draft needs the whole GPU")
+        ENG.stop(name)
+    job["stage"] = "installing"
+    py = ENG._install("orpheus")
+    if ENG.state.get("orpheus") == "installing":
+        ENG._set("orpheus", "idle")
+    if subprocess.run([py, "-c", "import pyarrow"], capture_output=True).returncode:
+        with open(os.path.join(LOGS_DIR, "eagle-install.log"), "a") as logf:
+            subprocess.run(f"uv pip install --python {py} -q pyarrow", shell=True, check=True, stdout=logf, stderr=logf)
+    env = {**os.environ, "HF_HOME": cache_dir("orpheus"), "TOKENIZERS_PARALLELISM": "false", "VLLM_USE_FLASHINFER_SAMPLER": "0",
+           "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True", "MPLBACKEND": "Agg"}
+    head = os.path.join(out, "head")
+    stages = [("gen", None), ("train", None), ("bench", None)] + [("bench", {"model": head, "k": k}) for k in job["ks"]]
+    bench_errors = {}
+    for i, (stage, spec) in enumerate(stages):
+        if stage == "gen" and os.path.exists(os.path.join(out, "gen.json")):
+            continue  # a re-run of the same job keeps its data
+        cfg = os.path.join(out, f"{stage}-{i}.json")
+        json.dump({"out": out, "progress": prog, "sentences": job["sentences"], "epochs": job["epochs"], "spec": spec}, open(cfg, "w"))
+        job["stage"] = {"gen": "generating", "train": "training", "bench": "testing"}[stage]
+        name = stage if stage != "bench" else ("bench-plain" if not spec else f"bench-k{spec['k']}")
+        with open(os.path.join(LOGS_DIR, f"eagle-{name}.log"), "w") as logf:
+            p = subprocess.Popen([py, os.path.join(HERE, "train_eagle.py"), stage, cfg], stdout=logf, stderr=logf, env=env, cwd=HERE,
+                                 start_new_session=True)
+            while p.poll() is None:
+                if job["cancel"]:
+                    import signal
+                    os.killpg(p.pid, signal.SIGKILL)
+                    p.wait()
+                    raise Cancelled()
+                time.sleep(2)
+        if p.returncode:
+            if spec:  # the head wouldn't load or run in this vLLM: report it, the other runs still count
+                bench_errors[f"k{spec['k']}"] = _stage_tail(name, 6)
+                continue
+            raise RuntimeError(f"{name} stopped (exit {p.returncode}): {_stage_tail(name)}")
+    rd = lambda f: json.load(open(os.path.join(out, f))) if os.path.exists(os.path.join(out, f)) else None  # noqa: E731
+    plain = rd("bench-plain.json")
+    runs = [r for r in (rd(f"bench-eagle-k{k}.json") for k in job["ks"]) if r]
+    best = max(runs, key=lambda r: r["lone_tokens_per_s"], default=None)
+    adopt = bool(best and plain and best["lone_tokens_per_s"] >= 1.1 * plain["lone_tokens_per_s"]
+                 and best["ten"]["tokens_per_s"] >= 0.95 * plain["ten"]["tokens_per_s"])
+    keep = os.path.join(EAGLE_DIR, job["id"])
+    shutil.rmtree(keep, ignore_errors=True)
+    if os.path.isdir(head):
+        shutil.copytree(head, keep)
+        with zipfile.ZipFile(os.path.join(jdir, "eagle.zip"), "w", zipfile.ZIP_STORED) as z:  # for the dashboard to keep
+            for f in os.listdir(head):
+                z.write(os.path.join(head, f), f)
+    k = int(best["name"].rsplit("k", 1)[1]) if best else None
+    if adopt:
+        json.dump({"job": job["id"], "path": keep, "k": k, "at": time.time()}, open(os.path.join(EAGLE_DIR, "current.json"), "w"))
+    job["eagle"] = {"gen": rd("gen.json"), "train": rd("train.json"), "plain": plain, "eagle": runs, "best_k": k, "adopted": adopt,
+                    "errors": bench_errors or None}
+    if bench_errors and not runs:
+        job.setdefault("warnings", []).append("vLLM couldn't run the draft: " + next(iter(bench_errors.values()))[-400:])
+    job["cur"], job["est_done"] = None, time.time() - t0
+    job["est_total"] = job["est_done"]
+    log(f"job {job['id']} EAGLE draft: best k {k}, adopted {adopt}")
+
+
 def run_train(job):
     """The whole GPU for training: stop every engine, install the train venv once, run train.py, then install the
     adapter for the myvoice engine on this worker (the dashboard also keeps a copy in R2 for the next runtime)."""
@@ -3332,7 +3431,7 @@ def run_train(job):
 
 def package(job):
     job["stage"] = "packaging"
-    if job["kind"] in ("video", "reference", "image", "dataset", "train", "voicewalk"):
+    if job["kind"] in ("video", "reference", "image", "dataset", "train", "voicewalk", "eagle"):
         return  # single files, served directly; no zip copy of a large video (a dataset packs its own zip)
     jdir = os.path.join(JOBS_DIR, job["id"])
     with zipfile.ZipFile(os.path.join(JOBS_DIR, f"{job['id']}.zip"), "w") as z:
@@ -3405,7 +3504,8 @@ def worker_loop(q=None):
         LAST_ACTIVE[0] = time.time()
         try:
             {"transcribe": run_transcribe, "video": run_video, "reference": run_reference,
-             "image": run_image, "dataset": run_dataset, "train": run_train, "voicewalk": run_voicewalk}.get(job["kind"], run_tts)(job)
+             "image": run_image, "dataset": run_dataset, "train": run_train, "voicewalk": run_voicewalk,
+             "eagle": run_eagle}.get(job["kind"], run_tts)(job)
             package(job)
             job["status"], job["stage"] = "done", "done"
         except Cancelled:
@@ -3463,6 +3563,16 @@ def _progress(job):
         frac = {"starting": 0.05, "downloading": 0.06 + 0.04 * step / tot, "encoding": 0.10 + 0.10 * step / tot, "loading": 0.22,
                 "listening": 0.90 + 0.02 * step / tot, "saving": 0.93, "testing": 0.95, "done": 0.99}.get(ph, 0.05)
         return frac, round(max(20, job["est_total"] - el)), ph if ph != "starting" else "preparing", pf.get("detail") or ""
+    if job["kind"] == "eagle" and job["status"] == "running":
+        el = now - job["cur"]["t0"] if job.get("cur") else 0
+        try:
+            pf = json.load(open(job["progress_file"]))
+        except Exception:
+            pf = {"phase": "starting", "step": 0, "total": 0}
+        ph, step, tot = pf.get("phase"), pf.get("step", 0), max(1, pf.get("total") or 1)
+        frac = {"generating": 0.05 + 0.40 * step / tot, "training": 0.45 + 0.40 * step / tot, "testing": 0.88,
+                "saving": 0.86}.get(ph, 0.03)
+        return frac, round(max(20, job["est_total"] - el)), job.get("stage") or ph, pf.get("detail") or ""
     if job["kind"] in ("video", "image") and stage == "rendering" and job.get("progress_file"):
         try:
             pf = json.load(open(job["progress_file"]))
@@ -3528,7 +3638,8 @@ def _progress(job):
 def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
                                  "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup", "decode",
-                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method", "lane", "review_batch", "stream")}
+                                 "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method", "lane", "review_batch", "stream",
+                                 "eagle")}
     v["resources"] = job_resources(job)
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
@@ -3726,7 +3837,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/jobs":
             return self._json(200, {"jobs": [job_view(j, urls=False) for j in reversed(JOBS.values())][:30]})
         m = re.match(r"^/logs/([a-z0-9]+)$", u.path)
-        if m and (m.group(1) in C.ENGINES or m.group(1) in ("gateway", "tunnel", "train")):
+        if m and (m.group(1) in C.ENGINES or m.group(1) in ("gateway", "tunnel", "train", "eagle-gen", "eagle-train", "eagle-install")):
             names = [f"{m.group(1)}.log", f"{m.group(1)}-install.log"]
             n = min(400, int(parse_qs(u.query).get("n", ["120"])[0]))
             text = ""
