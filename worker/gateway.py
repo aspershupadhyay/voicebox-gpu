@@ -80,9 +80,22 @@ def mem_info():
 
 
 # --------------------------------------------------------------------------------------- disk
+# Engines that run on another's weights share its folder: myvoice is Orpheus plus small LoRA adapters, and kept its own
+# 6.7 GB copy of the same base model (downloaded twice on every fresh runtime, part of its 311 s first load).
+CACHE_ALIAS = {"myvoice": "orpheus"}
+
+
 def cache_dir(name):
-    """Every engine downloads its weights into its own folder, so one engine's weights can be dropped alone."""
-    return os.path.join(CACHE_DIR, name)
+    """Every engine downloads its weights into its own folder, so one engine's weights can be dropped alone (an
+    engine in CACHE_ALIAS shares the folder of the one whose weights it runs on)."""
+    return os.path.join(CACHE_DIR, CACHE_ALIAS.get(name, name))
+
+
+if os.environ.get("ORPHEUS_MODEL", "unsloth/orpheus-3b-0.1-ft") == "unsloth/orpheus-3b-0.1-ft" and not os.environ.get("MY_VOICE_MODEL"):
+    # the copy myvoice kept before it shared Orpheus's folder: the same files, 6.7 GB
+    shutil.rmtree(os.path.join(CACHE_DIR, "myvoice"), ignore_errors=True)
+else:
+    CACHE_ALIAS.clear()  # a different base model (MY_VOICE_MODEL, ORPHEUS_MODEL): keep them apart
 
 
 _SIZES = {}
@@ -106,7 +119,7 @@ def dir_gb(path, max_age=60):
 def disk_info():
     du = shutil.disk_usage(HOME)
     return {"total_gb": round(du.total / 1e9, 1), "free_gb": round(du.free / 1e9, 1),
-            "weights_gb": {n: dir_gb(cache_dir(n)) for n in C.ENGINES if os.path.isdir(cache_dir(n))}}
+            "weights_gb": {n: dir_gb(cache_dir(n)) for n in C.ENGINES if n not in CACHE_ALIAS and os.path.isdir(cache_dir(n))}}
 
 
 USAGE_PATH = os.path.join(HOME, "usage.json")
@@ -537,9 +550,10 @@ class Engines:
         if free >= need:
             return
         legacy = os.path.expanduser("~/.cache/huggingface")
-        victims = ([legacy] if os.path.isdir(legacy) else []) + [
+        keep = {cache_dir(name)} | {cache_dir(n) for n in self.procs}  # a shared folder (CACHE_ALIAS) counts for both
+        victims = ([legacy] if os.path.isdir(legacy) else []) + list(dict.fromkeys(
             cache_dir(n) for n in sorted(C.ENGINES, key=lambda n: USAGE.get(n, 0))
-            if n != name and n not in self.procs and os.path.isdir(cache_dir(n))]
+            if cache_dir(n) not in keep and os.path.isdir(cache_dir(n))))
         for v in victims:
             log(f"disk: deleting {v} ({dir_gb(v):.1f} GB) to make room for {name}")
             shutil.rmtree(v, ignore_errors=True)
@@ -4020,8 +4034,11 @@ class Handler(BaseHTTPRequestHandler):
             if m and m.group(1) in C.ENGINES:
                 if m.group(2) == "forget":  # delete downloaded weights (frees disk; re-downloads on next use)
                     ENG.stop(m.group(1))
-                    shutil.rmtree(cache_dir(m.group(1)), ignore_errors=True)
-                    _SIZES.pop(cache_dir(m.group(1)), None)
+                    d = cache_dir(m.group(1))
+                    if any(cache_dir(n) == d for n in ENG.procs):  # a shared folder another loaded engine runs on
+                        raise ValueError(f"{m.group(1)}'s weights are shared with a loaded engine: unload it first")
+                    shutil.rmtree(d, ignore_errors=True)
+                    _SIZES.pop(d, None)
                 elif m.group(2) == "unload":
                     ENG.stop(m.group(1))
                 else:
