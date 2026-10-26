@@ -41,7 +41,7 @@ STREAM = os.environ.get("VOICEBOX_STREAM", "1") == "1"
 # too on 70 GB+) stay resident: never unloaded for idling, evicted last, and loaded in the background at the start of a
 # voiceover when they fit beside it, so the review never waits for a load. Off: the plain LRU of before.
 WHOLE_CARD = os.environ.get("VOICEBOX_WHOLE_CARD", "0") == "1"
-RESIDENT_REVIEW = os.environ.get("VOICEBOX_RESIDENT_REVIEW", "0") == "1"
+RESIDENT_REVIEW = os.environ.get("VOICEBOX_RESIDENT_REVIEW", "1") == "1"  # VOICEBOX_RESIDENT_REVIEW=0: plain LRU
 COMPILE_CODEC = os.environ.get("VOICEBOX_COMPILE_CODEC", "0") == "1"
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
 
