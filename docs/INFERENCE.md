@@ -82,6 +82,10 @@ loaded; otherwise it takes the normal path, retries included. Not for studio pol
 takes are kept whole as preference pairs). The Lines view plays a running job's finished lines from the worker link
 and swaps in the archived copy when the job is done. Delivery is the existing job poll (every 1 s while running), not
 server-sent events: it adds at most a second, and SSE through Vercel would need a long-lived function per job.
+Measured on the L4 (Results): line 1 playable in ≤ 9.4 s instead of 15.7 s (Orpheus best-of-1) and in ≤ 13 s instead
+of after the whole 78-97 s job (Qwen best-of-4), same scores; on by default. "About a second" needs per-chunk audio
+inside a line (Orpheus emits ~86 tokens a second of speech, so line 1 can't finish before its own tokens do); that's
+the later option above, and step 5b (faster tokens) shrinks it further.
 
 ### 5b. Speculative decoding for Orpheus
 Groq-style single-request speed on a GPU: a small draft guesses the next few audio tokens and Orpheus checks them all
@@ -112,6 +116,8 @@ while the job ran, so it includes whatever else was resident (Whisper, the enhan
 | Baseline · qwen (female) | L4 (22.5 GB) | 55.4 s | 55.4 s | 177.3 s | 11.4 GB | 0.999 / 0.949 (b1), 0.999 / 0.958 (b4) |
 | Step 3 · orpheus (tara) | L4 (22.5 GB) | 15.7 s | 15.7 s | 25.2 s | 16.9 GB | 0.993 / — (b1), 0.999 / — (b4) |
 | Step 3 · qwen (female) | L4 (22.5 GB) | 29.1 s | 29.1 s | 78.3 s | 10.9 GB | 0.999 / 0.949 (b1), 0.999 / 0.958 (b4) |
+| Step 5 · orpheus (tara) | L4 (22.5 GB) | ≤ 9.4 s | 17.5 s | — | 16.2 GB | 0.999 / — (b1) |
+| Step 5 · qwen (female) | L4 (22.5 GB) | ≤ 13 s | — | 88.5 s | 11.4 GB | 0.999 / 0.955 (b4) |
 | Baseline · orpheus | A100 | | | | | |
 | Baseline · qwen | A100 | | | | | |
 
@@ -154,6 +160,14 @@ style's temperatures pinned):
   Orpheus best-of-4: match 0.999 both times; two lines picked take 1 instead of 2 or 3 because take 1 came out better
   this time (vLLM sampling varies a little between runs), not because a score was read differently.
 - Orpheus best-of-4 is now 1.6× best-of-1 (was 2.65×). Qwen best-of-4 is 2.7× (was 3.2×): its generation is the rest.
+- Step 5, streamed first line (fresh L4 runtime, `VOICEBOX_STREAM` on; first audio is bounded by the dashboard-side
+  polls before and after line 1 appeared): Orpheus best-of-1 `7b870812afa4` line 1 by 9.4 s, total 17.5 s (the first
+  run on that runtime, `09b2ce7b3d6e`, took 23.4 s with line 1 by 13.4 s: totals swing ±30% between runs and runtimes,
+  so read them loosely). Qwen best-of-4 `23f0c63047f8` line 1 by 13.0 s (its first group, line 1's four takes, done at
+  8.8 s), total 88.5 s. Same 40 Qwen takes, scores and picks as `c933691ce49c`, where line 1 went the normal way
+  because Whisper had been parked: publishing early changes nothing in the result. That run is why the watcher now
+  wakes a parked Whisper when it fits beside the generation (`fits_now`). Cost: Qwen's line 1 is an extra small batch
+  (~3 s on a ~85 s job); Orpheus's step loop is the same loop `generate()` runs.
 - Step 2 check, same card, old codec path (`943477d45fe9`, Orpheus best-of-4): generating 14.7, codec 1.2,
   listening 8.9, mastering 1.2, total 26.0 s. The codec is the smallest stage.
 - Orpheus generating was also faster in this run (11.7 s vs 20.1 s) without any change to it; compare the review
