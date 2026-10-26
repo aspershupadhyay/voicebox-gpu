@@ -87,6 +87,7 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [x] 5b. Speculative decoding for Orpheus (n-gram first, then a small draft; vLLM `speculative_config`): built behind `VOICEBOX_SPEC`; n-gram measured slower on L4 (one request 54 → 51 tokens/s, 10 lines 17.6 → 25.6 s), left off. EAGLE head trained on our own Orpheus outputs (gpu train_draft): learned (28.7% top-1) but only ~17% of guesses accepted, so it measured slower everywhere (one request 55 → 38 tokens/s) and its gate kept it off
 - [x] 6. Faster cold start (cache tools on the runtime, tunnel in parallel, register early): online ~110 s → ~68 s on a fresh L4; app starts skip Colab Secrets (51 s of timeouts, re-measure on the next fresh start); voice engines prefetched to disk after a start (`VOICEBOX_PREFETCH`, pauses for jobs)
 - [x] 7. TensorRT-LLM for Orpheus: only if 1-6 aren't enough. Looked at, not built: per-GPU engine builds on every fresh Colab machine, and it mostly buys many-stream throughput; one request's speed is the gap, which a trained 5b proposer targets on the vLLM path
+- [x] Trained voice made a voiceover one chunk at a time (flow): chains of up to 4 lines side by side, each chunk starts the moment its predecessor finishes (`VOICEBOX_FLOW_CHAIN`, `VOICEBOX_FLOW_STREAM`): 37 lines generating 1041 → 189 s on the L4, same scores. Polish and subtitles (~200 s together) are now the rest
 
 
 ## Reliability audit (2026-10-26)
