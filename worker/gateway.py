@@ -2157,8 +2157,9 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
             ENG.preload("enhance")
         job["stage"] = "generating" if job["stage"] != "fixing" else "fixing"
         # vLLM schedules its own batches (continuous batching over the KV cache): hand it the whole job at once.
-        # Qwen batches on plain transformers, where memory grows with the batch: 8 at a time.
-        size = (int(os.environ.get("ORPHEUS_MAX_SEQS", "64")) if eng in ("orpheus", "myvoice") else 8) if ENG.batch.get(eng) else 1
+        # Qwen batches on plain transformers, where memory grows with the batch: sized to the card (config.qwen_batch).
+        size = (int(os.environ.get("ORPHEUS_MAX_SEQS", "64")) if eng in ("orpheus", "myvoice")
+                else C.qwen_batch(ENG.budget + 1.5) if eng == "qwen" else 8) if ENG.batch.get(eng) else 1
         head = [w for w in mine if w[0] is job.get("_stream_line")] if size > 1 and eng not in ("orpheus", "myvoice") else []
         rest = [w for w in mine if not any(w is h for h in head)]  # streaming: the first line goes first, on its own
         for group in ([head] if head else []) + [rest[b:b + size] for b in range(0, len(rest), size)]:
@@ -3798,7 +3799,7 @@ def job_view(job, urls=True):
                 r["json_url"] = sign(f"/files/{job['id']}/{r['id']}.subs.json")
         res.append(r)
     v["results"] = res
-    if urls and job["status"] == "done" and job["kind"] not in ("video", "reference", "dataset", "train", "voicewalk"):
+    if urls and job["status"] == "done" and job["kind"] not in ("video", "reference", "dataset", "train", "voicewalk", "eagle"):
         v["zip_url"] = sign(f"/files/{job['id']}.zip")
         if job.get("subs"):
             v["subs_urls"] = {ext: sign(f"/files/{job['id']}/subtitles.{ext}") for ext in ("srt", "vtt", "json")}

@@ -13,6 +13,7 @@ import { useResumeJob } from "./jobs";
 import Player from "./Player";
 import { Select } from "./pop";
 import Recorder from "./Recorder";
+import { useReleaseBlobs } from "./blobs";
 import { useStatus } from "./Shell";
 import { DropZone, Empty, Notice, SideRow, ToolPage } from "./ui";
 
@@ -61,6 +62,7 @@ export default function Subtitles() {
   const [libQ, setLibQ] = useState("");
   const forget = useRef<(() => void) | null>(null);
   const [items, setItems] = useState<Item[]>([]);
+  useReleaseBlobs(items.map((i) => i.url));
   const [lang, setLang] = useState("");
   const [uploading, setUploading] = useState(false);
   const [job, setJob] = useState<Job | null>(null);

@@ -299,9 +299,11 @@ def train(cfg):
         want = feat[:, 1:]
         p, w = pred[mask].float(), want[mask].float()
         if not p.shape[0]:
+            step_losses.ceiling = 0.0
             return pred.sum() * 0, 0.0, 0, 0.0, 0
         vloss = F.smooth_l1_loss(p, w)
         ploss, agree, accept, n = 0.0, 0, 0.0, p.shape[0]
+        ceiling = 0.0  # what a perfect draft would get accepted: Orpheus's own top probability at the served temperature
         for c in range(0, n, 4096):  # the audio vocabulary is ~29k rows: chunks keep the logits small
             lp = p[c:c + 4096] @ W.T
             with torch.no_grad():
@@ -309,14 +311,17 @@ def train(cfg):
                 tgt = lw.softmax(-1)
                 guess = lp.argmax(-1)
                 agree += (guess == lw.argmax(-1)).sum().item()
-                accept += (lw / TEMP_SERVED).softmax(-1).gather(1, guess[:, None]).sum().item()
+                served = (lw / TEMP_SERVED).softmax(-1)
+                accept += served.gather(1, guess[:, None]).sum().item()
+                ceiling += served.max(-1).values.sum().item()
             ploss = ploss - (tgt * lp.log_softmax(-1)).sum()
         ploss = ploss / max(1, n)
+        step_losses.ceiling = ceiling
         return vloss, ploss, agree, accept, n
 
     def evaluate():
         head.eval()
-        tot = {"agree": 0, "accept": 0.0, "n": 0, "vloss": 0.0}
+        tot = {"agree": 0, "accept": 0.0, "n": 0, "vloss": 0.0, "ceiling": 0.0}
         with torch.no_grad():
             for idx in batches(val, budget, False, rng):
                 ids, mask = batch_tensors(idx, val)
@@ -325,9 +330,11 @@ def train(cfg):
                 tot["accept"] += acc
                 tot["n"] += n
                 tot["vloss"] += v.item() * n
+                tot["ceiling"] += getattr(step_losses, "ceiling", 0.0)
         head.train()
         n = max(1, tot["n"])
-        return {"top1": round(tot["agree"] / n, 4), "accept_t065": round(tot["accept"] / n, 4), "vloss": round(tot["vloss"] / n, 4)}
+        return {"top1": round(tot["agree"] / n, 4), "accept_t065": round(tot["accept"] / n, 4), "vloss": round(tot["vloss"] / n, 4),
+                "ceiling_t065": round(tot["ceiling"] / n, 4)}
 
     before = evaluate()
     print("before training:", before, flush=True)
