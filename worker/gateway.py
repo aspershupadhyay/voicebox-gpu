@@ -116,12 +116,20 @@ except Exception:
     USAGE = {}
 
 
+USAGE_LOCK = threading.Lock()
+
+
 def mark_used(name):
-    USAGE[name] = time.time()
-    try:
-        json.dump(USAGE, open(USAGE_PATH, "w"))
-    except OSError:
-        pass
+    """Every engine call writes this from its own thread: one writer at a time, and atomically, so a crash or two
+    threads at once never leave a half-written file that loses every engine's last-used time on the next start."""
+    with USAGE_LOCK:
+        USAGE[name] = time.time()
+        try:
+            with open(USAGE_PATH + ".part", "w") as f:
+                json.dump(USAGE, f)
+            os.replace(USAGE_PATH + ".part", USAGE_PATH)
+        except OSError:
+            pass
 
 
 
@@ -309,7 +317,8 @@ class Engines:
         self.state = {n: "idle" for n in C.ENGINES}
         self.since = {n: time.time() for n in C.ENGINES}
         self.last = {n: 0.0 for n in C.ENGINES}   # last request served (for idle unload)
-        self.inflight = {n: 0 for n in C.ENGINES}
+        self.inflight = {n: 0 for n in C.ENGINES}  # calls in progress per engine (an engine with one is never moved off)
+        self.inflight_lock = threading.Lock()  # += from many threads isn't atomic; a count stuck above 0 blocked switching
         self.batch = {}
         self.errors = {}
         self.fetch = {}   # name -> live download / load progress while installing or loading
@@ -347,8 +356,15 @@ class Engines:
         return out
 
     def _reaper(self):
+        n = 0
         while True:
             time.sleep(20)
+            n += 1
+            if n % 30 == 0:  # every 10 min: finished jobs' files off the disk
+                try:
+                    prune_jobs()
+                except Exception as e:  # noqa: BLE001
+                    log(f"pruning old jobs: {type(e).__name__}: {e}")
             busy = any(j["status"] == "running" for j in list(JOBS.values()))
             for n, left in self.idle_left().items():
                 if left <= 0 and not busy and n not in self.parked and n not in self.resident:
@@ -616,6 +632,15 @@ class Engines:
                         self.stop(name)
                         return self.ensure(name)
                 return
+            if p:  # it died since it last answered: its children (vLLM's EngineCore) may still hold GPU memory
+                import signal
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                self.procs.pop(name, None)
+                self.parked.pop(name, None)
+                log(f"{name} had exited (code {p.returncode}); starting it again")
             try:
                 self._switch_group(name)
                 self._ensure_disk(name)
@@ -684,28 +709,62 @@ class Engines:
             if not keep_state:
                 self._set(name, "idle")
 
-    def _post(self, name, path, payload, timeout=60 * 60):
+    def _post(self, name, path, payload, timeout=60 * 60, retry=True):
+        """One call to an engine. If the engine dies during it (a crash, the kernel's OOM killer, or a fatal GPU error
+        it exits on), it's restarted and the call made once more, so a job survives it; a second death is an error."""
         self.ensure(name)
         req = urllib.request.Request(f"http://127.0.0.1:{C.ENGINES[name]['port']}{path}",
                                      data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
-        self.inflight[name] += 1
+        with self.inflight_lock:
+            self.inflight[name] += 1
+        died = None
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
-            raise RuntimeError(json.loads(e.read() or b"{}").get("error", str(e)))
+            err = json.loads(e.read() or b"{}")
+            if not err.get("fatal"):
+                raise RuntimeError(err.get("error", str(e)))
+            died = err.get("error")
+        except (urllib.error.URLError, ConnectionError, OSError) as e:
+            if isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
+                # hung (e.g. a stuck vLLM step): it would hang the next job too, so it goes; the next call starts it fresh
+                log(f"{name} didn't answer {path} in {timeout:.0f} s: stopping it")
+                self.errors[name] = f"stopped answering ({path}, {timeout:.0f} s); restarted on next use"
+                threading.Thread(target=self.stop, args=(name,), daemon=True).start()
+                raise RuntimeError(f"{name} stopped answering after {timeout:.0f} s; it will restart on the next try")
+            p = self.procs.get(name)
+            if not (p and self._exited(p)):
+                raise
+            died = f"{type(e).__name__}: {e}"
         finally:
-            self.inflight[name] -= 1
+            with self.inflight_lock:
+                self.inflight[name] -= 1
             self.last[name] = time.time()
             mark_used(name)
+        self.errors[name] = f"crashed during a call ({died}); restarted"
+        log(f"{name} died during {path} ({died}): restarting it" + (" and trying once more" if retry else ""))
+        self.stop(name)
+        if not retry:
+            raise RuntimeError(f"{name} stopped working twice in a row: {died}")
+        return self._post(name, path, payload, timeout, retry=False)
+
+    @staticmethod
+    def _exited(p, wait=5.0):
+        """Has this engine process ended (allowing it a moment: a fatal error answers first, then exits)?"""
+        try:
+            p.wait(wait)
+            return True
+        except subprocess.TimeoutExpired:
+            return False
 
     def synth(self, name, payload):
         return self._post(name, "/synth", payload)
 
-    def synth_batch(self, name, items, timing=None):
+    def synth_batch(self, name, items, timing=None, timeout=60 * 60):
         """timing: a dict that gets the engine's codec seconds and decode speed (Orpheus / myvoice: tokens made, their
         seconds, the speculative decoding in use), when it reports them."""
-        r = self._post(name, "/synth_batch", {"items": items})
+        r = self._post(name, "/synth_batch", {"items": items}, timeout=timeout)
         if timing is not None:
             timing["codec"] = r.get("codec_s") or 0.0
             timing.update({k: r[k] for k in ("gen_tokens", "gen_s", "spec") if k in r})
@@ -1096,6 +1155,37 @@ def _cpu_only(job):
 
 def _queue_of(job):
     return CPU_QUEUE if job.get("lane") == "cpu" else QUEUE
+
+
+JOB_KEEP_H = float(os.environ.get("VOICEBOX_JOB_KEEP_H", "12"))
+
+
+def prune_jobs():
+    """Every job leaves its files in jobs/ (takes, masters, zips, a draft's training data), and nothing removed them,
+    so a long session filled the disk. A finished job's files go after JOB_KEEP_H hours (its links expire after 6, and
+    the dashboard keeps its own copy); after 1 hour when the disk runs short. Queued and running jobs are never touched."""
+    now = time.time()
+    short = shutil.disk_usage(HOME).free / 1e9 < 2 * C.DISK_RESERVE_GB
+    keep_s = (1.0 if short else JOB_KEEP_H) * 3600
+    live = {j for j, x in list(JOBS.items()) if x["status"] in ("queued", "running")}
+    freed = 0
+    for entry in os.listdir(JOBS_DIR):
+        jid = entry.split(".")[0]
+        if jid in live:
+            continue
+        path = os.path.join(JOBS_DIR, entry)
+        job = JOBS.get(jid)
+        try:
+            t = (job or {}).get("finished") or os.path.getmtime(path)
+        except OSError:
+            continue
+        if now - t < keep_s:
+            continue
+        freed += dir_gb(path, max_age=0) if os.path.isdir(path) else os.path.getsize(path) / 1e9
+        shutil.rmtree(path, ignore_errors=True) if os.path.isdir(path) else os.remove(path)
+        _SIZES.pop(path, None)
+    if freed > 0.05:
+        log(f"removed old jobs' files: {freed:.1f} GB" + (" (disk was short)" if short else ""))
 
 
 def _enqueue(job):
@@ -2070,7 +2160,9 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
                 label += f" · {job['takes']} takes each"
             t0 = time.time()
             spent = {}
-            res = _run_unit(job, RATES[eng] * chars, lambda: ENG.synth_batch(eng, items, spent), label)
+            # a hung engine shouldn't hold the GPU queue for an hour: 10x the expected time, at least 15 min
+            limit = max(900.0, 10 * RATES[eng] * chars)
+            res = _run_unit(job, RATES[eng] * chars, lambda: ENG.synth_batch(eng, items, spent, timeout=limit), label)
             if spent.get("codec"):  # show the codec as its own step: move its seconds out of generating / re-voicing
                 t = job["timings"]
                 step = STEP.get(job["stage"], job["stage"])
@@ -2094,27 +2186,39 @@ def _assemble_all(job, jdir, items):
     a 60-line script finishes in the time of a few lines). Studio polish runs on the GPU's enhancer, so in order."""
     from concurrent.futures import ThreadPoolExecutor
     workers = min(len(items), max(1, (os.cpu_count() or 2) - 1), 12)
-    if workers < 2 or job["post"].get("enhance"):
-        for p, paths, pick in items:
-            _assemble(job, jdir, p, paths, pick)
+    # studio polish is GPU work (the enhancer, then the voice check), one line after another; it used to take the
+    # CPU mastering with it, so a 19-line voiceover mastered one line at a time (76 s). Now: polish in order, then
+    # master every line at once.
+    raws = [_line_raw(job, jdir, p, paths) for p, paths, _ in items] if job["post"].get("enhance") else [None] * len(items)
+    if workers < 2:
+        for (p, paths, pick), raw in zip(items, raws):
+            _assemble(job, jdir, p, paths, pick, raw=raw)
         return
     t0 = time.time()
     job["stage"] = "mastering"
     with ThreadPoolExecutor(workers) as ex:
-        list(ex.map(lambda it: _assemble(job, jdir, *it, timed=False), items))
+        list(ex.map(lambda a: _assemble(job, jdir, *a[0], timed=False, raw=a[1]), zip(items, raws)))
     _time(job, "mastering", time.time() - t0)
 
 
-def _assemble(job, jdir, p, paths, pick=None, timed=True):
-    """Chunks -> one line WAV: join with the asked-for gaps, then trim, pace, resample and master."""
+def _line_raw(job, jdir, p, paths):
+    """A line's chunks joined with the asked-for gaps (and studio-polished when asked): the WAV mastering starts from."""
     ln = p["ln"]
-    t0 = time.time()
     raw = os.path.join(jdir, f"{ln['id']}.raw.wav")
     _join_chunks(paths, raw, [c[2] for c in p["chunks"]], [c[1] for c in p["chunks"]])
     for x in paths:
         if os.path.exists(x):
             os.remove(x)
-    raw = _studio_output(job, raw)
+    return _studio_output(job, raw)
+
+
+def _assemble(job, jdir, p, paths, pick=None, timed=True, raw=None):
+    """Chunks -> one line WAV: join with the asked-for gaps, then trim, pace, resample and master. raw: the joined
+    (and polished) line, when _assemble_all made it already."""
+    ln = p["ln"]
+    if raw is None:
+        raw = _line_raw(job, jdir, p, paths)
+    t0 = time.time()  # mastering only: studio polish times itself as "enhancing"
     info = {}
     dur = postprocess(raw, os.path.join(jdir, f"{ln['id']}.wav"), job["post"], info)
     os.remove(raw)
@@ -2523,6 +2627,8 @@ def run_transcribe(job):
 
 
 def _download(url, path, limit=600 * 1024 * 1024):
+    if not _http_url(url, "url"):  # every caller passes a link from a request: never file:// or ftp:// (local files)
+        raise ValueError("url is missing")
     with urllib.request.urlopen(url, timeout=300) as r, open(path, "wb") as f:
         n = 0
         while True:
@@ -3905,7 +4011,7 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get("audio_b64"):
                     data = base64.b64decode(body["audio_b64"])
                 elif body.get("url"):
-                    with urllib.request.urlopen(body["url"], timeout=60) as r:
+                    with urllib.request.urlopen(_http_url(body["url"], "url"), timeout=60) as r:  # never file:// or ftp://
                         data = r.read(50 * 1024 * 1024)
                 else:
                     raise ValueError("send audio_b64 or url")

@@ -55,6 +55,29 @@ def _modules(engine):
     return out
 
 
+FATAL = ("illegal memory access", "device-side assert", "CUDA error: unspecified launch failure", "CUBLAS_STATUS_",
+         "CUDNN_STATUS_EXECUTION_FAILED", "EngineDeadError", "EngineCore encountered an issue", "Engine loop is not running",
+         "NCCL error", "CUDA error: misaligned address", "an illegal instruction was encountered")
+
+
+def is_fatal(e):
+    """Errors after which this process's GPU state can't be trusted (unlike running out of memory, which the next
+    call survives once the cache is freed)."""
+    text = f"{type(e).__name__}: {e}"
+    return any(k in text for k in FATAL)
+
+
+def free_gpu():
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001  a broken context can fail here too; exiting handles that
+        pass
+
+
 def park(engine):
     """Off the GPU, into RAM: the engine's own park() if it has one, vLLM's sleep (weights to RAM, cache dropped),
     and every torch module to the CPU. The process, its imports and compiled kernels stay, which is the slow part."""
@@ -134,6 +157,7 @@ def main():
 
         def do_POST(self):
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            fatal = False
             try:
                 with lock:
                     if self.path in ("/park", "/wake"):
@@ -212,7 +236,14 @@ def main():
                 return self._send(404, {"error": "not found"})
             except Exception as e:  # report, don't crash the engine
                 traceback.print_exc()
-                self._send(500, {"error": f"{type(e).__name__}: {e}"})
+                fatal = is_fatal(e)
+                self._send(500, {"error": f"{type(e).__name__}: {e}", "fatal": fatal})
+            # only an exception gets here (every answer above returns). Out of the except block, its traceback no longer
+            # holds the failed call's tensors, so the cache can really be freed
+            free_gpu()
+            if fatal:  # a broken CUDA context or a dead vLLM core fails every later call: exit, the gateway restarts us
+                print(f"[{args.engine}] fatal GPU error: exiting so the gateway starts a clean engine", flush=True)
+                os._exit(3)
 
     ThreadingHTTPServer(("127.0.0.1", args.port), H).serve_forever()
 

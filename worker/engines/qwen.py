@@ -64,37 +64,45 @@ class Engine:
         return self.synth_batch([{"text": text, "params": params, "ref_path": ref_path, "ref_text": ref_text}])[0]
 
     def synth_batch(self, items):
-        """All items of one call share a reference (the gateway sends one voice per job), so they run as one batch."""
-        out = []
+        """All items of one call share a reference (the gateway sends one voice per job), so they run as one batch.
+        Out of GPU memory (long lines, or another engine took room meanwhile): the batch is halved and tried again,
+        down to one line, instead of failing every line in it."""
         groups = {}
         for i, it in enumerate(items):
             groups.setdefault((it["ref_path"], it.get("ref_text")), []).append(i)
         res = [None] * len(items)
         for (ref, rtext), idx in groups.items():
-            p = items[idx[0]]["params"]
-            torch.manual_seed(int(p.get("seed", 7)))
-            try:
-                ft = self._custom(ref)
-                if ft:
-                    wavs, sr = ft[1].generate_custom_voice(
-                        text=[items[i]["text"] for i in idx], language=[p.get("language") or "English"] * len(idx),
-                        speaker=[ft[2]] * len(idx), do_sample=True, temperature=float(p.get("temperature", 0.8)),
-                        top_p=float(p.get("top_p", 0.95)), max_new_tokens=4096)
-                    for i, w in zip(idx, wavs):
-                        res[i] = (w.astype("float32") if hasattr(w, "astype") else w, sr)
-                    continue
+            self._run(items, ref, rtext, idx, res)
+        return res
+
+    def _run(self, items, ref, rtext, idx, res):
+        p = items[idx[0]]["params"]
+        torch.manual_seed(int(p.get("seed", 7)))
+        oom = False
+        try:
+            texts, langs = [items[i]["text"] for i in idx], [p.get("language") or "English"] * len(idx)
+            ft = self._custom(ref)
+            if ft:
+                wavs, sr = ft[1].generate_custom_voice(
+                    text=texts, language=langs, speaker=[ft[2]] * len(idx), do_sample=True,
+                    temperature=float(p.get("temperature", 0.8)), top_p=float(p.get("top_p", 0.95)), max_new_tokens=4096)
+            else:
                 wavs, sr = self.model.generate_voice_clone(
-                    text=[items[i]["text"] for i in idx], language=[p.get("language") or "English"] * len(idx),
-                    voice_clone_prompt=self._prompt(ref, rtext), do_sample=True,
-                    temperature=float(p.get("temperature", 0.8)), top_p=float(p.get("top_p", 0.95)),
-                    max_new_tokens=4096)
-                for i, w in zip(idx, wavs):
-                    res[i] = (w.astype("float32") if hasattr(w, "astype") else w, sr)
-            except Exception as e:  # noqa: BLE001
-                for i in idx:
-                    res[i] = e
-            finally:
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-        out.extend(res)
-        return out
+                    text=texts, language=langs, voice_clone_prompt=self._prompt(ref, rtext), do_sample=True,
+                    temperature=float(p.get("temperature", 0.8)), top_p=float(p.get("top_p", 0.95)), max_new_tokens=4096)
+            for i, w in zip(idx, wavs):
+                res[i] = (w.astype("float32") if hasattr(w, "astype") else w, sr)
+        except torch.cuda.OutOfMemoryError as e:
+            if len(idx) == 1:
+                res[idx[0]] = e
+            oom = len(idx) > 1
+        except Exception as e:  # noqa: BLE001
+            for i in idx:
+                res[i] = e
+        finally:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        if oom:  # out of the except block, so the failed batch's memory is really released first
+            half = len(idx) // 2
+            self._run(items, ref, rtext, idx[:half], res)
+            self._run(items, ref, rtext, idx[half:], res)
