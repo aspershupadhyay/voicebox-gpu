@@ -88,3 +88,17 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [x] 6. Faster cold start (cache tools on the runtime, tunnel in parallel, register early): online ~110 s → ~68 s on a fresh L4; app starts skip Colab Secrets (51 s of timeouts, re-measure on the next fresh start); voice engines prefetched to disk after a start (`VOICEBOX_PREFETCH`, pauses for jobs)
 - [x] 7. TensorRT-LLM for Orpheus: only if 1-6 aren't enough. Looked at, not built: per-GPU engine builds on every fresh Colab machine, and it mostly buys many-stream throughput; one request's speed is the gap, which a trained 5b proposer targets on the vLLM path
 
+
+## Reliability audit (2026-10-26)
+Weak points that could fail a job or leave the worker stuck, found reading the worker and dashboard, fixed in #63:
+- [x] Engines heal themselves: after a fatal GPU error (illegal memory access, device-side assert, cuBLAS, dead vLLM core) the engine exits instead of failing every later call while showing ready; GPU memory is freed after any failed call; a call whose engine died is retried once on a fresh engine; a dead engine's leftover processes (vLLM's EngineCore) are killed before it starts again
+- [x] A hung engine no longer holds the GPU queue for an hour: voice batches time out at 10x their expected time (at least 15 min) and the engine is restarted
+- [x] A hung gateway is restarted by the launcher (10 min without answering, 30 while a job runs), with its engines
+- [x] Finished jobs' files are pruned (12 h, 1 h when the disk is short): long sessions used to fill the disk
+- [x] Engine switching can't get stuck "busy" (the in-flight count is now thread-safe); queued and running jobs are never evicted from the job table
+- [x] Qwen halves a batch that runs out of GPU memory instead of failing every line in it
+- [x] myvoice shares Orpheus's weights (was a second 6.7 GB download on every fresh runtime)
+- [x] Studio polish no longer makes mastering serial (a 19-line voiceover spent 76 s "mastering")
+- [x] Downloads take http(s) links only; the usage file is written atomically
+- [x] The dashboard says "the worker isn't reachable" instead of quoting Cloudflare's HTML, and retries reads (never resends a job that may have arrived)
+- [ ] A runtime whose worker died entirely (kernel crash) bills until Colab reclaims it: a scheduled sweep on the dashboard (Vercel cron) could stop app-started runtimes with no heartbeat for 20 min

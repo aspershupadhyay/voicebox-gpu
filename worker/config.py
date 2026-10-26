@@ -446,6 +446,15 @@ def vllm_pool_gb(total_gb, whole=None):
     return 9.0
 
 
+# Lines Qwen voices in one batch (plain transformers, not vLLM: memory grows with the batch, but each line's cache is
+# small next to the 1.7B weights). Was a fixed 8, which kept best-of-4 generation-bound (40 takes = 5 batches);
+# engines/qwen.py halves a batch that runs out of memory, so a bigger one can't fail a job. VOICEBOX_QWEN_BATCH sets it.
+def qwen_batch(total_gb):
+    if os.environ.get("VOICEBOX_QWEN_BATCH"):
+        return max(1, int(os.environ["VOICEBOX_QWEN_BATCH"]))
+    return 32 if total_gb >= 70 else 24 if total_gb >= 38 else 16 if total_gb >= 20 else 8
+
+
 def vllm_max_seqs(pool_gb):
     """How many sentences vLLM may generate at once. Each one holds up to ~2.5k tokens of KV cache (~0.3 GB at 16 bit),
     and vLLM only admits what its cache fits, so a big pool (80 GB card) can take twice the default 64. A typical
