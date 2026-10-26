@@ -11,6 +11,7 @@ import { PendingCard } from "./GenCard";
 import { GuideButton } from "./GuideDrawer";
 import { useStatus } from "./Shell";
 import { Select } from "./pop";
+import { useReleaseBlobs } from "./blobs";
 import { Empty, Notice, SideRow, ToolPage } from "./ui";
 
 type Spec = { about: string; sizes: Record<string, [number, number]>; qualities: Record<string, { steps: number; about: string }>; disk_gb: number;
@@ -54,6 +55,7 @@ export default function Images() {
   const [transparent, setTransparent] = useState(false);
   const [seed, setSeed] = useState(7);
   const [refs, setRefs] = useState<Ref[]>([]);
+  useReleaseBlobs(refs.map((r) => r.url));
   const [pending, setPending] = useState<Pending[]>([]);
   const [history, setHistory] = useState<LibImages[]>([]);
   const [open, setOpen] = useState<{ item: LibImages; i: number } | null>(null);
