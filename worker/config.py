@@ -25,8 +25,9 @@ DISK_RESERVE_GB = 12.0                                         # keep this much 
 
 # Inference speed-ups (docs/INFERENCE.md): each behind a flag, default on only once measured on a real GPU.
 # Step 3: the review hears every take of a voiceover in one batched, text-only Whisper call instead of four word-timed
-# files at a time. A job can still ask for either path with review_batch (bench_voice.py --batch-review on|off).
-BATCH_REVIEW = os.environ.get("VOICEBOX_BATCH_REVIEW", "0") == "1"
+# files at a time (VOICEBOX_BATCH_REVIEW=0 brings back the old path). A job can still ask for either path with
+# review_batch (bench_voice.py --batch-review on|off).
+BATCH_REVIEW = os.environ.get("VOICEBOX_BATCH_REVIEW", "1") == "1"
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
 
 ENGINES = {
