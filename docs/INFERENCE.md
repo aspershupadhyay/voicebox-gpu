@@ -39,6 +39,8 @@ and tick the boxes in `docs/ROADMAP.md` (section "Inference").
 Add `scripts/bench_voice.py` (runs against a live worker through the dashboard API, like `scripts/make-samples.py`):
 a fixed 10-line script, Orpheus and Qwen, best-of-1 and best-of-4, review on. Record time to first line, total wall
 time, per-stage times from the job's progress, peak VRAM. Run it on L4 and on an A100; paste the numbers below.
+Done: `scripts/bench_voice.py` (needs `MCP_TOKEN` in `.secrets.local`; `--label "step 2"` names the row, `--runs 3`
+takes the median, every number lands in `bench/<date>-<gpu>.json`). L4 numbers are below; A100 still to run.
 
 ### 2. Compile the audio codec
 In `orpheus.py`, wrap the SNAC decoder in `torch.inference_mode()` and `torch.compile(mode="reduce-overhead")`
@@ -82,9 +84,39 @@ for many simultaneous users; for two people it's a heavy setup for a modest sing
 
 ## Results
 
+Measured with `scripts/bench_voice.py` (fixed 10-line script, seed 7, style tech, review on, subtitles off, engine
+warmed up first so loading isn't timed). Times are the worker's own (job start to finish). Peak VRAM is the whole card
+while the job ran, so it includes whatever else was resident (Whisper, the enhancer).
+
 | Step | Card | Time to first audio | 10 lines, best-of-1 | 10 lines, best-of-4 | Peak VRAM | Match / voice |
 |---|---|---|---|---|---|---|
-| Baseline | | | | | | |
+| Baseline · orpheus (tara) | L4 (22.5 GB) | 47.4 s | 47.4 s | 125.8 s | 18.2 GB | 0.993 / — (b1), 0.999 / — (b4) |
+| Baseline · qwen (female) | L4 (22.5 GB) | 55.4 s | 55.4 s | 177.3 s | 11.4 GB | 0.999 / 0.949 (b1), 0.999 / 0.958 (b4) |
+| Baseline · orpheus | A100 | | | | | |
+| Baseline · qwen | A100 | | | | | |
+
+Where the time went (seconds, L4, 2026-10-26, worker 3.3.0; about 40 s of audio per run):
+
+| Case | Generating | Listening (review) | Mastering | Total | Job |
+|---|---|---|---|---|---|
+| orpheus best-of-1 | 20.1 | 26.0 | 1.2 | 47.4 | `a4e45fad30f8` |
+| orpheus best-of-4 | 21.1 | 103.5 | 1.1 | 125.8 | `9195e6439d98` |
+| qwen best-of-1 | 27.1 | 26.7 | 1.1 | 55.4 | `a7164fc66c97` |
+| qwen best-of-4 | 70.5 | 105.6 | 1.1 | 177.3 | `a281da963b32` |
+
+What the baseline says:
+
+- **The review is the biggest stage, even at one take.** About 2.6 s per take (26 s for 10, 104 s for 40), on both
+  engines, working through the takes four at a time. That's step 3, and it's worth more than the plan assumed: it
+  speeds up best-of-1 too.
+- **Orpheus generation is already batched**: 40 takes in 21 s, 10 in 20 s. With the review batched, Orpheus
+  best-of-4 should land near best-of-1.
+- **Qwen generation is not**: 2.6× longer for 4 takes (it runs two lines at a time, not on vLLM). Batching the review
+  alone leaves Qwen best-of-4 at about 1.7× best-of-1; batching Qwen's takes is a follow-up to step 3.
+- **First audio = the whole job.** Every line arrives together after mastering, so time to first audio equals the
+  total (step 5).
+- **Cold loads on a fresh runtime**: Orpheus 161 s (mostly the 7 GB download), Qwen 71 s. Step 6 territory.
+- No sentence needed a retry in any run, so the review cost above is the floor, not inflated by re-voicing.
 
 ## Sources
 
