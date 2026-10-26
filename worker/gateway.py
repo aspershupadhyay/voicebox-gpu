@@ -2151,9 +2151,18 @@ def _take_params(p, k):
 
 
 def _chain(plans):
-    """Script order for flow: each line's first chunk follows the previous line's last one (see _flow)."""
-    for a, b in zip(plans, plans[1:]):
-        b["after"] = f"{a['ln']['id']}/{len(a['chunks']) - 1}"
+    """Script order for flow: each line's first chunk follows the previous line's last one (see _flow), in chains the
+    GPU voices side by side. One chain through the whole script made a trained voice's voiceover one chunk at a time
+    (37 lines: 17 min on an L4 at 45 tokens/s, under real time). Chains grow 1, 1, 2, 2, 3, 3 ... up to C.FLOW_CHAIN
+    lines, so the opening lines are ready first (they play while the rest are made) and every chain runs at once.
+    C.FLOW_CHAIN 0: one chain, as before."""
+    k = start = 0
+    while start < len(plans):
+        size = len(plans) if C.FLOW_CHAIN <= 0 else min(C.FLOW_CHAIN, 1 + k // 2)
+        seg = plans[start:start + size]
+        for a, b in zip(seg, seg[1:]):
+            b["after"] = f"{a['ln']['id']}/{len(a['chunks']) - 1}"
+        start, k = start + size, k + 1
 
 
 def _flow(job, p, i, k):

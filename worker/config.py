@@ -50,6 +50,8 @@ COMPILE_CODEC = os.environ.get("VOICEBOX_COMPILE_CODEC", "0") == "1"
 # Measured on an L4: n-gram guesses rarely match audio codes (one request 54 -> 51 tokens/s) and checking them slows the
 # batch (10 lines generating 13.7 -> 21.8 s), so n-gram stays off. "auto" (the default): the EAGLE draft an eagle job
 # trained and measured faster on this worker, if any (gateway run_eagle writes eagle/current.json); else plain decoding.
+# a trained voice's flow runs in chains of at most this many lines, side by side (gateway._chain); 0 = one chain
+FLOW_CHAIN = int(os.environ.get("VOICEBOX_FLOW_CHAIN", "4") or 0)
 SPEC = os.environ.get("VOICEBOX_SPEC", "auto")
 # Step 6: right after the gateway starts, install these engines' venvs and download their weights (ENGINES[...]["prefetch"])
 # to disk in the background, one at a time, without loading anything on the GPU: on a fresh runtime the first voiceover

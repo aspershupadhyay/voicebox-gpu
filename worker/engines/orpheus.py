@@ -35,6 +35,9 @@ SAMPLES_PER_FRAME = 2048  # SNAC 24 kHz: one level-1 code (7 Orpheus tokens) = 2
 # INFERENCE.md step 5 (gateway passes config.STREAM): hand back each chunk the moment vLLM finishes it (synth_batch's
 # emit), so the gateway can play the first line while the rest are still generating. Same batch, same sampling.
 STREAM = os.environ.get("VOICEBOX_STREAM", "0") == "1"
+# a trained voice's flow (each chunk carries on from the one before): chunks start as soon as their predecessor is done,
+# in one continuous vLLM stream, instead of in waves that each wait for their slowest chunk
+CHAIN = os.environ.get("VOICEBOX_FLOW_STREAM", "1") != "0"
 # INFERENCE.md step 5b (gateway passes config.SPEC): speculative decoding. A cheap proposer guesses the next few codec
 # tokens and Orpheus checks them all in one forward pass, so a step can move several tokens instead of one. Rejection
 # sampling keeps the output distribution the same. "ngram" proposes from repeats earlier in the sequence (no extra model);
@@ -295,6 +298,13 @@ class Engine:
         self.emit = emit if STREAM else None
         outs = [None] * len(items)
         made = {it.get("key") for it in items if it.get("key")}
+        # a trained voice's flow: each chunk starts the moment the chunk it follows is done (one continuous stream),
+        # instead of waves that each wait for their slowest chunk
+        if self.mode == "vllm" and CHAIN and any(self._flows(it) for it in items):
+            t0, c0 = time.time(), self.codec_s
+            if self._vllm_chain(items, outs, made):
+                self.gen_s += time.time() - t0 - (self.codec_s - c0)
+                return outs
         todo = list(range(len(items)))
         while todo:
             # a chunk waits while the chunk it follows is still to be made in this batch; everything else goes now
@@ -354,6 +364,86 @@ class Engine:
                 except Exception as e:  # noqa: BLE001
                     outs[j] = e
         self.codec_s += time.time() - t
+
+    def _vllm_chain(self, items, outs, made):
+        """All of a batch's chunks through one vLLM step loop: a chunk that carries on from another chunk of this batch
+        (flow) is added when that one finishes, the rest straight away. False (nothing queued) if this vLLM can't."""
+        from vllm import SamplingParams
+        eng = getattr(self.llm, "llm_engine", None)
+        if eng is None or not all(hasattr(eng, a) for a in ("add_request", "step", "has_unfinished_requests")):
+            return False
+        try:
+            from vllm.sampling_params import RequestOutputKind
+            final = RequestOutputKind.FINAL_ONLY
+        except ImportError:
+            final = None
+        done_keys, todo, ids = set(), set(range(len(items))), {}
+
+        def waits(j):
+            first = (items[j].get("ctx") or [])[:1]
+            return bool(first) and self._flows(items[j]) and first[0] in made and first[0] not in done_keys
+
+        def finish(j, result):
+            outs[j] = result
+            done_keys.add(items[j].get("key"))
+            if self.emit and not isinstance(result, Exception):
+                self.emit(j, result)
+
+        def submit():
+            for j in sorted(todo):
+                if waits(j):
+                    continue
+                todo.discard(j)
+                it, p = items[j], items[j].get("params") or {}
+                try:
+                    lr = self._lora(it)
+                except Exception as e:  # noqa: BLE001  e.g. no trained model for this voice
+                    finish(j, e)
+                    continue
+                sp = SamplingParams(temperature=float(p.get("temperature", 0.6)), top_p=float(p.get("top_p", 0.95)),
+                                    repetition_penalty=float(p.get("repetition_penalty", 1.1)),
+                                    max_tokens=token_budget(it["text"], p), stop_token_ids=[END_AUDIO], seed=int(p.get("seed", 7)))
+                if final is not None:
+                    sp.output_kind = final
+                rid = f"vb{j}-{time.time_ns()}"
+                eng.add_request(rid, {"prompt_token_ids": self._context(it) + self._prompt(it["text"], it.get("voice"))}, sp, lora_request=lr)
+                ids[rid] = j
+
+        try:
+            submit()
+        except Exception as e:  # noqa: BLE001  an engine API this code doesn't know: take back what was queued
+            print(f"[orpheus] chained scheduling unavailable ({type(e).__name__}: {e}); in waves", flush=True)
+            if ids and hasattr(eng, "abort_request"):
+                eng.abort_request(list(ids))
+            for j in range(len(items)):
+                outs[j] = None
+            return False
+        while ids or todo:
+            if not eng.has_unfinished_requests():
+                submit()  # only chunks whose context failed are left: they go without it
+                if not eng.has_unfinished_requests():
+                    for j in todo:
+                        outs[j] = RuntimeError("chunk never scheduled")
+                    break
+                continue
+            freed = False
+            for r in eng.step():
+                if not r.finished or r.request_id not in ids:
+                    continue
+                j, gen = ids.pop(r.request_id), r.outputs[0].token_ids
+                self.gen_tokens += len(gen)
+                t = time.time()
+                try:
+                    audio = self._decode(gen)
+                    self._remember(items[j], gen)
+                except Exception as e:  # noqa: BLE001
+                    audio = e
+                self.codec_s += time.time() - t
+                finish(j, audio)
+                freed = True
+            if freed and todo:
+                submit()
+        return True
 
     def _vllm_stream(self, items, ok, prompts, sps, loras, outs):
         """The loop LLM.generate runs inside, driven here so each chunk is decoded and handed on (emit) the moment it
