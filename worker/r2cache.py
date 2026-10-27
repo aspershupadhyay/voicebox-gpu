@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 PART = 256 << 20       # bytes per part
 PULL_THREADS = 8       # parts downloading at once (RAM: at most PULL_THREADS + 2 parts held)
 PUSH_THREADS = 4
-VERSION = 1            # bump to ignore every upload made by an older layout
+VERSION = 2            # bump to ignore every upload made by an older layout (1: mirrors weren't size-checked)
 
 _locks, _locks_lock = {}, threading.Lock()
 EVENTS = {}  # what came from or went to R2 this run (the gateway's /health shows it under boot.r2)
@@ -137,8 +137,9 @@ def pull(prefix, dest, m=None):
     return {"bytes": m["bytes"], "secs": round(secs, 1), "mbps": round(m["bytes"] / 1e6 / max(secs, 1e-3))}
 
 
-def push(prefix, src, names=None, meta=None):
-    """Upload the directory src (or only the entries names inside it) under prefix. Returns {bytes, secs}."""
+def push(prefix, src, names=None, meta=None, min_bytes=0):
+    """Upload the directory src (or only the entries names inside it) under prefix. Returns {bytes, secs}. Short of
+    min_bytes (files changed or vanished mid-upload), the manifest isn't written, so nothing trusts the upload."""
     t = time.time()
     names = names or sorted(os.listdir(src))
     tar = subprocess.Popen(["tar", "-cf", "-", "-C", src, *names], stdout=subprocess.PIPE)
@@ -164,6 +165,8 @@ def push(prefix, src, names=None, meta=None):
         tar.kill()
         tar.wait()
         raise
+    if total < min_bytes:
+        raise RuntimeError(f"upload came to {total} bytes, expected at least {min_bytes}: not marked complete")
     key = f"{prefix}/manifest.json"
     body = {"v": VERSION, "parts": n, "bytes": total, "names": names, "made": time.time(), **(meta or {})}
     _put(_sign([key], "PUT")[key], json.dumps(body).encode())
@@ -177,6 +180,35 @@ def repo_dir(repo):
 
 def weights_prefix(repo):
     return f"cache/hf/{repo_dir(repo)}"
+
+
+def file_bytes(root):
+    """Bytes in regular files under root (symlinks not followed: a snapshot's links point into blobs)."""
+    total = 0
+    for r, _, fs in os.walk(root):
+        for f in fs:
+            p = os.path.join(r, f)
+            if not os.path.islink(p):
+                try:
+                    total += os.path.getsize(p)
+                except OSError:
+                    pass
+    return total
+
+
+def big_files(root, over=100 << 20):
+    """Where the large files under root are (path, MB, is a link): to explain a mirror that came out small."""
+    out = []
+    for r, _, fs in os.walk(root):
+        for f in fs:
+            p = os.path.join(r, f)
+            try:
+                size = os.path.getsize(p)
+            except OSError:
+                continue
+            if size > over:
+                out.append((os.path.relpath(p, root), size >> 20, os.path.islink(p)))
+    return out[:12]
 
 
 def have_repo(hf_home, repo):
@@ -212,8 +244,10 @@ def push_repo(hf_home, repo, log=print):
         if not have_repo(hf_home, repo) or manifest(weights_prefix(repo)):
             return
         d = os.path.join(hf_home, "hub", repo_dir(repo))
+        want = file_bytes(d)
+        EVENTS[f"disk {repo}"] = {"bytes": want, "big": big_files(d), "big_anywhere": big_files(hf_home)}
         out = push(weights_prefix(repo), d, [n for n in ("blobs", "refs", "snapshots") if os.path.exists(os.path.join(d, n))],
-                   {"repo": repo})
+                   {"repo": repo}, min_bytes=want)
         EVENTS[f"push {repo}"] = out
         log(f"mirrored {repo} to R2: {out['bytes'] / 1e9:.1f} GB in {out['secs']} s")
 

@@ -371,31 +371,37 @@ class Engines:
         return out
 
     def _reaper(self):
-        n = 0
+        ticks = 0
         while True:
             time.sleep(20)
-            n += 1
-            if n % 30 == 0:  # every 10 min: finished jobs' files off the disk
-                try:
-                    prune_jobs()
-                except Exception as e:  # noqa: BLE001
-                    log(f"pruning old jobs: {type(e).__name__}: {e}")
-            busy = any(j["status"] == "running" for j in list(JOBS.values()))
-            for n, left in self.idle_left().items():
-                if left <= 0 and not busy and n not in self.parked and n not in self.resident:
-                    if C.IDLE_PARK:  # a high-RAM machine: off the GPU but kept in RAM, back in about a second
-                        with self.lock:
-                            if self.running(n) and not self.inflight[n]:
-                                self._park_or_stop(n, f"idle for {C.IDLE_MIN:g} min")
-                    else:
-                        log(f"unloading {n}: idle for {C.IDLE_MIN:g} min")
-                        self.stop(n)
-            for n, at in list(self.parked.items()):  # parked models give their RAM back after a while, or when RAM runs low
-                m = _meminfo()
-                late = C.PARK_MIN > 0 and time.time() - at > C.PARK_MIN * 60
-                if late or (m and m["avail"] < C.RAM_RESERVE_GB / 2):
-                    log(f"stopping parked {n}: " + (f"parked {C.PARK_MIN:g} min" if late else "RAM is low"))
+            ticks += 1
+            try:
+                self._reap(ticks)
+            except Exception as e:  # noqa: BLE001  one bad pass must never end idle unloads and pruning for good
+                log(f"reaper: {type(e).__name__}: {e}")
+
+    def _reap(self, ticks):
+        if ticks % 30 == 0:  # every 10 min: finished jobs' files off the disk
+            try:
+                prune_jobs()
+            except Exception as e:  # noqa: BLE001
+                log(f"pruning old jobs: {type(e).__name__}: {e}")
+        busy = any(j["status"] == "running" for j in list(JOBS.values()))
+        for n, left in self.idle_left().items():
+            if left <= 0 and not busy and n not in self.parked and n not in self.resident:
+                if C.IDLE_PARK:  # a high-RAM machine: off the GPU but kept in RAM, back in about a second
+                    with self.lock:
+                        if self.running(n) and not self.inflight[n]:
+                            self._park_or_stop(n, f"idle for {C.IDLE_MIN:g} min")
+                else:
+                    log(f"unloading {n}: idle for {C.IDLE_MIN:g} min")
                     self.stop(n)
+        for n, at in list(self.parked.items()):  # parked models give their RAM back after a while, or when RAM runs low
+            m = _meminfo()
+            late = C.PARK_MIN > 0 and time.time() - at > C.PARK_MIN * 60
+            if late or (m and m["avail"] < C.RAM_RESERVE_GB / 2):
+                log(f"stopping parked {n}: " + (f"parked {C.PARK_MIN:g} min" if late else "RAM is low"))
+                self.stop(n)
 
     def _can_park(self, name):
         """Room in RAM for this engine's weights (and its process) with the reserve still free."""
@@ -585,7 +591,14 @@ class Engines:
         root = r2cache.compile_root(HOME, gpu, version)
         if C.R2_COMPILE and r2cache.enabled() and root not in self.compile_sig:
             self.compile_sig[root] = None
-            if not r2cache.tree_sig(root)[0]:
+            if r2cache.tree_sig(root)[0]:  # compiled here already: upload after this load if R2 lacks them
+                try:
+                    if not r2cache.manifest(r2cache.compile_prefix(gpu, version)):
+                        self.compile_sig[root] = (0, 0)
+                        return r2cache.compile_env(root), root
+                except Exception as e:  # noqa: BLE001
+                    log(f"R2 compiled kernels: {type(e).__name__}: {e}")
+            else:
                 try:
                     out = r2cache.pull(r2cache.compile_prefix(gpu, version), root)
                     r2cache.EVENTS[f"pull kernels {version}"] = out or "none yet"
