@@ -11,17 +11,24 @@ import { AudioStage, VideoPlayer } from "./players";
 export type ViewFile = {
   key: string; name: string; kind: MediaKind; mime?: string | null; size?: number | null; url: string; download: string;
   poster?: string | null; by?: string | null; at?: number | null;
+  /** photos: a screen-sized copy to show first (light and quick); the original loads when you zoom in */
+  preview?: string | null;
 };
 
 const fmtSize = (b?: number | null) => (!b ? "" : b > 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b > 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
 
-/** A photo: fits the screen; click (or double-tap) to see it at full size and drag around; the wheel zooms. */
-function Photo({ src, name }: { src: string; name: string }) {
+/** A photo: always fits the screen whole (no zooming out); click (or double-tap) to see it at full size and drag around;
+ *  the wheel or a pinch zooms. It shows a screen-sized copy first and swaps in the original once you zoom. */
+function Photo({ src, preview, name }: { src: string; preview?: string | null; name: string }) {
   const [z, setZ] = useState(1);
   const [p, setP] = useState({ x: 0, y: 0 });
   const [loaded, setLoaded] = useState(false);
+  const [full, setFull] = useState(!preview);
+  const [bad, setBad] = useState(false);
   const drag = useRef<{ x: number; y: number; px: number; py: number; moved: boolean } | null>(null);
-  useEffect(() => { setZ(1); setP({ x: 0, y: 0 }); setLoaded(false); }, [src]);
+  useEffect(() => { setZ(1); setP({ x: 0, y: 0 }); setLoaded(false); setFull(!preview); setBad(false); }, [src, preview]);
+  useEffect(() => { if (z > 1) setFull(true); }, [z]);
+  const shown = full || bad || !preview ? src : preview;
   return (
     <div className={`fv-photo ${z > 1 ? "zoomed" : ""}`}
       onWheel={(e) => { const nz = Math.min(6, Math.max(1, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); setZ(nz); if (nz === 1) setP({ x: 0, y: 0 }); }}
@@ -29,13 +36,13 @@ function Photo({ src, name }: { src: string; name: string }) {
       onPointerMove={(e) => { const d = drag.current; if (!d || z === 1) return; if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 4) d.moved = true; setP({ x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) }); }}
       onPointerUp={() => { const d = drag.current; drag.current = null; if (d && !d.moved) { if (z > 1) { setZ(1); setP({ x: 0, y: 0 }); } else setZ(2.2); } }}>
       {!loaded && <span className="vp-spin" />}
-      <img src={src} alt={name} draggable={false} onLoad={() => setLoaded(true)} style={{ transform: `translate(${p.x}px, ${p.y}px) scale(${z})`, opacity: loaded ? 1 : 0 }} />
+      <img src={shown} alt={name} draggable={false} decoding="async" onLoad={() => setLoaded(true)} onError={() => { if (shown !== src) setBad(true); }} style={{ transform: `translate(${p.x}px, ${p.y}px) scale(${z})`, opacity: loaded ? 1 : 0 }} />
     </div>
   );
 }
 
 function Stage({ f }: { f: ViewFile }) {
-  if (f.kind === "image") return <Photo src={f.url} name={f.name} />;
+  if (f.kind === "image") return <Photo src={f.url} preview={f.preview} name={f.name} />;
   if (f.kind === "video") return <div className="fv-video"><VideoPlayer key={f.url} src={f.url} poster={f.poster} title={f.name} resumeKey={f.key} globalKeys /></div>;
   if (f.kind === "audio") return <div className="fv-audio"><AudioStage key={f.url} src={f.url} title={f.name} size={f.size} sub={[fmtSize(f.size), f.by].filter(Boolean).join(" · ")} /></div>;
   const dk = docKind(f.name, f.mime);

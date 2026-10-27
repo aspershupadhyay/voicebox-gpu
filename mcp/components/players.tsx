@@ -121,8 +121,10 @@ function useMedia(ref: React.RefObject<HTMLMediaElement | null>) {
 /** The video player. `resumeKey` remembers where you stopped (on this device). */
 /** `globalKeys`: the shortcuts work anywhere on the page (the full-screen viewer); otherwise only once you've clicked into
  *  this player or while the pointer is over it, so two players on a page never both answer. */
-export function VideoPlayer({ src, poster, title, autoPlay = true, resumeKey, onEnded, className, globalKeys = false }: {
+export function VideoPlayer({ src, poster, title, autoPlay = true, resumeKey, onEnded, className, globalKeys = false, ratio }: {
   src: string; poster?: string | null; title?: string; autoPlay?: boolean; resumeKey?: string; onEnded?: () => void; className?: string; globalKeys?: boolean;
+  /** width / height when it's known up front (the Library has it); otherwise the file's own, once its header arrives */
+  ratio?: number | null;
 }) {
   const v = useRef<HTMLVideoElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
@@ -132,6 +134,8 @@ export function VideoPlayer({ src, poster, title, autoPlay = true, resumeKey, on
   const [flash, setFlash] = useState<{ k: number; icon: "play" | "pause" | "back" | "fwd"; side?: "l" | "r" } | null>(null);
   const [resumed, setResumed] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
+  // the player takes the video's own shape (vertical Shorts stay tall, squares square), never a forced 16:9
+  const [ar, setAr] = useState<number | null>(ratio && isFinite(ratio) ? ratio : null);
   const idle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const taps = useRef<{ t: number; x: number } | null>(null);
   const over = useRef(false);
@@ -179,6 +183,7 @@ export function VideoPlayer({ src, poster, title, autoPlay = true, resumeKey, on
     el.muted = pref.get("vb-muted", 0) === 1;
     el.playbackRate = pref.get("vb-rate", 1);
     const onMeta = () => {
+      if (el.videoWidth && el.videoHeight) setAr(el.videoWidth / el.videoHeight);
       const at = rk ? pref.get(rk, 0) : 0;
       if (at > 20 && at < el.duration - 15) { el.currentTime = at; setResumed(at); setTimeout(() => setResumed(null), 5000); }
     };
@@ -241,7 +246,8 @@ export function VideoPlayer({ src, poster, title, autoPlay = true, resumeKey, on
 
   const pipOk = typeof document !== "undefined" && "pictureInPictureEnabled" in document && document.pictureInPictureEnabled;
   return (
-    <div ref={wrap} tabIndex={-1} className={`vp ${shown ? "show" : "idle"} ${full ? "full" : ""} ${className ?? ""}`} onPointerMove={(e) => e.pointerType !== "touch" && poke()}
+    <div ref={wrap} tabIndex={-1} className={`vp ${shown ? "show" : "idle"} ${full ? "full" : ""} ${ar && ar < 0.9 ? "tall" : ""} ${className ?? ""}`}
+      style={{ ["--ar" as string]: String(ar ?? 16 / 9) }} onPointerMove={(e) => e.pointerType !== "touch" && poke()}
       onPointerDown={(e) => { if (!(e.target as HTMLElement).closest("button, input, [role=slider]")) wrap.current?.focus({ preventScroll: true }); onTouch(e); }}
       onMouseEnter={() => { over.current = true; }} onMouseLeave={() => { over.current = false; if (s.playing) setShown(false); }}>
       <video ref={v} src={src} poster={poster ?? undefined} autoPlay={autoPlay} playsInline preload="metadata" aria-label={title}

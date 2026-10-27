@@ -11,10 +11,11 @@ import { aw, getMe, ID, logActivity, Query, timeAgo, useLive, useMe, useMembers 
 import { useDialog } from "./Dialog";
 import Player from "./Player";
 import { Avatar, deleteMedia, Gate, MediaTile, MediaViewer, UploadList, useUploader } from "./wsparts";
-import { NETWORKS, spaceName, spaceOf, targetsOf, type Target } from "@/lib/spaces";
+import { NETWORKS, spaceName, spaceOf, targetsOf, type SpaceId, type Target } from "@/lib/spaces";
 import { forgetTargets, saveTargets, useTargets } from "./useTargets";
 import { PlatformBadge } from "./platform";
 import { Select } from "./pop";
+import { Composer, PublishPill } from "./Publish";
 
 const T = { databaseId: AW.db, tableId: "posts" };
 const LABEL = Object.fromEntries(PLATFORMS.map((p) => [p.id, p.label])) as Record<Platform, string>;
@@ -147,7 +148,7 @@ function LinkInput({ value, onSave }: { value: string; onSave: (v: string | null
 }
 
 /** Where a post goes: one row per platform space, each with its own stage, publish time and live link. */
-export function TargetsEditor({ post }: { post: Post }) {
+export function TargetsEditor({ post, onPublish }: { post: Post; onPublish?: (space: SpaceId) => void }) {
   const { map } = useTargets();
   const { toast } = useDialog();
   const targets = targetsOf(post, map);
@@ -161,6 +162,7 @@ export function TargetsEditor({ post }: { post: Post }) {
           <Select size="sm" label={`Stage on ${spaceName(t.space)}`} value={t.status} onChange={(v) => patch(i, { status: v as Status })} options={STATUSES.map((s) => [s.id, s.label] as const)} />
           <input type="datetime-local" aria-label={`Publish time on ${spaceName(t.space)}`} value={toLocal(t.due_at)} onChange={(e) => patch(i, { due_at: e.target.value ? new Date(e.target.value).toISOString() : null })} />
           <LinkInput value={t.link ?? ""} onSave={(link) => patch(i, { link })} />
+          {onPublish && <PublishPill post={post} space={t.space} onOpen={() => onPublish(t.space)} />}
           <button className="icon-btn danger-h" title={`Stop posting to ${spaceName(t.space)}`} onClick={() => set(targets.filter((_, k) => k !== i))}><X size={14} /></button>
         </div>
       ))}
@@ -181,6 +183,7 @@ export function PostDrawer({ post, onClose }: { post: Post; onClose: () => void 
   const { uploads, upload } = useUploader(post.$id);
   const { rows: media } = useLive<Media>("media", [Query.equal("post_id", post.$id), Query.orderDesc("$createdAt"), Query.limit(100)], (m) => m.post_id === post.$id, [post.$id]);
   const [view, setView] = useState<Media | null>(null);
+  const [composer, setComposer] = useState<SpaceId | null>(null);
   const fileIn = useRef<HTMLInputElement>(null);
   const [drop, setDrop] = useState(false);
 
@@ -205,10 +208,10 @@ export function PostDrawer({ post, onClose }: { post: Post; onClose: () => void 
   }
   useEffect(() => () => { if (timer.current) { clearTimeout(timer.current); const data = pending.current; if (Object.keys(data).length) savePost(post, data).catch(() => {}); } }, [post]);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !view) onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !view && !composer && !document.querySelector(".modal")) onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, view]);
+  }, [onClose, view, composer]);
 
   const script = val("script") ?? "";
   const words = script.trim() ? script.trim().split(/\s+/).length : 0;
@@ -246,7 +249,7 @@ export function PostDrawer({ post, onClose }: { post: Post; onClose: () => void 
 
         <dl className="props">
           <dt>Publish to</dt>
-          <dd><TargetsEditor post={post} /></dd>
+          <dd><TargetsEditor post={post} onPublish={setComposer} /></dd>
           {!hasTargets && <>
             <dt>Publish</dt>
             <dd className="row" style={{ gap: 8 }}>
@@ -307,6 +310,7 @@ export function PostDrawer({ post, onClose }: { post: Post; onClose: () => void 
         </section>
         {drop && <div className="drawer-drop">Drop to attach to this post</div>}
       </aside>
+      {composer && <Composer post={post} space={composer} onClose={() => setComposer(null)} />}
       {view && <MediaViewer m={view} onClose={() => setView(null)}
         onDelete={async () => { if (await confirm({ title: "Delete this file?", body: view.name, confirm: "Delete", danger: true })) { await deleteMedia(view); setView(null); } }} />}
       {view && view.kind === "image" && (

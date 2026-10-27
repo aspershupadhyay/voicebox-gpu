@@ -46,6 +46,7 @@ export async function GET(req: Request, ctx: Ctx) {
   if (g.deny) return g.deny;
   const [a, b, c] = g.path;
   try {
+    if (a === "publish") return await (await import("@/lib/publish/api")).publishGet(g.path.slice(1));
     if (a === "status") {
       const rec = await loadWorker();
       if (!rec) return Response.json({ online: false, reason: "never registered" });
@@ -173,6 +174,7 @@ export async function POST(req: Request, ctx: Ctx) {
   const [a, b, c] = g.path;
   try {
     let body = await req.json().catch(() => ({}));
+    if (a === "publish") return await (await import("@/lib/publish/api")).publishPost(g.path.slice(1), body);
     if (a === "settings") {
       const who = (await currentUser())?.id;
       return Response.json(settingsFor(await updateSettings(body, who), who));
@@ -482,6 +484,7 @@ export async function DELETE(req: Request, ctx: Ctx) {
   const g = await guard(req, ctx);
   if (g.deny) return g.deny;
   const [a, b] = g.path;
+  if (a === "publish") return (await import("@/lib/publish/api")).publishDelete(g.path.slice(1)).catch((e) => err(e));
   if (a === "datasets" && b && VOICE_RE.test(b) && ID.test(String(g.path[2] ?? ""))) {
     await deleteDatasetPart(b, String(g.path[2]));
     return Response.json({ ok: true });

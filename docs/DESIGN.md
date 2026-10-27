@@ -14,7 +14,7 @@ The sidebar has eight destinations, grouped by what you're doing, not by which b
 |---|---|---|---|
 | — | Home | `/` | Greeting with the GPU's state, tool tiles, latest takes, ways to make a voice, what's due next |
 | — | Voices | `/voices` | Make a voice (three cards), then your voices and the built-in voices |
-| — | Posts | `/posts` | Every post as a Board, Calendar, List or Gallery, filtered by platform; the post drawer |
+| — | Posts | `/posts` | Every post as a Board, Calendar, List or Gallery, filtered by platform; the post drawer; Autopilot (`?view=autopilot`): accounts, the publishing queue, rules |
 | — | Files | `/files` | A Drive-like file manager: category folders (Videos, Images, Audio, Docs & scripts, Other) and yours, Recent, search, filters, drag-and-drop, paste, trash (`?view=trash`) |
 | Create | Voiceover | `/voiceover` | Write, pick a voice, generate; Script and Lines views |
 | Create | Clean-up, Subtitles, Images | `/clean-up`, `/subtitles`, `/images` | One tool each, in the tool layout |
@@ -30,6 +30,10 @@ existing page.
 between files. Video and audio use `players.tsx` (own controls that fade while playing, buffered ranges, speed,
 picture-in-picture, fullscreen, double-tap to skip, resume); documents use `docview.tsx`. Keep it the only way a file
 opens full size.
+
+**The publish composer** (`Publish.tsx`) opens from a target's pill in the post drawer or from Autopilot: a large
+modal (full screen on phones) with the options on the left and a flat stand-in preview of the platform on the right, the
+status and history under it, and the actions in a footer. It saves as you type.
 
 **One name per page.** The nav label, the route, the H1 and how the docs and MCP instructions refer to it all agree.
 

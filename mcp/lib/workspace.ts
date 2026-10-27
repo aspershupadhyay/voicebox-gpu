@@ -65,6 +65,15 @@ export function fileUrl(m: Pick<Media, "file_id" | "token">, mode: "view" | "dow
   return u.toString();
 }
 
+/** A photo sized for this screen (Appwrite resizes and sends WebP), so a 12 MB camera shot opens in a blink and always
+ *  fits. Animated GIFs, SVGs and HEIC go as they are. Widths come in steps so the browser's cache is reused. */
+export function screenPreview(m: Pick<Media, "file_id" | "token" | "mime" | "name">) {
+  if (/gif|svg|heic|heif/i.test(`${m.mime ?? ""} ${m.name}`)) return null;
+  const want = typeof window === "undefined" ? 1920 : Math.max(window.innerWidth, window.innerHeight) * Math.min(2, window.devicePixelRatio || 1);
+  const w = [1280, 1920, 2560, 3200].find((x) => x >= want) ?? 3200;
+  return fileUrl(m, "preview", w);
+}
+
 // ── Files page (folders live in R2, lib/files.ts): the folder colours and how a generated library item reads as a file
 export const FOLDER_COLORS = ["lavender", "sky", "peach", "mint", "rose", "sand"] as const;
 export type FolderColor = (typeof FOLDER_COLORS)[number];

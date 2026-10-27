@@ -50,8 +50,8 @@ export function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) 
       </div>
       {isOpen && j.video_url && (
         <div className="video-wrap">
-          <div className="vplayer" style={{ aspectRatio: v ? `${v.width}/${v.height}` : "16/9" }}>
-            <VideoPlayer src={j.video_url} poster={j.poster_url} autoPlay={false} resumeKey={`g:${j.id}`} />
+          <div className="vplayer">
+            <VideoPlayer src={j.video_url} poster={j.poster_url} autoPlay={false} resumeKey={`g:${j.id}`} ratio={v?.width && v.height ? v.width / v.height : null} />
           </div>
           <div className="stack" style={{ gap: 18 }}>
             <dl className="facts">

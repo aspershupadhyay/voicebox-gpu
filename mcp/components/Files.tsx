@@ -16,7 +16,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { folderFor, folderTrashed, isTrashed, newFolderId, normalize, ROOT, subtree, SYSTEM, within as inside, type FileTree, type Folder } from "@/lib/filetree";
-import { fileUrl as mediaUrl, kindOf, libKind, libName, libType, type Media, type MediaKind } from "@/lib/workspace";
+import { fileUrl as mediaUrl, kindOf, screenPreview, libKind, libName, libType, type Media, type MediaKind } from "@/lib/workspace";
 import { api, fileUrl as libFileUrl } from "./api";
 import { Query, signOut, useLive, useMe } from "./aw";
 import { useDialog } from "./Dialog";
@@ -93,7 +93,8 @@ function fromMedia(m: Media, t: Tree, starred: Set<string>, local: Record<string
 /** An upload as the viewer shows it. */
 function viewFile(it: Item): ViewFile {
   const m = it.m!;
-  return { key: it.key, name: it.name, kind: it.kind, mime: m.mime, size: m.size, url: mediaUrl(m), download: mediaUrl(m, "download"), poster: it.kind === "video" ? it.cover : null, by: it.by, at: it.at };
+  return { key: it.key, name: it.name, kind: it.kind, mime: m.mime, size: m.size, url: mediaUrl(m), download: mediaUrl(m, "download"), poster: it.kind === "video" ? it.cover : null, by: it.by, at: it.at,
+    preview: it.kind === "image" && m.token ? screenPreview(m) : null };
 }
 function StarBtn({ on, onClick }: { on: boolean; onClick: () => void }) {
   return <button className="vp-btn" onClick={onClick} aria-label={on ? "Remove star" : "Star"} aria-pressed={on} title={on ? "Remove star" : "Star"}><Star size={19} weight={on ? "fill" : "regular"} className={on ? "fm-star" : ""} /></button>;

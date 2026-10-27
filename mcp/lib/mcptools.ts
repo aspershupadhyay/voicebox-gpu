@@ -900,6 +900,97 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     }),
   );
 
+  // ── publishing (lib/publish/*): YouTube and Instagram straight from a post; the rest get a hand-off
+  const PUB_SPACE = z.enum(["yt_video", "yt_short", "ig_reel", "ig_post", "ig_story"]);
+  const toRef = (f: string) => (f.startsWith("g:") ? `j:${f.slice(2)}` : f);
+
+  server.registerTool(
+    "publish_accounts",
+    {
+      title: "Publishing accounts and queue",
+      description: "The YouTube channels and Instagram accounts connected for publishing (connect them on the dashboard: Posts → Autopilot), every publish plan with its state (draft, armed = goes out automatically at the target's publish time, queued/uploading/processing, published with its link, failed with the error and next retry), and the automation rules. Also whether each network is set up on the server.",
+      inputSchema: z.object({}),
+    },
+    async () => ws(async () => {
+      const r = await (await import("@/lib/publish/api")).publishGet([]);
+      const j = await r.json();
+      return { ...j, plans: j.plans.map((p: Record<string, unknown>) => ({ ...p, log: (p.log as unknown[]).slice(-5) })) };
+    }),
+  );
+
+  server.registerTool(
+    "publish_post",
+    {
+      title: "Publish a post",
+      description: "Set up and send a post's target to YouTube (yt_video, yt_short) or Instagram (ig_reel, ig_post: a photo, video or carousel of up to 20, ig_story). The post must already have that target (update_post targets). Pass files from list_files / workspace_media (m:<upload id>, or g:<generated video id>); cover is an image (m:) used as the YouTube thumbnail or the Reel cover. account: an id from publish_accounts (left out: the only one connected). YouTube options: title, description, tags, category (id, 28 = Science & Technology, 27 Education, 22 People & Blogs, 24 Entertainment), privacy, made_for_kids, synthetic (realistic AI voice/visuals: disclose it), playlist (id), language, notify, youtube_schedules (upload early, YouTube flips it public on the minute). Instagram options: caption, share_to_feed, collaborators (up to 3 usernames), user_tags, trial (MANUAL / SS_PERFORMANCE trial reel), audio_name, alt_text, ai_generated, first_comment, location_id. go: save (default, just saves), arm (goes out by itself at the target's publish time), now (publish right away). Only publish when the user asked; it's public and can't be undone from here.",
+      inputSchema: z.object({
+        post_id: POST_ID, space: PUB_SPACE,
+        account: z.string().max(64).optional(), files: z.array(FILE_ID).max(20).optional(), cover: FILE_ID.nullable().optional(),
+        go: z.enum(["save", "arm", "now", "disarm"]).optional(),
+        youtube: z.object({
+          title: z.string().max(100), description: z.string().max(5000), tags: z.array(z.string().max(100)).max(60), category: z.string().max(3),
+          privacy: z.enum(["public", "unlisted", "private"]), made_for_kids: z.boolean(), synthetic: z.boolean(), playlist: z.string().max(64).nullable(),
+          language: z.string().max(8).nullable(), notify: z.boolean(), youtube_schedules: z.boolean(), license: z.enum(["youtube", "creativeCommon"]),
+          embeddable: z.boolean(), public_stats: z.boolean(), recording_date: z.string().nullable(),
+        }).partial().optional(),
+        instagram: z.object({
+          caption: z.string().max(2200), share_to_feed: z.boolean(), collaborators: z.array(z.string().max(30)).max(3), user_tags: z.array(z.string().max(30)).max(20),
+          trial: z.enum(["MANUAL", "SS_PERFORMANCE"]).nullable(), audio_name: z.string().max(100).nullable(), alt_text: z.string().max(1000).nullable(),
+          ai_generated: z.boolean(), first_comment: z.string().max(2200).nullable(), location_id: z.string().max(30).nullable(), thumb_offset_ms: z.number().int().min(0).nullable(),
+        }).partial().optional(),
+      }),
+    },
+    async ({ post_id, space, account, files, cover, go, youtube, instagram }) => ws(async () => {
+      const api = await import("@/lib/publish/api");
+      let acc = account;
+      if (!acc) {
+        const { listAccounts } = await import("@/lib/publish/accounts");
+        const mine = (await listAccounts()).filter((a) => a.network === (space.startsWith("yt") ? "youtube" : "instagram"));
+        if (mine.length === 1) acc = mine[0].id;
+      }
+      const body: Record<string, unknown> = {
+        ...(acc ? { account: acc } : {}), ...(files ? { media: files.map(toRef) } : {}), ...(cover !== undefined ? { cover: cover ? toRef(cover) : null } : {}),
+        ...(youtube ? { yt: youtube } : {}), ...(instagram ? { ig: instagram } : {}), ...(go === "now" ? { when: "now" } : go === "arm" ? { when: "scheduled" } : {}),
+      };
+      const saved = await (await api.publishPost([post_id, space], body)).json();
+      if (saved.error) throw new Error(saved.error);
+      if (!go || go === "save") return saved;
+      const r = await api.publishPost([post_id, space, "go"], { mode: go });
+      const j = await r.json();
+      if (!r.ok) throw new Error(`${j.error}${j.problems?.length > 1 ? ` (also: ${j.problems.slice(1).join("; ")})` : ""}`);
+      return { ...j, next: go === "now" ? "Going out now: check publish_status in a minute (a big YouTube upload takes a few)." : "Armed: the autopilot sends it at the target's publish time (checks every 10 min)." };
+    }),
+  );
+
+  server.registerTool(
+    "publish_status",
+    {
+      title: "Publish status",
+      description: "Where one post's target stands: state, progress, the live link once it's out, what's stopping it (problems), and its history. stop cancels a run in progress; retry tries a failed one again.",
+      inputSchema: z.object({ post_id: POST_ID, space: PUB_SPACE, action: z.enum(["status", "stop", "retry"]).optional() }),
+    },
+    async ({ post_id, space, action }) => ws(async () => {
+      const api = await import("@/lib/publish/api");
+      if (action === "stop" || action === "retry") { const r = await api.publishPost([post_id, space, action === "stop" ? "cancel" : "retry"], {}); const j = await r.json(); if (!r.ok) throw new Error(j.error); return j; }
+      return (await api.publishGet([post_id, space])).json();
+    }),
+  );
+
+  server.registerTool(
+    "automation_rules",
+    {
+      title: "Publishing automation rules",
+      description: "Read or change the autopilot: autopilot (master switch), retries, mark_posted, notify (phone push), crosspost rules [{from, to, hours, on}] (live on one space → queued on another N hours later), slots [{space, day 0=Sun..6, time \"HH:MM\"}] (a post moved to Scheduled without a time gets the next free slot), footer {space: text} added to new captions, first_comment (Instagram default), yt_defaults, tz (IANA time zone the slots are in). Only change what the user asked; lists replace the whole list.",
+      inputSchema: z.object({ set: z.record(z.string(), z.unknown()).optional(), run_now: z.boolean().optional() }),
+    },
+    async ({ set, run_now }) => ws(async () => {
+      const api = await import("@/lib/publish/api");
+      if (run_now) return (await api.publishPost(["sweep"], {})).json();
+      if (set) return (await api.publishPost(["rules"], { rules: set })).json();
+      return { rules: await (await import("@/lib/publish/plans")).getRules() };
+    }),
+  );
+
   server.registerTool(
     "workspace_media",
     {
@@ -1144,6 +1235,7 @@ export const INSTRUCTIONS = [
     "6) The user's own voice model: voice_dataset to see or grow the training data, then the training notebook; once trained it is engine myvoice with voice = that person's name (my_voices lists both people's). benchmark_voices compares it with their clones on held-out sentences. voice_coach shows how a trained voice is doing and writes the next recording script around its weak spots; recording it makes the voice more natural (retrains only go live when they beat the current model).",
     "Content spaces: each post goes to one or more spaces (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast), each with its own stage and publish time; cross-post by adding targets (update_post targets, merge). Files: upload_media (bytes) or add_media (a link); delete_media / delete_post only when asked.",
     "Files page (a Drive-like file manager over uploads and generated items; category folders Videos, Images, Audio, Docs & scripts and Other file things by kind on their own): list_files browses folders and searches; get_file gives download links; create_folder / update_folder / move_files / rename_file / star_files keep it tidy (upload_media and add_media take a folder). delete_files and delete_folder move things to the trash (30 days, restore_files brings them back) and only when asked; forever / empty_trash only when asked for that.",
+    "Publishing: publish_accounts shows the connected YouTube / Instagram accounts and the queue; publish_post sets up a target (files, cover, every YouTube or Instagram option) and saves, arms it for its publish time, or sends it now (only when asked); publish_status follows it; automation_rules reads or changes cross-posting, posting slots, retries and footers. X, TikTok, LinkedIn and podcasts stay hand-offs: the user posts those and marks them posted.",
     "7) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",
     "Scores: match = how closely Whisper heard the script (>=0.95 good); similarity = voice match vs the recording (>=0.86 same speaker).",
 ].join("\n");
