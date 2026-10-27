@@ -2,7 +2,7 @@
 // Building blocks shared by Posts and Files: the sign-in gate, avatars, uploads and media tiles.
 import { FileAudio, FileText, FilmStrip, Paperclip, Play, UsersThree } from "@phosphor-icons/react";
 import { useCallback, useState } from "react";
-import { AW, fileUrl, initials, kindOf, type Media, type MediaKind } from "@/lib/workspace";
+import { AW, fileUrl, initials, kindOf, screenPreview, type Media, type MediaKind } from "@/lib/workspace";
 import { aw, getMe, ID, logActivity, signOut, useMe } from "./aw";
 import { Empty, PageHeader } from "./ui";
 import { FileViewer } from "./Viewer";
@@ -127,6 +127,7 @@ export function MediaViewer({ m, onClose, onDelete }: { m: Media; onClose: () =>
   return (
     <FileViewer onClose={onClose} onDelete={onDelete} file={{
       key: `m:${m.$id}`, name: m.name, kind: m.kind, mime: m.mime, size: m.size, url: fileUrl(m), download: fileUrl(m, "download"), by: m.uploaded_name, at: Date.parse(m.$createdAt),
+      preview: m.kind === "image" && m.token ? screenPreview(m) : null,
     }} />
   );
 }

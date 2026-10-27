@@ -18,6 +18,10 @@ Two layers. You normally only touch the first.
 | `get_job` | `{job_id, wait_seconds?}` long-poll. When done, each result has `duration`, `fits` (vs `window`) and a signed `url`; the job has `zip_url`. Links expire after 6 h. |
 | `list_jobs` | Last 30 jobs. |
 | `cancel_job` | Cancel a queued job, or stop a running one after the current line. |
+| `publish_accounts` | Connected YouTube channels and Instagram accounts, every publish plan (draft, armed, uploading, published + link, failed + next retry) and the automation rules. See `docs/PUBLISHING.md`. |
+| `publish_post` | `{post_id, space: yt_video\|yt_short\|ig_reel\|ig_post\|ig_story, account?, files?: [m:…\|g:…], cover?, youtube?: {title, description, tags, category, privacy, made_for_kids, synthetic, playlist, language, notify, youtube_schedules, …}, instagram?: {caption, share_to_feed, collaborators, user_tags, trial, audio_name, alt_text, ai_generated, first_comment, location_id}, go?: save\|arm\|now\|disarm}` → the plan. `arm` goes out at the target's publish time; `now` right away. |
+| `publish_status` | `{post_id, space, action?: status\|stop\|retry}` → state, progress, live link, problems, history. |
+| `automation_rules` | `{set?, run_now?}`: autopilot switch, retries, mark_posted, notify, crosspost rules, posting slots, caption footers, first comment, YouTube defaults, tz. |
 | `add_reference_voice` | `{name, url? \| audio_b64?, transcript?}` → a voice Chatterbox can clone. |
 | `transcribe` | `{sources:[{url, name?, text?}] \| library_job, language?}` → Whisper large-v3 subtitles (SRT/VTT/JSON, word timing). |
 | `list_library` | Saved jobs in the dashboard library. |

@@ -59,6 +59,12 @@ export default function Images() {
   const [pending, setPending] = useState<Pending[]>([]);
   const [history, setHistory] = useState<LibImages[]>([]);
   const [open, setOpen] = useState<{ item: LibImages; i: number } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(null); };
+    addEventListener("keydown", k);
+    return () => removeEventListener("keydown", k);
+  }, [open]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});

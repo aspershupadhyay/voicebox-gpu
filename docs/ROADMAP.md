@@ -75,7 +75,19 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [x] Uploads: up to 6 small files at once; the next file starts while the last one is recorded
 - [ ] Adaptive streaming (HLS renditions made on the worker) for long uploaded videos on slow connections
 - [ ] Slides (.pptx) preview
-- [ ] Publish to YouTube (Data API: upload, schedule with publishAt, thumbnail) and Instagram (Graph API: Reels, posts, stories, published by the scheduled check) from a post's targets, with a `publish_post` MCP tool
+- [x] The video player takes the video's own shape (vertical Shorts stay tall); photos always fit the screen and open from a screen-sized copy
+
+## Publishing and autopilot (2026-10-27, docs/PUBLISHING.md)
+- [x] Connect YouTube channels (Google OAuth) and Instagram Creator/Business accounts (Instagram Login); tokens sealed in R2, Instagram's refreshed automatically
+- [x] Composer on each target: every YouTube option (title, description, tags, category, visibility, playlist, language, license, recording date, made for kids, synthetic-content disclosure, embedding, stats, notify, thumbnail) and every Instagram one (caption, carousel up to 20, cover or frame, share to feed, collaborators, tags, trial reels, audio name, alt text, AI label, location, first comment), with a live preview
+- [x] Publish now, or set to go at the target's publish time; YouTube uploads early and goes public on the minute
+- [x] Resumable YouTube uploads in 32 MB pieces across runs; Instagram containers polled until ready
+- [x] Autopilot (every 10 min): starts due posts, carries on unfinished ones, retries with backoff, marks posts Posted with the link, phone push
+- [x] Rules: cross-post (live on A → B, N hours later), posting slots, caption footers, default first comment, YouTube defaults
+- [x] MCP tools: `publish_accounts`, `publish_post`, `publish_status`, `automation_rules`
+- [ ] Pass YouTube's API audit so uploads can go public straight away (until then they stay private)
+- [ ] Analytics back from YouTube and Instagram on each post
+- [ ] TikTok (needs its own audit), X (paid API) and LinkedIn publishing; they're hand-offs for now
 
 ## Later (not started)
 - [ ] Listen to a few of the cut training clips per session on Your model (the worker would push samples next to the zip)

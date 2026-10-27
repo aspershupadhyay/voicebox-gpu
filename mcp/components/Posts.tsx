@@ -4,7 +4,7 @@
 // or format; a post can go to many at once. Click any post for the full editor. Live: your partner's moves land here.
 import {
   CalendarBlank, CaretLeft, CaretRight, ChatCircleDots, CheckCircle, Circle, CircleDashed, Clock, Eye, Flame, Kanban, Lightbulb, ListBullets,
-  MagnifyingGlass, Microphone, Minus, Paperclip, Plus, Pulse, SquaresFour, TrashSimple, WarningCircle, X,
+  Lightning, MagnifyingGlass, Microphone, Minus, Paperclip, Plus, Pulse, SquaresFour, TrashSimple, WarningCircle, X,
 } from "@phosphor-icons/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -18,11 +18,14 @@ import { forgetTargets, saveGoals, saveTargets, useTargets } from "./useTargets"
 import { Avatar, Gate } from "./wsparts";
 import { Empty, PageHeader, StatCard } from "./ui";
 import { Select } from "./pop";
+import { Autopilot } from "./Autopilot";
+import { Composer } from "./Publish";
 
-type View = "board" | "calendar" | "list" | "gallery";
+type View = "board" | "calendar" | "list" | "gallery" | "autopilot";
 const VIEWS: { id: View; label: string; Icon: typeof Kanban }[] = [
   { id: "board", label: "Board", Icon: Kanban }, { id: "calendar", label: "Calendar", Icon: CalendarBlank },
   { id: "list", label: "List", Icon: ListBullets }, { id: "gallery", label: "Gallery", Icon: SquaresFour },
+  { id: "autopilot", label: "Autopilot", Icon: Lightning },
 ];
 type Entry = { p: Post; t: Target | null; all: Target[] }; // one post as seen from the current scope
 const IDEAS = "none";
@@ -133,6 +136,7 @@ function PostsInner() {
   const [menu, setMenu] = useState(false);
   const [feed, setFeed] = useState(false);
   const [over, setOver] = useState<string | null>(null);
+  const [compose, setCompose] = useState<{ post: Post; space: SpaceId } | null>(null);
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
 
   useEffect(() => {
@@ -502,6 +506,8 @@ function PostsInner() {
           </aside>
         </>
       )}
+      {view === "autopilot" && <Autopilot posts={posts} onCompose={(post, space) => setCompose({ post, space })} onOpen={(p) => go({ post: p.$id })} />}
+      {compose && <Composer post={posts.find((p) => p.$id === compose.post.$id) ?? compose.post} space={compose.space} onClose={() => setCompose(null)} />}
       {open && (openPost ? <PostDrawer key={open} post={openPost} onClose={() => go({ post: null })} />
         : !loading && (<><div className="scrim" onClick={() => go({ post: null })} /><aside className="drawer"><p className="dim">This post was deleted.</p><button onClick={() => go({ post: null })}>Close</button></aside></>))}
     </>
