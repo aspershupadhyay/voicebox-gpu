@@ -1,6 +1,8 @@
 # Deploys the dashboard + MCP server (mcp/) to Vercel on every push that touches it, with the current worker bundle.
 # One-time setup: repo Settings → Secrets and variables → Actions → New repository secret VERCEL_TOKEN
 # (vercel.com/account/settings/tokens). Env vars stay as they are on Vercel; this only ships code.
+# This is the only deployer of main: Vercel's own Git deploys of main are off (mcp/vercel.json), because they ship
+# the committed mcp/lib/bundle.ts, which can be stale (a docs-only push once rolled the worker back to 3.0.1).
 name: Deploy
 on:
   push:
