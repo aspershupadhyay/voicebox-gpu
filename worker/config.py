@@ -5,7 +5,7 @@ source of truth for defaults and ranges (docs/API.md is generated from the same 
 """
 import os
 
-VERSION = "3.3.0"
+VERSION = "3.4.0"
 HOME = os.environ.get("VOICEBOX_HOME", "/content/voicebox")
 VENVS = os.environ.get("VOICEBOX_VENVS", os.path.join(HOME, "venvs"))
 
@@ -18,7 +18,22 @@ PRESET_REFS = {"female": ("orpheus", "tara"), "male": ("orpheus", "dan")}
 # (VRAM *and* RAM are freed because each engine is its own process), and vice versa.
 GROUPS = {"voice": "Voice models", "visual": "Video models"}
 IDLE_MIN = float(os.environ.get("VOICEBOX_IDLE_MIN", "30"))   # unload an engine after this many idle minutes
-PARK_MIN = float(os.environ.get("VOICEBOX_PARK_MIN", "60"))   # a model parked in RAM is stopped after this many minutes
+
+
+def _ram_gb():
+    try:
+        return int(next(l for l in open("/proc/meminfo") if l.startswith("MemTotal")).split()[1]) / 2**20
+    except (OSError, StopIteration, ValueError):
+        return 0.0
+
+
+# A high-RAM machine (Colab's A100 high-RAM: 167 GB) has room to keep the voice models parked all session: an idle
+# engine is parked in RAM instead of stopped, and a parked one stays until RAM runs low, so every load after the
+# first is a ~1 s wake. Below that, idle engines stop and parked ones stop after PARK_MIN, as before.
+HIGH_RAM = _ram_gb() >= float(os.environ.get("VOICEBOX_HIGH_RAM_GB", "100"))
+# a model parked in RAM is stopped after this many minutes (0 = only when RAM runs low)
+PARK_MIN = float(os.environ.get("VOICEBOX_PARK_MIN") or (0 if HIGH_RAM else 60))
+IDLE_PARK = os.environ.get("VOICEBOX_IDLE_PARK", "1" if HIGH_RAM else "0") == "1"  # idle: park instead of stop
 RAM_RESERVE_GB = 16.0                                          # never park when it would leave less RAM free than this
 NO_PARK = {"wan", "wan14", "ltx", "animate"}                   # video engines that page themselves in and out (cpu offload)
 DISK_RESERVE_GB = 12.0                                         # keep this much disk free; evict old weights first
@@ -59,6 +74,14 @@ SPEC = os.environ.get("VOICEBOX_SPEC", "auto")
 # first (every review needs it, and it's small), then your own voice (its cold load took 311 s on a fresh L4), then the
 # rest. It pauses while a job fetches anything, so it never slows a real job down.
 PREFETCH = [n.strip() for n in os.environ.get("VOICEBOX_PREFETCH", "whisper,myvoice,qwen,orpheus").split(",") if n.strip()]
+# Load these on the GPU right after their prefetch, while the worker comes online, so the first voiceover doesn't wait
+# for a load. myvoice only when a trained voice exists; never while a job runs or the video models hold the GPU.
+PRELOAD = [n.strip() for n in os.environ.get("VOICEBOX_PRELOAD", "myvoice").split(",") if n.strip()]
+# Step 7 (docs/INFERENCE.md): the dashboard's R2 bucket as a cache across runtimes (worker/r2cache.py).
+# R2_WEIGHTS: the voice engines' Hugging Face repos come from R2 when it has them (mirrored by the first runtime that
+# downloaded them); R2_COMPILE: vLLM's compiled kernels, kept per GPU model and vLLM version.
+R2_WEIGHTS = os.environ.get("VOICEBOX_R2_WEIGHTS", "1") == "1"
+R2_COMPILE = os.environ.get("VOICEBOX_R2_COMPILE", "1") == "1"
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
 
 ENGINES = {

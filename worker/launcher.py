@@ -73,7 +73,8 @@ def start_gateway(secret):
 
 
 def spawn_gateway(secret):
-    env = {**os.environ, "WORKER_SECRET": secret, "VOICEBOX_HOME": HOME}
+    # REGISTER_URL too: the gateway asks the dashboard for its R2 cache links (r2cache.py) and fetches updates there
+    env = {**os.environ, "WORKER_SECRET": secret, "VOICEBOX_HOME": HOME, "REGISTER_URL": setting("REGISTER_URL") or ""}
     logf = open(os.path.join(HOME, "logs", "gateway.log"), "a")
     return subprocess.Popen([sys.executable, os.path.join(HERE, "gateway.py"), "--port", str(PORT)],
                             stdout=logf, stderr=subprocess.STDOUT, env=env, cwd=HERE)
