@@ -65,4 +65,13 @@ export function fileUrl(m: Pick<Media, "file_id" | "token">, mode: "view" | "dow
   return u.toString();
 }
 
+// ── Files page (folders live in R2, lib/files.ts): the folder colours and how a generated library item reads as a file
+export const FOLDER_COLORS = ["lavender", "sky", "peach", "mint", "rose", "sand"] as const;
+export type FolderColor = (typeof FOLDER_COLORS)[number];
+type LibLike = { id: string; kind?: string; label?: string; results: { text: string }[] };
+/** A voiceover is audio, a subtitle job a doc. */
+export const libKind = (j: Pick<LibLike, "kind">): MediaKind => (j.kind === "video" ? "video" : j.kind === "image" ? "image" : j.kind === "transcribe" ? "doc" : "audio");
+export const libType = (j: Pick<LibLike, "kind">) => ({ video: "Video", image: "Image", transcribe: "Subtitles" } as Record<string, string>)[j.kind ?? ""] ?? "Voiceover";
+export const libName = (j: LibLike) => j.label || (j.results[0]?.text ?? "").replace(/<[^>]+>/g, "").slice(0, 70) || j.id;
+
 export const initials = (name?: string | null) => (name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");

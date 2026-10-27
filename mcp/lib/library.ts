@@ -231,6 +231,15 @@ export async function listLibrary(): Promise<LibJob[]> {
   return jobs.sort((a, b) => b.created - a.created);
 }
 
+/** Rename a library item (its label; files and id stay). */
+export async function renameLibJob(id: string, label: string) {
+  const j = await getLibJob(id);
+  if (!j) throw new Error("library item not found");
+  const next = { ...j, label: label.slice(0, 120) };
+  await putLibJob(next);
+  return next;
+}
+
 export const deleteLibJob = (id: string) => delPrefix(`${ROOT}${id}/`);
 
 /** Presigned GET URLs for library files. */

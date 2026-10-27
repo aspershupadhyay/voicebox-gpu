@@ -1,29 +1,28 @@
 "use client";
+// One generated item (a voiceover, subtitles, an image set or a video) in full: its player, lines, scores and downloads.
+// The Files page opens these in its detail drawer (components/Files.tsx).
 import {
-  CaretRight, ClosedCaptioning, DownloadSimple, FileZip, FilmSlate, FilmStrip, ImageSquare, MagnifyingGlass, Microphone, Play, Plus, Stop, TrashSimple, X,
+  CaretRight, ClosedCaptioning, DownloadSimple, FileZip, FilmStrip, ImageSquare, Microphone, Play, Stop, TrashSimple,
 } from "@phosphor-icons/react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ago, api, fileUrl, fmtS, matchClass, pct, type Gen, type GenImage } from "./api";
-import { Info } from "./Info";
-import { CassetteArt, VoiceGlyph } from "./art";
+import { useEffect, useRef, useState } from "react";
+import { ago, fileUrl, fmtS, matchClass, pct, type Gen, type GenImage } from "./api";
+import { VoiceGlyph } from "./art";
 import LineRow, { coached, type Line } from "./LineRow";
-import { useStatus } from "./Shell";
-import { useDialog } from "./Dialog";
 
-type LibJob = {
+export type LibJob = {
   id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; created: number; source?: string; language?: string | null;
   params?: Record<string, unknown>; style?: string; subs?: { cues: number; timeline: string } | null; match?: number | null; results: (Line & { audio?: string | null })[];
   video?: { width: number; height: number; duration: number; size: number; voice_job?: string; has_audio?: boolean }; video_url?: string; poster_url?: string | null;
   gen?: Gen; images?: GenImage[]; mode?: string; scenes?: { id: string; text: string; start: number; seconds: number }[];
 };
-type CardProps = { j: LibJob; open: boolean; selected: boolean; onSelect: (shift: boolean) => void; onDelete: () => void };
+type CardProps = { j: LibJob; open: boolean; selected?: boolean; onSelect?: (shift: boolean) => void; onDelete: () => void };
 
-const Check = ({ selected, onSelect }: { selected: boolean; onSelect: (shift: boolean) => void }) => (
+const Check = ({ selected, onSelect }: { selected?: boolean; onSelect?: (shift: boolean) => void }) => !onSelect ? null : (
   <input type="checkbox" className="selbox" checked={selected} aria-label="Select" onClick={(e) => { e.stopPropagation(); onSelect(e.shiftKey); }} onChange={() => {}} />
 );
 
-function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) {
+export function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) {
   const [isOpen, setOpen] = useState(true);
   useEffect(() => { if (open) setOpen(true); }, [open]);
   const slug = (j.label || j.id).replace(/[^A-Za-z0-9._-]/g, "_");
@@ -78,7 +77,7 @@ function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) {
   );
 }
 
-function ImageCard({ j, selected, onSelect, onDelete }: CardProps) {
+export function ImageCard({ j, selected, onSelect, onDelete }: CardProps) {
   const slug = (j.label || j.id).replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 40);
   const ims = j.images ?? [];
   return (
@@ -111,7 +110,7 @@ function ImageCard({ j, selected, onSelect, onDelete }: CardProps) {
   );
 }
 
-function JobCard({ j, open, selected, onSelect, onDelete, onSubtitle }: CardProps & { onSubtitle: () => void }) {
+export function JobCard({ j, open, selected, onSelect, onDelete, onSubtitle }: CardProps & { onSubtitle: () => void }) {
   const players = useRef<(() => void)[]>([]);
   const [playing, setPlaying] = useState(-1);
   const [isOpen, setOpen] = useState(open);
@@ -165,170 +164,5 @@ function JobCard({ j, open, selected, onSelect, onDelete, onSubtitle }: CardProp
         </div>
       )}
     </div>
-  );
-}
-
-/** Everything the GPU made (takes, subtitles, images, videos): the Generated tab of Files. */
-export default function Library() {
-  const { status } = useStatus();
-  const { confirm, toast } = useDialog();
-  const [jobs, setJobs] = useState<LibJob[] | null>(null);
-  const [err, setErr] = useState("");
-  const [filter, setFilter] = useState("all");
-  const [q, setQ] = useState("");
-  const [hash, setHash] = useState("");
-  const [note, setNote] = useState("");
-  const [sel, setSel] = useState<Set<string>>(new Set());
-  const [removing, setRemoving] = useState<Set<string>>(new Set());
-  const anchor = useRef<string | null>(null);
-
-  const load = () => api<{ jobs: LibJob[] }>("library").then((r) => setJobs(r.jobs)).catch((e) => setErr(e.message));
-  useEffect(() => {
-    const onHash = () => setHash(location.hash.slice(1));
-    onHash(); load();
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
-  useEffect(() => {
-    if (!hash || !jobs) return;
-    const t = setTimeout(() => document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" }), 350); // let cards above expand first
-    return () => clearTimeout(t);
-  }, [hash, jobs]);
-
-  const engines = useMemo(() => Array.from(new Set((jobs ?? []).filter((j) => !j.kind || j.kind === "tts").map((j) => j.engine))), [jobs]);
-  const hasVideo = (jobs ?? []).some((j) => j.kind === "video");
-  const hasImages = (jobs ?? []).some((j) => j.kind === "image");
-  const shown = (jobs ?? []).filter((j) =>
-    (filter === "all" || (filter === "videos" ? j.kind === "video" : filter === "images" ? j.kind === "image" : filter === "subtitles" ? j.kind === "transcribe" || (!!j.subs && j.kind !== "video") : (!j.kind || j.kind === "tts") && j.engine === filter)) &&
-    (!q || `${j.label} ${j.voice} ${j.engine} ${j.results.map((r) => r.text).join(" ")}`.toLowerCase().includes(q.toLowerCase())));
-  const shownIds = shown.map((j) => j.id);
-  const selShown = shownIds.filter((id) => sel.has(id));
-  const allShown = shownIds.length > 0 && selShown.length === shownIds.length;
-  const someShown = selShown.length > 0 && !allShown;
-
-  // drop selections that vanished (deleted elsewhere / reloaded)
-  useEffect(() => { if (jobs) setSel((s) => new Set([...s].filter((id) => jobs.some((j) => j.id === id)))); }, [jobs]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const typing = (e.target as HTMLElement)?.closest?.("input:not([type=checkbox]), textarea");
-      if (e.key === "Escape" && sel.size && !document.querySelector(".modal")) setSel(new Set());
-      if (!typing && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && shownIds.length) { e.preventDefault(); setSel(new Set(shownIds)); }
-      if (!typing && (e.key === "Delete" || e.key === "Backspace") && sel.size && !document.querySelector(".modal")) { e.preventDefault(); removeMany([...sel]); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
-
-  function toggle(id: string, shift: boolean) {
-    setSel((prev) => {
-      const next = new Set(prev);
-      if (shift && anchor.current && shownIds.includes(anchor.current)) {
-        // shift-click selects the whole range from the last clicked card
-        const [a, b] = [shownIds.indexOf(anchor.current), shownIds.indexOf(id)].sort((x, y) => x - y);
-        shownIds.slice(a, b + 1).forEach((x) => next.add(x));
-      } else if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-    anchor.current = id;
-  }
-  function toggleAll() {
-    setSel((prev) => {
-      const next = new Set(prev);
-      if (allShown) shownIds.forEach((id) => next.delete(id));
-      else shownIds.forEach((id) => next.add(id));
-      return next;
-    });
-  }
-
-  async function removeMany(ids: string[]) {
-    const items = (jobs ?? []).filter((j) => ids.includes(j.id));
-    if (!items.length) return;
-    const files = items.reduce((n, j) => n + (j.kind === "video" ? 1 : j.kind === "image" ? (j.images?.length ?? 0) : j.results.length), 0);
-    const one = items.length === 1;
-    const ok = await confirm({
-      danger: true,
-      title: one ? `Delete "${items[0].label || items[0].id}"?` : `Delete ${items.length} items?`,
-      body: (
-        <>
-          {one ? "This removes it and all of its files" : `This removes ${items.length} items (${files} files, plus their subtitles)`} from your private storage. It can&apos;t be undone.
-          {!one && <ul>{items.slice(0, 50).map((j) => <li key={j.id}>{j.label || j.id}</li>)}{items.length > 50 && <li className="dim">…and {items.length - 50} more</li>}</ul>}
-        </>
-      ),
-      confirm: one ? "Delete" : `Delete ${items.length}`,
-    });
-    if (!ok) return;
-    setRemoving(new Set(ids));
-    try {
-      const r = one
-        ? await api(`library/${ids[0]}`, { method: "DELETE" }).then(() => ({ deleted: ids, failed: [] as string[] }))
-        : await api<{ deleted: string[]; failed: string[] }>("library", { method: "DELETE", body: { ids } });
-      setJobs((js) => (js ?? []).filter((j) => !r.deleted.includes(j.id)));
-      setSel((s) => new Set([...s].filter((id) => !r.deleted.includes(id))));
-      if (r.failed.length) toast(`Deleted ${r.deleted.length}; ${r.failed.length} failed. Try again.`, "bad");
-      else toast(one ? "Deleted." : `Deleted ${r.deleted.length} items.`, "ok");
-    } catch (e) {
-      toast((e as Error).message, "bad");
-    } finally {
-      setRemoving(new Set());
-    }
-  }
-  async function subtitle(j: LibJob) {
-    if (!status?.online) return toast("The GPU worker is offline. Start the Colab notebook first.", "bad");
-    try {
-      await api("jobs", { body: { kind: "transcribe", library: j.id, language: j.language || undefined } });
-      setNote(`Subtitling "${j.label || j.id}"… it'll show a CC badge here when done (follow it in the jobs tray).`);
-    } catch (e) {
-      toast((e as Error).message, "bad");
-    }
-  }
-
-  return (
-    <>
-      <div className="filters">
-        <div className="seg">
-          {["all", ...(hasVideo ? ["videos"] : []), ...(hasImages ? ["images"] : []), ...engines, "subtitles"].map((e) => <button key={e} className={filter === e ? "on" : ""} style={{ textTransform: "capitalize" }} onClick={() => setFilter(e)}>{e}</button>)}
-        </div>
-        <div className="searchbox"><MagnifyingGlass size={16} className="ic" /><input placeholder="Search titles, voices, script text…" aria-label="Search files" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-        <button className="ghost sm" onClick={load}>Refresh</button>
-      </div>
-
-      {jobs && shown.length > 0 && (
-        sel.size > 0 ? (
-          <div className="selbar">
-            <input type="checkbox" className="selbox" checked={allShown} ref={(el) => { if (el) el.indeterminate = someShown; }} onChange={toggleAll} aria-label="Select all shown" />
-            <b>{sel.size} selected</b>
-            {!allShown && <button className="quiet xs" onClick={toggleAll}>Select all {shownIds.length}</button>}
-            <button className="quiet xs" onClick={() => setSel(new Set())}><X size={12} />Clear</button>
-            <span className="faint tiny" style={{ flex: 1 }}>Shift-click selects a range · Esc clears</span>
-            <button className="danger sm" disabled={removing.size > 0} onClick={() => removeMany([...sel])}>
-              <TrashSimple size={14} weight="bold" />{removing.size ? "Deleting…" : `Delete ${sel.size}`}
-            </button>
-          </div>
-        ) : (
-          <label className="row tiny dim" style={{ gap: 10, margin: "0 0 10px 14px", cursor: "pointer", width: "fit-content" }}>
-            <input type="checkbox" className="selbox" checked={false} onChange={toggleAll} aria-label="Select all shown" />
-            Select all · {shown.length} shown
-          </label>
-        )
-      )}
-
-      {note && <div className="notice"><span className="n-ic"><ClosedCaptioning size={18} /></span><span className="n-text">{note}</span></div>}
-      {err && <p className="err">{err}</p>}
-      {jobs === null && !err && <div className="skel" style={{ height: 220 }} />}
-      {jobs && !shown.length && (
-        <div className="empty"><CassetteArt /><b>{jobs.length ? "Nothing matches" : "Nothing made yet"}</b><span>{jobs.length ? "Try another filter or search." : "Takes, subtitles and images you make land here."}</span>
-          {!jobs.length && <Link href="/voiceover" className="btn sm"><Microphone size={14} weight="bold" />Make a voiceover</Link>}</div>
-      )}
-      {shown.length > 0 && <div className="lib-list">{shown.map((j) => (
-        <div key={j.id} className={removing.has(j.id) ? "removing" : ""}>
-          {j.kind === "image"
-            ? <ImageCard j={j} open={hash === j.id} selected={sel.has(j.id)} onSelect={(sh) => toggle(j.id, sh)} onDelete={() => removeMany([j.id])} />
-            : j.kind === "video"
-            ? <VideoCard j={j} open={hash === j.id} selected={sel.has(j.id)} onSelect={(sh) => toggle(j.id, sh)} onDelete={() => removeMany([j.id])} />
-            : <JobCard j={j} open={hash === j.id} selected={sel.has(j.id)} onSelect={(sh) => toggle(j.id, sh)} onDelete={() => removeMany([j.id])} onSubtitle={() => subtitle(j)} />}
-        </div>
-      ))}</div>}
-    </>
   );
 }

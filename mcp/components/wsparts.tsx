@@ -32,10 +32,11 @@ export function Avatar({ id, name, sm }: { id?: string | null; name?: string | n
 
 export type Upload = { key: string; name: string; progress: number; error?: string };
 
-/** Upload to Appwrite Storage (chunked, resumable), record it in the media table, then mint a view token + R2 backup. */
+/** Upload to Appwrite Storage (chunked, resumable), record it in the media table, then mint a view token + R2 backup.
+ *  `onRow` hears about each file as soon as its row exists (the Files page files it into the open folder). */
 export function useUploader(postId?: string | null) {
   const [uploads, setUploads] = useState<Upload[]>([]);
-  const upload = useCallback(async (files: FileList | File[]) => {
+  const upload = useCallback(async (files: FileList | File[], onRow?: (m: Media) => void) => {
     const list = Array.from(files); // copy now: the caller clears the <input>, which empties a live FileList
     const { user } = await getMe();
     await Promise.all(list.map(async (file) => {
@@ -50,6 +51,7 @@ export function useUploader(postId?: string | null) {
             uploaded_by: user?.id ?? null, uploaded_name: user?.name ?? null, r2_key: null, token: null },
         });
         set({ progress: 1 });
+        onRow?.(row);
         const fin = await fetch(`/api/ws/media/${row.$id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then((r) => r.json());
         if (fin.backup) set({ error: fin.backup });
         logActivity(postId ?? null, "uploaded", file.name);
