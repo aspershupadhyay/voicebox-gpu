@@ -99,7 +99,7 @@ const handler = createMcpHandler(
       {
         title: "Worker status",
         description: "Is the Colab GPU worker online? Shows GPU, VRAM, which engines are loaded, queue length, the worker version vs the latest, and (once Colab is connected on Health) colab: compute units left, hourly burn, runtimes assigned and the current session. Start / stop / configure the GPU with the gpu tool. logs: the end of one log (an engine name, gateway or train), e.g. to see how long a load took.",
-        inputSchema: z.object({ logs: z.string().regex(/^[a-z0-9-]{1,32}$/).optional(), lines: z.number().int().min(1).max(400).optional() }),
+        inputSchema: z.object({ logs: z.string().regex(/^[a-z0-9-]{1,32}$/).optional(), lines: z.coerce.number().int().min(1).max(400).optional() }),
       },
       async ({ logs: want, lines }) => {
         const rec = await loadWorker();
