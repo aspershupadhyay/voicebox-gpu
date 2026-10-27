@@ -902,12 +902,12 @@ class Engines:
     def revoice(self, payload):
         return self._post("chatterbox", "/revoice", payload)
 
-    def enhance(self, payload):
-        return self._post("enhance", "/enhance", payload)
+    def enhance(self, payload, name="enhance"):
+        return self._post(name, "/enhance", payload)
 
-    def enhance_batch(self, items):
-        """Studio polish for many files in one call (clips up to 30 s go through the model together)."""
-        return self._post("enhance", "/enhance_batch", {"items": items})["results"]
+    def enhance_batch(self, items, name="enhance"):
+        """Studio polish for many files in one call (Resemble Enhance or AP-BWE)."""
+        return self._post(name, "/enhance_batch", {"items": items})["results"]
 
     def video(self, name, payload):
         return self._post(name, "/video", payload, timeout=3 * 60 * 60)
@@ -1686,24 +1686,35 @@ def run_story(job):
             os.remove(f)
 
 
-def studio_clean(job, src, dst, params=None, label="studio clean-up: noise out, detail restored"):
-    """Resemble Enhance src -> dst (44.1 kHz). True on success; False after a warning when the enhancer can't run,
-    so the caller falls back to its plain ffmpeg clean-up instead of failing the job."""
+def polish_engine(job):
+    """The engine studio polish runs on for this job: post.polish_engine, else config.POLISH."""
+    pick = (job.get("post") or {}).get("polish_engine") or C.POLISH
+    return C.POLISH_ENGINE.get(pick, "enhance")
+
+
+def studio_clean(job, src, dst, params=None, label="studio clean-up: noise out, detail restored", engine="enhance"):
+    """Resemble Enhance (or AP-BWE for studio polish) src -> dst. True on success; False after a warning when the
+    enhancer can't run, so the caller falls back to its plain ffmpeg clean-up instead of failing the job. AP-BWE that
+    fails hands the file to Resemble Enhance."""
     import soundfile as sf
     stage = job["stage"]
     dur = sf.info(src).duration
     p = C.resolve_params("enhance", params or {})
     try:
-        _prepare(job, "enhance")
+        _prepare(job, engine)
         job["stage"] = "enhancing"
         t0 = time.time()
-        _run_unit(job, RATES["enhance"] * dur + 2, lambda: ENG.enhance({"src_path": src, "out_path": dst, "params": p}), label)
-        learn_rate("enhance", time.time() - t0, max(dur, 1.0))
+        _run_unit(job, RATES[engine] * dur + 2, lambda: ENG.enhance({"src_path": src, "out_path": dst, "params": p}, engine), label)
+        learn_rate(engine, time.time() - t0, max(dur, 1.0))
         return True
     except Cancelled:
         raise
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()
+        if engine != "enhance":
+            log(f"{engine} failed ({type(e).__name__}: {e}); Resemble Enhance instead")
+            job["stage"] = stage
+            return studio_clean(job, src, dst, params, label)
         msg = f"studio enhance unavailable ({type(e).__name__}: {str(e)[:120]}); used the standard clean-up"
         if msg not in job["warnings"]:
             job["warnings"].append(msg)
@@ -1721,7 +1732,7 @@ def _studio_output(job, path):
         return path
     out = path[:-4] + ".enh.wav"
     if not studio_clean(job, path, out, {"mode": "enhance", "strength": float(job["post"].get("enhance_strength", 0.3))},
-                        "studio polish"):
+                        "studio polish", polish_engine(job)):
         return path
     if mode == "auto":
         try:
@@ -1753,24 +1764,32 @@ def _studio_outputs(job, paths):
     outs = [x[:-4] + ".enh.wav" for x in paths]
     params = C.resolve_params("enhance", {"mode": "enhance", "strength": float(job["post"].get("enhance_strength", 0.3))})
     stage = job["stage"]
-    try:
-        _prepare(job, "enhance")
-        job["stage"] = "enhancing"
-        dur = sum(sf.info(x).duration for x in paths)
-        t0 = time.time()
-        res = _run_unit(job, RATES["enhance"] * dur + 2, lambda: ENG.enhance_batch(
-            [{"src_path": a, "out_path": b, "params": params} for a, b in zip(paths, outs)]), f"studio polish: {len(paths)} lines at once")
-        learn_rate("enhance", time.time() - t0, max(dur, 1.0))
-    except Cancelled:
-        raise
-    except Exception as e:  # noqa: BLE001
-        traceback.print_exc()
-        msg = f"studio enhance unavailable ({type(e).__name__}: {str(e)[:120]}); used the standard clean-up"
-        if msg not in job["warnings"]:
-            job["warnings"].append(msg)
-        return paths
-    finally:
-        job["stage"] = stage
+    dur = sum(sf.info(x).duration for x in paths)
+    res = None
+    for engine in dict.fromkeys((polish_engine(job), "enhance")):  # AP-BWE, and Resemble Enhance if it fails
+        try:
+            _prepare(job, engine)
+            job["stage"] = "enhancing"
+            t0 = time.time()
+            res = _run_unit(job, RATES[engine] * dur + 2, lambda: ENG.enhance_batch(
+                [{"src_path": a, "out_path": b, "params": params} for a, b in zip(paths, outs)], engine),
+                f"studio polish: {len(paths)} lines at once")
+            learn_rate(engine, time.time() - t0, max(dur, 1.0))
+            job["polish_engine"] = engine
+            break
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001
+            traceback.print_exc()
+            if engine != "enhance":
+                log(f"{engine} failed ({type(e).__name__}: {e}); Resemble Enhance instead")
+                continue
+            msg = f"studio enhance unavailable ({type(e).__name__}: {str(e)[:120]}); used the standard clean-up"
+            if msg not in job["warnings"]:
+                job["warnings"].append(msg)
+            return paths
+        finally:
+            job["stage"] = stage
     ok = [i for i, r in enumerate(res) if "error" not in r and os.path.exists(outs[i])]
     keep = set(ok)
     if mode == "auto" and ok:
@@ -2350,7 +2369,7 @@ def _generate(job, wanted, out, ref_path, ref_text, order, n_lines):
         if job.get("review") or job.get("takes", 1) > 1 or job.get("subtitles"):
             ENG.preload("whisper")  # step 4: the review's model loads beside the generation, not after it
         if job["post"].get("enhance"):
-            ENG.preload("enhance")
+            ENG.preload(polish_engine(job))
         job["stage"] = "generating" if job["stage"] != "fixing" else "fixing"
         # vLLM schedules its own batches (continuous batching over the KV cache): hand it the whole job at once.
         # Qwen batches on plain transformers, where memory grows with the batch: sized to the card (config.qwen_batch).
@@ -3992,7 +4011,7 @@ def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
                                  "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup", "decode",
                                  "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method", "lane", "review_batch", "stream",
-                                 "eagle")}
+                                 "eagle", "polish_engine")}
     v["resources"] = job_resources(job)
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]

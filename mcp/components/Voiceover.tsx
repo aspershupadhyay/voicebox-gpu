@@ -8,14 +8,14 @@ import { ArrowSquareOut, CaretDown, CaretUp, ClosedCaptioning, DownloadSimple, M
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useResumeJob } from "./jobs";
-import { ago, api, fileUrl, fmtS, rangeFill, type Job, type MyVoice } from "./api";
+import { ago, api, clock, fileUrl, fmtS, rangeFill, type Job, type MyVoice } from "./api";
 import { decode, joinWav } from "./audio";
 import { Info } from "./Info";
 import { VoiceGlyph } from "./art";
 import { GuideButton } from "./GuideDrawer";
 import { describeVoice, KOKORO_LANG, KOKORO_VOICES, LANGUAGES, ORPHEUS_VOICES, QWEN_LANG } from "./guides";
 import JobProgress from "./JobProgress";
-import Player, { peaksFor } from "./Player";
+import Player from "./Player";
 import { Select, useDismiss } from "./pop";
 import { SampleButton, useSamples } from "./Sample";
 import { useStatus } from "./Shell";
@@ -31,10 +31,10 @@ type Catalogue = { engines: Record<string, Engine>; references: string[]; styles
 type ParsedLine = { id: string; text: string; window?: number; start?: number; params?: Record<string, number> };
 type Hist = { id: string; kind?: string; engine: string; voice: string; label?: string; created: number; results: { text?: string; duration: number; audio?: string | null }[] };
 
-const TTS = ["qwen", "myvoice", "orpheus", "chatterbox", "kokoro"] as const;
-const NAME: Record<string, string> = { myvoice: "Your voice model", orpheus: "Orpheus", qwen: "Qwen3-TTS", chatterbox: "Chatterbox", kokoro: "Kokoro" };
-const BLURB: Record<string, string> = { myvoice: "Your trained voice", orpheus: "Most human · English", qwen: "Best cloning · 10 languages", chatterbox: "Emotion · 23 languages", kokoro: "Instant drafts · CPU" };
-const CLONERS = ["qwen", "chatterbox"];
+const TTS = ["qwen", "myvoice", "orpheus", "chatterbox", "cosyvoice", "kokoro"] as const;
+const NAME: Record<string, string> = { myvoice: "Your voice model", orpheus: "Orpheus", qwen: "Qwen3-TTS", chatterbox: "Chatterbox", cosyvoice: "CosyVoice 2", kokoro: "Kokoro" };
+const BLURB: Record<string, string> = { myvoice: "Your trained voice", orpheus: "Most human · English", qwen: "Best cloning · 10 languages", chatterbox: "Emotion · 23 languages", cosyvoice: "Fast cloning · new", kokoro: "Instant drafts · CPU" };
+const CLONERS = ["qwen", "chatterbox", "cosyvoice"];
 const STYLE_ORDER = ["tech", "hype", "narrator", "neutral"];
 const STYLE_FALLBACK: Record<string, string> = { tech: "Tech", hype: "Hype", narrator: "Narrator", neutral: "Neutral" };
 const TAGS = ["<laugh>", "<chuckle>", "<sigh>", "<gasp>", "<groan>", "<yawn>", "<sniffle>", "<cough>"];
@@ -42,8 +42,8 @@ const MARKS = ["[pause]", "[pause 1.2]", "[beat]", "[breath]"];
 const PLATFORM_ORDER = ["youtube", "shorts", "reels", "tiktok", "podcast", "raw"];
 const PLATFORM_FALLBACK: Record<string, string> = { youtube: "YouTube", shorts: "YouTube Shorts", reels: "Instagram Reels", tiktok: "TikTok", podcast: "Podcast", raw: "Raw (no mastering)" };
 const POST_PLATFORM: Record<string, string> = { youtube: "youtube", shorts: "shorts", reels: "reels", instagram: "reels", tiktok: "tiktok", podcast: "podcast" };
-const LOAD_S: Record<string, number> = { orpheus: 120, chatterbox: 45, kokoro: 5, whisper: 40, qwen: 60 };
-const RATE: Record<string, number> = { orpheus: 0.03, chatterbox: 0.06, kokoro: 0.004, whisper: 0.06, qwen: 0.05 };
+const LOAD_S: Record<string, number> = { orpheus: 120, chatterbox: 45, kokoro: 5, whisper: 40, qwen: 60, cosyvoice: 90 };
+const RATE: Record<string, number> = { orpheus: 0.03, chatterbox: 0.06, kokoro: 0.004, whisper: 0.06, qwen: 0.05, cosyvoice: 0.03 };
 const SAMPLE = `This little dot knows exactly where you are.
 But... how?
 It's listening to clocks in space. About thirty satellites, high above.`;
@@ -133,12 +133,34 @@ const BARS = 96;
 /** The voiceover being made, playing while it is made: each line as soon as the worker has it, in order (it waits
  *  quietly at a line that isn't made yet). Starts by itself; pause or stop any time. Drawn as one waveform: each
  *  line's bars appear as it's made (dots until then), dark as it plays. */
+const GAP = 0.35; // seconds between lines: the same as the finished take (joinWav), so live and final sound alike
+const LEAD = 0.06; // a source is scheduled this far ahead, so the first samples are never late
+
+/** Each line's waveform from its decoded audio (the same bars peaksFor draws, without fetching the file twice). */
+function barsOf(b: AudioBuffer, n = 96) {
+  const d = b.getChannelData(0), step = Math.max(1, Math.floor(d.length / n));
+  const out = Array.from({ length: n }, (_, i) => {
+    let m = 0;
+    for (let k = i * step, e = Math.min(d.length, k + step); k < e; k += 4) m = Math.max(m, Math.abs(d[k]));
+    return m;
+  });
+  const top = Math.max(...out, 1e-4);
+  return out.map((v) => Math.max(0.04, Math.sqrt(v / top)));
+}
+
+/** A voiceover playing while it's made, like a video that streams: the lines are decoded as the worker finishes them
+ *  and scheduled back to back on one Web Audio clock (no gap or click between lines, beyond the take's own pauses).
+ *  If playback catches up with the generation it waits on a buffering ring and picks up by itself; the waveform is
+ *  the seek bar for everything made so far. */
 function LiveGeneration({ job, sent, onActive, onCancel }: { job: Job; sent: { id: string; text: string }[]; onActive: (on: boolean) => void; onCancel: () => void }) {
-  const audio = useRef<HTMLAudioElement>(null);
+  const ctx = useRef<AudioContext | null>(null);
+  const bufs = useRef<Record<string, AudioBuffer>>({});
+  const loading = useRef<Set<string>>(new Set());
+  const srcs = useRef<{ node: AudioBufferSourceNode; gain: GainNode; line: number }[]>([]);
+  const clockRef = useRef({ pos: 0, at: 0, running: false }); // timeline seconds at ctx time `at`, while running
   const [on, setOn] = useState(true); // auto-play: the first line plays as soon as it's made
-  const [idx, setIdx] = useState(0);
-  const [pos, setPos] = useState(0); // 0..1 through the line playing
-  const [peaks, setPeaks] = useState<Record<string, number[]>>({});
+  const [, setTick] = useState(0); // re-render while playing (the bars and the time follow the clock)
+  const [ready, setReady] = useState<Record<string, number[]>>({}); // decoded lines -> their bars
   const urlOf = (id: string) => job.results.find((r) => r.id === id)?.url ?? job.live?.find((x) => x.id === id)?.url ?? null;
   // a resumed job knows only the lines it has made: the rest are placeholders of average length
   const order = useMemo(() => {
@@ -146,65 +168,178 @@ function LiveGeneration({ job, sent, onActive, onCancel }: { job: Job; sent: { i
     const pad = Array.from({ length: Math.max(0, job.progress.total - known.length) }, (_, i) => ({ id: `?${i}`, text: "" }));
     return [...known, ...pad];
   }, [sent, job.results, job.live, job.progress.total]);
-  const total = order.length;
-  const cur = order[idx]?.id;
-  const src = cur ? urlOf(cur) : null;
+  const making = ["queued", "running"].includes(job.status);
   const readyKey = order.map((l) => (urlOf(l.id) ? l.id : "")).join(",");
-  useEffect(() => { // each line's own waveform, once it's made
+
+  // the timeline: where each line starts, as far as the lines are decoded in order from the top
+  const starts: number[] = [];
+  let made = 0, contiguous = 0;
+  for (const l of order) {
+    const b = bufs.current[l.id];
+    if (!b) break;
+    starts.push(made);
+    made += b.duration + GAP;
+    contiguous++;
+  }
+  const madeEnd = contiguous ? made - GAP : 0; // the end of the audio that can play without a wait
+  const finished = !making && contiguous >= order.length;
+
+  const now = () => {
+    const c = clockRef.current;
+    return c.running && ctx.current ? Math.min(madeEnd, c.pos + Math.max(0, ctx.current.currentTime - c.at)) : c.pos;
+  };
+
+  useEffect(() => { // fetch and decode each line once, the moment the worker has it
     for (const l of order) {
       const u = urlOf(l.id);
-      if (u && !peaks[l.id]) peaksFor(u).then((p) => p && setPeaks((cur) => (cur[l.id] ? cur : { ...cur, [l.id]: p })));
+      if (!u || bufs.current[l.id] || loading.current.has(l.id)) continue;
+      loading.current.add(l.id);
+      (async () => {
+        try {
+          ctx.current ??= new AudioContext();
+          const b = await ctx.current.decodeAudioData(await (await fetch(u)).arrayBuffer());
+          bufs.current[l.id] = b;
+          setReady((cur) => ({ ...cur, [l.id]: barsOf(b) }));
+        } catch { /* the next poll's link tries again */ }
+        loading.current.delete(l.id);
+      })();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readyKey]);
-  const start = (a: HTMLAudioElement, id: string, u: string) => { a.src = u; a.dataset.id = id; a.play().catch(() => setOn(false)); }; // blocked: press play
-  useEffect(() => { onActive(on); }, [on, onActive]);
-  useEffect(() => {
-    const a = audio.current;
-    if (!a || !on) return;
-    if (idx >= total) { setOn(false); setIdx(0); setPos(0); a.removeAttribute("data-id"); return; }
-    if (src && a.dataset.id !== cur) start(a, cur, src); // the next line just arrived, or the last one ended
-  }, [on, idx, src, cur, total]);
-  useEffect(() => () => audio.current?.pause(), []);
-  function toggle() {
-    const a = audio.current!;
-    if (on) { a.pause(); setOn(false); return; }
-    setOn(true);
-    if (src && a.dataset.id === cur && a.src) a.play().catch(() => start(a, cur, src)); // resume, inside the click (Safari)
-    else if (src) start(a, cur, src);
+
+  function silence() {
+    for (const s of srcs.current) { try { s.node.onended = null; s.node.stop(); } catch { /* already stopped */ } }
+    srcs.current = [];
   }
-  // BARS slots shared out by each line's length
-  const weights = order.map((l) => Math.max(8, l.text.length || 60));
+
+  /** Queue line i on the running clock (timeline position p plays at ctx time at + p - pos). */
+  function schedule(i: number) {
+    const c = ctx.current!, clk = clockRef.current;
+    const b = bufs.current[order[i].id];
+    const into = Math.max(0, clk.pos - starts[i]), when = clk.at + Math.max(0, starts[i] - clk.pos);
+    if (into >= b.duration || when < c.currentTime) return;
+    const node = c.createBufferSource(), gain = c.createGain();
+    node.buffer = b;
+    node.connect(gain).connect(c.destination);
+    gain.gain.setValueAtTime(into > 0 ? 0 : 1, when); // a seek into the middle of a line fades in over 15 ms
+    if (into > 0) gain.gain.linearRampToValueAtTime(1, when + 0.015);
+    node.start(when, into);
+    srcs.current.push({ node, gain, line: i });
+  }
+
+  /** Start (or seek) at timeline position pos: every decoded line from there on, back to back. */
+  function playFrom(pos: number) {
+    const c = ctx.current;
+    if (!c) return;
+    silence();
+    clockRef.current = { pos, at: c.currentTime + LEAD, running: true };
+    for (let i = 0; i < contiguous; i++) schedule(i);
+  }
+
+  // keep the schedule in step: start, add lines as they're decoded, wait at the edge of what's made, stop at the end
+  const buffering = on && !finished && now() >= madeEnd - 0.01 && clockRef.current.running === false;
+  useEffect(() => {
+    const c = ctx.current;
+    if (!on || !c || !contiguous) return;
+    const clk = clockRef.current;
+    if (c.state === "suspended") { // the browser wants a click first (autoplay blocked): show play instead of a silent pause
+      c.resume().catch(() => {});
+      const t = setTimeout(() => { if (ctx.current?.state === "suspended") { silence(); clockRef.current.running = false; setOn(false); } }, 800);
+      return () => clearTimeout(t);
+    }
+    if (!clk.running) { // not playing yet, or waiting for the next line: go as soon as there's audio past the playhead
+      if (clk.pos < madeEnd - 0.01) playFrom(clk.pos);
+      return;
+    }
+    // playing: lines decoded since go on the same clock after what's queued, so nothing playing is touched
+    const queued = new Set(srcs.current.map((s) => s.line));
+    for (let i = 0; i < contiguous; i++) if (!queued.has(i)) schedule(i);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [on, contiguous]);
+
+  useEffect(() => { // the clock: redraw, and notice the playhead reaching the edge of what's made
+    if (!on) return;
+    let raf = 0;
+    const step = () => {
+      const clk = clockRef.current;
+      if (clk.running && ctx.current && clk.pos + (ctx.current.currentTime - clk.at) >= madeEnd) {
+        clockRef.current = { pos: madeEnd, at: 0, running: false };
+        if (finished) { setOn(false); clockRef.current.pos = 0; } // played to the end: back to the start, like a video
+      }
+      setTick((t) => (t + 1) % 1e6);
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [on, madeEnd, finished]);
+
+  useEffect(() => { onActive(on); }, [on, onActive]);
+  useEffect(() => () => { silence(); ctx.current?.close().catch(() => {}); }, []);
+
+  function toggle() {
+    ctx.current ??= new AudioContext();
+    if (on) { clockRef.current = { pos: now(), at: 0, running: false }; silence(); setOn(false); return; }
+    ctx.current.resume().catch(() => {}); // inside the click, so Safari lets it play
+    setOn(true);
+  }
+  function seek(line: number, frac: number) {
+    if (line >= contiguous) return; // not made yet
+    const b = bufs.current[order[line].id];
+    const pos = starts[line] + frac * b.duration;
+    if (on) playFrom(pos);
+    else clockRef.current = { pos, at: 0, running: false };
+    setTick((t) => t + 1);
+  }
+
+  // BARS slots shared out by each line's length (its real duration once made, its text until then)
+  const pos = now();
+  const weights = order.map((l) => (bufs.current[l.id] ? bufs.current[l.id].duration * 15 : Math.max(8, l.text.length || 60)));
   const sum = weights.reduce((x, y) => x + y, 0);
-  const bars: { h: number; made: boolean; played: boolean }[] = [];
+  const bars: { h: number; made: boolean; played: boolean; line: number; frac: number }[] = [];
   let acc = 0;
   order.forEach((l, li) => {
     const from = Math.round((acc / sum) * BARS), to = Math.max(from + 1, Math.round(((acc + weights[li]) / sum) * BARS));
     acc += weights[li];
-    const p = peaks[l.id];
+    const p = ready[l.id];
+    const b = bufs.current[l.id];
     for (let s = from; s < to && bars.length < BARS; s++) {
       const f = (s - from + 0.5) / (to - from);
-      bars.push({ h: p ? p[Math.min(p.length - 1, Math.floor(f * p.length))] : 0, made: !!p, played: li < idx || (li === idx && f <= pos) });
+      const at = li < contiguous && b ? starts[li] + f * b.duration : Infinity;
+      bars.push({ h: p ? p[Math.min(p.length - 1, Math.floor(f * p.length))] : 0, made: !!p, played: at <= pos, line: li, frac: (s - from) / (to - from) });
     }
   });
-  const making = ["queued", "running"].includes(job.status);
+  const wave = useRef<SVGSVGElement>(null);
+  function onWave(e: React.MouseEvent<SVGSVGElement>) {
+    const r = wave.current!.getBoundingClientRect();
+    const b = bars[Math.max(0, Math.min(bars.length - 1, Math.floor(((e.clientX - r.left) / r.width) * bars.length)))];
+    if (b) seek(b.line, b.frac);
+  }
+  function onKey(e: React.KeyboardEvent) { // arrows: 5 s back / forward within what's made
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const to = Math.max(0, Math.min(madeEnd - 0.05, pos + (e.key === "ArrowRight" ? 5 : -5)));
+    const li = Math.max(0, starts.findLastIndex((st) => st <= to));
+    const b = bufs.current[order[li]?.id];
+    if (b) seek(li, Math.min(1, (to - starts[li]) / b.duration));
+  }
   return (
     <div className="vo-gen live">
       <div className="player compact">
-        <button className={`pp ${on ? "on" : ""}`} onClick={toggle} aria-label={on ? "Pause" : "Play"}>
+        <button className={`pp ${on ? "on" : ""} ${on && (buffering || !contiguous) ? "buffering" : ""}`} onClick={toggle}
+          aria-label={on ? (buffering || !contiguous ? "Buffering, press to pause" : "Pause") : "Play"}>
           {on ? <Pause size={16} weight="fill" /> : <Play size={16} weight="fill" />}
         </button>
-        <div className="vo-bars" role="progressbar" aria-label="Voiceover so far" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(job.progress.fraction * 100)}>
-          <svg viewBox={`0 0 ${BARS * 3} 40`} preserveAspectRatio="none" aria-hidden>
+        <div className="vo-bars" role="slider" tabIndex={0} aria-label="Voiceover so far: click to jump, arrows to skip 5 s" onKeyDown={onKey}
+          aria-valuemin={0} aria-valuemax={Math.round(madeEnd)} aria-valuenow={Math.round(pos)} aria-valuetext={`${clock(pos)} of ${clock(madeEnd)} made`}>
+          <svg ref={wave} viewBox={`0 0 ${BARS * 3} 40`} preserveAspectRatio="none" onClick={onWave} aria-hidden>
             {bars.map((b, i) => b.made
               ? <rect key={i} className={b.played ? "on" : ""} x={i * 3} y={20 - b.h * 19} width="1.9" height={Math.max(1, b.h * 38)} />
               : i % 2 ? null : <rect key={i} className="todo" x={i * 3 + 0.4} y={19.2} width="1.1" height="1.6" />)}
           </svg>
         </div>
+        <span className="vo-time">{clock(pos)}</span>
       </div>
-      {making && <div className="vo-gen-acts"><button className="icon-btn" onClick={() => { audio.current?.pause(); setOn(false); onCancel(); }} aria-label="Stop generating" title="Stop"><X size={16} /></button></div>}
-      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-      <audio ref={audio} onEnded={() => { setIdx((i) => i + 1); setPos(0); }} onTimeUpdate={(e) => { const a = e.currentTarget; if (a.duration) setPos(a.currentTime / a.duration); }} preload="auto" hidden />
+      {making && <div className="vo-gen-acts"><button className="icon-btn" onClick={() => { silence(); clockRef.current.running = false; setOn(false); onCancel(); }} aria-label="Stop generating" title="Stop"><X size={16} /></button></div>}
     </div>
   );
 }

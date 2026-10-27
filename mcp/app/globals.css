@@ -1170,6 +1170,13 @@ video.vplayer { width: 100%; border-radius: 12px; background: #000; display: blo
 .vo-gen .vo-bars rect { fill: var(--line3); transition: fill .2s; }
 .vo-gen .vo-bars rect.on { fill: var(--ink); }
 .vo-gen .vo-bars rect.todo { fill: var(--line3); }
+.vo-gen .vo-bars { cursor: pointer; border-radius: 6px; outline-offset: 2px; }
+.vo-gen .vo-time { flex: none; min-width: 34px; text-align: right; font: 500 12px/1 var(--mono); color: var(--ink2); font-variant-numeric: tabular-nums; }
+/* waiting for the next line, like a video buffering: a ring turns round the play button (live, so it loops) */
+.player .pp.buffering { position: relative; }
+.player .pp.buffering::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--ink); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .player .pp.buffering::after { animation-duration: 2.4s; } }
 .insert-pop { display: flex; flex-direction: column; gap: 6px; padding: 4px; }
 @media (max-width: 640px) {
   .vline { grid-template-columns: minmax(0, 1fr); }
