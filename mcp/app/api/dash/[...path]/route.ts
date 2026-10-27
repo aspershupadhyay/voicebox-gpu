@@ -47,6 +47,13 @@ export async function GET(req: Request, ctx: Ctx) {
   const [a, b, c] = g.path;
   try {
     if (a === "publish") return await (await import("@/lib/publish/api")).publishGet(g.path.slice(1));
+    if (a === "analytics" && !b) {
+      // the Analytics page: ?range=7|28|90, &fresh=1 asks YouTube and Instagram again instead of the 30-minute copy
+      const q = new URL(req.url).searchParams;
+      const { getAnalytics, RANGES } = await import("@/lib/analytics");
+      const range = (RANGES as readonly number[]).includes(Number(q.get("range"))) ? (Number(q.get("range")) as (typeof RANGES)[number]) : 28;
+      return Response.json(await getAnalytics(range, q.get("fresh") === "1"));
+    }
     if (a === "status") {
       const rec = await loadWorker();
       if (!rec) return Response.json({ online: false, reason: "never registered" });

@@ -9,8 +9,8 @@ const AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN = "https://oauth2.googleapis.com/token";
 const API = "https://www.googleapis.com/youtube/v3";
 const UPLOAD = "https://www.googleapis.com/upload/youtube/v3";
-// upload + manage (playlists, thumbnails, reading the channel back)
-export const SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube"];
+// upload + manage (playlists, thumbnails, reading the channel back) + read the channel's analytics (Analytics page)
+export const SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube", "https://www.googleapis.com/auth/yt-analytics.readonly"];
 export const CHUNK = 32 * 1024 * 1024; // a multiple of 256 KiB, as YouTube asks
 
 export class YtError extends Error {
@@ -43,6 +43,9 @@ function ytErr(status: number, data: { error?: { message?: string; errors?: { re
   };
   return new YtError(nice[reason] ?? data.error?.message ?? `YouTube ${status}`, status, reason);
 }
+
+/** A read for the Analytics page (Data API or YouTube Analytics API), with the same errors as everything else. */
+export const ytGet = <T>(url: string, token: string) => yt<T>(url, token);
 
 export function authUrl(redirect: string, state: string) {
   const u = new URL(AUTH);

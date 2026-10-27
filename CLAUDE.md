@@ -15,7 +15,7 @@ Every dashboard change follows `docs/DESIGN.md`. In short:
   soft tinted status pills. Flat: no gradients anywhere (the owner's call), including the logo.
 - Geist only (Mono for moving numbers). Every page opens with `PageHeader` (the page name as the H1, one sub line).
 - Build from `components/ui.tsx`; every text colour is a token at 4.5:1 or better; every control has a label.
-- Eight sidebar pages (Home, Voices, Posts, Files, Voiceover, Clean-up/Subtitles/Images, GPU & engines, Settings).
+- Nine sidebar pages (Home, Voices, Posts, Analytics, Files, Voiceover, Clean-up/Subtitles/Images, GPU & engines, Settings).
   Making a voice lives under Voices (`/voices/new`, `/voices/professional`, `/voices/revoice`).
 - Never a native `<select>`: use `Select` from `components/pop.tsx`. Every popup closes on Escape and a click outside.
   New capabilities become views or tabs, not new pages. Pages rise in; only live things loop.

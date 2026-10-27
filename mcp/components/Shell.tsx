@@ -2,7 +2,7 @@
 // The studio's frame (dark only): a sidebar (studio switcher, search, the pages, a GPU card, you), a top bar with the page
 // name and the GPU's state, the ⌘K command palette, and on phones a bottom tab bar plus the sidebar as a drawer.
 import {
-  ArrowsClockwise, CaretDown, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
+  ArrowsClockwise, CaretDown, ChartLineUp, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
   FileAudio, FileText, FilmStrip, Folder, Folders, MagicWand, MagnifyingGlass, Microphone, Paperclip, Plus, Power, SignOut, Star, UserSound, X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
@@ -24,6 +24,7 @@ export const NAV: Nav[] = [
   { href: "/", name: "Home", Icon: House, sec: "main" },
   { href: "/voices", name: "Voices", Icon: UserSound, sec: "main" },
   { href: "/posts", name: "Posts", Icon: Kanban, sec: "main" },
+  { href: "/analytics", name: "Analytics", Icon: ChartLineUp, sec: "main" },
   { href: "/files", name: "Files", Icon: Folders, sec: "main" },
   { href: "/voiceover", name: "Voiceover", Icon: Microphone, sec: "create" },
   { href: "/clean-up", name: "Clean-up", Icon: MagicWand, sec: "create" },

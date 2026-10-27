@@ -86,7 +86,7 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [x] Rules: cross-post (live on A → B, N hours later), posting slots, caption footers, default first comment, YouTube defaults
 - [x] MCP tools: `publish_accounts`, `publish_post`, `publish_status`, `automation_rules`
 - [ ] Pass YouTube's API audit so uploads can go public straight away (until then they stay private)
-- [ ] Analytics back from YouTube and Instagram on each post
+- [x] Analytics back from YouTube and Instagram on each post (the Analytics page and the `analytics` MCP tool)
 - [ ] TikTok (needs its own audit), X (paid API) and LinkedIn publishing; they're hand-offs for now
 
 ## Later (not started)
