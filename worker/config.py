@@ -5,7 +5,7 @@ source of truth for defaults and ranges (docs/API.md is generated from the same 
 """
 import os
 
-VERSION = "3.4.0"
+VERSION = "3.5.0"
 HOME = os.environ.get("VOICEBOX_HOME", "/content/voicebox")
 VENVS = os.environ.get("VOICEBOX_VENVS", os.path.join(HOME, "venvs"))
 
@@ -80,6 +80,11 @@ PRELOAD = [n.strip() for n in os.environ.get("VOICEBOX_PRELOAD", "myvoice").spli
 # Step 7 (docs/INFERENCE.md): the dashboard's R2 bucket as a cache across runtimes (worker/r2cache.py).
 # R2_WEIGHTS: the voice engines' Hugging Face repos come from R2 when it has them (mirrored by the first runtime that
 # downloaded them); R2_COMPILE: vLLM's compiled kernels, kept per GPU model and vLLM version.
+# Studio polish (post.enhance) runs on this engine: "resemble" (Resemble Enhance: denoise + flow-matching restore to
+# 44.1 kHz, ~0.2 s per second of audio) or "apbwe" (AP-BWE: one-pass 24 -> 48 kHz bandwidth extension that leaves the
+# low band as it was). A job can pick with post.polish_engine; if AP-BWE fails, Resemble does the job.
+POLISH = os.environ.get("VOICEBOX_POLISH", "resemble")
+POLISH_ENGINE = {"resemble": "enhance", "apbwe": "apbwe"}
 R2_WEIGHTS = os.environ.get("VOICEBOX_R2_WEIGHTS", "1") == "1"
 R2_COMPILE = os.environ.get("VOICEBOX_R2_COMPILE", "1") == "1"
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
@@ -205,6 +210,17 @@ ENGINES = {
             "steps": {"type": "integer", "default": 48, "min": 16, "max": 128, "about": "restoration detail (more = finer, slower)"},
         },
     },
+    "apbwe": {
+        "group": "voice",
+        "disk_gb": 0.12,
+        "kind": "enhance",
+        "port": 8114,
+        "gpu_gb": 1.0,
+        "packages": "torch torchaudio safetensors huggingface_hub soundfile numpy",
+        "about": "AP-BWE (MIT). Studio polish in one pass: 24 -> 48 kHz bandwidth extension that only adds the missing high band, so the voice itself is untouched.",
+        "voices": [], "presets": {},
+        "params": {},
+    },
     "qwen": {
         "group": "voice",
         "disk_gb": 4.6,
@@ -224,6 +240,29 @@ ENGINES = {
             "language": {"type": "string", "default": "English", "about": "English, Chinese, Japanese, Korean, German, French, Russian, Portuguese, Spanish or Italian"},
             "temperature": {"type": "number", "default": 0.8, "min": 0.1, "max": 1.5, "about": "lower = closer to your reference delivery, higher = livelier"},
             "top_p": {"type": "number", "default": 0.95, "min": 0.1, "max": 1.0},
+            "seed": {"type": "integer", "default": 7, "about": "change it for a different take"},
+        },
+    },
+    "cosyvoice": {
+        "group": "voice",
+        "disk_gb": 3.8,
+        "kind": "tts",
+        "port": 8115,
+        "gpu_gb": 5.0,
+        "chunk_chars": 300,
+        "clone": True,  # like qwen: your recordings (or the female/male presets) are the voices
+        # CosyVoice's own pins for inference (its training, TensorRT and gradio extras left out); its code is fetched by
+        # the engine at a pinned commit. onnxruntime on the CPU: the reference is tokenised once per recording.
+        "packages": 'torch==2.3.1 torchaudio==2.3.1 conformer==0.3.2 diffusers==0.29.0 hydra-core==1.3.2 HyperPyYAML==1.2.3 '
+                    'inflect==7.3.1 librosa==0.10.2 lightning==2.2.4 omegaconf==2.3.0 onnxruntime==1.18.0 openai-whisper==20250625 '
+                    'transformers==4.51.3 x-transformers==2.11.24 wetext==0.0.4 numpy==1.26.4 pyarrow==18.1.0 pyworld==0.3.4 '
+                    '"setuptools<70" gdown wget soundfile einops tiktoken huggingface_hub matplotlib rich',
+        "prefetch": [os.environ.get("COSYVOICE_MODEL", "FunAudioLLM/CosyVoice2-0.5B")],
+        "about": "CosyVoice 2 0.5B (Alibaba, Apache-2.0). Fast zero-shot cloning of your recorded voice; English, Chinese, Japanese, Korean and more.",
+        "voices": ["female", "male", "<any reference name>"],
+        "presets": {"female": "female", "male": "male"},
+        "params": {
+            "speed": {"type": "number", "default": 1.0, "min": 0.5, "max": 2.0, "about": "speaking rate"},
             "seed": {"type": "integer", "default": 7, "about": "change it for a different take"},
         },
     },
@@ -421,13 +460,13 @@ def style_settings(style, engine):
 # Speed priors (seconds of compute per character / per second of audio), refined live by the gateway.
 RATE_PRIORS = {"kokoro": 0.004, "chatterbox": 0.06, "orpheus": 0.03, "myvoice": 0.03, "whisper": 0.06, "qwen": 0.05,
                "listen": 0.06,  # the batched review (text only), seconds per second of takes
-               "revoice": 0.25, "enhance": 0.4,  # per second of audio  # Chatterbox VC: seconds per second of performance
+               "revoice": 0.25, "enhance": 0.4, "apbwe": 0.01, "cosyvoice": 0.03,  # per second of audio  # Chatterbox VC: seconds per second of performance
                # video: seconds per (step x frame x megapixel), x2 when CFG doubles the passes
                "wan": 0.3, "ltx": 0.35, "wan14": 1.2,
                # image: seconds per (step x megapixel x image); animate: per (step x frame x megapixel)
                "zimage": 0.08, "qwenimage": 0.1, "animate": 1.5}
-INSTALL_PRIORS = {"enhance": 150, "kokoro": 40, "chatterbox": 150, "orpheus": 240, "myvoice": 240, "whisper": 120, "qwen": 150, "wan": 300, "ltx": 600, "wan14": 300, "zimage": 120, "qwenimage": 120, "animate": 300}  # first install, seconds
-LOAD_PRIORS = {"enhance": 40, "kokoro": 5, "chatterbox": 45, "orpheus": 120, "myvoice": 120, "whisper": 40, "qwen": 60, "wan": 240, "ltx": 480, "wan14": 600, "zimage": 150, "qwenimage": 240, "animate": 600}  # first load includes the weight download
+INSTALL_PRIORS = {"enhance": 150, "apbwe": 90, "cosyvoice": 200, "kokoro": 40, "chatterbox": 150, "orpheus": 240, "myvoice": 240, "whisper": 120, "qwen": 150, "wan": 300, "ltx": 600, "wan14": 300, "zimage": 120, "qwenimage": 120, "animate": 300}  # first install, seconds
+LOAD_PRIORS = {"enhance": 40, "apbwe": 10, "cosyvoice": 90, "kokoro": 5, "chatterbox": 45, "orpheus": 120, "myvoice": 120, "whisper": 40, "qwen": 60, "wan": 240, "ltx": 480, "wan14": 600, "zimage": 150, "qwenimage": 240, "animate": 600}  # first load includes the weight download
 
 SUBTITLE_STYLE = {"max_chars": 42, "max_seconds": 3.5, "min_gap": 0.08}
 CAPTION_STYLES = {
@@ -492,7 +531,7 @@ def resident_engines(total_gb, on=None):
     """RESIDENT_REVIEW: the engines a voiceover's review needs, kept loaded (never idle-unloaded, evicted last)."""
     if not (RESIDENT_REVIEW if on is None else on):
         return set()
-    return {"whisper"} | ({"enhance"} if total_gb >= 70 else set())
+    return {"whisper"} | ({POLISH_ENGINE.get(POLISH, "enhance")} if total_gb >= 70 or POLISH == "apbwe" else set())
 
 
 def python_for(engine):

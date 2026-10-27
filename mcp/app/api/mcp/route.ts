@@ -21,8 +21,8 @@ import { SCOPE, verify } from "@/lib/oauth";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // starting a Colab GPU waits on the VM to boot (lib/colab.ts)
 
-const ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "myvoice"] as const;
-const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "myvoice", "whisper", "enhance", "zimage", "qwenimage"] as const;
+const ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "myvoice", "cosyvoice"] as const;
+const ALL_ENGINES = ["kokoro", "chatterbox", "orpheus", "qwen", "myvoice", "cosyvoice", "whisper", "enhance", "apbwe", "zimage", "qwenimage"] as const;
 const POST_STATUS = STATUSES.map((s) => s.id) as [Post["status"], ...Post["status"][]];
 const POST_PLAT = POST_PLATFORMS.map((p) => p.id) as [Post["platforms"][number], ...Post["platforms"][number][]];
 const CLAUDE = { name: "Claude (MCP)" }; // shows up in the activity feed as the author of MCP changes
@@ -149,7 +149,7 @@ const handler = createMcpHandler(
           "takes: 2-4 = best-of-N: every sentence is voiced N times and the take Whisper hears most accurately (and, for a cloned voice, that sounds most like the recording) wins. Costs N x the time; worth it for final renders.",
           "Script markup: [pause], [pause 0.8], [pause 500ms], [beat], [breath] insert real silence. Tech terms are said right automatically (SQL -> sequel, GPU -> G P U, JSON -> jay-son, 16GB -> 16 gigabytes, markdown and URLs cleaned); pronounce: {word: 'how to say it'} adds your own, lexicon: false turns it off. The script itself is untouched for subtitles.",
           "With a recorded voice on qwen, lines in Devanagari (Hindi) are voiced by Chatterbox in the same voice automatically. With subtitles on and a cloned voice, each line also gets similarity (voice match vs the recording; 0.86+ = same speaker).",
-          "Engines: kokoro (fast drafts, many languages), chatterbox (emotion dial + cloning, 23 languages incl. Hindi), orpheus (most human, English; tags like <laugh> <sigh>), qwen (best cloning of the user's recorded voice, or a fine-tuned voice ft_<name> from my_voices.fine_tuned; 10 languages, no Hindi; params.language takes names like English), myvoice (a fine-tuned Orpheus model of one of the two creators, once trained: English; voice = the person's model name from my_voices.trained, 'me' = the newest; most human, carries delivery across sentences).",
+          "Engines: kokoro (fast drafts, many languages), chatterbox (emotion dial + cloning, 23 languages incl. Hindi), orpheus (most human, English; tags like <laugh> <sigh>), qwen (best cloning of the user's recorded voice, or a fine-tuned voice ft_<name> from my_voices.fine_tuned; 10 languages, no Hindi; params.language takes names like English), myvoice (a fine-tuned Orpheus model of one of the two creators, once trained: English; voice = the person's model name from my_voices.trained, 'me' = the newest; most human, carries delivery across sentences), cosyvoice (CosyVoice 2: fast zero-shot cloning of a recorded voice, like qwen; params speed, seed; new, being compared).",
           "No length limit: long text is split at sentences, voiced in one batch and re-joined.",
           "subtitles: true adds Whisper large-v3 word-timed SRT/VTT per line and for the whole timeline (uses each line's start when given), plus a match score vs the script.",
           "voice: 'female' / 'male' presets, an engine voice (e.g. tara, dan, af_heart), or the name of a recorded voice from my_voices (qwen or chatterbox).",
@@ -178,6 +178,7 @@ const handler = createMcpHandler(
           post: z
             .object({
               tempo: z.number().min(0.5).max(2).optional().describe("pitch-preserving pace multiplier, e.g. 1.05"),
+              polish_engine: z.enum(["apbwe", "resemble"]).optional().describe("benchmarking: which model studio polish runs on (default: the worker's setting)"),
               trim: z.boolean().optional(),
               trim_db: z.number().optional(),
               normalize_dbfs: z.number().nullable().optional(),
