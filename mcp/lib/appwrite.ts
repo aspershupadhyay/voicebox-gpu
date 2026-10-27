@@ -117,8 +117,8 @@ export async function getMedia(id: string) {
   return aw<Media>(`${rows("media")}/${encodeURIComponent(id)}`);
 }
 
-export async function listMedia(postId?: string) {
-  const qs: object[] = [{ method: "orderDesc", attribute: "$createdAt" }, { method: "limit", values: [100] }];
+export async function listMedia(postId?: string, limit = 100) {
+  const qs: object[] = [{ method: "orderDesc", attribute: "$createdAt" }, { method: "limit", values: [Math.min(limit, 1000)] }];
   if (postId) qs.push({ method: "equal", attribute: "post_id", values: [postId] });
   return (await aw<{ rows: Media[] }>(`${rows("media")}?${q(...qs)}`)).rows;
 }
@@ -182,6 +182,14 @@ export async function deleteMediaRow(id: string, actor: { id?: string; name: str
   await aw(`${rows("media")}/${encodeURIComponent(id)}`, { method: "DELETE" });
   await logActivity({ post_id: m.post_id, verb: "deleted", text: m.name }, actor);
   return m;
+}
+
+/** Rename a workspace file (the row's name; the stored file keeps its id). */
+export async function renameMedia(id: string, name: string, actor: { id?: string; name: string }) {
+  const before = await getMedia(id);
+  const row = await aw<Media>(`${rows("media")}/${encodeURIComponent(id)}`, { method: "PATCH", body: { data: { name: name.slice(0, 255) } } });
+  await logActivity({ post_id: before.post_id, verb: "renamed", text: `${before.name} → ${row.name}` }, actor);
+  return row;
 }
 
 export async function deletePost(id: string, actor: { id?: string; name: string }) {

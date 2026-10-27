@@ -11,7 +11,7 @@ import { describeProfile, profileFor, withProfile } from "@/lib/profiles";
 import { listDataset } from "@/lib/datasets";
 import { listModels } from "@/lib/voicemodel";
 import {
-  addComment, addMediaFromUrl, createPost, deletePost, getPost, hasKey, linkJob, listActivity, listComments, listMedia, listMembers, listPosts, postsBetween, updatePost, addMediaBytes, deleteMediaRow, mimeFor } from "@/lib/appwrite";
+  addComment, createPost, deletePost, getPost, hasKey, linkJob, listActivity, listComments, listMedia, listMembers, listPosts, postsBetween, updatePost, addMediaBytes, deleteMediaRow, mimeFor } from "@/lib/appwrite";
 import { SPACE_IDS, spaceName, targetsOf, type TargetMap } from "@/lib/spaces";
 import { dropTargets, getTargets, setTargets } from "@/lib/spacestore";
 import { fileUrl, PLATFORMS as POST_PLATFORMS, STATUSES, type Post } from "@/lib/workspace";
@@ -754,6 +754,16 @@ const handler = createMcpHandler(
       if (!hasKey()) return { ...text("ERROR: the shared workspace is not configured on the server (APPWRITE_API_KEY)."), isError: true };
       try { return text(await fn()); } catch (e) { return fail(e); }
     };
+    const files = async <T,>(fn: () => Promise<T>) => { try { return text(await fn()); } catch (e) { return fail(e); } };
+    const FILE_ID = z.string().regex(/^[mg]:[A-Za-z0-9._-]{1,64}$/).describe("a file id from list_files: m:<upload id> or g:<generated id>");
+    const ITEM_ID = z.string().regex(/^(?:[mg]:[A-Za-z0-9._-]{1,64}|f:[a-z0-9]{6,16})$/).describe("a file id (m:… / g:…) or a folder as f:<folder id>");
+    const FOLDER_REF = z.string().max(300).describe("a folder id, or its path by name such as \"Thumbnails/October\"");
+    const COLOR = z.enum(["lavender", "sky", "peach", "mint", "rose", "sand"]);
+    const folderId = async (ref?: string | null) => {
+      if (!ref) return null;
+      const fs = await import("@/lib/files");
+      return fs.findFolder(await fs.getTree(), ref)?.id ?? null;
+    };
     const resolveMember = async (who?: string | null) => {
       if (!who) return { assignee_id: null, assignee_name: null };
       const m = (await listMembers()).find((x) => [x.id, x.email.toLowerCase(), x.name.toLowerCase(), x.name.split(" ")[0].toLowerCase()].includes(who.toLowerCase()));
@@ -908,12 +918,12 @@ const handler = createMcpHandler(
       "add_media",
       {
         title: "Add a file to the workspace",
-        description: "Copy a file from a URL (a generated image or voiceover link from this server, or any public link) into the shared Media library, optionally attached to a post. Up to 150 MB; it is also backed up to R2 when the backup setting is on.",
-        inputSchema: z.object({ url: z.string().url(), name: z.string().max(200).optional(), post_id: POST_ID.optional() }),
+        description: "Copy a file from a URL (a generated image or voiceover link from this server, or any public link) into the shared uploads on the Files page, optionally attached to a post and filed in a folder. Up to 150 MB; it is also backed up to R2 when the backup setting is on.",
+        inputSchema: z.object({ url: z.string().url(), name: z.string().max(200).optional(), post_id: POST_ID.optional(), folder: FOLDER_REF.optional() }),
       },
-      async ({ url, name, post_id }) => ws(async () => {
-        const { media, backup } = await addMediaFromUrl(url, { name, postId: post_id, backup: (await getSettings()).backup_media }, CLAUDE);
-        return { id: media.$id, name: media.name, kind: media.kind, url: fileUrl(media), r2_backup: media.r2_key ? "saved" : backup ?? "off" };
+      async ({ url, name, post_id, folder }) => ws(async () => {
+        const { media, backup, folder: placed } = await (await import("@/lib/filemanager")).importUrl(url, { name, postId: post_id, folder, backup: (await getSettings()).backup_media }, CLAUDE);
+        return { id: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, url: fileUrl(media), folder: placed, r2_backup: media.r2_key ? "saved" : backup ?? "off" };
       }),
     );
 
@@ -921,17 +931,19 @@ const handler = createMcpHandler(
       "upload_media",
       {
         title: "Upload a file to the workspace",
-        description: "Upload a file's bytes (base64) into the shared Media library, optionally attached to a post: a thumbnail, a script PDF, a short clip, subtitles. Up to ~3 MB this way (the server takes 4.5 MB requests); for bigger files use add_media with a link (up to 150 MB), or the Media page (2 GB).",
+        description: "Upload a file's bytes (base64) into the shared uploads on the Files page, optionally attached to a post and filed in a folder: a thumbnail, a script PDF, a short clip, subtitles. Up to ~3 MB this way (the server takes 4.5 MB requests); for bigger files use add_media with a link (up to 150 MB), or the Files page (2 GB).",
         inputSchema: z.object({
           name: z.string().min(1).max(200).describe("file name with extension, e.g. thumb.png"),
           content_base64: z.string().min(4).max(4_400_000), mime: z.string().max(100).optional().describe("default: from the file extension"),
-          post_id: POST_ID.optional(),
+          post_id: POST_ID.optional(), folder: FOLDER_REF.optional(),
         }),
       },
-      async ({ name, content_base64, mime, post_id }) => ws(async () => {
+      async ({ name, content_base64, mime, post_id, folder }) => ws(async () => {
+        const into = await folderId(folder);
         const bytes = new Uint8Array(Buffer.from(content_base64.replace(/^data:[^,]*,/, ""), "base64"));
         const { media, backup } = await addMediaBytes(bytes, mime || mimeFor(name), name, { postId: post_id ?? null, backup: (await getSettings()).backup_media }, CLAUDE);
-        return { id: media.$id, name: media.name, kind: media.kind, mb: +(bytes.length / 1e6).toFixed(2), url: fileUrl(media), r2_backup: media.r2_key ? "saved" : backup ?? "off" };
+        if (into) await (await import("@/lib/files")).moveItems([`m:${media.$id}`], into);
+        return { id: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: +(bytes.length / 1e6).toFixed(2), url: fileUrl(media), folder: into, r2_backup: media.r2_key ? "saved" : backup ?? "off" };
       }),
     );
 
@@ -943,6 +955,127 @@ const handler = createMcpHandler(
         inputSchema: z.object({ media_id: POST_ID }),
       },
       async ({ media_id }) => ws(async () => { const m = await deleteMediaRow(media_id, CLAUDE); return { deleted: media_id, name: m.name }; }),
+    );
+
+    // ── Files: the file manager (folders, move, rename, star, delete) over uploads and generated items alike
+    server.registerTool(
+      "list_files",
+      {
+        title: "List files and folders",
+        description:
+          "The dashboard's Files page as a file manager: uploads (shared workspace) and generated items (voiceovers, subtitles, images, videos) in one list, filed in folders. Without `folder` it shows the top level; `everywhere` searches every folder. Each file has an id (m:… upload, g:… generated) for move_files, rename_file, star_files, get_file and delete_files.",
+        inputSchema: z.object({
+          folder: FOLDER_REF.optional(), everywhere: z.boolean().optional().describe("list files from every folder (default: only this folder; on when search is set)"),
+          search: z.string().max(200).optional(), kind: z.enum(["image", "video", "audio", "doc", "other"]).optional(),
+          source: z.enum(["upload", "generated"]).optional(), starred: z.boolean().optional(), limit: z.number().int().min(1).max(500).optional(),
+        }),
+      },
+      async ({ folder, everywhere, search, kind, source, starred, limit }) => files(async () => {
+        const { catalog } = await import("@/lib/filemanager");
+        const fs = await import("@/lib/files");
+        const { tree, items, note } = await catalog();
+        const here = fs.findFolder(tree, folder);
+        const id = here?.id ?? null;
+        const all = everywhere || !!search;
+        const inside = (fid: string | null): number => items.filter((i) => i.folder === fid).length + tree.folders.filter((f) => f.parent === fid).reduce((n, f) => n + inside(f.id), 0);
+        const q = search?.toLowerCase();
+        const shown = items.filter((i) => (all || i.folder === id) && (!kind || i.kind === kind) && (!source || i.source === source) && (starred === undefined || i.starred === starred) &&
+          (!q || `${i.name} ${i.type} ${i.folder_path}`.toLowerCase().includes(q)));
+        return {
+          folder: here ? { id: here.id, name: here.name, path: fs.pathOf(tree, here.id), color: here.color, parent: here.parent } : null,
+          folders: tree.folders.filter((f) => (all && q ? f.name.toLowerCase().includes(q) : f.parent === id))
+            .map((f) => ({ id: f.id, name: f.name, path: fs.pathOf(tree, f.id), color: f.color, items: inside(f.id), starred: tree.starred.includes(`f:${f.id}`) })),
+          files: shown.slice(0, limit ?? 100), total: shown.length, note,
+        };
+      }),
+    );
+
+    server.registerTool(
+      "get_file",
+      {
+        title: "One file, with download links",
+        description: "A file's details and links that work for 6 hours: an upload's view/download link, or every file of a generated item (each line's WAV, the MP4, images) plus its zip path (GET with Bearer MCP_TOKEN).",
+        inputSchema: z.object({ file_id: FILE_ID }),
+      },
+      async ({ file_id }) => files(async () => (await import("@/lib/filemanager")).fileDetail(file_id)),
+    );
+
+    server.registerTool(
+      "create_folder",
+      {
+        title: "Create a folder",
+        description: "Make a folder on the Files page, at the top level or inside `parent`. A taken name gets a number (\"Thumbnails 2\"). Colours: lavender, sky, peach, mint, rose, sand.",
+        inputSchema: z.object({ name: z.string().min(1).max(80), parent: FOLDER_REF.optional(), color: COLOR.optional() }),
+      },
+      async ({ name, parent, color }) => files(async () => (await import("@/lib/files")).createFolder({ name, color, parent: await folderId(parent) }, CLAUDE.name)),
+    );
+
+    server.registerTool(
+      "update_folder",
+      {
+        title: "Rename, recolour or move a folder",
+        description: "Change a folder's name or colour, or move it inside another folder (parent) or to the top level (parent \"/\").",
+        inputSchema: z.object({ folder: FOLDER_REF, name: z.string().min(1).max(80).optional(), color: COLOR.optional(), parent: FOLDER_REF.optional() }),
+      },
+      async ({ folder, name, color, parent }) => files(async () => {
+        const id = await folderId(folder);
+        if (!id) throw new Error("pick a folder (the top level can't be renamed)");
+        return (await import("@/lib/files")).updateFolder(id, { name, color, parent: parent === undefined ? undefined : await folderId(parent) });
+      }),
+    );
+
+    server.registerTool(
+      "delete_folder",
+      {
+        title: "Delete a folder",
+        description: "Remove a folder. Nothing inside is deleted: its files and folders move up to its parent. Only when the user asks.",
+        inputSchema: z.object({ folder: FOLDER_REF }),
+      },
+      async ({ folder }) => files(async () => {
+        const id = await folderId(folder);
+        if (!id) throw new Error("pick a folder");
+        return (await import("@/lib/files")).deleteFolder(id);
+      }),
+    );
+
+    server.registerTool(
+      "move_files",
+      {
+        title: "Move files and folders",
+        description: "File things into a folder (to), or back to the top level (to \"/\"). items: file ids from list_files and/or folders as f:<folder id>.",
+        inputSchema: z.object({ items: z.array(ITEM_ID).min(1).max(500), to: FOLDER_REF }),
+      },
+      async ({ items, to }) => files(async () => (await import("@/lib/files")).moveItems(items, await folderId(to))),
+    );
+
+    server.registerTool(
+      "rename_file",
+      {
+        title: "Rename a file",
+        description: "Rename an upload or a generated item (its title on the Files page; links and ids stay the same). Keep an upload's extension.",
+        inputSchema: z.object({ file_id: FILE_ID, name: z.string().min(1).max(200) }),
+      },
+      async ({ file_id, name }) => files(async () => (await import("@/lib/filemanager")).renameItem(file_id, name, CLAUDE)),
+    );
+
+    server.registerTool(
+      "star_files",
+      {
+        title: "Star or unstar",
+        description: "Star files or folders (f:<id>) so they show under Starred on the Files page, or unstar them with starred false.",
+        inputSchema: z.object({ items: z.array(ITEM_ID).min(1).max(500), starred: z.boolean().default(true) }),
+      },
+      async ({ items, starred }) => files(async () => ({ starred: await (await import("@/lib/files")).starItems(items, starred) })),
+    );
+
+    server.registerTool(
+      "delete_files",
+      {
+        title: "Delete files",
+        description: "Permanently delete files: an upload (its R2 backup copy stays) or a generated item with all its audio, subtitles, images or video. Can't be undone. Only when the user explicitly asks.",
+        inputSchema: z.object({ items: z.array(FILE_ID).min(1).max(500) }),
+      },
+      async ({ items }) => files(async () => (await import("@/lib/filemanager")).deleteItems(items, CLAUDE)),
     );
 
     server.registerTool(
@@ -986,6 +1119,7 @@ const handler = createMcpHandler(
       "5) Long jobs return a job id: poll get_job (each call waits up to 45 s). Results are archived to the dashboard's Files page; links expire after 6 h.",
       "6) The user's own voice model: voice_dataset to see or grow the training data, then the training notebook; once trained it is engine myvoice with voice = that person's name (my_voices lists both people's). benchmark_voices compares it with their clones on held-out sentences. voice_coach shows how a trained voice is doing and writes the next recording script around its weak spots; recording it makes the voice more natural (retrains only go live when they beat the current model).",
       "Content spaces: each post goes to one or more spaces (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast), each with its own stage and publish time; cross-post by adding targets (update_post targets, merge). Files: upload_media (bytes) or add_media (a link); delete_media / delete_post only when asked.",
+      "Files page (a file manager over uploads and generated items): list_files browses folders and searches; get_file gives download links; create_folder / update_folder / move_files / rename_file / star_files keep it tidy (upload_media and add_media take a folder). delete_files and delete_folder only when asked; deleting a folder keeps what was inside.",
       "7) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",
       "Scores: match = how closely Whisper heard the script (>=0.95 good); similarity = voice match vs the recording (>=0.86 same speaker).",
     ].join("\n"),

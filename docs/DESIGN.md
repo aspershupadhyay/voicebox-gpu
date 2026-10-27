@@ -14,7 +14,7 @@ The sidebar has eight destinations, grouped by what you're doing, not by which b
 | — | Home | `/` | Greeting with the GPU's state, tool tiles, latest takes, ways to make a voice, what's due next |
 | — | Voices | `/voices` | Make a voice (three cards), then your voices and the built-in voices |
 | — | Posts | `/posts` | Every post as a Board, Calendar, List or Gallery, filtered by platform; the post drawer |
-| — | Files | `/files` | Generated (takes, subtitles, images, videos in R2) and Uploads (shared workspace files) |
+| — | Files | `/files` | A file manager: folders, then files (uploads and everything the GPU made), with search, filters, drag-and-drop and paste |
 | Create | Voiceover | `/voiceover` | Write, pick a voice, generate; Script and Lines views |
 | Create | Clean-up, Subtitles, Images | `/clean-up`, `/subtitles`, `/images` | One tool each, in the tool layout |
 | Studio | GPU & engines | `/gpu` | Start/stop the Colab GPU, engines, machine, worker, failures |
@@ -41,6 +41,11 @@ existing page.
 - Tool pages (Re-voice, Clean-up, Subtitles, Images) use `ToolPage`: the work on a canvas on the left (`DropZone`,
   the recorder, results, an `Empty` state for where results land), settings in a panel on the right built from
   `SideRow`, and the one primary action at the panel's foot (`.tool-go`).
+- Files is a file manager (`components/Files.tsx`, `fileparts.tsx`): a search box with filter pills ("Type: All ▾"),
+  the folder path, then **Folders** and **Files** sections, each H2 with a count pill. A folder is a tabbed sheet in one
+  of six soft colours (`--f-lavender` … `--f-sand`: back sheet and tab a shade deeper than the front, never a gradient);
+  a file is a card whose white body rises into its cover as a tab, the ⋮ sitting in the notch. Every card has the same
+  menu on right-click and ⋮, and a full-size open button under its checkbox and ⋮ (nothing interactive nests).
 - Making a voice uses the voice art (`components/Orb.tsx`): a flat disc with a waveform inside a dotted arc that runs
   from nothing to the best length of audio, with the minimum ticked.
 
@@ -60,7 +65,8 @@ existing page.
 
 ## Type
 
-- Geist for everything; Geist Mono only for numbers that move (timings, sizes, counters) and code.
+- Geist for everything; Geist Mono only for numbers that move (timings, sizes, counters), code, and file and folder
+  names on the Files page (they read as file names).
 - H1 26px/600, section H2 15–16px/600, body 14px, small 13px, labels 13px/500. No serif, no all-caps labels.
 
 ## Controls and accessibility

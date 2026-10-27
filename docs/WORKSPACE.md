@@ -10,7 +10,7 @@ organization). Voiceovers and voices stay in **R2**, which is also the backup fo
 |---|---|
 | **Posts** | Every post, with summary cards (due this week, overdue, in production, shipped vs the weekly goal) and four views: **Board** by stage (Ideas → In production → Review → Scheduled → Posted; drag cards between stages), **Calendar** (drag a post onto a day; double-click a day to start one), **List** (stage and publish time editable inline) and **Gallery** (the week ahead plus cards grouped Up next / In the works / Ideas / Shipped). Filter by platform or format (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast) or Ideas, and by "Mine". **New post** starts one already in that format. **Activity** shows who did what. |
 | **Post** (drawer) | Title, stage, **Publish to** (one row per space, each with its own stage, publish time and live link; *Cross-post to…* adds another; the post's stage is its furthest-behind target, so it's Posted only when every target is), publish time, owner, script (with **Voiceover** → opens the voice page with the script loaded; the result is attached back to the post), caption with per-platform character counts, media, notes, discussion. Edits save as you type. |
-| **Files → Uploads** | Every file either of you added: images, videos (up to 2 GB each), audio, docs. Drop files anywhere on the page. |
+| **Files** | A file manager over every upload (images, videos up to 2 GB, audio, docs) and everything the GPU made, in folders (six colours, nested). Upload with the button, by dropping files anywhere (or onto a folder) or by pasting a photo, files or a link. Drag cards onto a folder or the path to move them; right-click or ⋮ for open, rename (F2), move, cut, star, download, copy link and delete. Search covers every folder; filter by type, source, date and who added it; grid or list. Keys: ⌘F search, ⌘A select all, ⌘C copy links, ⌘X then ⌘V move, Delete, Esc. |
 
 Everything is live (Appwrite Realtime): when one of you moves a card, edits a script or comments, the other sees it within
 a second. **Activity** (top right of Posts) says who did what.
@@ -53,6 +53,9 @@ and the code paths to R2 (`mcp/lib/store.ts`) are unchanged.
 | `NEXT_PUBLIC_APPWRITE_ENDPOINT` / `NEXT_PUBLIC_APPWRITE_PROJECT` | optional | Default to `https://sgp.cloud.appwrite.io/v1` and `voicebox-studio`. |
 | `WORKSPACE_EMAILS` | optional | Comma-separated allow-list. |
 
+Folders, where each file sits and stars are not in Appwrite: they're one small JSON file in R2 (`workspace/files.json`,
+`mcp/lib/files.ts`), read fresh before every change. The page re-reads it every 20 s and when the tab comes back.
+
 Schema (database `studio`): `posts`, `comments`, `activity`, `media` tables, team-level permissions for `team:studio`;
 storage bucket `media` (2 GB per file, encrypted, antivirus, image previews). The dashboard's web platform is registered
 for `voiceboxstudio.vercel.app`, `mcp-eta-tawny.vercel.app` and `localhost`; add a platform in the Appwrite console if you add a custom domain.
@@ -60,7 +63,8 @@ for `voiceboxstudio.vercel.app`, `mcp-eta-tawny.vercel.app` and `localhost`; add
 ## From Claude (MCP)
 
 The MCP server covers the workspace too: `workspace_board`, `get_post`, `create_post`, `update_post`, `comment_on_post`,
-`content_calendar`, `workspace_media`, `add_media` (from a link), `upload_media` (file bytes), `delete_media`, `attach_voiceover`, `workspace_activity`, `workspace_members`, and
+`content_calendar`, `workspace_media`, `add_media` (from a link), `upload_media` (file bytes), `delete_media`, `attach_voiceover`, `workspace_activity`, `workspace_members`,
+the Files tools (`list_files`, `get_file`, `create_folder`, `update_folder`, `delete_folder`, `move_files`, `rename_file`, `star_files`, `delete_files`; see docs/API.md), and
 `voice_lines` with `post_id` to voice a post's script. Posts take `targets` (spaces such as `ig_reel`, `yt_short`, `x_post`) to cross-post, and `workspace_board` filters by `space`.
 Where each post goes is stored in R2 (`workspace/spaces.json`) next to the Appwrite post, whose `platforms` follow it.
 Ask things like "plan three Shorts for next week about Git and

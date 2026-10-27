@@ -100,6 +100,7 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "qmodels" && !b) return Response.json({ models: await (await import("@/lib/qwenmodels")).listQwenModelsWithSamples() });
     if (a === "kvoices" && !b) return Response.json({ voices: await listKVoices() });
     if (a === "spaces" && !b) return Response.json(await getSpaces());
+    if (a === "files" && !b) return Response.json(await (await import("@/lib/files")).getTree());
     if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
     if (a === "jobs" && !b) return Response.json(await call("/jobs"));
     if (a === "jobs" && b) {
@@ -181,6 +182,7 @@ export async function POST(req: Request, ctx: Ctx) {
         return Response.json(await coach.gateAction(b, body.action, String(body.job)));
       return Response.json({ error: "not found" }, { status: 404 });
     }
+    if (a === "files") return await filesAction(b, c, body);
     if (a === "spaces" && b === "goals") return Response.json({ goals: await setGoals(body.goals) });
     if (a === "spaces" && b && ID.test(b)) {
       // a post's targets (where it goes, cross-posting); the post's platforms / stage / publish time follow
@@ -400,6 +402,42 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 }
 
+/** The Files page's file manager: folders, moving, stars, renaming, deleting and importing a link (lib/files.ts). */
+async function filesAction(b: string | undefined, c: string | undefined, body: Record<string, unknown>) {
+  const fs = await import("@/lib/files");
+  const fm = await import("@/lib/filemanager");
+  const who = await currentUser();
+  const actor = who ? { id: who.id, name: who.name } : { name: "someone" };
+  const keys = (v: unknown, folders = false) => {
+    const k = Array.isArray(v) ? v.map(String) : [];
+    if (!k.length || k.length > 500 || !k.every((x) => fs.ITEM_RE.test(x) || (folders && x.startsWith("f:") && fs.FOLDER_RE.test(x.slice(2)))))
+      throw new fs.FilesError("items: 1-500 ids such as m:<upload id>, g:<library id> or f:<folder id>");
+    return k;
+  };
+  const folder = (v: unknown) => {
+    if (v == null || v === "") return null;
+    if (!fs.FOLDER_RE.test(String(v))) throw new fs.FilesError("bad folder id");
+    return String(v);
+  };
+  try {
+    if (b === "folders" && !c) return Response.json(await fs.createFolder({ name: body.name, color: body.color, parent: folder(body.parent) }, actor.name));
+    if (b === "folders" && c && fs.FOLDER_RE.test(c))
+      return Response.json(await fs.updateFolder(c, { name: body.name, color: body.color, parent: body.parent === undefined ? undefined : folder(body.parent) }));
+    if (b === "move") return Response.json(await fs.moveItems(keys(body.items, true), folder(body.folder)));
+    if (b === "star") return Response.json({ starred: await fs.starItems(keys(body.items, true), !!body.on) });
+    if (b === "rename") return Response.json(await fm.renameItem(keys([body.item])[0], String(body.name ?? ""), actor));
+    if (b === "delete") return Response.json(await fm.deleteItems(keys(body.items), actor));
+    if (b === "import") {
+      const r = await fm.importUrl(String(body.url ?? ""), { name: body.name ? String(body.name) : undefined, folder: folder(body.folder), backup: (await getSettings()).backup_media }, actor);
+      return Response.json({ media: r.media, backup: r.backup, folder: r.folder });
+    }
+    return Response.json({ error: "not found" }, { status: 404 });
+  } catch (e) {
+    if (e instanceof fs.FilesError) return Response.json({ error: e.message }, { status: e.status });
+    throw e;
+  }
+}
+
 /** Upload into the library: PUT /api/dash/library/<job>/<line>.wav (audio body) or .../<job>/job.json */
 export async function PUT(req: Request, ctx: Ctx) {
   const g = await guard(req, ctx);
@@ -423,6 +461,15 @@ export async function DELETE(req: Request, ctx: Ctx) {
   if (a === "datasets" && b && VOICE_RE.test(b) && ID.test(String(g.path[2] ?? ""))) {
     await deleteDatasetPart(b, String(g.path[2]));
     return Response.json({ ok: true });
+  }
+  if (a === "files" && b === "folders" && g.path[2]) {
+    const fs = await import("@/lib/files");
+    if (!fs.FOLDER_RE.test(g.path[2])) return Response.json({ error: "bad folder id" }, { status: 400 });
+    try {
+      return Response.json(await fs.deleteFolder(g.path[2]));
+    } catch (e) {
+      return Response.json({ error: (e as Error).message }, { status: e instanceof fs.FilesError ? e.status : 502 });
+    }
   }
   if (a === "spaces" && b && ID.test(b)) {
     await dropTargets(b);
