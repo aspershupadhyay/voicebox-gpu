@@ -1818,13 +1818,16 @@ def _studio_outputs(job, paths):
             raise
         except Exception as e:  # noqa: BLE001  can't judge them: keep the takes as generated
             log(f"polish check failed ({type(e).__name__}: {e})")
-            keep = set()
+            note = f"studio polish not applied: its voice check failed ({type(e).__name__}: {str(e)[:80]})"
+            if note not in job["warnings"]:
+                job["warnings"].append(note)
+            keep, ok = set(), []
         finally:
             job["stage"] = stage
         avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
         job["polish"].update(check_s=round(time.time() - t_check, 1), sim=avg(list(sims.values())),  # voice match, polished vs not
                              mos_before=avg([m for m in mos[0::2] if m is not None]), mos_after=avg([m for m in mos[1::2] if m is not None]))
-        if len(keep) < len(paths):
+        if ok and len(keep) < len(paths):
             note = "studio polish skipped on some lines: it changed the voice or sounded less natural"
             if note not in job["warnings"]:
                 job["warnings"].append(note)
@@ -4180,6 +4183,12 @@ def self_update(url):
         tar.extractall(HERE, filter="data")
     except TypeError:  # Python < 3.12 without extraction filters
         tar.extractall(HERE)
+    # the bundle's files all carry mtime 0, and Python trusts cached bytecode whose (mtime, size) match: an edit that
+    # keeps a module's size (a flag "1" -> "0", a version string) would run the old code. Drop the caches.
+    for root, dirs, _ in os.walk(HERE):
+        if "__pycache__" in dirs:
+            shutil.rmtree(os.path.join(root, "__pycache__"), ignore_errors=True)
+            dirs.remove("__pycache__")
 
     def restart():
         time.sleep(1.5)

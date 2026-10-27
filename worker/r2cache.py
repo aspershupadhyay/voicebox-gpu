@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 PART = 256 << 20       # bytes per part
 PULL_THREADS = 8       # parts downloading at once (RAM: at most PULL_THREADS + 2 parts held)
 PUSH_THREADS = 4
-VERSION = 2            # bump to ignore every upload made by an older layout (1: mirrors weren't size-checked)
+VERSION = 3            # bump to ignore every upload made by an older layout (1: not size-checked; 2: symlinked blobs left out)
 
 _locks, _locks_lock = {}, threading.Lock()
 EVENTS = {}  # what came from or went to R2 this run (the gateway's /health shows it under boot.r2)
@@ -137,12 +137,12 @@ def pull(prefix, dest, m=None):
     return {"bytes": m["bytes"], "secs": round(secs, 1), "mbps": round(m["bytes"] / 1e6 / max(secs, 1e-3))}
 
 
-def push(prefix, src, names=None, meta=None, min_bytes=0):
+def push(prefix, src, names=None, meta=None, min_bytes=0, deref=False):
     """Upload the directory src (or only the entries names inside it) under prefix. Returns {bytes, secs}. Short of
     min_bytes (files changed or vanished mid-upload), the manifest isn't written, so nothing trusts the upload."""
     t = time.time()
     names = names or sorted(os.listdir(src))
-    tar = subprocess.Popen(["tar", "-cf", "-", "-C", src, *names], stdout=subprocess.PIPE)
+    tar = subprocess.Popen(["tar", "-cf", "-", *(["-h"] if deref else []), "-C", src, *names], stdout=subprocess.PIPE)
     total, n, futs = 0, 0, []
     try:
         with ThreadPoolExecutor(PUSH_THREADS) as ex:
@@ -183,32 +183,16 @@ def weights_prefix(repo):
 
 
 def file_bytes(root):
-    """Bytes in regular files under root (symlinks not followed: a snapshot's links point into blobs)."""
+    """Bytes of the files under root, following symlinks (what tar -h writes)."""
     total = 0
     for r, _, fs in os.walk(root):
         for f in fs:
-            p = os.path.join(r, f)
-            if not os.path.islink(p):
-                try:
-                    total += os.path.getsize(p)
-                except OSError:
-                    pass
+            try:
+                total += os.path.getsize(os.path.join(r, f))
+            except OSError:
+                pass
     return total
 
-
-def big_files(root, over=100 << 20):
-    """Where the large files under root are (path, MB, is a link): to explain a mirror that came out small."""
-    out = []
-    for r, _, fs in os.walk(root):
-        for f in fs:
-            p = os.path.join(r, f)
-            try:
-                size = os.path.getsize(p)
-            except OSError:
-                continue
-            if size > over:
-                out.append((os.path.relpath(p, root), size >> 20, os.path.islink(p)))
-    return out[:12]
 
 
 def have_repo(hf_home, repo):
@@ -218,7 +202,12 @@ def have_repo(hf_home, repo):
     if not os.path.isdir(snaps) or not os.listdir(snaps):
         return False
     blobs = os.path.join(d, "blobs")
-    return not (os.path.isdir(blobs) and any(f.endswith(".incomplete") for f in os.listdir(blobs)))
+    if os.path.isdir(blobs) and any(f.endswith(".incomplete") for f in os.listdir(blobs)):
+        return False
+    for r, _, fs in os.walk(snaps):  # every file a snapshot names is really there (newer hubs link into a shared store)
+        if not all(os.path.exists(os.path.join(r, f)) for f in fs):
+            return False
+    return True
 
 
 def pull_repo(hf_home, repo, log=print):
@@ -243,11 +232,12 @@ def push_repo(hf_home, repo, log=print):
     with _lock(("repo", repo)):
         if not have_repo(hf_home, repo) or manifest(weights_prefix(repo)):
             return
+        # refs + snapshots with every link resolved: the files themselves, wherever this hub version keeps them (its
+        # own blobs folder, or a shared store it links into). Hugging Face reads a snapshot of real files just the same.
         d = os.path.join(hf_home, "hub", repo_dir(repo))
-        want = file_bytes(d)
-        EVENTS[f"disk {repo}"] = {"bytes": want, "big": big_files(d), "big_anywhere": big_files(hf_home)}
-        out = push(weights_prefix(repo), d, [n for n in ("blobs", "refs", "snapshots") if os.path.exists(os.path.join(d, n))],
-                   {"repo": repo}, min_bytes=want)
+        names = [n for n in ("refs", "snapshots") if os.path.exists(os.path.join(d, n))]
+        want = sum(file_bytes(os.path.join(d, n)) for n in names)
+        out = push(weights_prefix(repo), d, names, {"repo": repo}, min_bytes=want, deref=True)
         EVENTS[f"push {repo}"] = out
         log(f"mirrored {repo} to R2: {out['bytes'] / 1e9:.1f} GB in {out['secs']} s")
 
