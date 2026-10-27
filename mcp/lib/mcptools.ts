@@ -1,4 +1,4 @@
-// Voicebox tools: everything on the dashboard, as tools (served by the MCP route, and run in-process by Ask Voicebox). The Colab GPU worker (Kokoro, Chatterbox, Orpheus, Qwen TTS,
+// Voicebox tools: everything on the dashboard, as tools (served by the MCP route, app/api/mcp/route.ts). The Colab GPU worker (Kokoro, Chatterbox, Orpheus, Qwen TTS,
 // Whisper subtitles, Resemble Enhance clean-up, Z-Image / Qwen-Image stills) plus the shared workspace in Appwrite
 // (posts and their scripts, calendar, comments, media, activity), so an assistant can plan, write, voice and file a post.
 import type { createMcpHandler } from "mcp-handler";
@@ -89,14 +89,10 @@ const line = z.object({
 
 export type ToolServer = Parameters<Parameters<typeof createMcpHandler>[0]>[0];
 export type Actor = { name: string; id?: string };
-type Result = { content: { type: "text"; text: string }[]; isError?: boolean };
-/** Asked before a tool runs: a result to answer with instead (an approval request), or null to run it. */
-export type Gate = (name: string, args: Record<string, unknown>, ctx: unknown) => Promise<Result | null>;
 
-/** Every Voicebox tool on `raw`. `who` is the author shown in the activity feed; `gate` can hold a tool back. */
-export function registerTools(raw: ToolServer, who: Actor = { name: "Claude (MCP)" }, gate?: Gate) {
+/** Every Voicebox tool on `server`. `who` is the author shown in the activity feed. */
+export function registerTools(server: ToolServer, who: Actor = { name: "Claude (MCP)" }) {
   const CLAUDE = who;
-  const server = gate ? withGate(raw, gate) : raw;
   server.registerTool(
     "worker_status",
     {
@@ -1136,16 +1132,6 @@ export function registerTools(raw: ToolServer, who: Actor = { name: "Claude (MCP
     },
     async () => ws(async () => listMembers()),
   );
-}
-
-function withGate(raw: ToolServer, gate: Gate): ToolServer {
-  return new Proxy(raw, {
-    get(t, p, r) {
-      if (p !== "registerTool") return Reflect.get(t, p, r);
-      return (name: string, config: unknown, cb: (args: Record<string, unknown>, ctx: unknown) => unknown) =>
-        t.registerTool(name, config as never, (async (args: Record<string, unknown>, ctx: unknown) => (await gate(name, args ?? {}, ctx)) ?? cb(args, ctx)) as never);
-    },
-  });
 }
 
 export const INSTRUCTIONS = [

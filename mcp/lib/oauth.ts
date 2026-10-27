@@ -9,7 +9,7 @@ export const ACCESS_TTL = 60 * 60; // 1 hour
 const REFRESH_TTL = 60 * 60 * 24 * 90; // 90 days
 const CODE_TTL = 5 * 60;
 
-type Claims = { typ: "client" | "code" | "access" | "refresh" | "ask"; exp?: number; [k: string]: unknown };
+type Claims = { typ: "client" | "code" | "access" | "refresh"; exp?: number; [k: string]: unknown };
 
 const b64 = (s: string | Buffer) => Buffer.from(s).toString("base64url");
 const now = () => Math.floor(Date.now() / 1000);
