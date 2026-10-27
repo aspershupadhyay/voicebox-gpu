@@ -22,6 +22,7 @@ import cleanup  # noqa: E402
 import dataset  # noqa: E402
 import quality  # noqa: E402
 import voicewalk  # noqa: E402
+import r2cache  # noqa: E402
 
 SECRET = os.environ.get("WORKER_SECRET", "")
 HOME = C.HOME
@@ -348,6 +349,7 @@ class Engines:
             C.ENGINES[n]["gpu_gb"] = pool + 2.5  # + SNAC decoder + CUDA context
         self.resident = C.resident_engines(self.budget + 1.5)  # step 4: the review's models stay loaded
         self.preloading = set()
+        self.compile_sig = {}  # compile-cache folder -> (files, bytes) as last pulled or pushed (step 7)
         threading.Thread(target=self._reaper, daemon=True).start()
 
     def _set(self, name, state):
@@ -381,12 +383,18 @@ class Engines:
             busy = any(j["status"] == "running" for j in list(JOBS.values()))
             for n, left in self.idle_left().items():
                 if left <= 0 and not busy and n not in self.parked and n not in self.resident:
-                    log(f"unloading {n}: idle for {C.IDLE_MIN:g} min")
-                    self.stop(n)
+                    if C.IDLE_PARK:  # a high-RAM machine: off the GPU but kept in RAM, back in about a second
+                        with self.lock:
+                            if self.running(n) and not self.inflight[n]:
+                                self._park_or_stop(n, f"idle for {C.IDLE_MIN:g} min")
+                    else:
+                        log(f"unloading {n}: idle for {C.IDLE_MIN:g} min")
+                        self.stop(n)
             for n, at in list(self.parked.items()):  # parked models give their RAM back after a while, or when RAM runs low
                 m = _meminfo()
-                if time.time() - at > C.PARK_MIN * 60 or (m and m["avail"] < C.RAM_RESERVE_GB / 2):
-                    log(f"stopping parked {n}: " + ("parked " + f"{C.PARK_MIN:g} min" if time.time() - at > C.PARK_MIN * 60 else "RAM is low"))
+                late = C.PARK_MIN > 0 and time.time() - at > C.PARK_MIN * 60
+                if late or (m and m["avail"] < C.RAM_RESERVE_GB / 2):
+                    log(f"stopping parked {n}: " + (f"parked {C.PARK_MIN:g} min" if late else "RAM is low"))
                     self.stop(n)
 
     def _can_park(self, name):
@@ -509,6 +517,9 @@ class Engines:
         have = dir_gb(cache_dir(name), max_age=0) if os.path.isdir(cache_dir(name)) else 0.0
         if shutil.disk_usage(HOME).free / 1e9 < max(0.0, C.ENGINES[name].get("disk_gb", 0) - have) + C.DISK_RESERVE_GB:
             return log(f"not prefetching {name}: short of disk (a prefetch never deletes other weights)")
+        repos = self._r2_weights(name)  # whatever R2 has, from R2 (step 7); the rest from Hugging Face
+        if not repos:
+            return log(f"prefetched {name} (venv + weights on disk) in {time.time() - t:.0f} s")
         env = {**os.environ, "HF_HOME": cache_dir(name), "HF_HUB_ENABLE_HF_TRANSFER": "0"}
         code = ("import sys; from huggingface_hub import snapshot_download\n"
                 "for r in sys.argv[1:]: snapshot_download(r, ignore_patterns=['*.msgpack', '*.h5', '*.ot', '*.onnx', '*.gguf', 'original/*'])")
@@ -517,7 +528,7 @@ class Engines:
                 self._wait_for_quiet(name)
                 if name in self.procs:
                     return  # a job loaded it meanwhile: its own load fetched what was missing
-                p = subprocess.Popen([py, "-c", code, *C.ENGINES[name]["prefetch"]], stdout=logf, stderr=logf, env=env)
+                p = subprocess.Popen([py, "-c", code, *repos], stdout=logf, stderr=logf, env=env)
                 while p.poll() is None and not self._others_fetching(name):
                     time.sleep(1)
                 if p.poll() is None:  # a job needs the network and the disk now: stop, pick up again after it
@@ -529,6 +540,84 @@ class Engines:
                     raise RuntimeError(f"download failed (exit {p.returncode}); see {name}-prefetch.log")
                 break
         log(f"prefetched {name} (venv + weights on disk) in {time.time() - t:.0f} s")
+        self._r2_mirror(name, repos)
+
+    def _r2_weights(self, name):
+        """Step 7: fill name's weights folder from the R2 mirror. Returns the repos that didn't come from R2 just now
+        (missing ones, and ones already on disk that Hugging Face's snapshot_download checks are complete)."""
+        repos = list(C.ENGINES[name].get("prefetch") or [])
+        if not (C.R2_WEIGHTS and r2cache.enabled()):
+            return repos
+        left = []
+        for repo in repos:
+            try:
+                got = r2cache.pull_repo(cache_dir(name), repo, log)
+            except Exception as e:  # noqa: BLE001  e.g. an older dashboard without /api/worker-cache
+                log(f"R2 weights for {repo}: {type(e).__name__}: {e}")
+                got = False
+            if got != "r2":
+                left.append(repo)
+        _SIZES.pop(cache_dir(name), None)
+        return left
+
+    def _r2_mirror(self, name, repos):
+        """Mirror repos this runtime downloaded from Hugging Face to R2, in the background, for the next runtime."""
+        if not (C.R2_WEIGHTS and r2cache.enabled() and repos):
+            return
+
+        def go():
+            for repo in repos:
+                try:
+                    r2cache.push_repo(cache_dir(name), repo, log)
+                except Exception as e:  # noqa: BLE001
+                    log(f"couldn't mirror {repo} to R2 ({type(e).__name__}: {e})")
+        threading.Thread(target=go, daemon=True).start()
+
+    def _compile_cache(self, name, py):
+        """Step 7: vLLM engines keep their compiled kernels in a folder per GPU model and vLLM version, filled from R2
+        on a fresh runtime. Returns (extra env, folder) or ({}, None) for engines that don't run vLLM."""
+        if "vllm" not in C.ENGINES[name].get("packages", "").split():
+            return {}, None
+        version = r2cache.vllm_version(py)
+        if not version:
+            return {}, None
+        gpu = gpu_info_cached()["name"]
+        root = r2cache.compile_root(HOME, gpu, version)
+        if C.R2_COMPILE and r2cache.enabled() and root not in self.compile_sig:
+            self.compile_sig[root] = None
+            if not r2cache.tree_sig(root)[0]:
+                try:
+                    out = r2cache.pull(r2cache.compile_prefix(gpu, version), root)
+                    r2cache.EVENTS[f"pull kernels {version}"] = out or "none yet"
+                    log(f"compiled kernels for {gpu} / vLLM {version} from R2: {out['bytes'] / 1e6:.0f} MB in {out['secs']} s"
+                        if out else f"no compiled kernels in R2 yet for {gpu} / vLLM {version}: this load compiles them")
+                except Exception as e:  # noqa: BLE001  it compiles them itself
+                    log(f"R2 compiled kernels: {type(e).__name__}: {e}")
+            self.compile_sig[root] = r2cache.tree_sig(root)
+        os.makedirs(root, exist_ok=True)
+        return r2cache.compile_env(root), root
+
+    def _compile_push(self, root):
+        """After a vLLM engine is ready: upload its folder if this load compiled anything new (background, holding the
+        engine lock so no other load writes into it meanwhile)."""
+        if not (root and C.R2_COMPILE and r2cache.enabled()):
+            return
+        sig = r2cache.tree_sig(root)
+        if not sig[0] or sig == self.compile_sig.get(root):
+            return
+        self.compile_sig[root] = sig
+        parts = root.split(os.sep)
+
+        def go():
+            with self.lock:
+                try:
+                    names = [n for n in ("vllm", "inductor", "triton") if os.path.isdir(os.path.join(root, n))]
+                    out = r2cache.push(r2cache.compile_prefix(*parts[-2:]), root, names)
+                    r2cache.EVENTS["push kernels"] = out
+                    log(f"compiled kernels saved to R2: {out['bytes'] / 1e6:.0f} MB in {out['secs']} s")
+                except Exception as e:  # noqa: BLE001
+                    log(f"couldn't save compiled kernels to R2 ({type(e).__name__}: {e})")
+        threading.Thread(target=go, daemon=True).start()
 
     def _others_fetching(self, name):
         """A job is installing, downloading or loading another engine (its live progress is in self.fetch)."""
@@ -662,6 +751,7 @@ class Engines:
                 self.procs.pop(name, None)
                 self.parked.pop(name, None)
                 log(f"{name} had exited (code {p.returncode}); starting it again")
+            compile_root = None
             try:
                 self._switch_group(name)
                 self._ensure_disk(name)
@@ -671,6 +761,8 @@ class Engines:
                 py = self._install(name)
                 self._evict_for(name)
                 self._room_in_ram(name)
+                self._r2_weights(name)  # a fresh runtime whose prefetch hasn't got this far: R2 beats the engine's own download
+                compile_env, compile_root = self._compile_cache(name, py)
                 self._set(name, "loading")
                 mark_used(name)
                 logf = open(os.path.join(LOGS_DIR, f"{name}.log"), "a")
@@ -683,7 +775,7 @@ class Engines:
                        # Colab sets the notebook's inline plot backend, which an engine's own venv can't load: matplotlib
                        # then refuses to import (Resemble Enhance imports pyplot and died loading). Engines never show plots.
                        "MPLBACKEND": "Agg", "VOICEBOX_COMPILE_CODEC": "1" if C.COMPILE_CODEC else "0",
-                       "VOICEBOX_STREAM": "1" if C.STREAM else "0", "VOICEBOX_SPEC": C.SPEC}
+                       "VOICEBOX_STREAM": "1" if C.STREAM else "0", "VOICEBOX_SPEC": C.SPEC, **compile_env}
                 p = subprocess.Popen([py, os.path.join(HERE, "engine_host.py"), "--engine", name,
                                       "--port", str(C.ENGINES[name]["port"])], stdout=logf, stderr=logf, env=env, cwd=HERE,
                                      start_new_session=True)  # own process group: stop() also kills vLLM's children
@@ -700,6 +792,7 @@ class Engines:
                         self.errors.pop(name, None)
                         self.loads[name] = {"secs": round(time.time() - t_load, 1), "warm": warm, "at": time.time()}
                         log(f"{name} ready in {time.time() - t_load:.0f} s (batch={self.batch[name]}, weights {'in RAM' if warm else 'from disk'})")
+                        self._compile_push(compile_root)
                         return
                     except Exception:
                         time.sleep(2)
@@ -708,6 +801,9 @@ class Engines:
                 self._set(name, "error")
                 self.errors[name] = str(e)
                 self.stop(name, keep_state=True)
+                if compile_root:  # a bad or mismatched kernel cache must not fail every load: the next one compiles afresh
+                    shutil.rmtree(compile_root, ignore_errors=True)
+                    self.compile_sig[compile_root] = (0, 0)
                 raise
 
     def stop(self, name, keep_state=False):
@@ -3982,7 +4078,7 @@ def boot_info():
         b = json.load(open(os.path.join(HOME, "boot.json")))
     except (OSError, ValueError):
         b = {}
-    return {**b, "prefetch": {"engines": C.PREFETCH, **BOOT_PREFETCH}} if (b or C.PREFETCH) else None
+    return {**b, "prefetch": {"engines": C.PREFETCH, **BOOT_PREFETCH}, "r2": r2cache.EVENTS} if (b or C.PREFETCH) else None
 
 
 def health():
@@ -4219,8 +4315,34 @@ def prefetch_all():
             ENG.prefetch(name)
         except Exception as e:  # noqa: BLE001  the first job that needs it installs and downloads it the usual way
             log(f"couldn't prefetch {name} ({type(e).__name__}: {e})")
+        if name in C.PRELOAD:
+            threading.Thread(target=preload_at_start, args=(name,), daemon=True).start()
     if C.PREFETCH:
         BOOT_PREFETCH["done_s"] = round(time.time() - t, 1)
+    for name in C.PRELOAD:  # one that isn't prefetched loads now instead
+        if name in C.ENGINES and name not in C.PREFETCH:
+            threading.Thread(target=preload_at_start, args=(name,), daemon=True).start()
+
+
+def has_trained_voice():
+    return bool(os.environ.get("MY_VOICE_MODEL") or os.environ.get("MY_VOICE_ADAPTER_URL")
+                or os.path.exists(os.path.join(HOME, "myvoice", "adapter", "adapter_config.json")))
+
+
+def preload_at_start(name):
+    """Load name on the GPU while the worker comes online (config.PRELOAD), so the first voiceover finds it ready.
+    Skipped when a job is running, the video models hold the GPU, or (myvoice) there's no trained voice to serve."""
+    if name == "myvoice" and not has_trained_voice():
+        return
+    if ENG.running(name) or name in ENG.procs or ENG.mode == "visual" or any(j["status"] == "running" for j in list(JOBS.values())):
+        return
+    t = time.time()
+    try:
+        ENG.ensure(name)
+        BOOT_PREFETCH.setdefault("preloaded", {})[name] = round(time.time() - t, 1)
+        log(f"preloaded {name} at start in {time.time() - t:.0f} s")
+    except Exception as e:  # noqa: BLE001  the first job that needs it loads it the usual way
+        log(f"couldn't preload {name} ({type(e).__name__}: {e})")
 
 
 def main():
