@@ -77,6 +77,11 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [ ] Speech super-resolution model (beyond Resemble Enhance) as the polish step; A/B with benchmark_voices
 - [ ] Add newer open TTS engines as benchmark candidates (e.g. Higgs Audio, VoxCPM, IndexTTS2) and let the scores pick
 - [ ] Full Kokoro / StyleTTS2 fine-tune on your clips (beyond the voicewalk mix)
+- [ ] Other cloud storage on the Files page, kept in sync: Google Drive first, then Dropbox, OneDrive, Box (OAuth APIs) and
+  S3 / Backblaze B2 (keys). Each shows as its own folder of cards (previews from the service's thumbnails); dragging a
+  file in or out copies it across. A scheduled check reads each service's change feed every few minutes and applies new,
+  renamed and deleted files both ways; a file changed on both sides keeps both copies. Needs an app registration per
+  service (Google's review for Drive access takes longest) and chunked copies for big videos
 
 ## Inference (plan in docs/INFERENCE.md; one PR per step, measured on a real GPU, behind a flag)
 - [ ] 1. Baseline benchmark script (`scripts/bench_voice.py`) and numbers on L4 and A100 (script and L4 numbers done 2026-10-26; A100 still to run)
