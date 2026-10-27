@@ -5,7 +5,7 @@ source of truth for defaults and ranges (docs/API.md is generated from the same 
 """
 import os
 
-VERSION = "3.5.2"
+VERSION = "3.5.3"
 HOME = os.environ.get("VOICEBOX_HOME", "/content/voicebox")
 VENVS = os.environ.get("VOICEBOX_VENVS", os.path.join(HOME, "venvs"))
 
@@ -183,7 +183,8 @@ ENGINES = {
         "kind": "asr",
         "port": 8105,
         "gpu_gb": 4.0,  # large-v3-turbo fp16 weights (1.6 GB) + batched 30 s windows, voice match and naturalness models
-        "packages": "torch transformers accelerate soundfile scipy",
+        # torchaudio: the naturalness model (UTMOS via SpeechMOS) imports it; without it every polish check failed
+        "packages": "torch torchaudio transformers accelerate soundfile scipy",
         "prefetch": [os.environ.get("WHISPER_MODEL", "openai/whisper-large-v3-turbo"),
                      os.environ.get("VOICE_MATCH_MODEL", "microsoft/wavlm-base-plus-sv")],
         "about": "Whisper large-v3-turbo (OpenAI). Large-v3 accuracy with a 4-layer decoder: several times faster subtitles, review and dataset cuts. Word-level timestamps, 99 languages.",
