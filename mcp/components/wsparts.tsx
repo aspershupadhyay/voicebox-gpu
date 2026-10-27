@@ -2,7 +2,7 @@
 // Building blocks shared by Posts and Files: the sign-in gate, avatars, uploads and media tiles.
 import { FileAudio, FileText, FilmStrip, Paperclip, Play, UsersThree } from "@phosphor-icons/react";
 import { useCallback, useState } from "react";
-import { AW, fileUrl, initials, kindOf, type Media } from "@/lib/workspace";
+import { AW, fileUrl, initials, kindOf, type Media, type MediaKind } from "@/lib/workspace";
 import { aw, getMe, ID, logActivity, signOut, useMe } from "./aw";
 import { Empty, PageHeader } from "./ui";
 
@@ -30,41 +30,47 @@ export function Avatar({ id, name, sm }: { id?: string | null; name?: string | n
   return <span className={`avatar ${tone(id)} ${sm ? "sm" : ""}`} title={name ?? undefined}>{initials(name)}</span>;
 }
 
-export type Upload = { key: string; name: string; progress: number; error?: string };
+export type Upload = { key: string; name: string; size: number; kind: MediaKind; progress: number; error?: string; done?: boolean; mediaId?: string };
 
-/** Upload to Appwrite Storage (chunked, resumable), record it in the media table, then mint a view token + R2 backup.
- *  `onRow` hears about each file as soon as its row exists (the Files page files it into the open folder). */
+const LANES = 3; // files going up at once: enough to fill the line, few enough that each one finishes soon
+
+/** Upload to Appwrite Storage (chunked, resumable), record it in the media table, then mint a view token (the R2 backup
+ *  copy follows on the server). `onRow` hears about each file as soon as its row exists; `onStart` as it's queued. */
 export function useUploader(postId?: string | null) {
   const [uploads, setUploads] = useState<Upload[]>([]);
-  const upload = useCallback(async (files: FileList | File[], onRow?: (m: Media) => void) => {
+  const upload = useCallback(async (files: FileList | File[], onRow?: (m: Media, file: File, key: string) => void, onStart?: (key: string, file: File) => void) => {
     const list = Array.from(files); // copy now: the caller clears the <input>, which empties a live FileList
+    const jobs = list.map((file) => ({ file, key: `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}` }));
+    setUploads((u) => [...u, ...jobs.map(({ file, key }) => ({ key, name: file.name, size: file.size, kind: kindOf(file.type, file.name), progress: 0 }))]);
+    jobs.forEach(({ file, key }) => onStart?.(key, file));
     const { user } = await getMe();
-    await Promise.all(list.map(async (file) => {
-      const key = `${file.name}-${file.size}-${Math.random()}`;
-      setUploads((u) => [...u, { key, name: file.name, progress: 0 }]);
+    const one = async ({ file, key }: { file: File; key: string }) => {
       const set = (p: Partial<Upload>) => setUploads((u) => u.map((x) => (x.key === key ? { ...x, ...p } : x)));
       try {
-        const f = await aw().storage.createFile({ bucketId: AW.bucket, fileId: ID.unique(), file, onProgress: (p) => set({ progress: p.progress / 100 }) });
+        const f = await aw().storage.createFile({ bucketId: AW.bucket, fileId: ID.unique(), file, onProgress: (p) => set({ progress: Math.min(0.99, p.progress / 100) }) });
         const row = await aw().tables.createRow<Media>({
           databaseId: AW.db, tableId: "media", rowId: ID.unique(),
           data: { file_id: f.$id, name: file.name.slice(0, 255), mime: file.type || null, size: file.size, kind: kindOf(file.type, file.name), post_id: postId ?? null,
             uploaded_by: user?.id ?? null, uploaded_name: user?.name ?? null, r2_key: null, token: null },
         });
-        set({ progress: 1 });
-        onRow?.(row);
-        const fin = await fetch(`/api/ws/media/${row.$id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then((r) => r.json());
-        if (fin.backup) set({ error: fin.backup });
+        set({ progress: 0.99, mediaId: row.$id });
+        onRow?.(row, file, key);
+        const fin = await fetch(`/api/ws/media/${row.$id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then((r) => r.json()).catch(() => ({}));
+        set({ progress: 1, done: true, error: fin.backup || undefined });
         logActivity(postId ?? null, "uploaded", file.name);
-        setTimeout(() => setUploads((u) => u.filter((x) => x.key !== key)), fin.backup ? 6000 : 900);
       } catch (e) {
-        set({ error: (e as Error).message });
+        set({ error: (e as Error).message || "Upload failed" });
       }
-    }));
+    };
+    const queue = [...jobs];
+    await Promise.all(Array.from({ length: Math.min(LANES, queue.length) }, async () => { for (let j = queue.shift(); j; j = queue.shift()) await one(j); }));
   }, [postId]);
-  return { uploads, upload };
+  const clear = useCallback(() => setUploads((u) => u.filter((x) => !x.done && !x.error)), []);
+  return { uploads, upload, clear };
 }
 
-export function UploadList({ uploads }: { uploads: Upload[] }) {
+export function UploadList({ uploads: all }: { uploads: Upload[] }) {
+  const uploads = all.filter((u) => !u.done || u.error);
   if (!uploads.length) return null;
   return (
     <div className="stack" style={{ gap: 6, margin: "10px 0" }}>

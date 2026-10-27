@@ -1,4 +1,5 @@
 // JSON API behind the dashboard (cookie session or Bearer MCP_TOKEN).
+import { after } from "next/server";
 import { currentUser, isAuthed } from "@/lib/session";
 import { call, WorkerOffline } from "@/lib/worker";
 import { loadWorker, STALE_MS } from "@/lib/registry";
@@ -100,7 +101,26 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "qmodels" && !b) return Response.json({ models: await (await import("@/lib/qwenmodels")).listQwenModelsWithSamples() });
     if (a === "kvoices" && !b) return Response.json({ voices: await listKVoices() });
     if (a === "spaces" && !b) return Response.json(await getSpaces());
-    if (a === "files" && !b) return Response.json(await (await import("@/lib/files")).getTree());
+    if (a === "files") {
+      // the Files page: the folder tree (with video posters), the generated items as files, the sidebar's favourites
+      const fm = await import("@/lib/filemanager");
+      if (!b) {
+        const t = await fm.treeForBrowser();
+        const { expired } = await import("@/lib/files");
+        if (expired(t).length) after(() => fm.purgeTrash().catch(() => null));
+        return Response.json(t);
+      }
+      if (b === "items") {
+        const { listSummaries } = await import("@/lib/library");
+        const [sums, sign] = await Promise.all([listSummaries(), signer()]);
+        return Response.json({ jobs: await Promise.all(sums.map(async (j) => ({
+          ...j,
+          cover: j.image ? await sign(j.id, j.image.thumb) : j.video?.poster ? await sign(j.id, "poster.jpg") : null,
+          audio: (!j.kind || j.kind === "tts") && j.first ? await sign(j.id, `${j.first}.wav`) : null,
+        }))) });
+      }
+      if (b === "favourites") return Response.json({ items: await fm.favourites() });
+    }
     if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
     if (a === "jobs" && !b) return Response.json(await call("/jobs"));
     if (a === "jobs" && b) {
@@ -420,13 +440,17 @@ async function filesAction(b: string | undefined, c: string | undefined, body: R
     return String(v);
   };
   try {
-    if (b === "folders" && !c) return Response.json(await fs.createFolder({ name: body.name, color: body.color, parent: folder(body.parent) }, actor.name));
+    if (b === "folders" && !c) return Response.json(await fs.createFolder({ id: body.id, name: body.name, color: body.color, parent: folder(body.parent) }, actor.name));
     if (b === "folders" && c && fs.FOLDER_RE.test(c))
       return Response.json(await fs.updateFolder(c, { name: body.name, color: body.color, parent: body.parent === undefined ? undefined : folder(body.parent) }));
     if (b === "move") return Response.json(await fs.moveItems(keys(body.items, true), folder(body.folder)));
+    if (b === "auto") { await fs.autoFile(keys(body.items)); return Response.json({ ok: true }); }
     if (b === "star") return Response.json({ starred: await fs.starItems(keys(body.items, true), !!body.on) });
     if (b === "rename") return Response.json(await fm.renameItem(keys([body.item])[0], String(body.name ?? ""), actor));
-    if (b === "delete") return Response.json(await fm.deleteItems(keys(body.items), actor));
+    if (b === "delete") return Response.json(await fm.deleteItems(keys(body.items, true), actor, body.forever === true));
+    if (b === "restore") return Response.json(await fm.restore(keys(body.items, true)));
+    if (b === "empty-trash") return Response.json(await fm.emptyTrash(actor));
+    if (b === "poster") return Response.json(await fm.savePoster(keys([body.item])[0], String(body.data ?? "")));
     if (b === "import") {
       const r = await fm.importUrl(String(body.url ?? ""), { name: body.name ? String(body.name) : undefined, folder: folder(body.folder), backup: (await getSettings()).backup_media }, actor);
       return Response.json({ media: r.media, backup: r.backup, folder: r.folder });
@@ -466,7 +490,7 @@ export async function DELETE(req: Request, ctx: Ctx) {
     const fs = await import("@/lib/files");
     if (!fs.FOLDER_RE.test(g.path[2])) return Response.json({ error: "bad folder id" }, { status: 400 });
     try {
-      return Response.json(await fs.deleteFolder(g.path[2]));
+      return Response.json(await fs.trashItems([`f:${g.path[2]}`], (await currentUser())?.name ?? null)); // to the trash
     } catch (e) {
       return Response.json({ error: (e as Error).message }, { status: e instanceof fs.FilesError ? e.status : 502 });
     }

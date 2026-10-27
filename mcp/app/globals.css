@@ -1,32 +1,9 @@
-/* Voicebox Studio: a clean product UI. A light sidebar, a white canvas, hairline borders, black primary buttons and
-   soft tinted status pills. Geist throughout, Geist Mono for numbers that move. Every text colour is 4.5:1 or better
-   in both themes. Rules in docs/DESIGN.md; shared parts in components/ui.tsx and components/Shell.tsx. */
+/* Voicebox Studio: a clean product UI, dark only (the owner's call). A near-black sidebar and canvas, hairline borders,
+   white primary buttons and soft tinted status pills. Geist throughout, Geist Mono for numbers that move. Every text
+   colour is 4.5:1 or better. Rules in docs/DESIGN.md; shared parts in components/ui.tsx and components/Shell.tsx. */
 
 /* ───────────── tokens */
 :root {
-  --bg: #ffffff; --side: #fafaf9; --surface: #ffffff; --fill: #f4f4f3; --fill2: #ececea; --raised: #ffffff;
-  --line: #ebebe9; --line2: #dededb; --line3: #c9c9c5;
-  --ink: #0d0d0d; --ink2: #3a3a37; --dim: #5c5c57; --mute: #6f6f6a; --on-ink: #ffffff;
-  --hover: #f4f4f3; --sel: #0d0d0d;
-  --ok: #137a3a; --ok-soft: #e7f5ec; --warn: #a15c07; --warn-soft: #fdf3e1; --bad: #b42318; --bad-soft: #fdecec;
-  --blue: #1d4ed8; --blue-soft: #eaf1fe; --violet: #6d28d9; --violet-soft: #f1ecfe; --grey: #57575a; --grey-soft: #f1f1f0;
-  --live: #16a34a;
-  --brand: #6d5dfc; --brand-ink: #5b45e8; --brand-soft: #efedff;
-  --shadow: 0 1px 2px rgb(13 13 13 / .04);
-  --shadow-md: 0 4px 14px -6px rgb(13 13 13 / .12), 0 1px 2px rgb(13 13 13 / .04);
-  --shadow-lg: 0 24px 60px -20px rgb(13 13 13 / .28), 0 0 0 1px rgb(13 13 13 / .05);
-  --scrim: rgb(13 13 13 / .32);
-  --r: 14px; --r-sm: 10px; --r-xs: 8px;
-  --side-w: 252px; --top-h: 56px; --tab-h: 64px;
-  --sans: var(--font-sans), -apple-system, system-ui, "Segoe UI", sans-serif;
-  --mono: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
-  --ease: cubic-bezier(.2, .8, .2, 1);
-  /* names older components (and the recorder's canvas) still read */
-  --signal: #e5484d; --signal2: var(--bad); --accent: var(--live); --faint: var(--mute); --danger: var(--bad); --glacier: var(--blue);
-  --sand: var(--warn); --bg2: var(--fill); --raised2: var(--fill); --display: var(--sans);
-  color-scheme: light;
-}
-:root[data-theme="dark"] {
   --bg: #111111; --side: #0c0c0c; --surface: #161616; --fill: #1d1d1d; --fill2: #262626; --raised: #1b1b1b;
   --line: #242424; --line2: #2f2f2f; --line3: #444444;
   --ink: #f2f2f0; --ink2: #d4d4cf; --dim: #b4b4ae; --mute: #8e8e88; --on-ink: #0d0d0d;
@@ -39,24 +16,15 @@
   --shadow-md: 0 6px 18px -8px rgb(0 0 0 / .7), 0 0 0 1px rgb(255 255 255 / .03);
   --shadow-lg: 0 24px 60px -16px rgb(0 0 0 / .8), 0 0 0 1px rgb(255 255 255 / .06);
   --scrim: rgb(0 0 0 / .6);
+  --r: 14px; --r-sm: 10px; --r-xs: 8px;
+  --side-w: 252px; --top-h: 56px; --tab-h: 64px;
+  --sans: var(--font-sans), -apple-system, system-ui, "Segoe UI", sans-serif;
+  --mono: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  /* names older components (and the recorder's canvas) still read */
+  --signal: #e5484d; --signal2: var(--bad); --accent: var(--live); --faint: var(--mute); --danger: var(--bad); --glacier: var(--blue);
+  --sand: var(--warn); --bg2: var(--fill); --raised2: var(--fill); --display: var(--sans);
   color-scheme: dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #111111; --side: #0c0c0c; --surface: #161616; --fill: #1d1d1d; --fill2: #262626; --raised: #1b1b1b;
-    --line: #242424; --line2: #2f2f2f; --line3: #444444;
-    --ink: #f2f2f0; --ink2: #d4d4cf; --dim: #b4b4ae; --mute: #8e8e88; --on-ink: #0d0d0d;
-    --hover: #1d1d1d; --sel: #f2f2f0;
-    --ok: #7fd6a1; --ok-soft: #13281c; --warn: #e9b765; --warn-soft: #2e2412; --bad: #f2a39b; --bad-soft: #3a1b18;
-    --blue: #93b4f6; --blue-soft: #172338; --violet: #c3a8fb; --violet-soft: #251b3b; --grey: #bdbdb6; --grey-soft: #232322;
-    --live: #4ade80;
-  --brand: #8f82ff; --brand-ink: #b3a9ff; --brand-soft: #211c45;
-    --shadow: 0 1px 2px rgb(0 0 0 / .4);
-    --shadow-md: 0 6px 18px -8px rgb(0 0 0 / .7), 0 0 0 1px rgb(255 255 255 / .03);
-    --shadow-lg: 0 24px 60px -16px rgb(0 0 0 / .8), 0 0 0 1px rgb(255 255 255 / .06);
-    --scrim: rgb(0 0 0 / .6);
-    color-scheme: dark;
-  }
 }
 
 /* ───────────── base */
@@ -205,7 +173,7 @@ button:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed;
 .btn.quiet, button.quiet { background: transparent; color: var(--dim); padding: 0 10px; }
 .btn.quiet:hover, button.quiet:hover { background: var(--hover); color: var(--ink); opacity: 1; }
 button.danger, .btn.danger { background: var(--bad); color: #fff; }
-:root[data-theme="dark"] button.danger { color: #1a0d0b; }
+button.danger, .btn.danger { color: #1a0d0b; }
 .btn.sm, button.sm { height: 32px; padding: 0 11px; font-size: 13px; gap: 6px; border-radius: 9px; }
 .btn.xs, button.xs { height: 28px; padding: 0 9px; font-size: 12.5px; gap: 5px; border-radius: 8px; }
 .btn.lg, button.lg { height: 42px; padding: 0 18px; font-size: 14.5px; border-radius: 11px; }
@@ -1116,8 +1084,7 @@ video.vplayer { width: 100%; border-radius: 12px; background: #000; display: blo
 .rec-pill:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 88%, #000); opacity: 1; }
 .rec-pill.on { width: 72px; padding: 0; }
 .rec-dot { width: 9px; height: 9px; border-radius: 50%; background: #fff; }
-:root[data-theme="dark"] .rec-pill { background: #c5362f; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .rec-pill { background: #c5362f; } }
+.rec-pill { background: #c5362f; }
 .clone-side { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 28px 22px 22px; }
 .clone-msg { margin: 0; font-size: 13.5px; color: var(--dim); text-align: center; min-height: 20px; }
 .clone-msg.bad { color: var(--bad); }
@@ -1188,15 +1155,6 @@ video.vplayer { width: 100%; border-radius: 12px; background: #000; display: blo
    six soft colours (back sheet + tab a shade deeper than the front); files are cards whose white body rises into the
    cover as a tab, with the ⋮ button sitting in the notch. Titles are Geist Mono, like file names. Flat, no gradients. */
 :root {
-  --f-lavender: #e4e2f8; --f-lavender-2: #efeefc; --f-lavender-ink: #5b4fd0;
-  --f-sky: #d5e6f7; --f-sky-2: #e7f1fc; --f-sky-ink: #2f6db0;
-  --f-peach: #f6dfcb; --f-peach-2: #fcede1; --f-peach-ink: #a85a1c;
-  --f-mint: #d2ebdd; --f-mint-2: #e5f5ec; --f-mint-ink: #23774b;
-  --f-rose: #f4d9e1; --f-rose-2: #fbe9ee; --f-rose-ink: #b23a62;
-  --f-sand: #ebe3c9; --f-sand-2: #f6f1e0; --f-sand-ink: #85681a;
-  --star: #d99a06;
-}
-:root[data-theme="dark"] {
   --f-lavender: #2d2a4b; --f-lavender-2: #232039; --f-lavender-ink: #b2a8ff;
   --f-sky: #1f3249; --f-sky-2: #18273a; --f-sky-ink: #8cbcf0;
   --f-peach: #42301f; --f-peach-2: #332519; --f-peach-ink: #f2ae78;
@@ -1204,17 +1162,6 @@ video.vplayer { width: 100%; border-radius: 12px; background: #000; display: blo
   --f-rose: #43242e; --f-rose-2: #341c24; --f-rose-ink: #f39bb7;
   --f-sand: #3a341d; --f-sand-2: #2e2a18; --f-sand-ink: #e2c771;
   --star: #f4c14f;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --f-lavender: #2d2a4b; --f-lavender-2: #232039; --f-lavender-ink: #b2a8ff;
-    --f-sky: #1f3249; --f-sky-2: #18273a; --f-sky-ink: #8cbcf0;
-    --f-peach: #42301f; --f-peach-2: #332519; --f-peach-ink: #f2ae78;
-    --f-mint: #1d3a2b; --f-mint-2: #172d22; --f-mint-ink: #7fd9a8;
-    --f-rose: #43242e; --f-rose-2: #341c24; --f-rose-ink: #f39bb7;
-    --f-sand: #3a341d; --f-sand-2: #2e2a18; --f-sand-ink: #e2c771;
-    --star: #f4c14f;
-  }
 }
 .c-lavender { --fb: var(--f-lavender); --ff: var(--f-lavender-2); --fi: var(--f-lavender-ink); }
 .c-sky { --fb: var(--f-sky); --ff: var(--f-sky-2); --fi: var(--f-sky-ink); }
@@ -1334,7 +1281,12 @@ video.vplayer { width: 100%; border-radius: 12px; background: #000; display: blo
 .fc-badges { display: inline-flex; align-items: center; }
 .fb-ic { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: var(--fill2); color: var(--ink2); border: 2px solid var(--surface); box-sizing: content-box; }
 .fb-ic + .fb-ic { margin-left: -6px; }
-.fb-ic.k-audio, .fb-ic.k-image, .fb-ic.k-video, .fb-ic.k-doc, .fb-ic.k-other { background: var(--ink); color: var(--on-ink); }
+/* the kind tile: each kind in its category folder's colour */
+.fb-ic.k-video { background: var(--f-rose); color: var(--f-rose-ink); }
+.fb-ic.k-image { background: var(--f-sky); color: var(--f-sky-ink); }
+.fb-ic.k-audio { background: var(--f-lavender); color: var(--f-lavender-ink); }
+.fb-ic.k-doc { background: var(--f-mint); color: var(--f-mint-ink); }
+.fb-ic.k-other { background: var(--f-sand); color: var(--f-sand-ink); }
 .fm-gpu { background: var(--ink); color: var(--on-ink); }
 .fm-more { background: var(--fill2); color: var(--ink2); font: 600 10px var(--sans); }
 .fm-rename { height: 30px; margin: 4px 0 10px; padding: 0 8px; border-radius: 8px; font: 500 14.5px var(--mono); }
@@ -1370,8 +1322,8 @@ video.vplayer { width: 100%; border-radius: 12px; background: #000; display: blo
 
 /* menu, colours, move dialog, detail drawer */
 .fm-menu { min-width: 230px; }
-.fm-menu .pm-item.danger, .fm-menu .pm-item.danger .ic { color: var(--bad); }
-.fm-menu .pm-item.danger:hover { background: var(--bad-soft); color: var(--bad); }
+.pm-item.pm-danger, .pm-item.pm-danger .ic { color: var(--bad); }
+.pm-item.pm-danger:hover, .pm-item.pm-danger:focus-visible { background: var(--bad-soft); color: var(--bad); }
 .fm-swatches { display: flex; gap: 8px; padding: 8px 10px 6px; }
 .fm-sw { width: 26px; height: 26px; padding: 0; border-radius: 50%; background: var(--fb); border: 1.5px solid color-mix(in srgb, var(--fi) 55%, transparent); color: var(--fi); box-shadow: none; }
 .fm-sw:hover { opacity: 1; border-color: var(--fi); }
@@ -1417,3 +1369,51 @@ video.vplayer { width: 100%; border-radius: 12px; background: #000; display: blo
   .fc-wave { top: 10px; height: 46px; }
   .fm-sec-h h2 { font-size: 17px; }
 }
+
+/* uploads: a ring on the card, a Drive-like panel bottom right */
+.fc-up { position: absolute; inset: 0; display: grid; place-items: center; background: rgb(0 0 0 / .38); backdrop-filter: blur(2px); }
+.fc-up-err { font: 600 12px var(--sans); background: var(--bad-soft); padding: 4px 10px; border-radius: 99px; color: var(--bad); }
+.fm-ring .rg-track { fill: none; stroke: rgb(255 255 255 / .22); stroke-width: 3; }
+.fm-ring .rg-fill { fill: none; stroke: var(--ink); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset .3s var(--ease); }
+.fu-row .fm-ring .rg-track { stroke: var(--line2); }
+.fm-ups { position: fixed; right: 20px; bottom: 20px; z-index: 85; width: min(380px, calc(100vw - 24px)); border-radius: 16px; background: var(--raised); border: 1px solid var(--line2); box-shadow: var(--shadow-lg); overflow: hidden; animation: rise .22s var(--ease); }
+.fu-h { display: flex; align-items: center; gap: 10px; padding: 12px 10px 12px 16px; }
+.fu-h b { font-size: 14px; }
+.fu-bar { height: 3px; background: var(--fill2); }
+.fu-bar i { display: block; height: 100%; background: var(--ink); transition: width .3s var(--ease); }
+.fu-list { list-style: none; margin: 0; padding: 6px; max-height: 300px; overflow-y: auto; border-top: 1px solid var(--line); }
+.fu-row { display: flex; align-items: center; gap: 10px; padding: 8px 8px; border-radius: 10px; }
+.fu-row:hover { background: var(--hover); }
+.fu-row .fb-ic { border-color: var(--raised); }
+.fu-name { display: flex; flex-direction: column; min-width: 0; flex: 1; font-size: 13.5px; }
+.fu-err { color: var(--bad); }
+.fu-link { height: auto; padding: 0; background: none; border: 0; box-shadow: none; color: var(--dim); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.fu-link:hover { color: var(--ink); opacity: 1; }
+.fu-ok, .fu-bad { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; flex: none; }
+.fu-ok { background: var(--ok-soft); color: var(--ok); }
+.fu-bad { background: var(--bad-soft); color: var(--bad); }
+.fm-snack { position: fixed; left: calc(var(--side-w) + 24px); bottom: 20px; z-index: 86; display: flex; align-items: center; gap: 14px; max-width: min(520px, calc(100vw - 32px)); padding: 10px 10px 10px 16px; border-radius: 12px; background: var(--ink); color: var(--on-ink); box-shadow: var(--shadow-lg); font-size: 13.5px; animation: rise .2s var(--ease); }
+.fm-snack .fs-act { height: 30px; padding: 0 10px; background: transparent; color: var(--on-ink); border: 0; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; box-shadow: none; }
+.fm-snack .fs-act:hover { background: color-mix(in srgb, var(--on-ink) 10%, transparent); opacity: 1; }
+.fm-snack .fs-x { color: var(--on-ink); }
+.fm-snack .fs-x:hover { background: color-mix(in srgb, var(--on-ink) 10%, transparent); color: var(--on-ink); }
+.fm-trash-btn { height: 32px; padding: 0 10px; gap: 6px; margin-left: 10px; border-radius: 9px; background: transparent; color: var(--dim); border: 1px solid var(--line2); box-shadow: none; font: 500 13px var(--sans); }
+.fm-trash-btn:hover { color: var(--ink); background: var(--hover); opacity: 1; }
+.fm-count.sm { min-width: 20px; height: 20px; padding: 0 6px; font-size: 11.5px; }
+.fm-drawer-cover { display: block; width: 100%; max-height: 280px; object-fit: cover; border-radius: 14px; margin-bottom: 12px; }
+.fold-skel { pointer-events: none; opacity: .7; }
+@media (max-width: 960px) {
+  .fm-ups { right: 12px; bottom: calc(var(--tab-h) + 12px + env(safe-area-inset-bottom)); }
+  .fm-snack { left: 12px; right: 12px; bottom: calc(var(--tab-h) + 12px + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 640px) { .fm-trash-btn { margin-left: auto; } }
+
+/* sidebar favourites (Shell.tsx): starred files and folders, like the reference's Favourites */
+.side-favs { display: flex; flex-direction: column; gap: 1px; }
+.fav-link { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 9px; color: var(--ink2); font: 500 13.5px var(--sans); min-width: 0; }
+.fav-link:hover { background: var(--hover); color: var(--ink); }
+.fav-link .fav-th { width: 24px; height: 24px; border-radius: 7px; flex: none; overflow: hidden; display: grid; place-items: center; background: var(--fill2); color: var(--dim); }
+.fav-link .fav-th img { width: 100%; height: 100%; object-fit: cover; }
+.fav-link .fav-th.fold-th { background: var(--fb); color: var(--fi); }
+.fav-link .ellipsis { flex: 1; }
+.fav-link .fm-star { margin-left: auto; }

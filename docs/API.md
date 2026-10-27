@@ -39,22 +39,26 @@ dashboards and are signed "Claude (MCP)" in the activity feed.
 | `attach_voiceover` | `{post_id, job_id}` → link a library voiceover to a post. |
 | `workspace_activity` / `workspace_members` | Who did what, newest first; who is on the team. |
 
-**Files** (the Files page as a file manager: uploads and generated items in one list, in folders kept in R2 at
-`workspace/files.json`). File ids are `m:<upload id>` or `g:<library id>`; folders are an id or a name path such as
+**Files** (the Files page as a Drive-like file manager: uploads and generated items in one list, in folders kept in R2
+at `workspace/files.json`; five category folders, Videos `sysvideos`, Images `sysimages`, Audio `sysaudio`, Docs &
+scripts `sysdocs` and Other `sysother`, file everything by kind unless you move it). File ids are `m:<upload id>` or `g:<library id>`; folders are an id or a name path such as
 `Thumbnails/October`, and `f:<folder id>` when moved or starred.
 
 | Tool | What it does |
 |---|---|
-| `list_files` | `{folder?, everywhere?, search?, kind?, source?, starred?, limit?}` → the folder's subfolders (with item counts) and files (type, size, who, folder path, star, view link). Search looks in every folder. |
+| `list_files` | `{folder?, everywhere?, search?, kind?, source?, starred?, trash?, limit?}` → the folder's subfolders (with item counts) and files (type, size, who, folder path, star, view link). Search looks in every folder. |
 | `get_file` | `{file_id}` → details plus links valid for 6 h: an upload's view/download link, or every file of a generated item and its zip path. |
 | `create_folder` / `update_folder` | `{name, parent?, color?}`; rename, recolour (lavender, sky, peach, mint, rose, sand) or move a folder (`parent: "/"` for the top). |
 | `move_files` | `{items, to}` → file ids and `f:` folders into a folder, or the top with `to: "/"`. |
 | `rename_file` / `star_files` | Rename an upload or a generated item; star or unstar files and folders. |
-| `delete_files` / `delete_folder` | Only when asked. Deleting a file is for good (an upload's R2 backup stays); deleting a folder keeps what was inside (it moves up a level). |
+| `delete_files` / `delete_folder` | Only when asked. To the trash for 30 days (a folder with everything in it); `delete_files` with `forever: true` deletes for good (an upload's R2 backup stays). |
+| `restore_files` / `empty_trash` | Bring things back from the trash; empty it (only when asked). |
 
-The dashboard uses the same operations under `/api/dash/files`: `GET` (the tree), `POST folders`, `POST folders/<id>`,
-`DELETE folders/<id>`, `POST move {items, folder}`, `POST star {items, on}`, `POST rename {item, name}`,
-`POST delete {items}`, `POST import {url, folder?}`.
+The dashboard uses the same operations under `/api/dash/files`: `GET` (the tree, with video poster links), `GET items`
+(generated items as file summaries from `library/index.json`), `GET favourites`, `POST folders {id?, name, parent?}`,
+`POST folders/<id>`, `POST move {items, folder}`, `POST auto {items}` (back to its category), `POST star {items, on}`,
+`POST rename {item, name}`, `POST delete {items, forever?}`, `POST restore {items}`, `POST empty-trash`,
+`POST poster {item, data}`, `POST import {url, folder?}`.
 
 `voice` resolves as: `female` / `male` preset → engine voice name (`tara`, `af_heart`, …) → a recorded voice (`my_voices`).
 Recorded voices live in R2 (`voices/<name>/reference.wav` + transcript); the dashboard passes the worker a signed link
