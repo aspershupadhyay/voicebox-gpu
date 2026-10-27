@@ -651,7 +651,7 @@ export default function Voiceover() {
                 </div></div>
               <div className="set-line"><span>Subtitles <Info label="Subtitles">Whisper large-v3 turbo word timing. SRT, VTT and JSON, with a match score per line. Off finishes faster (about 110 s less on a 9-minute voiceover).</Info></span>
                 <button role="switch" aria-checked={subtitles} className={`switch ${subtitles ? "on" : ""}`} onClick={() => setSubtitles(!subtitles)} aria-label="Subtitles" /></div>
-              <div className="set-line"><span>Studio polish <Info label="Studio polish">Each line through Resemble Enhance for fuller, 44.1 kHz studio sound, kept only where it still sounds like the voice. Off finishes faster (about 90 s less on a 9-minute voiceover).</Info></span>
+              <div className="set-line"><span>Studio polish <Info label="Studio polish">Adds the crisp top end (24 → 48 kHz) the voice models leave out, without changing the voice. Takes seconds.</Info></span>
                 <button role="switch" aria-checked={effPolish} className={`switch ${effPolish ? "on" : ""}`} onClick={() => setPolish(!effPolish)} aria-label="Studio polish" /></div>
               <div className="set-line"><span>Tech pronunciation <Info label="Tech pronunciation">SQL → sequel, GPU → G-P-U, 16GB → 16 gigabytes; markdown and links cleaned.</Info></span>
                 <button role="switch" aria-checked={lexicon} className={`switch ${lexicon ? "on" : ""}`} onClick={() => setLexicon(!lexicon)} aria-label="Tech pronunciation" /></div>

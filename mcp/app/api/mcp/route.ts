@@ -166,7 +166,7 @@ const handler = createMcpHandler(
           review: z.boolean().optional().describe("listen back and re-voice sentences that missed (default on)"),
           review_batch: z.boolean().optional().describe("benchmarking only: true = the review hears every take in one batched call, false = four at a time (default: the worker's setting)"),
           subtitles: z.boolean().optional().describe("also make word-timed subtitles with Whisper large-v3 turbo (turn off to finish faster: ~110 s on a 9-minute voiceover)"),
-          polish: z.boolean().optional().describe("studio polish: each line through Resemble Enhance (24 -> 44.1 kHz air), kept only where it still sounds like the voice. Default on for myvoice, off otherwise; off finishes faster (~90 s on a 9-minute voiceover)"),
+          polish: z.boolean().optional().describe("studio polish: AP-BWE adds the 12-24 kHz air the 24 kHz voice models leave out (24 -> 48 kHz, the voice itself untouched), kept only where it still sounds like the voice; ~5 s on a 9-minute voiceover (Resemble Enhance, ~90 s, if it fails). Default on for myvoice, off otherwise"),
           language: z.string().max(8).optional().describe("ISO code for Whisper/Chatterbox, e.g. en, hi; omit to auto-detect"),
           style: z.enum(["tech", "hype", "narrator", "neutral"]).optional().describe("delivery style; default tech"),
           platform: z.enum(PLATFORMS).optional().describe("where it's going: sets loudness + caption cut; default youtube"),
