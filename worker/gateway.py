@@ -573,6 +573,8 @@ class Engines:
 
         def go():
             for repo in repos:
+                while self.fetch:  # never slow a load down: a fresh L4's preload took 202 s beside four uploads (62 s alone)
+                    time.sleep(5)
                 try:
                     r2cache.push_repo(cache_dir(name), repo, log)
                 except Exception as e:  # noqa: BLE001

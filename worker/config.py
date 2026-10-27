@@ -5,7 +5,7 @@ source of truth for defaults and ranges (docs/API.md is generated from the same 
 """
 import os
 
-VERSION = "3.5.3"
+VERSION = "3.5.4"
 HOME = os.environ.get("VOICEBOX_HOME", "/content/voicebox")
 VENVS = os.environ.get("VOICEBOX_VENVS", os.path.join(HOME, "venvs"))
 
@@ -83,7 +83,8 @@ PRELOAD = [n.strip() for n in os.environ.get("VOICEBOX_PRELOAD", "myvoice").spli
 # Studio polish (post.enhance) runs on this engine: "resemble" (Resemble Enhance: denoise + flow-matching restore to
 # 44.1 kHz, ~0.2 s per second of audio) or "apbwe" (AP-BWE: one-pass 24 -> 48 kHz bandwidth extension that leaves the
 # low band as it was). A job can pick with post.polish_engine; if AP-BWE fails, Resemble does the job.
-POLISH = os.environ.get("VOICEBOX_POLISH", "resemble")
+# Measured on the L4, 37 lines (564 s of audio): AP-BWE 5.4 s and 37/37 kept vs Resemble 89.4 s and 11/37 kept.
+POLISH = os.environ.get("VOICEBOX_POLISH", "apbwe")
 POLISH_ENGINE = {"resemble": "enhance", "apbwe": "apbwe"}
 R2_WEIGHTS = os.environ.get("VOICEBOX_R2_WEIGHTS", "1") == "1"
 R2_COMPILE = os.environ.get("VOICEBOX_R2_COMPILE", "1") == "1"
