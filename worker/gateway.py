@@ -1789,6 +1789,7 @@ def _studio_outputs(job, paths):
                 f"studio polish: {len(paths)} lines at once")
             learn_rate(engine, time.time() - t0, max(dur, 1.0))
             job["polish_engine"] = engine
+            job["polish"] = {"engine": engine, "lines": len(paths), "audio_s": round(dur, 1), "model_s": round(time.time() - t0, 1)}
             break
         except Cancelled:
             raise
@@ -1805,6 +1806,7 @@ def _studio_outputs(job, paths):
             job["stage"] = stage
     ok = [i for i, r in enumerate(res) if "error" not in r and os.path.exists(outs[i])]
     keep = set(ok)
+    t_check, sims, mos = time.time(), {}, []
     if mode == "auto" and ok:
         try:
             _prepare(job, "whisper")
@@ -1819,10 +1821,14 @@ def _studio_outputs(job, paths):
             keep = set()
         finally:
             job["stage"] = stage
+        avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
+        job["polish"].update(check_s=round(time.time() - t_check, 1), sim=avg(list(sims.values())),  # voice match, polished vs not
+                             mos_before=avg([m for m in mos[0::2] if m is not None]), mos_after=avg([m for m in mos[1::2] if m is not None]))
         if len(keep) < len(paths):
             note = "studio polish skipped on some lines: it changed the voice or sounded less natural"
             if note not in job["warnings"]:
                 job["warnings"].append(note)
+    job["polish"]["kept"] = len(keep)
     final = []
     for i, (a, b) in enumerate(zip(paths, outs)):
         if i in keep:
@@ -4024,7 +4030,7 @@ def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
                                  "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup", "decode",
                                  "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method", "lane", "review_batch", "stream",
-                                 "eagle", "polish_engine")}
+                                 "eagle", "polish_engine", "polish")}
     v["resources"] = job_resources(job)
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
