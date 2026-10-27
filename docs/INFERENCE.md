@@ -272,6 +272,20 @@ style's temperatures pinned):
     keeps the GPU busy, padding adds work), so the enhancer went back to one line at a time.
   - what's left after generation is polish (~90 s) and subtitles (~110 s): both bound by GPU compute, not batching.
 
+- Faster loads, studio polish and CosyVoice (2026-10-27, fresh L4):
+  - myvoice preloaded at start (`VOICEBOX_PRELOAD`): the first voiceover's loading went from a cold ~184 s to 0 s.
+    The cold load was 107.5 s of engine init, 50.9 s of it compilation; with vLLM's compiled kernels kept (R2,
+    per GPU and vLLM version, `worker/r2cache.py`) it loads in 62 s.
+  - R2 mirrors every voice repo (Whisper, Orpheus 6.6 GB, Qwen 4.5 GB, wavlm, SNAC) after the first download;
+    a fresh runtime's pull speed is still to measure.
+  - Studio polish, same 37 lines of sparsh (564 s of audio): Resemble Enhance 89.4 s, kept on 11/37 lines,
+    naturalness 4.00 -> 3.83; AP-BWE 5.4 s, kept on 37/37, voice match 1.00, naturalness unchanged, real 12-20 kHz
+    content added (-26 to -31 dB). AP-BWE is the default (`VOICEBOX_POLISH`), Resemble the fallback. Before this,
+    every "auto" polish check had failed (the whisper venv lacked torchaudio), so no earlier run kept any polish.
+  - CosyVoice 2 vs Qwen, same 10 lines, female preset: 96.6 s vs 95.1 s generating (~106 s of audio), voice match
+    0.94-0.98 vs 0.82-0.97, words heard 0.97-1.0 for both. It voices one line at a time (GPU ~14% busy), so it is no
+    faster here; it stays as an engine to choose.
+
 ## Sources
 
 - Baseten, Inference Engineering, TTS models: https://www.baseten.co/inference-engineering/book/06-modalities/tts-models/
