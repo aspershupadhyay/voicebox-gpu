@@ -69,15 +69,13 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - Job tracking: `mcp/components/jobs.ts` (localStorage, `useResumeJob`), the tray `JobTray.tsx`; `api()` tracks every
   POST to `jobs` / `myvoices`. Saved recordings: `takes.ts` (IndexedDB); `startRecording(scope)` in `Recorder.tsx`.
 
-## Ask Voicebox, viewer, players (2026-10-27)
-- [x] Ask Voicebox (docs/ASK.md): the dashboard's own assistant over every MCP tool, on Antigravity (worker, Google plan) or the Gemini API; approvals for deletes, settings and GPU spending
+## Viewer and players (2026-10-27)
 - [x] File viewer for PDF, Word (.docx), Excel / ODS / CSV, Markdown, JSON, text, subtitles and code; slides (.pptx) download only
 - [x] Video player with its own controls (byte-range streaming, buffered bar, speed, PiP, fullscreen, double-tap skip, resume) and an audio stage with the waveform
 - [x] Uploads: up to 6 small files at once; the next file starts while the last one is recorded
-- [ ] Sign Antigravity in on the real worker and check a full run (only tested up to Google's code exchange)
 - [ ] Adaptive streaming (HLS renditions made on the worker) for long uploaded videos on slow connections
 - [ ] Slides (.pptx) preview
-- [ ] Publish to YouTube (Data API: upload, schedule with publishAt, thumbnail) and Instagram (Graph API: Reels, posts, stories, published by the scheduled check) from a post's targets, with a `publish_post` tool so Ask Voicebox can post (after an approval)
+- [ ] Publish to YouTube (Data API: upload, schedule with publishAt, thumbnail) and Instagram (Graph API: Reels, posts, stories, published by the scheduled check) from a post's targets, with a `publish_post` MCP tool
 
 ## Later (not started)
 - [ ] Listen to a few of the cut training clips per session on Your model (the worker would push samples next to the zip)
