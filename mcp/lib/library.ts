@@ -1,7 +1,7 @@
 // Permanent storage for finished jobs: the private R2 bucket under library/<jobId>/.
 // Files are served to the browser (and handed to the worker) through short-lived presigned URLs.
 import { learnFromJob, type Trial } from "./profiles";
-import { delPrefix, getJson, getObj, listObjs, presign, putJson, putObj, typeOf } from "./store";
+import { delPrefix, getJson, getObj, listDirs, listObjs, presign, putJson, putObj, typeOf } from "./store";
 import { call } from "./worker";
 import { unzip } from "./zip";
 
@@ -32,7 +32,58 @@ export { typeOf };
 
 export const getLibJob = (id: string) => getJson<LibJob>(`${ROOT}${id}/job.json`).catch(() => null);
 
-export const putLibJob = (job: LibJob) => putJson(`${ROOT}${job.id}/job.json`, job);
+/** Every write of a job goes through here, so the index (what the Files page lists) follows it. */
+export async function putLibJob(job: LibJob) {
+  await putJson(`${ROOT}${job.id}/job.json`, job);
+  await patchIndex((i) => { i.jobs[job.id] = summarize(job); }).catch(() => null);
+}
+
+// ── the index: one small summary per job (library/index.json), so listing the library is two requests, not one per job
+
+/** What the Files page needs to show a job as a file; the full job (every line) loads when it's opened. */
+export type LibSummary = {
+  id: string; kind?: LibJob["kind"]; engine: string; voice: string; label?: string; created: number; language?: string | null; mode?: string;
+  text: string; lines: number; seconds: number; first?: string; subs: boolean;
+  video?: { width: number; height: number; duration: number; size: number; poster?: boolean };
+  image?: { file: string; thumb: string; width: number; height: number; transparent?: boolean }; images: number; model?: string;
+};
+type Index = { built: number; jobs: Record<string, LibSummary> };
+const INDEX = `${ROOT}index.json`;
+
+export function summarize(j: LibJob): LibSummary {
+  return {
+    id: j.id, kind: j.kind, engine: j.engine, voice: j.voice, label: j.label, created: j.created, language: j.language ?? null, mode: j.mode,
+    text: (j.results[0]?.text ?? "").replace(/<[^>]+>/g, "").slice(0, 200), lines: j.results.length,
+    seconds: +j.results.reduce((s, r) => s + (r.duration || 0), 0).toFixed(1), first: j.results[0]?.id, subs: !!j.subs,
+    video: j.video ? { width: j.video.width, height: j.video.height, duration: j.video.duration, size: j.video.size, poster: j.video.poster } : undefined,
+    image: j.images?.[0], images: j.images?.length ?? 0, model: j.gen?.model,
+  };
+}
+
+const readIndex = () => getJson<Index>(INDEX).catch(() => null);
+async function patchIndex(fn: (i: Index) => void) {
+  const i = (await readIndex()) ?? { built: 0, jobs: {} };
+  if (!i.built) return; // no index yet: the next listing builds it from scratch
+  fn(i);
+  await putJson(INDEX, i);
+}
+
+/** Every job, summarised: the index, plus any job it misses (made before it, or a write it missed). Rebuilt daily. */
+export async function listSummaries(): Promise<LibSummary[]> {
+  const [dirs, idx] = await Promise.all([listDirs(ROOT), readIndex()]);
+  const fresh = idx && Date.now() - idx.built < 86400_000;
+  const i: Index = fresh ? idx : { built: Date.now(), jobs: {} };
+  const ids = new Set(dirs.filter((d) => /^[A-Za-z0-9_-]{1,64}$/.test(d)));
+  const missing = [...ids].filter((id) => !i.jobs[id]);
+  const gone = Object.keys(i.jobs).filter((id) => !ids.has(id));
+  for (let k = 0; k < missing.length; k += 24) {
+    const got = await Promise.all(missing.slice(k, k + 24).map((id) => getLibJob(id)));
+    for (const j of got) if (j) i.jobs[j.id] = summarize(j);
+  }
+  for (const id of gone) delete i.jobs[id];
+  if (!fresh || gone.length || missing.some((id) => i.jobs[id])) await putJson(INDEX, i).catch(() => null);
+  return Object.values(i.jobs).sort((a, b) => b.created - a.created);
+}
 
 export const putFile = (jobId: string, name: string, data: BodyInit) => putObj(`${ROOT}${jobId}/${name}`, data);
 export const putAudio = (jobId: string, lineId: string, data: ArrayBuffer) => putFile(jobId, `${lineId}.wav`, data);
@@ -240,11 +291,14 @@ export async function renameLibJob(id: string, label: string) {
   return next;
 }
 
-export const deleteLibJob = (id: string) => delPrefix(`${ROOT}${id}/`);
+export async function deleteLibJob(id: string) {
+  await delPrefix(`${ROOT}${id}/`);
+  await patchIndex((i) => { delete i.jobs[id]; }).catch(() => null);
+}
 
 /** Presigned GET URLs for library files. */
 export async function signer(ttlSec = 6 * 3600) {
-  return async (jobId: string, name: string) => presign(`${ROOT}${jobId}/${name}`, "GET", ttlSec);
+  return async (jobId: string, name: string) => presign(`${ROOT}${jobId}/${name}`, "GET", ttlSec, undefined, true);
 }
 
 /** Presigned GET for any stored key (e.g. an upload the worker must fetch). */

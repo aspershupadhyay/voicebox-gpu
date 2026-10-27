@@ -1,26 +1,25 @@
-// The Files page's file manager: folders, where each file sits and what's starred, kept in R2 as one small JSON file
-// (workspace/files.json). Files themselves stay where they are: uploads in Appwrite (`m:<media id>`), generated takes,
-// subtitles, images and videos in the R2 library (`g:<library id>`). Folders are `f:<folder id>` when moved. Writes read
-// the latest copy first and change one thing, so two people filing different things never overwrite each other.
+// The Files page's folder tree in R2 (workspace/files.json): folders, where each file sits, stars, the trash and which
+// uploaded videos have a poster frame. Files themselves stay where they are: uploads in Appwrite (`m:<media id>`),
+// generated takes, subtitles, images and videos in the R2 library (`g:<library id>`); folders are `f:<folder id>`.
+// Writes read the latest copy first and change one thing, so two people filing different things never overwrite each
+// other. The rules (category folders, trash, where a file shows) are in lib/filetree.ts, shared with the browser.
 import { getJson, putJson } from "./store";
-import { FOLDER_COLORS, type FolderColor } from "./workspace";
+import {
+  FOLDER_COLORS, FOLDER_RE, ITEM_RE, normalize, pathOf, ROOT, subtree, TRASH_DAYS, within, newFolderId, type FileTree, type Folder, type FolderColor,
+} from "./filetree";
 
-export { FOLDER_COLORS, type FolderColor };
-export type Folder = { id: string; name: string; color: FolderColor; parent: string | null; created: number; by: string | null };
-export type FileTree = { folders: Folder[]; place: Record<string, string>; starred: string[] };
+export { FOLDER_COLORS, FOLDER_RE, ITEM_RE, pathOf, type FileTree, type Folder, type FolderColor };
 
 const KEY = "workspace/files.json";
-export const ITEM_RE = /^[mg]:[A-Za-z0-9._-]{1,64}$/;
-export const FOLDER_RE = /^[a-z0-9]{6,16}$/;
 const MAX_FOLDERS = 500;
+const FKEY = /^f:[a-z0-9]{6,16}$/;
 
 export class FilesError extends Error {
   constructor(message: string, public status = 400) { super(message); }
 }
 
 async function load(): Promise<FileTree> {
-  const s = await getJson<Partial<FileTree>>(KEY).catch(() => null);
-  return { folders: s?.folders ?? [], place: s?.place ?? {}, starred: s?.starred ?? [] };
+  return normalize(await getJson<Partial<FileTree>>(KEY).catch(() => null));
 }
 const save = (t: FileTree) => putJson(KEY, t);
 
@@ -37,32 +36,29 @@ function folderOf(t: FileTree, id: string | null | undefined) {
   if (id == null) return null;
   const f = t.folders.find((x) => x.id === id);
   if (!f) throw new FilesError("that folder doesn't exist", 404);
+  if (t.trash[`f:${f.id}`]) throw new FilesError(`"${f.name}" is in the trash: restore it first`, 409);
   return f;
-}
-
-/** True when `id` is `ancestor` or sits somewhere inside it. */
-function within(t: FileTree, id: string | null, ancestor: string) {
-  for (let cur = id, n = 0; cur && n < 64; n++) {
-    if (cur === ancestor) return true;
-    cur = t.folders.find((x) => x.id === cur)?.parent ?? null;
-  }
-  return false;
 }
 
 /** A name not already used by a sibling: "Thumbnails", "Thumbnails 2", ... */
 function unique(t: FileTree, parent: string | null, name: string, except?: string) {
-  const taken = new Set(t.folders.filter((f) => f.parent === parent && f.id !== except).map((f) => f.name.toLowerCase()));
+  const taken = new Set(t.folders.filter((f) => f.parent === parent && f.id !== except && !t.trash[`f:${f.id}`]).map((f) => f.name.toLowerCase()));
   if (!taken.has(name.toLowerCase())) return name;
   for (let i = 2; ; i++) if (!taken.has(`${name} ${i}`.toLowerCase())) return `${name} ${i}`;
 }
 
-export async function createFolder(input: { name?: unknown; parent?: unknown; color?: unknown }, by: string | null) {
+/** Make a folder. The browser picks the id itself (so the folder shows the moment you click), else one is made here. */
+export async function createFolder(input: { id?: unknown; name?: unknown; parent?: unknown; color?: unknown }, by: string | null) {
   const t = await load();
   if (t.folders.length >= MAX_FOLDERS) throw new FilesError(`up to ${MAX_FOLDERS} folders`);
+  const id = input.id == null ? newFolderId() : String(input.id);
+  if (!FOLDER_RE.test(id) || id.startsWith("sys")) throw new FilesError("bad folder id");
+  const exists = t.folders.find((f) => f.id === id);
+  if (exists) return exists; // a retried request
   const parent = input.parent ? String(input.parent) : null;
   folderOf(t, parent);
   const f: Folder = {
-    id: crypto.randomUUID().replace(/-/g, "").slice(0, 10), name: unique(t, parent, cleanName(input.name ?? "Untitled folder")),
+    id, name: unique(t, parent, cleanName(input.name ?? "Untitled folder")),
     color: cleanColor(input.color, t.folders.length), parent, created: Date.now(), by,
   };
   t.folders.push(f);
@@ -70,12 +66,14 @@ export async function createFolder(input: { name?: unknown; parent?: unknown; co
   return f;
 }
 
-/** Rename, recolour or move a folder (into another folder, or to the top with parent null). */
+/** Rename, recolour or move a folder (into another folder, or to the top with parent null). Category folders can be
+ *  renamed and recoloured but stay at the top. */
 export async function updateFolder(id: string, patch: { name?: unknown; color?: unknown; parent?: unknown }) {
   const t = await load();
   const f = folderOf(t, id)!;
   if (patch.parent !== undefined) {
     const parent = patch.parent ? String(patch.parent) : null;
+    if (f.system && parent) throw new FilesError(`"${f.name}" sorts files by kind and stays at the top`);
     folderOf(t, parent);
     if (parent && within(t, parent, id)) throw new FilesError("a folder can't go inside itself");
     f.parent = parent;
@@ -86,32 +84,21 @@ export async function updateFolder(id: string, patch: { name?: unknown; color?: 
   return f;
 }
 
-/** Delete a folder. What was inside (files and folders) moves up to its parent; nothing is deleted with it. */
-export async function deleteFolder(id: string) {
-  const t = await load();
-  const f = folderOf(t, id)!;
-  let moved = 0;
-  for (const c of t.folders) if (c.parent === id) { c.parent = f.parent; c.name = unique(t, f.parent, c.name, c.id); moved++; }
-  for (const [k, v] of Object.entries(t.place)) if (v === id) { if (f.parent) t.place[k] = f.parent; else delete t.place[k]; moved++; }
-  t.folders = t.folders.filter((x) => x.id !== id);
-  await save(t);
-  return { deleted: f, moved };
-}
-
-/** Move files (m:/g: keys) and folders (f: keys) into a folder, or to the top level with folder null. */
+/** Move files (m:/g:) and folders (f:) into a folder, or to the top level with folder null. */
 export async function moveItems(keys: string[], folder: string | null) {
   const t = await load();
   folderOf(t, folder);
   let files = 0, folders = 0;
   for (const k of keys) {
-    if (k.startsWith("f:")) {
+    if (FKEY.test(k)) {
       const f = folderOf(t, k.slice(2))!;
+      if (f.system) { if (folder) throw new FilesError(`"${f.name}" sorts files by kind and stays at the top`); continue; }
       if (folder && within(t, folder, f.id)) throw new FilesError(`"${f.name}" can't go inside itself`);
       f.parent = folder;
       f.name = unique(t, folder, f.name, f.id);
       folders++;
     } else if (ITEM_RE.test(k)) {
-      if (folder) t.place[k] = folder; else delete t.place[k];
+      t.place[k] = folder ?? ROOT;
       files++;
     } else throw new FilesError(`not a file or folder: ${k}`);
   }
@@ -119,11 +106,18 @@ export async function moveItems(keys: string[], folder: string | null) {
   return { files, folders, folder };
 }
 
+/** Back to its kind's folder (Videos, Images, ...): forget where a file was put. */
+export async function autoFile(keys: string[]) {
+  const t = await load();
+  for (const k of keys) delete t.place[k];
+  await save(t);
+}
+
 export async function starItems(keys: string[], on: boolean) {
   const t = await load();
   const s = new Set(t.starred);
   for (const k of keys) {
-    if (!ITEM_RE.test(k) && !/^f:[a-z0-9]{6,16}$/.test(k)) throw new FilesError(`not a file or folder: ${k}`);
+    if (!ITEM_RE.test(k) && !FKEY.test(k)) throw new FilesError(`not a file or folder: ${k}`);
     if (on) s.add(k); else s.delete(k);
   }
   t.starred = [...s];
@@ -131,41 +125,84 @@ export async function starItems(keys: string[], on: boolean) {
   return t.starred;
 }
 
-/** Forget deleted files (their folder and star). */
-export async function forgetItems(keys: string[]) {
+// ── the trash: deleting puts things here for 30 days; restore puts them back where they were
+
+export async function trashItems(keys: string[], by: string | null) {
   const t = await load();
-  let changed = false;
+  const at = Date.now();
   for (const k of keys) {
-    if (k in t.place) { delete t.place[k]; changed = true; }
+    if (FKEY.test(k)) {
+      const f = t.folders.find((x) => x.id === k.slice(2));
+      if (!f) throw new FilesError("that folder doesn't exist", 404);
+      if (f.system) throw new FilesError(`"${f.name}" sorts files by kind and can't be deleted`);
+    } else if (!ITEM_RE.test(k)) throw new FilesError(`not a file or folder: ${k}`);
+    t.trash[k] = { at, by };
   }
-  const starred = t.starred.filter((k) => !keys.includes(k));
-  if (starred.length !== t.starred.length) { t.starred = starred; changed = true; }
-  if (changed) await save(t);
+  await save(t);
+  return { trashed: keys.length };
+}
+
+export async function restoreItems(keys: string[]) {
+  const t = await load();
+  let restored = 0;
+  for (const k of keys) {
+    if (!t.trash[k]) continue;
+    delete t.trash[k];
+    restored++;
+    if (FKEY.test(k)) {
+      // a folder comes back under its old parent, or at the top if that's gone or still in the trash
+      const f = t.folders.find((x) => x.id === k.slice(2));
+      if (f?.parent && (!t.folders.some((x) => x.id === f.parent) || t.trash[`f:${f.parent}`])) f.parent = null;
+      if (f) f.name = unique(t, f.parent, f.name, f.id);
+    }
+  }
+  await save(t);
+  return { restored };
+}
+
+/** What deleting for good involves: the trashed folders (with their folders inside) and every file in them. */
+export function forgetPlan(t: FileTree, keys: string[]) {
+  const folders = new Set<string>();
+  for (const k of keys) if (FKEY.test(k)) for (const id of subtree(t, k.slice(2))) folders.add(id);
+  const files = new Set(keys.filter((k) => ITEM_RE.test(k)));
+  for (const [k, f] of Object.entries(t.place)) if (folders.has(f)) files.add(k);
+  return { folders, files: [...files] };
+}
+
+/** Drop files that were deleted for good (place, star, trash) and folders removed with them. */
+export async function forget(files: string[], folders: Iterable<string> = []) {
+  const t = await load();
+  const gone = new Set(folders);
+  for (const k of files) { delete t.place[k]; delete t.trash[k]; delete t.posters[k]; }
+  for (const id of gone) delete t.trash[`f:${id}`];
+  t.folders = t.folders.filter((f) => !gone.has(f.id) || f.system);
+  for (const [k, f] of Object.entries(t.place)) if (gone.has(f)) delete t.place[k];
+  const dead = new Set([...files, ...[...gone].map((id) => `f:${id}`)]);
+  t.starred = t.starred.filter((k) => !dead.has(k));
+  await save(t);
+}
+
+/** Trash entries past their 30 days. */
+export const expired = (t: FileTree, now = Date.now()) => Object.entries(t.trash).filter(([, v]) => now - v.at > TRASH_DAYS * 864e5).map(([k]) => k);
+
+export async function markPoster(key: string) {
+  const t = await load();
+  t.posters[key] = Date.now();
+  await save(t);
 }
 
 /** A folder by id, or by its name path ("Thumbnails/October"), case-insensitive. null for the top level. */
 export function findFolder(t: FileTree, ref: string | null | undefined) {
-  if (!ref || ref === "/" ) return null;
-  const byId = t.folders.find((f) => f.id === ref);
+  if (!ref || ref === "/") return null;
+  const live = t.folders.filter((f) => !t.trash[`f:${f.id}`]);
+  const byId = live.find((f) => f.id === ref);
   if (byId) return byId;
   let parent: string | null = null;
   let found: Folder | undefined;
   for (const part of ref.split("/").map((s) => s.trim()).filter(Boolean)) {
-    found = t.folders.find((f) => f.parent === parent && f.name.toLowerCase() === part.toLowerCase());
+    found = live.find((f) => f.parent === parent && f.name.toLowerCase() === part.toLowerCase());
     if (!found) throw new FilesError(`no folder called "${ref}" (list_files shows them)`, 404);
     parent = found.id;
   }
   return found ?? null;
-}
-
-/** "Thumbnails / October" for a folder id. */
-export function pathOf(t: FileTree, id: string | null) {
-  const parts: string[] = [];
-  for (let cur = id, n = 0; cur && n < 64; n++) {
-    const f = t.folders.find((x) => x.id === cur);
-    if (!f) break;
-    parts.unshift(f.name);
-    cur = f.parent;
-  }
-  return parts.join(" / ");
 }

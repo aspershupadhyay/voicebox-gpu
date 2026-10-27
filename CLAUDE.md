@@ -11,8 +11,8 @@ run succeeded and say so. A restarted Colab worker picks up `worker/` changes.
 
 Every dashboard change follows `docs/DESIGN.md`. In short:
 
-- Clean product UI: light sidebar, white canvas, hairline borders, black primary buttons, soft tinted status pills.
-  Flat: no gradients anywhere (the owner's call), including the logo (seven white bars in a V on a solid ink tile).
+- Clean product UI, dark only (the owner's call): near-black sidebar and canvas, hairline borders, white primary buttons,
+  soft tinted status pills. Flat: no gradients anywhere (the owner's call), including the logo.
 - Geist only (Mono for moving numbers). Every page opens with `PageHeader` (the page name as the H1, one sub line).
 - Build from `components/ui.tsx`; every text colour is a token at 4.5:1 or better; every control has a label.
 - Eight sidebar pages (Home, Voices, Posts, Files, Voiceover, Clean-up/Subtitles/Images, GPU & engines, Settings).
@@ -20,7 +20,7 @@ Every dashboard change follows `docs/DESIGN.md`. In short:
 - Never a native `<select>`: use `Select` from `components/pop.tsx`. Every popup closes on Escape and a click outside.
   New capabilities become views or tabs, not new pages. Pages rise in; only live things loop.
 
-Check light, dark and 390px width before you ship.
+Check dark (the only theme) and 390px width before you ship.
 
 ## Inference work
 

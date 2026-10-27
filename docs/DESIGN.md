@@ -1,7 +1,8 @@
 # Voicebox Studio design rules
 
-The dashboard is a clean product UI in the family of ElevenLabs and Linear-style workspaces: a light sidebar, a white
-canvas, hairline borders, black primary buttons, soft tinted status pills, and nothing decorative. Read this before you
+The dashboard is a clean product UI in the family of ElevenLabs and Linear-style workspaces, dark only (the owner's
+call): a near-black sidebar and canvas, hairline borders, white primary buttons, soft tinted status pills, and nothing
+decorative. Read this before you
 build or change any screen. Tokens live in `mcp/app/globals.css`; the shared parts live in `mcp/components/ui.tsx`
 (`PageHeader`, `Field`, `StatCard`, `Empty`, `Notice`, `Toggle`, `PopMenu`, `ToolPage`, `SideRow`, `DropZone`), `Info.tsx`, `pop.tsx` (`Select`, `useDismiss`) and `Shell.tsx`.
 
@@ -14,7 +15,7 @@ The sidebar has eight destinations, grouped by what you're doing, not by which b
 | — | Home | `/` | Greeting with the GPU's state, tool tiles, latest takes, ways to make a voice, what's due next |
 | — | Voices | `/voices` | Make a voice (three cards), then your voices and the built-in voices |
 | — | Posts | `/posts` | Every post as a Board, Calendar, List or Gallery, filtered by platform; the post drawer |
-| — | Files | `/files` | A file manager: folders, then files (uploads and everything the GPU made), with search, filters, drag-and-drop and paste |
+| — | Files | `/files` | A Drive-like file manager: category folders (Videos, Images, Audio, Docs & scripts, Other) and yours, Recent, search, filters, drag-and-drop, paste, trash (`?view=trash`) |
 | Create | Voiceover | `/voiceover` | Write, pick a voice, generate; Script and Lines views |
 | Create | Clean-up, Subtitles, Images | `/clean-up`, `/subtitles`, `/images` | One tool each, in the tool layout |
 | Studio | GPU & engines | `/gpu` | Start/stop the Colab GPU, engines, machine, worker, failures |
@@ -45,22 +46,25 @@ existing page.
   the folder path, then **Folders** and **Files** sections, each H2 with a count pill. A folder is a tabbed sheet in one
   of six soft colours (`--f-lavender` … `--f-sand`: back sheet and tab a shade deeper than the front, never a gradient);
   a file is a card whose white body rises into its cover as a tab, the ⋮ sitting in the notch. Every card has the same
-  menu on right-click and ⋮, and a full-size open button under its checkbox and ⋮ (nothing interactive nests).
+  menu on right-click and ⋮, and a full-size open button under its checkbox and ⋮ (nothing interactive nests). Five
+  category folders come first and file things by kind on their own; deleting goes to the trash with an Undo snackbar;
+  uploads show as cards at once (with a progress ring) and in a panel bottom right. Every change shows at once and is
+  saved behind it. The sidebar lists starred things under Favourites.
 - Making a voice uses the voice art (`components/Orb.tsx`): a flat disc with a waveform inside a dotted arc that runs
   from nothing to the best length of audio, with the minimum ticked.
 
 ## Colour
 
-- Light: white canvas (`--bg`), barely-grey sidebar (`--side`), `--fill` for tiles, tracks and inputs on grey.
-  Dark mirrors it on near-black. Every colour is a token; never write a hex in a component.
+- Dark only: near-black canvas (`--bg`), a darker sidebar (`--side`), `--fill` for tiles, tracks and inputs. There is
+  no light theme and no theme switch. Every colour is a token; never write a hex in a component.
 - Text: `--ink`, `--ink2`, `--dim`, `--mute`. All are 4.5:1 or better on their backgrounds in both themes. There is
   no fainter text token: decoration that must be lighter is not text.
-- The primary button is solid ink (black in light, white in dark). Ghost buttons are white with a hairline border.
+- The primary button is solid ink (white). Ghost buttons are the surface colour with a hairline border.
 - Status pills are soft tints with strong text: `ok` (green), `warn` (amber), `bad` (red), `blue`, `violet`, `grey`.
   Post stages always use the same tint: Ideas grey, In production amber, Review violet, Scheduled blue, Posted green.
 - Red means an error, a destructive action or something overdue. Green means live or done.
 - Flat everywhere: no gradients, glows or gradient art, the logo included (seven white bars falling into a V on a
-  solid ink tile; it inverts in dark mode). `--brand` (violet) is only for text selection, checkmarks and native
+  solid ink tile). `--brand` (violet) is only for text selection, checkmarks and native
   controls' accent colour.
 
 ## Type
@@ -97,6 +101,6 @@ existing page.
 
 ## Before you ship UI
 
-- Check light, dark and 390px width. No horizontal scrolling on any page.
+- Check the page at desktop and 390px width. No horizontal scrolling on any page.
 - Run axe (or the browser's accessibility checker) on the page you changed.
 - Run `npx tsc --noEmit` and `npx next build`.

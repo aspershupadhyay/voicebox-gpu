@@ -8,16 +8,20 @@ import {
 } from "@phosphor-icons/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Folder } from "@/lib/files";
+import type { Folder } from "@/lib/filetree";
+import type { LibSummary } from "@/lib/library";
 import { FOLDER_COLORS, type FolderColor, type Media, type MediaKind } from "@/lib/workspace";
 import { useDismiss } from "./pop";
 import { Avatar } from "./wsparts";
-import type { LibJob } from "./Library";
+
+/** A generated item as the Files page lists it: its summary plus a cover and its first line's audio. */
+export type JobSum = LibSummary & { cover: string | null; audio: string | null };
 
 export type Item = {
   key: string; src: "upload" | "generated"; name: string; kind: MediaKind; type: string; size: number | null; seconds: number | null; at: number;
-  by: string | null; byId: string | null; folder: string | null; starred: boolean; cover: string | null; video: string | null; audio: string | null;
-  subs: boolean; post: string | null; backedUp: boolean; snippet: string; m?: Media; j?: LibJob;
+  by: string | null; byId: string | null; folder: string | null; starred: boolean; cover: string | null; audio: string | null;
+  subs: boolean; post: string | null; backedUp: boolean; snippet: string; m?: Media; j?: JobSum;
+  progress?: number; error?: string; trashedAt?: number; placed?: boolean;
 };
 
 export const DT = "application/x-voicebox-files"; // what an internal drag carries: a JSON list of keys
@@ -33,6 +37,10 @@ export function fmtAgo(ms: number) {
   if (d < 30) return `${d} day${d === 1 ? "" : "s"} ago`;
   return new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: d > 330 ? "numeric" : undefined });
 }
+
+/** "2 days ago", or what's happening to it: uploading, failed, deleted. */
+const when = (it: Item) => it.error ? "Upload failed" : it.progress != null ? (it.progress >= 1 ? "Finishing…" : `Uploading ${Math.round(it.progress * 100)}%`)
+  : it.trashedAt ? `Deleted ${fmtAgo(it.trashedAt).toLowerCase()}` : fmtAgo(it.at);
 
 const hash = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; };
 
@@ -51,29 +59,40 @@ function Wave({ seed }: { seed: string }) {
   );
 }
 
-export function KindIcon({ kind, src, size = 16 }: { kind: MediaKind; src: Item["src"]; size?: number }) {
-  if (kind === "image") return <ImageSquare size={size} />;
-  if (kind === "video") return <FilmStrip size={size} />;
-  if (kind === "audio") return src === "generated" ? <Microphone size={size} /> : <FileAudio size={size} />;
-  if (kind === "doc") return src === "generated" ? <ClosedCaptioning size={size} /> : <FileText size={size} />;
-  return <Paperclip size={size} />;
+export function KindIcon({ kind, src, size = 16, weight = "duotone" }: { kind: MediaKind; src: Item["src"]; size?: number; weight?: "duotone" | "fill" | "regular" | "bold" }) {
+  if (kind === "image") return <ImageSquare size={size} weight={weight} />;
+  if (kind === "video") return <FilmStrip size={size} weight={weight} />;
+  if (kind === "audio") return src === "generated" ? <Microphone size={size} weight={weight} /> : <FileAudio size={size} weight={weight} />;
+  if (kind === "doc") return src === "generated" ? <ClosedCaptioning size={size} weight={weight} /> : <FileText size={size} weight={weight} />;
+  return <Paperclip size={size} weight={weight} />;
+}
+
+/** A ring that fills as an upload goes. */
+export function Ring({ value, size = 44 }: { value: number; size?: number }) {
+  const r = size / 2 - 3, c = 2 * Math.PI * r;
+  return (
+    <svg className="fm-ring" width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${Math.round(value * 100)}% uploaded`}>
+      <circle cx={size / 2} cy={size / 2} r={r} className="rg-track" />
+      <circle cx={size / 2} cy={size / 2} r={r} className="rg-fill" strokeDasharray={c} strokeDashoffset={c * (1 - Math.max(0.02, value))} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
+    </svg>
+  );
 }
 
 /** The art at the top of a file card: the image or a video frame, else a tinted cover for audio, docs and the rest. */
 export function Cover({ it, playing, onPlay }: { it: Item; playing?: boolean; onPlay?: () => void }) {
-  const tint = it.cover || it.video ? "" : `t-${it.kind}`;
+  const tint = it.cover ? "" : `t-${it.kind}`;
   return (
     <div className={`fc-cover ${tint}`}>
-      {it.cover ? <img src={it.cover} alt="" loading="lazy" draggable={false} />
-        : it.video ? <video src={`${it.video}#t=0.5`} preload="metadata" muted playsInline />
+      {it.cover ? <img src={it.cover} alt="" loading="lazy" decoding="async" draggable={false} />
         : it.kind === "audio" ? <Wave seed={it.key} />
         : it.kind === "doc" && it.snippet ? <p className="fc-snippet">{it.snippet}</p>
         : <span className="fc-glyph"><KindIcon kind={it.kind} src={it.src} size={30} /></span>}
-      {it.audio && onPlay && (
+      {it.audio && onPlay && it.progress == null && (
         <button type="button" className={`fc-play ${playing ? "on" : ""}`} aria-label={playing ? `Stop ${it.name}` : `Play ${it.name}`} title={playing ? "Stop" : "Play"}
           onClick={(e) => { e.stopPropagation(); onPlay(); }}>{playing ? <Stop size={13} weight="fill" /> : <Play size={13} weight="fill" />}</button>
       )}
-      {it.kind === "video" && (it.cover || it.video) && <span className="fc-badge"><FilmStrip size={12} weight="bold" />{it.seconds ? fmtLen(it.seconds) : "Video"}</span>}
+      {it.progress != null && <span className="fc-up">{it.error ? <span className="fc-up-err">Failed</span> : <Ring value={it.progress} />}</span>}
+      {it.kind === "video" && it.cover && it.progress == null && <span className="fc-badge"><FilmStrip size={12} weight="bold" />{it.seconds ? fmtLen(it.seconds) : "Video"}</span>}
     </div>
   );
 }
@@ -90,7 +109,7 @@ function Badges({ it }: { it: Item }) {
     <span className="fc-badges">
       {it.subs && <span role="img" className="fb-ic" title="Has subtitles" aria-label="Has subtitles"><ClosedCaptioning size={13} weight="bold" /></span>}
       {it.post && <span role="img" className="fb-ic" title="On a post" aria-label="On a post"><Paperclip size={13} weight="bold" /></span>}
-      <span role="img" className={`fb-ic k-${it.kind}`} title={it.type} aria-label={it.type}><KindIcon kind={it.kind} src={it.src} size={13} /></span>
+      <span role="img" className={`fb-ic k-${it.kind}`} title={it.type} aria-label={it.type}><KindIcon kind={it.kind} src={it.src} size={14} weight="fill" /></span>
     </span>
   );
 }
@@ -144,7 +163,7 @@ export function FileCard({ it, playing, onPlay, ...ev }: { it: Item; playing: bo
         <button type="button" className="fc-more" aria-label={`More for ${it.name}`} title="More" onClick={(e) => { e.stopPropagation(); ev.onMenu(anchorOf(e.currentTarget)); }}><DotsThree size={18} weight="bold" /></button>
         <div className="fc-meta">
           {it.starred && <Star size={12} weight="fill" className="fm-star" aria-label="Starred" />}
-          <span>{fmtAgo(it.at)}</span><span className="dot" aria-hidden /><span>{it.type}</span>
+          <span>{when(it)}</span><span className="dot" aria-hidden /><span>{it.type}</span>
         </div>
         <Name value={it.name} renaming={ev.renaming} onRename={ev.onRename} className="fc-name" />
         <div className="fc-foot">
@@ -204,7 +223,7 @@ export function FileRow({ it, folderName, ...ev }: { it: Item; folderName?: stri
       <span className="fr-col fr-type small dim">{it.type}</span>
       <span className="fr-col fr-size small dim mono">{it.seconds && it.kind === "audio" ? fmtLen(it.seconds) : fmtSize(it.size) || "—"}</span>
       <span className="fr-col fr-by"><ByMark it={it} /><span className="small dim ellipsis">{it.src === "generated" ? "GPU" : (it.by || "Someone").split(" ")[0]}</span></span>
-      <span className="fr-col fr-at small dim">{fmtAgo(it.at)}</span>
+      <span className="fr-col fr-at small dim">{when(it)}</span>
       <button type="button" className="icon-btn sm" aria-label={`More for ${it.name}`} title="More" onClick={(e) => { e.stopPropagation(); ev.onMenu(anchorOf(e.currentTarget)); }}><DotsThree size={18} weight="bold" /></button>
     </div>
   );
@@ -271,7 +290,7 @@ export function ContextMenu({ at, title, entries, onClose, inside }: { at: Ancho
           ))}
         </div>
       ) : (
-        <button key={i} type="button" role="menuitem" className={`pm-item ${en.danger ? "danger" : ""}`} onClick={() => { onClose(); en.run(); }}>
+        <button key={i} type="button" role="menuitem" className={`pm-item ${en.danger ? "pm-danger" : ""}`} onClick={() => { onClose(); en.run(); }}>
           {en.icon && <span className="ic" aria-hidden>{en.icon}</span>}{en.label}{en.kbd && <kbd>{en.kbd}</kbd>}
         </button>
       ))}
@@ -351,5 +370,57 @@ export function FilterPill<T extends string>({ label, value, options, onChange }
       </button>
       {at && <ContextMenu at={at} title={label} inside={btn} onClose={() => setAt(null)} entries={options.map(([v, l]) => ({ label: l, icon: v === value ? <Check size={14} weight="bold" /> : <span style={{ width: 14 }} />, run: () => onChange(v) }))} />}
     </>
+  );
+}
+
+// ── the upload panel (bottom right, like Drive's): every file going up, its progress, done or failed
+
+export type UpRow = { key: string; name: string; size: number; kind: MediaKind; progress: number; error?: string; done?: boolean; folder: string };
+
+export function UploadPanel({ rows, onClose, onOpenFolder }: { rows: UpRow[]; onClose: () => void; onOpenFolder: (folderName: string) => void }) {
+  const [small, setSmall] = useState(false);
+  if (!rows.length) return null;
+  const going = rows.filter((r) => !r.done && !r.error).length;
+  const failed = rows.filter((r) => r.error).length;
+  const bytes = rows.reduce((s, r) => s + r.size, 0), sent = rows.reduce((s, r) => s + r.size * (r.done ? 1 : r.progress), 0);
+  const title = going ? `Uploading ${going} item${going === 1 ? "" : "s"}` : failed ? `${failed} upload${failed === 1 ? "" : "s"} failed` : `${rows.length} upload${rows.length === 1 ? "" : "s"} complete`;
+  return (
+    <section className={`fm-ups ${small ? "small" : ""}`} aria-label="Uploads" aria-live="polite">
+      <header className="fu-h">
+        <b>{title}</b>
+        {going > 0 && <span className="tiny dim mono">{fmtSize(sent) || "0 KB"} of {fmtSize(bytes)}</span>}
+        <span className="row" style={{ gap: 2, marginLeft: "auto", flexWrap: "nowrap" }}>
+          <button className="icon-btn sm" aria-label={small ? "Show uploads" : "Hide uploads"} title={small ? "Show" : "Hide"} onClick={() => setSmall(!small)}><CaretDown size={14} weight="bold" style={{ transform: small ? "rotate(180deg)" : undefined }} /></button>
+          {!going && <button className="icon-btn sm" aria-label="Close" title="Close" onClick={onClose}><X size={14} weight="bold" /></button>}
+        </span>
+      </header>
+      {going > 0 && <div className="fu-bar"><i style={{ width: `${bytes ? (sent / bytes) * 100 : 0}%` }} /></div>}
+      {!small && (
+        <ul className="fu-list">
+          {rows.map((r) => (
+            <li key={r.key} className="fu-row">
+              <span className={`fb-ic k-${r.kind}`} aria-hidden><KindIcon kind={r.kind} src="upload" size={14} weight="fill" /></span>
+              <span className="fu-name">
+                <span className="ellipsis">{r.name}</span>
+                <span className="tiny dim">{r.error ? <span className="fu-err">{r.error}</span> : r.done ? <button className="fu-link" onClick={() => onOpenFolder(r.folder)}>In {r.folder}</button> : `${fmtSize(r.size * r.progress) || "0 KB"} of ${fmtSize(r.size)}`}</span>
+              </span>
+              {r.done ? <span className="fu-ok" role="img" aria-label="Uploaded"><Check size={13} weight="bold" /></span> : r.error ? <span className="fu-bad" role="img" aria-label="Failed"><X size={13} weight="bold" /></span> : <Ring value={r.progress} size={26} />}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/** "3 items moved to the trash · Undo", bottom left. */
+export function Snack({ text, action, onAction, onClose }: { text: string; action?: string; onAction?: () => void; onClose: () => void }) {
+  useEffect(() => { const t = setTimeout(onClose, 6500); return () => clearTimeout(t); }, [text, onClose]);
+  return (
+    <div className="fm-snack" role="status">
+      <span>{text}</span>
+      {action && <button className="fs-act" onClick={() => { onAction?.(); onClose(); }}>{action}</button>}
+      <button className="icon-btn xs fs-x" aria-label="Dismiss" onClick={onClose}><X size={13} weight="bold" /></button>
+    </div>
   );
 }

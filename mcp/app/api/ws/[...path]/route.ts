@@ -1,11 +1,12 @@
 // Server half of the shared workspace. The browser reads and writes posts/comments/media straight to Appwrite (that is
 // what makes it live); these routes do the parts that need the project's API key.
 import { AppwriteError, backupUrl, finalizeMedia, getMedia, hasKey, listMembers } from "@/lib/appwrite";
+import { after } from "next/server";
 import { currentUser, isAuthed } from "@/lib/session";
 import { getSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300; // the R2 backup of a big upload runs after the response
 
 type Ctx = { params: Promise<{ path: string[] }> };
 const ID = /^[A-Za-z0-9._-]{1,36}$/;
@@ -34,7 +35,10 @@ export async function POST(req: Request, ctx: Ctx) {
     if (a === "media" && b && ID.test(b)) {
       const body = (await req.json().catch(() => ({}))) as { backup?: boolean };
       const backup = body.backup ?? (await getSettings()).backup_media;
-      return Response.json(await finalizeMedia(b, { backup }));
+      // the view token now (the file shows at once), the R2 backup copy after the response
+      const out = await finalizeMedia(b, { backup: false });
+      if (backup) after(() => finalizeMedia(b, { backup: true }).catch(() => null));
+      return Response.json(out);
     }
     return Response.json({ error: "not found" }, { status: 404 });
   } catch (e) {

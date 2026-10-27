@@ -963,28 +963,34 @@ const handler = createMcpHandler(
       {
         title: "List files and folders",
         description:
-          "The dashboard's Files page as a file manager: uploads (shared workspace) and generated items (voiceovers, subtitles, images, videos) in one list, filed in folders. Without `folder` it shows the top level; `everywhere` searches every folder. Each file has an id (m:… upload, g:… generated) for move_files, rename_file, star_files, get_file and delete_files.",
+          "The dashboard's Files page, a Drive-like file manager over uploads (shared workspace) and generated items (voiceovers, subtitles, images, videos). The top level holds five category folders that file everything by kind on their own (Videos, Images, Audio, Docs & scripts, Other) beside your own folders. Without `folder` it shows the top level; `everywhere` searches every folder; `trash` lists the trash. Each file has an id (m:… upload, g:… generated) for move_files, rename_file, star_files, get_file and delete_files.",
         inputSchema: z.object({
           folder: FOLDER_REF.optional(), everywhere: z.boolean().optional().describe("list files from every folder (default: only this folder; on when search is set)"),
           search: z.string().max(200).optional(), kind: z.enum(["image", "video", "audio", "doc", "other"]).optional(),
-          source: z.enum(["upload", "generated"]).optional(), starred: z.boolean().optional(), limit: z.number().int().min(1).max(500).optional(),
+          source: z.enum(["upload", "generated"]).optional(), starred: z.boolean().optional(), trash: z.boolean().optional().describe("list what's in the trash instead"),
+          limit: z.number().int().min(1).max(500).optional(),
         }),
       },
-      async ({ folder, everywhere, search, kind, source, starred, limit }) => files(async () => {
+      async ({ folder, everywhere, search, kind, source, starred, trash, limit }) => files(async () => {
         const { catalog } = await import("@/lib/filemanager");
         const fs = await import("@/lib/files");
-        const { tree, items, note } = await catalog();
+        const { tree, items, note } = await catalog({ trash });
+        if (trash) {
+          const folders = tree.folders.filter((f) => tree.trash[`f:${f.id}`]).map((f) => ({ id: `f:${f.id}`, name: f.name, deleted: new Date(tree.trash[`f:${f.id}`].at).toISOString() }));
+          return { trash: { folders, files: items.slice(0, limit ?? 100), total: items.length }, note: "Things stay 30 days; restore_files brings them back." };
+        }
+        const live = tree.folders.filter((f) => !tree.trash[`f:${f.id}`]);
         const here = fs.findFolder(tree, folder);
         const id = here?.id ?? null;
         const all = everywhere || !!search;
-        const inside = (fid: string | null): number => items.filter((i) => i.folder === fid).length + tree.folders.filter((f) => f.parent === fid).reduce((n, f) => n + inside(f.id), 0);
+        const inside = (fid: string | null): number => items.filter((i) => i.folder === fid).length + live.filter((f) => f.parent === fid).reduce((n, f) => n + inside(f.id), 0);
         const q = search?.toLowerCase();
         const shown = items.filter((i) => (all || i.folder === id) && (!kind || i.kind === kind) && (!source || i.source === source) && (starred === undefined || i.starred === starred) &&
           (!q || `${i.name} ${i.type} ${i.folder_path}`.toLowerCase().includes(q)));
         return {
-          folder: here ? { id: here.id, name: here.name, path: fs.pathOf(tree, here.id), color: here.color, parent: here.parent } : null,
-          folders: tree.folders.filter((f) => (all && q ? f.name.toLowerCase().includes(q) : f.parent === id))
-            .map((f) => ({ id: f.id, name: f.name, path: fs.pathOf(tree, f.id), color: f.color, items: inside(f.id), starred: tree.starred.includes(`f:${f.id}`) })),
+          folder: here ? { id: here.id, name: here.name, path: fs.pathOf(tree, here.id), color: here.color, parent: here.parent, category: here.system ?? null } : null,
+          folders: live.filter((f) => (all && q ? f.name.toLowerCase().includes(q) : f.parent === id))
+            .map((f) => ({ id: f.id, name: f.name, path: fs.pathOf(tree, f.id), color: f.color, items: inside(f.id), category: f.system ?? null, starred: tree.starred.includes(`f:${f.id}`) })),
           files: shown.slice(0, limit ?? 100), total: shown.length, note,
         };
       }),
@@ -1028,13 +1034,13 @@ const handler = createMcpHandler(
       "delete_folder",
       {
         title: "Delete a folder",
-        description: "Remove a folder. Nothing inside is deleted: its files and folders move up to its parent. Only when the user asks.",
+        description: "Move a folder, with everything in it, to the trash (kept 30 days; restore_files with f:<folder id> brings it back). Category folders can't be deleted. Only when the user asks.",
         inputSchema: z.object({ folder: FOLDER_REF }),
       },
       async ({ folder }) => files(async () => {
         const id = await folderId(folder);
         if (!id) throw new Error("pick a folder");
-        return (await import("@/lib/files")).deleteFolder(id);
+        return (await import("@/lib/files")).trashItems([`f:${id}`], CLAUDE.name);
       }),
     );
 
@@ -1072,10 +1078,30 @@ const handler = createMcpHandler(
       "delete_files",
       {
         title: "Delete files",
-        description: "Permanently delete files: an upload (its R2 backup copy stays) or a generated item with all its audio, subtitles, images or video. Can't be undone. Only when the user explicitly asks.",
-        inputSchema: z.object({ items: z.array(FILE_ID).min(1).max(500) }),
+        description: "Move files (or folders as f:<id>) to the trash, kept 30 days. With forever: true they're deleted for good instead (an upload's R2 backup copy stays). Only when the user explicitly asks; forever only when they ask for that too.",
+        inputSchema: z.object({ items: z.array(ITEM_ID).min(1).max(500), forever: z.boolean().optional() }),
       },
-      async ({ items }) => files(async () => (await import("@/lib/filemanager")).deleteItems(items, CLAUDE)),
+      async ({ items, forever }) => files(async () => (await import("@/lib/filemanager")).deleteItems(items, CLAUDE, !!forever)),
+    );
+
+    server.registerTool(
+      "restore_files",
+      {
+        title: "Restore from the trash",
+        description: "Bring files or folders (f:<id>) back from the trash to where they were (list_files trash: true shows what's there).",
+        inputSchema: z.object({ items: z.array(ITEM_ID).min(1).max(500) }),
+      },
+      async ({ items }) => files(async () => (await import("@/lib/filemanager")).restore(items)),
+    );
+
+    server.registerTool(
+      "empty_trash",
+      {
+        title: "Empty the trash",
+        description: "Delete everything in the trash for good. Can't be undone. Only when the user explicitly asks.",
+        inputSchema: z.object({}),
+      },
+      async () => files(async () => (await import("@/lib/filemanager")).emptyTrash(CLAUDE)),
     );
 
     server.registerTool(
@@ -1119,7 +1145,7 @@ const handler = createMcpHandler(
       "5) Long jobs return a job id: poll get_job (each call waits up to 45 s). Results are archived to the dashboard's Files page; links expire after 6 h.",
       "6) The user's own voice model: voice_dataset to see or grow the training data, then the training notebook; once trained it is engine myvoice with voice = that person's name (my_voices lists both people's). benchmark_voices compares it with their clones on held-out sentences. voice_coach shows how a trained voice is doing and writes the next recording script around its weak spots; recording it makes the voice more natural (retrains only go live when they beat the current model).",
       "Content spaces: each post goes to one or more spaces (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast), each with its own stage and publish time; cross-post by adding targets (update_post targets, merge). Files: upload_media (bytes) or add_media (a link); delete_media / delete_post only when asked.",
-      "Files page (a file manager over uploads and generated items): list_files browses folders and searches; get_file gives download links; create_folder / update_folder / move_files / rename_file / star_files keep it tidy (upload_media and add_media take a folder). delete_files and delete_folder only when asked; deleting a folder keeps what was inside.",
+      "Files page (a Drive-like file manager over uploads and generated items; category folders Videos, Images, Audio, Docs & scripts and Other file things by kind on their own): list_files browses folders and searches; get_file gives download links; create_folder / update_folder / move_files / rename_file / star_files keep it tidy (upload_media and add_media take a folder). delete_files and delete_folder move things to the trash (30 days, restore_files brings them back) and only when asked; forever / empty_trash only when asked for that.",
       "7) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",
       "Scores: match = how closely Whisper heard the script (>=0.95 good); similarity = voice match vs the recording (>=0.86 same speaker).",
     ].join("\n"),

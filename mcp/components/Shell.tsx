@@ -1,9 +1,9 @@
 "use client";
-// The studio's frame: a light sidebar (studio switcher, search, the pages, a GPU card, you), a top bar with the page
+// The studio's frame (dark only): a sidebar (studio switcher, search, the pages, a GPU card, you), a top bar with the page
 // name and the GPU's state, the ⌘K command palette, and on phones a bottom tab bar plus the sidebar as a drawer.
 import {
-  ArrowsClockwise, Books, CaretDown, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
-  MagicWand, MagnifyingGlass, Microphone, Moon, Plus, Power, SignOut, Sun, UserSound, X,
+  ArrowsClockwise, CaretDown, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
+  FileAudio, FileText, FilmStrip, Folder, Folders, MagicWand, MagnifyingGlass, Microphone, Paperclip, Plus, Power, SignOut, Star, UserSound, X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -24,7 +24,7 @@ export const NAV: Nav[] = [
   { href: "/", name: "Home", Icon: House, sec: "main" },
   { href: "/voices", name: "Voices", Icon: UserSound, sec: "main" },
   { href: "/posts", name: "Posts", Icon: Kanban, sec: "main" },
-  { href: "/files", name: "Files", Icon: Books, sec: "main" },
+  { href: "/files", name: "Files", Icon: Folders, sec: "main" },
   { href: "/voiceover", name: "Voiceover", Icon: Microphone, sec: "create" },
   { href: "/clean-up", name: "Clean-up", Icon: MagicWand, sec: "create" },
   { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning, sec: "create" },
@@ -35,21 +35,40 @@ export const NAV: Nav[] = [
 const TABS = ["/", "/voiceover", "/posts", "/voices"];
 const ALL_ENGINES = ["orpheus", "myvoice", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "zimage", "qwenimage"];
 
-function useTheme() {
-  const [t, setT] = useState<"light" | "dark" | null>(null);
+type Fav = { key: string; name: string; kind: string; color: string | null; thumb: string | null; href: string };
+const FAV_ICON: Record<string, typeof Folder> = { video: FilmStrip, image: ImageSquare, audio: FileAudio, doc: FileText, other: Paperclip, folder: Folder };
+
+/** Starred files and folders (Files page), like Drive's: a thumbnail, the name and the star. Kept in this browser too,
+ *  so the sidebar shows them at once. */
+function Favourites() {
+  const [items, setItems] = useState<Fav[]>([]);
   useEffect(() => {
-    const cur = document.documentElement.dataset.theme as "light" | "dark" | undefined;
-    setT(cur ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+    try { setItems(JSON.parse(localStorage.getItem("vb-favs") ?? "[]")); } catch {}
+    const load = () => api<{ items: Fav[] }>("files/favourites").then((r) => { setItems(r.items); try { localStorage.setItem("vb-favs", JSON.stringify(r.items)); } catch {} }).catch(() => null);
+    load();
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const soon = () => { clearTimeout(t); t = setTimeout(load, 700); };
+    addEventListener("vb-files-changed", soon);
+    return () => { clearTimeout(t); removeEventListener("vb-files-changed", soon); };
   }, []);
-  const flip = useCallback(() => {
-    setT((cur) => {
-      const next = cur === "dark" ? "light" : "dark";
-      document.documentElement.dataset.theme = next;
-      try { localStorage.setItem("vb-theme", next); } catch {}
-      return next;
-    });
-  }, []);
-  return { theme: t, flip };
+  if (!items.length) return null;
+  return (
+    <>
+      <div className="navsec">Favourites</div>
+      <div className="side-favs">
+        {items.map((f) => {
+          const Ic = FAV_ICON[f.kind] ?? Paperclip;
+          return (
+            <Link key={f.key} href={f.href} className="fav-link" title={f.name}>
+              <span className={`fav-th ${f.kind === "folder" ? `fold-th c-${f.color}` : ""}`}>{f.thumb ? <img src={f.thumb} alt="" loading="lazy" /> : <Ic size={14} weight="duotone" />}</span>
+              <span className="ellipsis">{f.name}</span>
+              <Star size={13} weight="fill" className="fm-star" aria-label="Starred" />
+            </Link>
+          );
+        })}
+      </div>
+    </>
+  );
 }
 
 async function leave() { await signOut(); location.href = "/login"; }
@@ -150,7 +169,6 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
   const [palette, setPalette] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const me = useMe();
-  const { theme, flip } = useTheme();
   const here = pageOf(path);
   const on = (href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`));
   const busy = !!(status?.running?.length || status?.queue);
@@ -168,10 +186,9 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
       ...ALL_ENGINES.map((n) => ({ id: `warm-${n}`, label: `Warm up ${n}`, group: "Engines", Icon: Fire, run: engine(n, "load") })),
       ...ALL_ENGINES.map((n) => ({ id: `unload-${n}`, label: `Unload ${n}`, group: "Engines", Icon: Power, run: engine(n, "unload") })),
       { id: "refresh", label: "Refresh GPU status", group: "System", Icon: ArrowsClockwise, run: () => refresh() },
-      { id: "theme", label: "Switch light / dark", group: "System", Icon: Moon, run: flip },
       { id: "signout", label: "Sign out", group: "System", Icon: SignOut, run: leave },
     ];
-  }, [router, toast, refresh, flip]);
+  }, [router, toast, refresh]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -188,7 +205,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
 
   const section = (sec: Nav["sec"]) => NAV.filter((n) => n.sec === sec).map(({ href, name, Icon }) => (
     <Link key={href} href={href} className={`navlink ${on(href) ? "on" : ""}`} aria-current={on(href) ? "page" : undefined}>
-      <Icon size={18} weight={on(href) ? "fill" : "regular"} className="ic" />{name}
+      <Icon size={18} weight={on(href) ? "duotone" : "regular"} className="ic" />{name}
     </Link>
   ));
 
@@ -209,7 +226,6 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
               <Link className="pm-item" role="menuitem" href="/settings" onClick={close}><GearSix size={16} className="ic" />Settings</Link>
               <Link className="pm-item" role="menuitem" href="/gpu" onClick={close}><Cpu size={16} className="ic" />GPU &amp; engines</Link>
               <hr />
-              <button className="pm-item" role="menuitem" onClick={() => { flip(); close(); }}>{theme === "dark" ? <Sun size={16} className="ic" /> : <Moon size={16} className="ic" />}{theme === "dark" ? "Light mode" : "Dark mode"}</button>
               <button className="pm-item" role="menuitem" onClick={leave}><SignOut size={16} className="ic" />Sign out</button>
             </>
           )}
@@ -219,6 +235,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
           {section("main")}
           <div className="navsec">Create</div>
           {section("create")}
+          <Favourites />
         </nav>
         <GpuCard status={status} />
         <div className="side-foot">{section("studio")}</div>
@@ -231,7 +248,6 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
         )}>
           {(close) => (
             <>
-              <button className="pm-item" role="menuitem" onClick={() => { flip(); close(); }}>{theme === "dark" ? <Sun size={16} className="ic" /> : <Moon size={16} className="ic" />}{theme === "dark" ? "Light mode" : "Dark mode"}</button>
               <Link className="pm-item" role="menuitem" href="/settings" onClick={close}><GearSix size={16} className="ic" />Settings</Link>
               <hr />
               <button className="pm-item" role="menuitem" onClick={leave}><SignOut size={16} className="ic" />Sign out</button>
@@ -249,7 +265,6 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
               <span className={`dot ${status?.online ? (busy ? "warn" : "ok") : status ? "bad" : "off"}`} />
               {!status ? "Connecting" : status.online ? (busy ? `Working · ${status.queue ?? 0} queued` : `${status.gpu?.name?.replace("NVIDIA ", "") ?? "GPU"} ready`) : "GPU off"}
             </Link>
-            <button className="icon-btn boxed hide-sm" onClick={flip} aria-label={theme === "dark" ? "Light mode" : "Dark mode"} title={theme === "dark" ? "Light mode" : "Dark mode"}>{theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}</button>
             <PopMenu width={220} trigger={({ toggle, ref, open }) => (
               <button ref={ref} className="sm" onClick={toggle} aria-expanded={open} aria-haspopup="menu"><Plus size={15} weight="bold" /><span className="hide-sm">Create</span><CaretDown size={12} className="hide-sm" /></button>
             )}>
@@ -270,7 +285,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
 
       <nav className="tabbar" aria-label="Main">
         {TABS.map((href) => { const n = NAV.find((x) => x.href === href)!; return (
-          <Link key={href} href={href} className={on(href) ? "on" : ""} aria-current={on(href) ? "page" : undefined}><n.Icon size={22} weight={on(href) ? "fill" : "regular"} /><span>{n.name}</span></Link>
+          <Link key={href} href={href} className={on(href) ? "on" : ""} aria-current={on(href) ? "page" : undefined}><n.Icon size={22} weight={on(href) ? "duotone" : "regular"} /><span>{n.name}</span></Link>
         ); })}
         <button onClick={() => setDrawer(true)} aria-label="More pages"><DotsThreeOutline size={22} /><span>More</span></button>
       </nav>
