@@ -5,6 +5,7 @@ import { useCallback, useState } from "react";
 import { AW, fileUrl, initials, kindOf, type Media, type MediaKind } from "@/lib/workspace";
 import { aw, getMe, ID, logActivity, signOut, useMe } from "./aw";
 import { Empty, PageHeader } from "./ui";
+import { FileViewer } from "./Viewer";
 
 /** The workspace needs a real account (the token login is single-user). Renders children only when signed in;
  *  otherwise the page's header and a clear next step. */
@@ -32,7 +33,8 @@ export function Avatar({ id, name, sm }: { id?: string | null; name?: string | n
 
 export type Upload = { key: string; name: string; size: number; kind: MediaKind; progress: number; error?: string; done?: boolean; mediaId?: string };
 
-const LANES = 3; // files going up at once: enough to fill the line, few enough that each one finishes soon
+// files going up at once: many small ones fill the line in parallel; big ones go two or three at a time so each finishes soon
+const lanesFor = (files: File[]) => (files.every((f) => f.size < 8e6) ? 6 : files.some((f) => f.size > 200e6) ? 2 : 3);
 
 /** Upload to Appwrite Storage (chunked, resumable), record it in the media table, then mint a view token (the R2 backup
  *  copy follows on the server). `onRow` hears about each file as soon as its row exists; `onStart` as it's queued. */
@@ -44,26 +46,36 @@ export function useUploader(postId?: string | null) {
     setUploads((u) => [...u, ...jobs.map(({ file, key }) => ({ key, name: file.name, size: file.size, kind: kindOf(file.type, file.name), progress: 0 }))]);
     jobs.forEach(({ file, key }) => onStart?.(key, file));
     const { user } = await getMe();
+    const finishing: Promise<void>[] = [];
     const one = async ({ file, key }: { file: File; key: string }) => {
       const set = (p: Partial<Upload>) => setUploads((u) => u.map((x) => (x.key === key ? { ...x, ...p } : x)));
       try {
         const f = await aw().storage.createFile({ bucketId: AW.bucket, fileId: ID.unique(), file, onProgress: (p) => set({ progress: Math.min(0.99, p.progress / 100) }) });
-        const row = await aw().tables.createRow<Media>({
-          databaseId: AW.db, tableId: "media", rowId: ID.unique(),
-          data: { file_id: f.$id, name: file.name.slice(0, 255), mime: file.type || null, size: file.size, kind: kindOf(file.type, file.name), post_id: postId ?? null,
-            uploaded_by: user?.id ?? null, uploaded_name: user?.name ?? null, r2_key: null, token: null },
-        });
-        set({ progress: 0.99, mediaId: row.$id });
-        onRow?.(row, file, key);
-        const fin = await fetch(`/api/ws/media/${row.$id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then((r) => r.json()).catch(() => ({}));
-        set({ progress: 1, done: true, error: fin.backup || undefined });
-        logActivity(postId ?? null, "uploaded", file.name);
+        set({ progress: 0.99 });
+        // the bytes are up: the lane takes the next file while this one is recorded and gets its link
+        finishing.push((async () => {
+          try {
+            const row = await aw().tables.createRow<Media>({
+              databaseId: AW.db, tableId: "media", rowId: ID.unique(),
+              data: { file_id: f.$id, name: file.name.slice(0, 255), mime: file.type || null, size: file.size, kind: kindOf(file.type, file.name), post_id: postId ?? null,
+                uploaded_by: user?.id ?? null, uploaded_name: user?.name ?? null, r2_key: null, token: null },
+            });
+            set({ mediaId: row.$id });
+            onRow?.(row, file, key);
+            const fin = await fetch(`/api/ws/media/${row.$id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then((r) => r.json()).catch(() => ({}));
+            set({ progress: 1, done: true, error: fin.backup || undefined });
+            logActivity(postId ?? null, "uploaded", file.name);
+          } catch (e) {
+            set({ error: (e as Error).message || "Upload failed" });
+          }
+        })());
       } catch (e) {
         set({ error: (e as Error).message || "Upload failed" });
       }
     };
     const queue = [...jobs];
-    await Promise.all(Array.from({ length: Math.min(LANES, queue.length) }, async () => { for (let j = queue.shift(); j; j = queue.shift()) await one(j); }));
+    await Promise.all(Array.from({ length: Math.min(lanesFor(list), queue.length) }, async () => { for (let j = queue.shift(); j; j = queue.shift()) await one(j); }));
+    await Promise.all(finishing);
   }, [postId]);
   const clear = useCallback(() => setUploads((u) => u.filter((x) => !x.done && !x.error)), []);
   return { uploads, upload, clear };
@@ -110,27 +122,12 @@ export function MediaTile({ m, onOpen, selected }: { m: Media; onOpen?: () => vo
   );
 }
 
-/** Full-size viewer for one media file, with download, R2-backup link and delete. */
+/** Full-size viewer for one media file (the Files viewer), with download and delete. */
 export function MediaViewer({ m, onClose, onDelete }: { m: Media; onClose: () => void; onDelete?: () => void }) {
-  const [backup, setBackup] = useState<string | null>(null);
   return (
-    <div className="lightbox" onClick={onClose}>
-      <div className="stage" onClick={(e) => e.stopPropagation()}>
-        {m.kind === "image" ? <img src={fileUrl(m)} alt={m.name} />
-          : m.kind === "video" ? <video src={fileUrl(m)} controls autoPlay playsInline />
-          : m.kind === "audio" ? <audio src={fileUrl(m)} controls autoPlay style={{ width: "min(560px, 90vw)" }} />
-          : <div className="card" style={{ textAlign: "center" }}><FileText size={40} weight="light" /><p>{m.name}</p></div>}
-      </div>
-      <div className="bar2" onClick={(e) => e.stopPropagation()}>
-        <span className="lb-name">{m.name}</span>
-        <a className="btn ghost sm" href={fileUrl(m, "download")}>Download</a>
-        {m.r2_key && (backup
-          ? <a className="btn ghost sm" href={backup} target="_blank" rel="noreferrer">Open R2 copy</a>
-          : <button className="ghost sm" onClick={async () => { const r = await fetch(`/api/ws/backup/${m.$id}`).then((x) => x.json()); if (r.url) setBackup(r.url); }}>R2 backup</button>)}
-        {onDelete && <button className="ghost sm" onClick={onDelete}>Delete</button>}
-        <button className="sm" onClick={onClose}>Close</button>
-      </div>
-    </div>
+    <FileViewer onClose={onClose} onDelete={onDelete} file={{
+      key: `m:${m.$id}`, name: m.name, kind: m.kind, mime: m.mime, size: m.size, url: fileUrl(m), download: fileUrl(m, "download"), by: m.uploaded_name, at: Date.parse(m.$createdAt),
+    }} />
   );
 }
 

@@ -26,6 +26,15 @@ your trained model) and Re-voice (`/voices/revoice`). Old addresses redirect (`n
 page only when a capability has its own object and its own primary action; otherwise it's a view, tab or section of an
 existing page.
 
+**Ask Voicebox** is a panel, not a page: the Ask button in the top bar, ⌘J, or "Ask Voicebox" in ⌘K (anything typed
+there can go to it). It slides in on the right (full screen on phones) and closes on Escape or the backdrop. Tool calls
+show as small step chips; anything that needs approval is a warm card above the composer (docs/ASK.md).
+
+**The file viewer** (`Viewer.tsx`) is full screen on near-black: name and actions on top, the file in the middle, ← →
+between files. Video and audio use `players.tsx` (own controls that fade while playing, buffered ranges, speed,
+picture-in-picture, fullscreen, double-tap to skip, resume); documents use `docview.tsx`. Keep it the only way a file
+opens full size.
+
 **One name per page.** The nav label, the route, the H1 and how the docs and MCP instructions refer to it all agree.
 
 ## Page anatomy

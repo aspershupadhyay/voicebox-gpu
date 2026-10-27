@@ -23,6 +23,7 @@ import dataset  # noqa: E402
 import quality  # noqa: E402
 import voicewalk  # noqa: E402
 import r2cache  # noqa: E402
+import ask  # noqa: E402
 
 SECRET = os.environ.get("WORKER_SECRET", "")
 HOME = C.HOME
@@ -4132,7 +4133,7 @@ def health():
             "cpu": {"cores": MON.cores, "load": os.getloadavg()[0] if hasattr(os, "getloadavg") else None}, "now": MON.latest(),
             "warm": WARM.view(), "loads": ENG.loads, "parked": {n: round(time.time() - t) for n, t in ENG.parked.items()},
             "running": [j["id"] for j in JOBS.values() if j["status"] == "running"], "public_url": public_url(),
-            "selfcheck": _selfcheck_result(), "last_active": LAST_ACTIVE[0]}
+            "selfcheck": _selfcheck_result(), "last_active": max(LAST_ACTIVE[0], ask.ACTIVE[0])}
 
 
 LAST_ACTIVE = [time.time()]  # when a job last started or finished: the dashboard stops an idle runtime the app started
@@ -4258,6 +4259,11 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"^/jobs/([a-f0-9]{12})$", u.path)
         if m and m.group(1) in JOBS:
             return self._json(200, job_view(JOBS[m.group(1)]))
+        if u.path == "/ask/status":  # Ask Voicebox's Antigravity (ask.py)
+            return self._json(200, ask.status())
+        m = re.match(r"^/ask/([a-f0-9]{12})$", u.path)
+        if m and ask.view(m.group(1)):
+            return self._json(200, ask.view(m.group(1)))
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
@@ -4268,6 +4274,17 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             if u.path == "/jobs":
                 return self._json(202, job_view(make_job(body)))
+            if u.path == "/ask":
+                return self._json(202, ask.start(body))
+            if u.path == "/ask/login":
+                return self._json(200, ask.start_login())
+            if u.path == "/ask/login/code":
+                return self._json(200, ask.send_code(str(body.get("code") or "")))
+            if u.path == "/ask/logout":
+                return self._json(200, ask.logout())
+            m = re.match(r"^/ask/([a-f0-9]{12})/cancel$", u.path)
+            if m:
+                return self._json(200, ask.cancel(m.group(1)) or {"error": "not found"})
             if u.path == "/admin/update":
                 return self._json(200, self_update(str(body.get("url") or "")))
             if u.path == "/admin/restart":
