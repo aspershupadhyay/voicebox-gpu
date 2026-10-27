@@ -4349,9 +4349,23 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(os.path.getsize(path)))
         self.send_header("Content-Disposition", f'attachment; filename="{os.path.basename(path)}"')
+        origin = self.headers.get("Origin", "")
+        if origin in CORS_ORIGINS:  # the dashboard's live player decodes the lines with fetch, which needs this
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.end_headers()
         with open(path, "rb") as f:
             shutil.copyfileobj(f, self.wfile)
+
+
+def _origin(url):
+    u = urlparse(url or "")
+    return f"{u.scheme}://{u.netloc}" if u.scheme == "https" and u.netloc else None
+
+
+# Origins whose pages may read signed file links with fetch (the dashboard; the link itself is still the permission)
+CORS_ORIGINS = {o for o in [_origin(os.environ.get("REGISTER_URL")), *map(_origin, os.environ.get(
+    "VOICEBOX_CORS_ORIGINS", "https://voiceboxstudio.vercel.app,https://mcp-eta-tawny.vercel.app").split(","))] if o}
 
 
 def prefetch_all():
