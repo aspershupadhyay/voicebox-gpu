@@ -88,6 +88,9 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [x] 6. Faster cold start (cache tools on the runtime, tunnel in parallel, register early): online ~110 s → ~68 s on a fresh L4; app starts skip Colab Secrets (51 s of timeouts, re-measure on the next fresh start); voice engines prefetched to disk after a start (`VOICEBOX_PREFETCH`, pauses for jobs)
 - [x] 7. TensorRT-LLM for Orpheus: only if 1-6 aren't enough. Looked at, not built: per-GPU engine builds on every fresh Colab machine, and it mostly buys many-stream throughput; one request's speed is the gap, which a trained 5b proposer targets on the vLLM path
 - [x] Trained voice made a voiceover one chunk at a time (flow): chains of up to 4 lines side by side, each chunk starts the moment its predecessor finishes (`VOICEBOX_FLOW_CHAIN`, `VOICEBOX_FLOW_STREAM`): 37 lines generating 1041 → 189 s on the L4, same scores. Polish and subtitles (~200 s together) are now the rest
+- [x] Faster loads: your voice preloads at start (first voiceover 0 s loading, was ~184 s cold); vLLM compiled kernels and all voice weights kept in R2 per GPU (load 184 -> 62 s with kernels); high-RAM machines park instead of stop. Fresh-runtime pull from R2 still to measure
+- [x] Studio polish on AP-BWE: 5.4 s vs Resemble's 89.4 s on 37 lines, kept on 37/37 lines (Resemble 11/37), same voice; polish check fixed (torchaudio)
+- [ ] CosyVoice 2: added and measured (same speed as Qwen here, one line at a time); a batched or vLLM path would be needed to make it faster
 
 
 ## Reliability audit (2026-10-26)
