@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { ago, fileUrl, fmtS, matchClass, pct, type Gen, type GenImage } from "./api";
 import { VoiceGlyph } from "./art";
 import LineRow, { coached, type Line } from "./LineRow";
+import { VideoPlayer } from "./players";
 
 export type LibJob = {
   id: string; kind?: "tts" | "transcribe" | "video" | "image"; engine: string; voice: string; label?: string; created: number; source?: string; language?: string | null;
@@ -49,8 +50,9 @@ export function VideoCard({ j, open, selected, onSelect, onDelete }: CardProps) 
       </div>
       {isOpen && j.video_url && (
         <div className="video-wrap">
-          <video className="vplayer" src={j.video_url} poster={j.poster_url ?? undefined} controls playsInline preload="metadata"
-            style={{ aspectRatio: v ? `${v.width}/${v.height}` : undefined }} />
+          <div className="vplayer" style={{ aspectRatio: v ? `${v.width}/${v.height}` : "16/9" }}>
+            <VideoPlayer src={j.video_url} poster={j.poster_url} autoPlay={false} resumeKey={`g:${j.id}`} />
+          </div>
           <div className="stack" style={{ gap: 18 }}>
             <dl className="facts">
               {j.gen ? <>

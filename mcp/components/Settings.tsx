@@ -5,6 +5,7 @@ import { CheckCircle, Copy } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { api, type MyVoice } from "./api";
 import { useDialog } from "./Dialog";
+import AskCard from "./AskCard";
 import SecurityCard from "./SecurityCard";
 import { Field, PageHeader, Toggle } from "./ui";
 import { Select } from "./pop";
@@ -121,6 +122,7 @@ export default function Settings() {
         </div>
 
         <div className="stack" style={{ gap: 16 }}>
+          <AskCard />
           <SecurityCard />
           <div className="card">
             <div className="card-head"><h2>Publishing</h2></div>

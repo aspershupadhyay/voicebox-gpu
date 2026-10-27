@@ -3,12 +3,13 @@
 // name and the GPU's state, the ⌘K command palette, and on phones a bottom tab bar plus the sidebar as a drawer.
 import {
   ArrowsClockwise, CaretDown, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
-  FileAudio, FileText, FilmStrip, Folder, Folders, MagicWand, MagnifyingGlass, Microphone, Paperclip, Plus, Power, SignOut, Star, UserSound, X,
+  FileAudio, FileText, FilmStrip, Folder, Folders, MagicWand, MagnifyingGlass, Microphone, Paperclip, Plus, Power, SignOut, Sparkle, Star, UserSound, X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, type Status } from "./api";
+import { AskButton, AskProvider, useAsk } from "./Ask";
 import { Logo } from "./art";
 import { signOut, useMe } from "./aw";
 import { DialogProvider, useDialog } from "./Dialog";
@@ -83,7 +84,7 @@ export function fmtUptime(s?: number) {
 type Cmd = { id: string; label: string; group: string; Icon: typeof Fire; run: () => void | Promise<void> };
 
 /** ⌘K: an ARIA combobox over a listbox. Arrow keys move, Enter runs, Escape closes and hands focus back. */
-function Palette({ open, onClose, cmds }: { open: boolean; onClose: () => void; cmds: Cmd[] }) {
+function Palette({ open, onClose, cmds, onAsk }: { open: boolean; onClose: () => void; cmds: Cmd[]; onAsk: (q: string) => void }) {
   const [q, setQ] = useState("");
   const [i, setI] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -91,8 +92,12 @@ function Palette({ open, onClose, cmds }: { open: boolean; onClose: () => void; 
   const lid = useId();
   const list = useMemo(() => {
     const t = q.trim().toLowerCase();
-    return t ? cmds.filter((c) => `${c.group} ${c.label}`.toLowerCase().includes(t)) : cmds;
-  }, [q, cmds]);
+    if (!t) return cmds;
+    // anything typed can go to the assistant: first when nothing else matches, else last
+    const ask: Cmd = { id: "ask-q", label: `Ask Voicebox: “${q.trim()}”`, group: "Ask", Icon: Sparkle as typeof Fire, run: () => onAsk(q.trim()) };
+    const hits = cmds.filter((c) => `${c.group} ${c.label}`.toLowerCase().includes(t));
+    return hits.length ? [...hits, ask] : [ask];
+  }, [q, cmds, onAsk]);
   useEffect(() => {
     if (!open) return;
     back.current = document.activeElement as HTMLElement;
@@ -112,7 +117,7 @@ function Palette({ open, onClose, cmds }: { open: boolean; onClose: () => void; 
         onKeyDown={(e) => { if (e.key === "Tab") e.preventDefault(); /* focus stays in the box */ }}>
         <div className="pin">
           <MagnifyingGlass size={18} aria-hidden />
-          <input ref={input} value={q} placeholder="Go to a page, warm an engine…" onChange={(e) => setQ(e.target.value)}
+          <input ref={input} value={q} placeholder="Go to a page, or ask Voicebox to do something…" onChange={(e) => setQ(e.target.value)}
             role="combobox" aria-expanded="true" aria-controls={`${lid}-list`} aria-autocomplete="list"
             aria-activedescendant={list[i] ? `${lid}-${i}` : undefined}
             onKeyDown={(e) => {
@@ -166,6 +171,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
   const router = useRouter();
   const { toast } = useDialog();
   const { refresh } = useStatus();
+  const ask = useAsk();
   const [palette, setPalette] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const me = useMe();
@@ -180,6 +186,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
       catch (e) { toast((e as Error).message, "bad"); }
     };
     return [
+      { id: "ask", label: "Ask Voicebox", group: "Ask", Icon: Sparkle as typeof Fire, run: () => ask.open() },
       ...NAV.map((n) => ({ id: `go-${n.href}`, label: n.name, group: "Pages", Icon: n.Icon as typeof Fire, run: () => router.push(n.href) })),
       { id: "new-post", label: "New post", group: "Create", Icon: Plus, run: () => router.push("/posts?new=1") },
       { id: "new-vo", label: "New voiceover", group: "Create", Icon: Microphone, run: () => router.push("/voiceover") },
@@ -188,7 +195,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
       { id: "refresh", label: "Refresh GPU status", group: "System", Icon: ArrowsClockwise, run: () => refresh() },
       { id: "signout", label: "Sign out", group: "System", Icon: SignOut, run: leave },
     ];
-  }, [router, toast, refresh]);
+  }, [router, toast, refresh, ask]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -261,6 +268,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
           <button className="icon-btn menu-btn" onClick={() => setDrawer(true)} aria-label="Open menu" aria-expanded={drawer}><List size={20} /></button>
           <div className="crumb">{here && here.sec !== "main" && <span className="hide-sm">{here.sec === "create" ? "Create" : "Studio"}<span aria-hidden> /</span></span>}<b>{here?.name ?? "Voicebox"}</b></div>
           <div className="top-actions">
+            <AskButton />
             <Link href="/gpu" className="status-pill" title="GPU & engines">
               <span className={`dot ${status?.online ? (busy ? "warn" : "ok") : status ? "bad" : "off"}`} />
               {!status ? "Connecting" : status.online ? (busy ? `Working · ${status.queue ?? 0} queued` : `${status.gpu?.name?.replace("NVIDIA ", "") ?? "GPU"} ready`) : "GPU off"}
@@ -289,7 +297,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
         ); })}
         <button onClick={() => setDrawer(true)} aria-label="More pages"><DotsThreeOutline size={22} /><span>More</span></button>
       </nav>
-      <Palette open={palette} onClose={() => setPalette(false)} cmds={cmds} />
+      <Palette open={palette} onClose={() => setPalette(false)} cmds={cmds} onAsk={ask.open} />
       <JobTray />
     </div>
   );
@@ -309,7 +317,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   return (
     <StatusCtx.Provider value={{ status, refresh }}>
       <DialogProvider>
-        <Frame status={status}>{children}</Frame>
+        <AskProvider>
+          <Frame status={status}>{children}</Frame>
+        </AskProvider>
       </DialogProvider>
     </StatusCtx.Provider>
   );

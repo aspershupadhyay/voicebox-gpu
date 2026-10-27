@@ -51,7 +51,12 @@ MCP client ──Bearer MCP_TOKEN──▶ Vercel (/api/mcp) ──Bearer WORKER
   and a voice-match score for cloned voices.
 - **Dashboard:** `https://<app>/` (sign in with your account, or `MCP_TOKEN` for the studio only): Home, Voices, Posts
   (board, calendar, list, gallery), Files, Voiceover (Script and Lines views), Voices (instant clone, professional clone, re-voice), Clean-up, Subtitles, Images, GPU & engines, Settings.
-  Light and dark themes; installable as an app.
+  Dark only; installable as an app.
+- **Ask Voicebox:** an assistant in the dashboard (⌘J) that does the work with the same tools as the MCP server, on
+  Antigravity (your Google plan, on the worker) or a free Gemini API key; deletes and GPU spending wait for an Approve
+  click. See [docs/ASK.md](docs/ASK.md).
+- **Files viewer:** photos, video and audio in full-screen players, plus PDF, Word, Excel / CSV, Markdown, JSON, text and
+  code read in place.
 - **MCP covers the whole dashboard:** voice, clean-up, re-voice, subtitles, images, library, settings, and the workspace
   (read the board and calendar, create and edit posts and scripts, comment, attach media, voice a post's script).
 - **Output:** 48 kHz mono WAV, trimmed and mastered for the platform (or peak-normalised with `platform: raw`), plus a `fits` flag when you pass the line's timeline `window`.

@@ -60,6 +60,12 @@ The dashboard uses the same operations under `/api/dash/files`: `GET` (the tree,
 `POST rename {item, name}`, `POST delete {items, forever?}`, `POST restore {items}`, `POST empty-trash`,
 `POST poster {item, data}`, `POST import {url, folder?}`.
 
+**Ask Voicebox** (`/api/ask`, cookie session or Bearer `MCP_TOKEN`; docs/ASK.md): `GET /api/ask` (chats, brains),
+`GET /api/ask/c/<id>`, `POST /api/ask/c {text, id?, brain?}` (Gemini answers as NDJSON events `convo`, `step`, `result`,
+`text`, `done`; Antigravity returns the chat and fills in), `POST /api/ask/c/<id>/decide {approval, approve}`,
+`DELETE /api/ask/c/<id>`, `POST /api/ask/prefs {brain}`, `GET /api/ask/agy`, `POST /api/ask/agy/login | code {code} | logout`.
+`/api/mcp?ask=1` takes only the per-chat tokens Ask Voicebox mints; its risky tools park an approval instead of running.
+
 `voice` resolves as: `female` / `male` preset → engine voice name (`tara`, `af_heart`, …) → a recorded voice (`my_voices`).
 Recorded voices live in R2 (`voices/<name>/reference.wav` + transcript); the dashboard passes the worker a signed link
 (`ref: {url, transcript, version}`) so they survive the Colab runtime being recycled.
@@ -79,6 +85,8 @@ All routes need `Authorization: Bearer $WORKER_SECRET`, except `/files/*`, which
 | `POST /jobs/{id}/push` | `{targets: {file: presigned PUT url}}`: the worker uploads results straight to R2 |
 | `POST /refs` | `{name, audio_b64 \| url, transcript?}` (raw; the dashboard uses `kind: reference` jobs, which clean + transcribe) |
 | `POST /engines/{name}/load\|unload\|forget` | `forget` also deletes the engine's downloaded weights |
+| `GET /ask/status` · `POST /ask/login` · `POST /ask/login/code` · `POST /ask/logout` | Ask Voicebox's Antigravity CLI on the worker: installed, signed in, the Google sign-in link and code (`worker/ask.py`) |
+| `POST /ask` · `GET /ask/{id}` · `POST /ask/{id}/cancel` | one `agy -p` run with the Voicebox MCP server (`{prompt, mcp_url, token, conversation?, auth?}`) |
 | `GET /files/{job}/{line}.wav?exp&sig` · `video.mp4` · `poster.jpg` · `GET /files/{job}.zip?exp&sig` | downloads (zip includes `manifest.json`) |
 
 **Video job** `{kind: "video", model, prompt, aspect, seconds, quality, seed, negative?, audio?, image_url?}`: frames are

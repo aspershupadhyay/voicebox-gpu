@@ -27,7 +27,8 @@ import {
 import { ImageCard, JobCard, VideoCard, type LibJob } from "./Library";
 import { useStatus } from "./Shell";
 import { Notice, PageHeader } from "./ui";
-import { MediaViewer, useUploader } from "./wsparts";
+import { useUploader } from "./wsparts";
+import { FileViewer, type ViewFile } from "./Viewer";
 
 type Sort = "new" | "old" | "name" | "size";
 type Tree = FileTree & { poster_urls?: Record<string, string> };
@@ -87,6 +88,15 @@ function fromMedia(m: Media, t: Tree, starred: Set<string>, local: Record<string
     cover: m.kind === "image" ? (ready ? mediaUrl(m, "preview", 480) : local[key] ?? null) : m.kind === "video" ? poster : null,
     audio: ready && m.kind === "audio" ? mediaUrl(m) : null, subs: false, post: m.post_id, backedUp: !!m.r2_key, snippet: "", m, trashedAt: t.trash[key]?.at,
   };
+}
+
+/** An upload as the viewer shows it. */
+function viewFile(it: Item): ViewFile {
+  const m = it.m!;
+  return { key: it.key, name: it.name, kind: it.kind, mime: m.mime, size: m.size, url: mediaUrl(m), download: mediaUrl(m, "download"), poster: it.kind === "video" ? it.cover : null, by: it.by, at: it.at };
+}
+function StarBtn({ on, onClick }: { on: boolean; onClick: () => void }) {
+  return <button className="vp-btn" onClick={onClick} aria-label={on ? "Remove star" : "Star"} aria-pressed={on} title={on ? "Remove star" : "Star"}><Star size={19} weight={on ? "fill" : "regular"} className={on ? "fm-star" : ""} /></button>;
 }
 
 /** Where to download a file from. */
@@ -691,12 +701,6 @@ export default function Files() {
     setDetail(null);
     if (location.hash || params.get("file")) history.replaceState(null, "", `/files${cwdId ? `?folder=${cwdId}` : ""}`);
   };
-  useEffect(() => {
-    if (!detailItem?.m) return;
-    const k = (e: KeyboardEvent) => { if (e.key === "Escape" && !document.querySelector(".modal")) closeDetail(); }; // the viewer closes on Escape too
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  });
 
   const totalBytes = items.reduce((s, i) => s + (i.size ?? 0), 0);
   const trashCount = Object.keys(t.trash).length;
@@ -875,9 +879,18 @@ export default function Files() {
           onCreate={async (name, parent) => newFolder(parent, name, false)} />
       )}
 
-      {detailItem?.m && (
-        <MediaViewer m={detailItem.m} onClose={closeDetail} onDelete={() => { const k = detailItem.key; closeDetail(); remove([k]); }} />
-      )}
+      {detailItem?.m && (() => {
+        // step through the uploads shown here, in the order they're shown
+        const seq = [...new Set(order.map((k) => k.replace(/^r:/, "")))].filter((k) => byKey.get(k)?.m);
+        const at = seq.indexOf(detailItem.key);
+        const step = (d: number) => { const k = seq[(at + d + seq.length) % seq.length]; if (k) setDetail(k); };
+        return (
+          <FileViewer file={viewFile(detailItem)} index={at} total={seq.length} onClose={closeDetail}
+            onPrev={seq.length > 1 && at >= 0 ? () => step(-1) : undefined} onNext={seq.length > 1 && at >= 0 ? () => step(1) : undefined}
+            onDelete={() => { const k = detailItem.key; const nxt = seq.length > 1 ? seq[(at + 1) % seq.length] : null; remove([k]); if (nxt && nxt !== k) setDetail(nxt); else closeDetail(); }}
+            extra={<StarBtn on={detailItem.starred} onClick={() => star([detailItem.key], !detailItem.starred)} />} />
+        );
+      })()}
       {detailItem?.j && (
         <>
           <div className="scrim" onClick={closeDetail} />
