@@ -220,6 +220,7 @@ export default function Voiceover() {
   const [style, setStyle] = useState("tech");
   const [tempo, setTempo] = useState<number | null>(null);
   const [subtitles, setSubtitles] = useState(true);
+  const [polish, setPolish] = useState<boolean | null>(null); // studio polish; null = the engine's default (on for your trained voice)
   const [post, setPost] = useState({ trim: true, sample_rate: 48000 });
   const [platform, setPlatform] = useState("youtube");
   const [nBest, setNBest] = useState(1);
@@ -252,7 +253,7 @@ export default function Voiceover() {
   useEffect(() => {
     const s = JSON.parse(localStorage.getItem("vb-gen2") || "{}");
     if (s.engine) setEngine(s.engine); if (s.voice) setVoice(s.voice); if (s.script) setScript(s.script);
-    if (s.params) setParams(s.params); if (s.style) setStyle(s.style); if (s.lang) setLang(s.lang); if (s.subtitles !== undefined) setSubtitles(s.subtitles);
+    if (s.params) setParams(s.params); if (s.style) setStyle(s.style); if (s.lang) setLang(s.lang); if (s.subtitles !== undefined) setSubtitles(s.subtitles); if (typeof s.polish === "boolean") setPolish(s.polish);
     try { setGens((JSON.parse(localStorage.getItem(GENS_KEY) || "[]") as Gen[]).slice(0, 1)); } catch { /* none kept */ }
     if (s.platform) setPlatform(s.platform); if (s.takes) setNBest(s.takes); if (s.lexicon !== undefined) setLexicon(s.lexicon); if (s.pronounce) setPronounce(s.pronounce);
     // deep links from the Voices page: /voiceover?engine=qwen&voice=<name>
@@ -275,7 +276,7 @@ export default function Voiceover() {
     loaded.current = true;
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, []);
-  useEffect(() => { if (loaded.current) localStorage.setItem("vb-gen2", JSON.stringify({ engine, voice, script, params, style, lang, subtitles, platform, takes: nBest, lexicon, pronounce })); }, [engine, voice, script, params, style, lang, subtitles, platform, nBest, lexicon, pronounce]);
+  useEffect(() => { if (loaded.current) localStorage.setItem("vb-gen2", JSON.stringify({ engine, voice, script, params, style, lang, subtitles, polish, platform, takes: nBest, lexicon, pronounce })); }, [engine, voice, script, params, style, lang, subtitles, polish, platform, nBest, lexicon, pronounce]);
   useEffect(() => { if (status?.online && !cat) api<Catalogue>("voices").then(setCat).catch((e) => setCatErr(e.message)); }, [status?.online, cat]);
 
   const eng = cat?.engines[engine];
@@ -312,6 +313,7 @@ export default function Voiceover() {
   const ready = status?.engines?.[engine] === "ready";
   const subsReady = status?.engines?.whisper === "ready";
   const nTakes = engine === "kokoro" ? 1 : nBest;
+  const effPolish = polish ?? engine === "myvoice";
   const whisperRate = status?.rates?.whisper ?? RATE.whisper;
   const listenRate = status?.rates?.listen ?? whisperRate; // the batched review (text only), learned on the worker
   const estS = rate * chars * nTakes + (ready ? 0 : LOAD_S[engine]) + (subtitles ? whisperRate * audioS + (subsReady ? 0 : LOAD_S.whisper) : 0)
@@ -365,7 +367,7 @@ export default function Voiceover() {
         body: {
           engine, voice, style, lines, params: p, label: label || undefined, subtitles, language: lang,
           platform, takes: nTakes, lexicon, pronounce: parsePronounce(pronounce),
-          post: { trim: post.trim, normalize_dbfs: -3, sample_rate: post.sample_rate || null, ...(tempo != null ? { tempo } : {}) },
+          post: { trim: post.trim, normalize_dbfs: -3, sample_rate: post.sample_rate || null, ...(tempo != null ? { tempo } : {}), enhance: effPolish ? "auto" : false },
         },
       });
       setJob(j);
@@ -512,8 +514,10 @@ export default function Voiceover() {
                     <button key={n} role="radio" aria-checked={nTakes === n} className={nTakes === n ? "on" : ""} disabled={engine === "kokoro" && n > 1} onClick={() => setNBest(n)}>{n}×</button>
                   ))}
                 </div></div>
-              <div className="set-line"><span>Subtitles <Info label="Subtitles">Whisper large-v3 word timing. SRT, VTT and JSON, with a match score per line.</Info></span>
+              <div className="set-line"><span>Subtitles <Info label="Subtitles">Whisper large-v3 turbo word timing. SRT, VTT and JSON, with a match score per line. Off finishes faster (about 110 s less on a 9-minute voiceover).</Info></span>
                 <button role="switch" aria-checked={subtitles} className={`switch ${subtitles ? "on" : ""}`} onClick={() => setSubtitles(!subtitles)} aria-label="Subtitles" /></div>
+              <div className="set-line"><span>Studio polish <Info label="Studio polish">Each line through Resemble Enhance for fuller, 44.1 kHz studio sound, kept only where it still sounds like the voice. Off finishes faster (about 90 s less on a 9-minute voiceover).</Info></span>
+                <button role="switch" aria-checked={effPolish} className={`switch ${effPolish ? "on" : ""}`} onClick={() => setPolish(!effPolish)} aria-label="Studio polish" /></div>
               <div className="set-line"><span>Tech pronunciation <Info label="Tech pronunciation">SQL → sequel, GPU → G-P-U, 16GB → 16 gigabytes; markdown and links cleaned.</Info></span>
                 <button role="switch" aria-checked={lexicon} className={`switch ${lexicon ? "on" : ""}`} onClick={() => setLexicon(!lexicon)} aria-label="Tech pronunciation" /></div>
             </div>

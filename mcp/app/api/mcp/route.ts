@@ -163,7 +163,8 @@ const handler = createMcpHandler(
           post_id: POST_ID.optional().describe("workspace post: voice its script and attach the result to it"),
           review: z.boolean().optional().describe("listen back and re-voice sentences that missed (default on)"),
           review_batch: z.boolean().optional().describe("benchmarking only: true = the review hears every take in one batched call, false = four at a time (default: the worker's setting)"),
-          subtitles: z.boolean().optional().describe("also make word-timed subtitles with Whisper large-v3"),
+          subtitles: z.boolean().optional().describe("also make word-timed subtitles with Whisper large-v3 turbo (turn off to finish faster: ~110 s on a 9-minute voiceover)"),
+          polish: z.boolean().optional().describe("studio polish: each line through Resemble Enhance (24 -> 44.1 kHz air), kept only where it still sounds like the voice. Default on for myvoice, off otherwise; off finishes faster (~90 s on a 9-minute voiceover)"),
           language: z.string().max(8).optional().describe("ISO code for Whisper/Chatterbox, e.g. en, hi; omit to auto-detect"),
           style: z.enum(["tech", "hype", "narrator", "neutral"]).optional().describe("delivery style; default tech"),
           platform: z.enum(PLATFORMS).optional().describe("where it's going: sets loudness + caption cut; default youtube"),
@@ -186,8 +187,9 @@ const handler = createMcpHandler(
           wait_seconds: z.number().min(0).max(MAX_WAIT).optional().describe(`block up to this long for results (default ${MAX_WAIT})`),
         }),
       },
-      async ({ wait_seconds, post_id, ...body }) => {
+      async ({ wait_seconds, post_id, polish, ...body }) => {
         try {
+          if (polish !== undefined) body.post = { ...(body.post ?? {}), enhance: polish ? "auto" : false } as typeof body.post;
           let post: Post | null = null;
           if (post_id) {
             post = await getPost(post_id);
