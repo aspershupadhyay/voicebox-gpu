@@ -11,6 +11,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, type Status } from "./api";
+import { PixelAvatar } from "./pixel";
 import { PlatformBadge } from "./platform";
 import { Logo } from "./art";
 import { signOut, useMe } from "./aw";
@@ -262,22 +263,10 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
       <a href="#main" className="skip">Skip to content</a>
       {drawer && <div className="side-scrim" onClick={() => setDrawer(false)} />}
       <aside className={`side ${drawer ? "open" : ""}`} aria-label="Sidebar">
-        <PopMenu align="left" width={230} trigger={({ toggle, ref, open }) => (
-          <button ref={ref} className="ws-btn" onClick={toggle} aria-expanded={open} aria-haspopup="menu">
-            <Logo size={28} />
-            <span className="ws-name nl"><b>Voicebox Studio</b><span>Shared studio</span></span>
-            <CaretUpDown size={14} className="dim nl" />
-          </button>
-        )}>
-          {(close) => (
-            <>
-              <Link className="pm-item" role="menuitem" href="/settings" onClick={close}><GearSix size={16} className="ic" />Settings</Link>
-              <Link className="pm-item" role="menuitem" href="/settings?tab=gpu" onClick={close}><Cpu size={16} className="ic" />GPU &amp; engines</Link>
-              <hr />
-              <button className="pm-item" role="menuitem" onClick={leave}><SignOut size={16} className="ic" />Sign out</button>
-            </>
-          )}
-        </PopMenu>
+        <Link href={grow ? "/analytics" : "/home"} className="brand" aria-label="Voicebox Studio">
+          <Logo size={26} />
+          <span className="brand-n nl"><b>Voicebox</b><span>Studio</span></span>
+        </Link>
         <ModeSwitch grow={grow} />
         {grow ? (
           <nav className="side-nav" aria-label="Grow pages">
@@ -298,7 +287,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
         )}
         <PopMenu align="left" up width={230} trigger={({ toggle, ref, open }) => (
           <button ref={ref} className="me-btn" onClick={toggle} aria-expanded={open} aria-haspopup="menu">
-            <span className="avatar">{initials(me?.user?.name ?? (me ? "T" : ""))}</span>
+            <PixelAvatar name={me?.user?.email ?? me?.user?.name ?? "access token"} size={30} />
             <span className="me-name nl"><b className="ellipsis">{me?.user?.name ?? (me ? "Access token" : " ")}</b><span className="ellipsis">{me?.user?.email ?? (me ? "Studio only, no shared workspace" : " ")}</span></span>
             <CaretUpDown size={14} className="dim nl" />
           </button>
