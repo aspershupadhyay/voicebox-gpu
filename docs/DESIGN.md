@@ -23,6 +23,7 @@ own phone tabs (Overview, Live, Content, Competitors, More). Page by page:
 | Grow | Competitors | `/analytics/competitors` | You and each rival side by side (account cards, You vs them), the outlier feed (their videos beating their own usual), their fresh uploads live, when they post, the title habits of their hits, and following / pinning / removing rivals; each pinned rival gets `/analytics/competitors/<handle>` |
 | Grow | Analytics | `/analytics` | Six views, each a tab with its own address and 8–12 numbers at most: Overview (a one-line summary, the headline metrics as tiles that pick one big chart, this period against the one before, every format side by side, the next moves, top posts), Content (`/analytics/content`: output and hit rate, the performance map, every post with its deep dive, lengths and tags), Audience (`/analytics/audience`: followers and growth, followers over time, accounts, who's watching, how they find you), When to post (`/analytics/when-to-post`: the day × time heatmap, best slots, the days and hours the audience shows up, rhythm), YouTube and Instagram (`/analytics/youtube`, `/analytics/instagram`: that platform in depth in four views, `?view=` overview, reach, audience, posts) |
 | — | Files | `/files` | A Drive-like file manager: category folders (Videos, Images, Audio, Docs & scripts, Other) and yours, Recent, search, filters, drag-and-drop, paste, trash (`?view=trash`) |
+| Create | Writing room | `/writing` | Five tools as orbs (after the owner's poster): Hook score, Titles, Captions, Thumbnails, Weekly digest, each at `?tool=` (and `&post=`), the others shrunk into a rail; under the orbs, "On your desk" (every open post's hook, title, thumbnail and captions) |
 | Create | Voiceover | `/voiceover` | Write, pick a voice, generate; Script and Lines views |
 | Create | Clean-up, Subtitles, Images | `/clean-up`, `/subtitles`, `/images` | One tool each, in the tool layout |
 | Studio | Settings | `/settings` | Tabs along the top with their own addresses (`?tab=`): Profile, Voice & sound, Publishing, GPU & engines (start/stop the Colab GPU, engines, machine, worker, failures; `/gpu` lands here), Security, Claude & API (MCP, upload keys). Each tab is a bento of cards; no H1, the breadcrumb names the page |
@@ -88,6 +89,12 @@ status and history under it, and the actions in a footer. It saves as you type.
   `--ok` over the surface; networks are `--c-yt` / `--c-ig` (validated for colour blindness). The performance map plots
   every post (views against the usual × engagement rate) in four named quadrants. Every chart has a hover and keyboard
   read-out, and values are written beside bars, never only in them.
+- The Writing room (`components/Writing.tsx`, `orbs.tsx`) is the owner's "It's okay to be okay" poster in matte black:
+  each tool a marbled pixel orb (four shades of one token, never a gradient) in concentric hairline rings (3 to 9: more
+  rings, further along), its name curving over the top in Geist, a white chip with its number, every chip's thread
+  running down into one pixel hand, and a small key. Hover turns the marble and widens the rings. Inside a tool the orbs
+  shrink into a pill rail; the score is the same rings filling in (`RingScore`). Below 720px the orbs become a list.
+  Scores come from `lib/writing.ts` (no AI); "Ask Claude" copies a prompt for the MCP tools, which do the writing.
 - Making a voice uses the voice art (`components/Orb.tsx`): a flat disc with a waveform inside a dotted arc that runs
   from nothing to the best length of audio, with the minimum ticked.
 

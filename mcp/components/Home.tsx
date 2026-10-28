@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { ago, api, fmtS, useSeed, type Job } from "./api";
 import { CassetteArt, EngineArt, MicArt, VoiceGlyph } from "./art";
 import { Query, useLive, useMe } from "./aw";
+import { Marble, Rings } from "./orbs";
 import { SampleButton } from "./Sample";
 import { useStatus } from "./Shell";
 import { PixelScene } from "./pixel";
@@ -31,6 +32,7 @@ const greeting = (h: number) => (h < 5 ? "Working late" : h < 12 ? "Good morning
 
 const TOOLS = [
   { href: "/voiceover", name: "Voiceover", art: <EngineArt engine="chatterbox" /> },
+  { href: "/writing", name: "Writing room", art: <svg viewBox="-40 -40 80 80" width={72} height={72} aria-hidden><Rings cx={0} cy={0} r0={23} gap={4} n={4} /><Marble tone="ginger" seed={1.3} r={19} n={10} /></svg> },
   { href: "/voices/new", name: "Clone your voice", art: <EngineArt engine="qwen" /> },
   { href: "/voices/professional", name: "Train your voice", art: <VoiceGlyph name="myvoice" size={72} /> },
   { href: "/clean-up", name: "Clean-up", art: <MicArt /> },

@@ -11,6 +11,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Fmt } from "@/lib/analytics";
 import { bandAt, rivalSlug, type LiveChan, type LivePost, type LiveView, type Rival, type Vid } from "@/lib/live-shared";
+import { PATTERNS, STOP } from "@/lib/writing";
 import { compact, full, Heatmap, LineChart, Score, Sparkline } from "./anparts";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
@@ -228,18 +229,6 @@ function whatItMeans(p: LivePost) {
 }
 
 /* ───────────── Competitors */
-
-/** Title habits: how often hit titles do each thing against the rest. */
-const PATTERNS: [string, (t: string) => boolean][] = [
-  ["A number", (t) => /\d/.test(t)],
-  ["A question", (t) => /\?/.test(t)],
-  ["How / why / what", (t) => /\b(how|why|what)\b/i.test(t)],
-  ["“I” or “my”", (t) => /\b(I|I'm|I've|my|me)\b/.test(t)],
-  ["“You”", (t) => /\byou(r|'re)?\b/i.test(t)],
-  ["A word in CAPS", (t) => /\b[A-Z]{3,}\b/.test(t.replace(/\b(AI|GPT|API|USA|UK|CEO|SEO|LLM|MCP|AGI)\b/g, ""))],
-  ["Under 50 characters", (t) => t.length < 50],
-];
-const STOP = new Set("a an the and or but of to in on for with is are was were be been it this that these those i you he she we they my your our their me us them how why what when who which from by at as so not no do does did can will just about into than then there here new vs its it's i'm you're im".split(" "));
 
 function Titles({ vids, id }: { vids: (Vid & { score: number | null })[]; id: string }) {
   const rated = vids.filter((v) => v.score != null);

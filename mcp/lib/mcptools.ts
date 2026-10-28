@@ -870,7 +870,7 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       description: "Permanently delete a post from the board (its media files stay in the Media library). Only when the user explicitly asks.",
       inputSchema: z.object({ post_id: POST_ID }),
     },
-    async ({ post_id }) => ws(async () => { await deletePost(post_id, CLAUDE); await dropTargets(post_id); return { deleted: post_id }; }),
+    async ({ post_id }) => ws(async () => { await deletePost(post_id, CLAUDE); await dropTargets(post_id); await (await import("@/lib/captions")).dropCaptions(post_id).catch(() => null); return { deleted: post_id }; }),
   );
 
   server.registerTool(
@@ -1265,6 +1265,95 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     async ({ limit, post_id }) => ws(async () => (await listActivity(limit ?? 30, post_id)).map((a) => ({ at: a.$createdAt, who: a.actor_name, did: a.verb, what: a.text, post_id: a.post_id }))),
   );
 
+  // ───────────── the Writing room (lib/writing.ts): no AI on the server; Claude writes, these rules score it
+  const room = async () => (await import("@/lib/writing-data")).writingData();
+  server.registerTool(
+    "hook_score",
+    {
+      title: "Score a script's hook",
+      description: "The Writing room's hook score (0-100) for a script: eight checks on its opening (gets to it fast, no warm-up, opens a loop, specific, talks to the viewer, stakes, one beat per line, length against the user's best-performing length for the format) and a note on every weak line (long beats, filler, passive, weak starts). Give post_id to score that post's script, or script to score any text. Use it to improve a script: rewrite the failing parts, score again, and save the best version with update_post script (only when asked to change the post). 85+ is a scroll-stopper, 70+ strong.",
+      inputSchema: z.object({
+        post_id: POST_ID.optional(), script: z.string().max(60_000).optional(),
+        format: z.enum(["yt_video", "yt_short", "ig_reel", "ig_post"]).optional().describe("the format it's for (sets the length check); taken from the post's targets when omitted"),
+      }),
+    },
+    async ({ post_id, script, format }) => ws(async () => {
+      const { hookScore } = await import("@/lib/writing");
+      let text = script ?? "", fmt = format ?? null;
+      if (post_id) {
+        const p = await getPost(post_id);
+        text = script ?? p.script ?? "";
+        if (!fmt) { const t = targetsOf(p, await getTargets()).map((x) => x.space); fmt = t.includes("yt_short") ? "yt_short" : t.includes("ig_reel") ? "ig_reel" : t.includes("yt_video") ? "yt_video" : null; }
+      }
+      if (!text.trim()) throw new Error(post_id ? "that post has no script yet" : "give post_id or script");
+      const d = await room().catch(() => null);
+      const r = hookScore(text, { fmt, best: fmt ? d?.best_len[fmt] ?? null : null });
+      return { ...r, format: fmt, lines: r.lines.filter((l) => l.notes.length), failing: r.checks.filter((c) => !c.ok).map((c) => `${c.label}: ${c.why}`) };
+    }),
+  );
+
+  server.registerTool(
+    "title_lab",
+    {
+      title: "Titles and thumbnails from what works",
+      description: "The Writing room's title model, learned from the user's own posts of the last 90 days: which title habits their hits (1.5x their usual or more) use more than the rest (numbers, questions, how/why, I, you, CAPS, length), the words that keep showing up in hits, their top hit titles, and rivals' recent hit titles. Pass titles (candidates you wrote) to get each one scored 1-99 with what helped and what's missing. To suggest titles: read this, write 8-12 candidates that follow the user's winning habits, score them here, and offer the best 3-5. For thumbnails: brief = overlay text of 4 words or fewer that adds to (doesn't repeat) the title, one subject, a face with a feeling; imagine can make it. Put a chosen title on a post with update_post (only when asked).",
+      inputSchema: z.object({ titles: z.array(z.string().min(1).max(200)).max(30).optional(), post_id: POST_ID.optional().describe("include this post's current title as a candidate") }),
+    },
+    async ({ titles, post_id }) => ws(async () => {
+      const { scoreTitle, titleModel, HIT } = await import("@/lib/writing");
+      const d = await room();
+      const m = titleModel(d.items);
+      const cands = [...(post_id ? [(await getPost(post_id)).title] : []), ...(titles ?? [])];
+      return {
+        basis: m.basis === "yours" ? `learned from your ${m.hits} hits and ${m.rest} other posts` : "general rules (fewer than 3 hits and 3 others to learn from yet)",
+        habits: m.lifts.map((l) => ({ habit: l.label, hits: Math.round(l.a * 100), rest: Math.round(l.b * 100), weight: Math.round(l.lift * 100) })),
+        hit_words: m.words, typical_hit_length: m.len, your_top_titles: m.top.map(({ thumb: _, ...t }) => t),
+        rival_hits: d.rivals.filter((r) => r.x != null && r.x >= HIT).sort((a, b) => b.x! - a.x!).slice(0, 10).map((r) => ({ title: r.title, channel: r.name, x_their_usual: r.x, url: r.url })),
+        scored: cands.map((t) => scoreTitle(t, m)).sort((a, b) => b.score - a.score),
+      };
+    }),
+  );
+
+  server.registerTool(
+    "captions",
+    {
+      title: "Captions per platform",
+      description: "A post's caption fitted to every place it goes (Writing room → Captions): X Posts 280 characters and 1-2 hashtags, Instagram 2,200 with the hook first and hashtags after a break, YouTube description with 3 hashtags (Shorts adds #shorts), TikTok short with 4, LinkedIn short paragraphs with 3, a community post ending on a question. Without captions: returns the post's base caption, each target's limit and hint, its saved caption if any, and a rule-made draft (using the hashtags that go with the user's best posts) to write from. With captions ({space: text}): saves them (\"\" for a space goes back to the post's caption); over-limit text is refused. Publishing starts each target from its saved caption. Write each one for its platform rather than trimming, and save only when asked.",
+      inputSchema: z.object({ post_id: POST_ID, captions: z.record(z.enum(SPACE_IDS), z.string().max(6000)).optional() }),
+    },
+    async ({ post_id, captions }) => ws(async () => {
+      const cap = await import("@/lib/captions");
+      const { adaptCaption, CAPTION, captionLimit } = await import("@/lib/writing");
+      if (captions) return { saved: await cap.setCaptions(post_id, captions) };
+      const [p, map, saved, d] = await Promise.all([getPost(post_id), getTargets(), cap.captionsFor(post_id), room().catch(() => null)]);
+      const tags = (d?.tags ?? []).map((t) => t.tag);
+      return {
+        title: p.title, base_caption: p.caption ?? "",
+        targets: targetsOf(p, map).map((t) => ({
+          space: t.space, name: spaceName(t.space), limit: captionLimit(t.space), hint: CAPTION[t.space]?.hint ?? "",
+          saved: saved[t.space] ?? null, draft: adaptCaption(p.caption ?? "", t.space, { title: p.title, tags }),
+        })),
+        best_hashtags: d?.tags ?? [],
+      };
+    }),
+  );
+
+  server.registerTool(
+    "weekly_digest",
+    {
+      title: "Weekly digest",
+      description: "The Writing room's weekly digest: the last 7 days against the 7 before (posts, views, hits, median score), what worked and what didn't (each post against the usual for its format), rivals' hits this week, topics their hits cover that none of the user's titles do, and rule-made ideas for what to post next (a follow-up to the best post, a take on a rival's hit, a gap topic, the best length). Use it to write the user's Monday summary in their words and to turn ideas into create_post drafts (status idea) when asked.",
+      inputSchema: z.object({}),
+    },
+    async () => ws(async () => {
+      const { weeklyDigest } = await import("@/lib/writing");
+      const d = await room();
+      const g = weeklyDigest(d.items, d.rivals, d.lengths);
+      const slim = ({ thumb: _, tags: __, ...i }: (typeof g.best)[number]) => i;
+      return { ...g, best: g.best.map(slim), worst: g.worst.map(slim), rivals: g.rivals.map(({ thumb: _, avatar: __, ...r }) => r), needs: d.needs };
+    }),
+  );
+
   server.registerTool(
     "workspace_members",
     {
@@ -1287,6 +1376,7 @@ export const INSTRUCTIONS = [
     "Content spaces: each post goes to one or more spaces (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast), each with its own stage and publish time; cross-post by adding targets (update_post targets, merge). Files: save_file (any size up to 2 GB: get an upload address, curl the file to it, hand back the ticket), upload_media (small bytes) or add_media (a link); delete_media / delete_post only when asked.",
     "Files page (a Drive-like file manager over uploads and generated items; category folders Videos, Images, Audio, Docs & scripts and Other file things by kind on their own): list_files browses folders and searches; get_file gives download links; create_folder / update_folder / move_files / rename_file / star_files keep it tidy (upload_media and add_media take a folder). delete_files and delete_folder move things to the trash (30 days, restore_files brings them back) and only when asked; forever / empty_trash only when asked for that.",
     "Publishing: publish_accounts shows the connected YouTube / Instagram accounts and the queue; publish_post sets up a target (files, cover, every YouTube or Instagram option) and saves, arms it for its publish time, or sends it now (only when asked); publish_status follows it; automation_rules reads or changes cross-posting, posting slots, retries and footers. analytics shows how the channels are doing (per format, every post's score against the usual, best times, lengths, hashtags, tips): read it before planning so the next posts build on what works. X, TikTok, LinkedIn and podcasts stay hand-offs: the user posts those and marks them posted.",
+    "Writing room (scores from the user's own numbers, no AI on the server, so you do the writing): hook_score on a script before voicing it (aim for 70+); title_lab for title ideas and thumbnail briefs that follow what their hits do; captions to fit a post's caption to each target (X 280, Instagram 2,200…); weekly_digest for what worked, what rivals did and what to post next.",
     "7) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",
     "Scores: match = how closely Whisper heard the script (>=0.95 good); similarity = voice match vs the recording (>=0.86 same speaker).",
 ].join("\n");
