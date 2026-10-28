@@ -4,7 +4,7 @@
 // rows, the day × time heatmap, the score pill, the KPI scorecard, a sparkline, the trend board (metric tiles that pick
 // the big chart, as YouTube Studio does) and the performance quadrant. Styles: the .an-* block in app/globals.css.
 import { ArrowDownRight, ArrowUpRight, ChartLineUp, Fire } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { Bar, Daily, Item, Kpi } from "@/lib/analytics";
 import { Select } from "./pop";
 import { Empty } from "./ui";
@@ -40,6 +40,36 @@ export function Trend({ v, size = "md", better = "up" }: { v: number | null; siz
       <Ic size={size === "sm" ? 12 : 14} weight="bold" aria-hidden /><span className="sr-only">{up ? "up" : "down"}</span>
       {Math.abs(v) >= 10 ? `${Math.round(Math.abs(v) + 1)}×` : `${Math.abs(v * 100).toFixed(Math.abs(v) < 0.1 ? 1 : 0)}%`}
     </span>
+  );
+}
+
+/** A number that counts up to its value when it first shows (or changes), in its unit. Still for reduced motion. */
+export function CountUp({ value, unit = "", short = true }: { value: number | null | undefined; unit?: Kpi["unit"]; short?: boolean }) {
+  const [shown, setShown] = useState<number | null | undefined>(value);
+  const from = useRef(0);
+  useEffect(() => {
+    if (value == null || !isFinite(value) || matchMedia("(prefers-reduced-motion: reduce)").matches) { setShown(value); return; }
+    const a = from.current, start = performance.now(), D = 750;
+    let raf = 0;
+    const step = (t: number) => {
+      const k = Math.min(1, (t - start) / D), e = 1 - (1 - k) ** 3;
+      setShown(a + (value - a) * e);
+      if (k < 1) raf = requestAnimationFrame(step); else from.current = value;
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  const v = shown != null && value != null && Number.isInteger(value) && unit !== "pct" && unit !== "x" ? Math.round(shown) : shown;
+  return <>{fmtUnit(v, unit, short)}</>;
+}
+
+/** Flat patterns the charts share: a 45° hatch for areas and a dot field behind the plot. */
+export function ChartDefs({ id }: { id: string }) {
+  return (
+    <defs>
+      <pattern id={`${id}-hatch`} width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="1.4" height="5" className="an-hatch" /></pattern>
+      <pattern id={`${id}-dots`} width="14" height="14" patternUnits="userSpaceOnUse"><rect x="6.5" y="6.5" width="1" height="1" className="an-dotf" /></pattern>
+    </defs>
   );
 }
 
@@ -84,6 +114,7 @@ export function LineChart({ labels, cur, prev, unit = "", name, prevName = "the 
 }) {
   const [box, W] = useWidth<HTMLDivElement>();
   const [h, setH] = useState<number | null>(null);
+  const uid = useId().replace(/:/g, "");
   const H = height, L = 46, R = 10, T = 26, B = 26;
   const n = cur.length;
   const max = niceMax(Math.max(minMax ?? 1, ...cur, ...(prev ?? [])));
@@ -105,10 +136,13 @@ export function LineChart({ labels, cur, prev, unit = "", name, prevName = "the 
         aria-label={`${name}: ${unit === "" ? `${full(totalCur)} in all${totalPrev != null ? `, against ${full(totalPrev)} ${prevName}` : ""}` : `${n} points`}. Arrow keys read each point.`}
         onKeyDown={(e) => { if (e.key === "ArrowRight") setH((v) => Math.min(n - 1, (v ?? -1) + 1)); if (e.key === "ArrowLeft") setH((v) => Math.max(0, (v ?? n) - 1)); if (e.key === "Escape") setH(null); }}>
         <svg width={W} height={H} aria-hidden>
+          <ChartDefs id={uid} />
+          <rect x={L} y={T} width={Math.max(0, W - L - R)} height={Math.max(0, y(0) - T)} fill={`url(#${uid}-dots)`} />
           {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className="an-grid" /><text x={L - 8} y={y(t) + 4} className="an-axis" textAnchor="end">{fmtUnit(t, unit)}</text></g>)}
           {labels.map((lb, i) => (i % every === 0 || i === n - 1) && (n - 1 - i > every / 2 || i === n - 1) ? <text key={i} x={x(i)} y={H - 6} className="an-axis" textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"}>{lb}</text> : null)}
           {h !== null && n > 1 && <rect x={x(h) - (W - L - R) / (n - 1) / 2} y={T - 6} width={(W - L - R) / (n - 1)} height={y(0) - T + 6} className="an-band" />}
           <path key={`a${n}-${max}`} d={`${curve(pc)} L${x(n - 1)},${y(0)} L${x(0)},${y(0)} Z`} className="an-area" />
+          <path key={`h${n}-${max}`} d={`${curve(pc)} L${x(n - 1)},${y(0)} L${x(0)},${y(0)} Z`} fill={`url(#${uid}-hatch)`} className="an-area-h" />
           {pp && <path d={curve(pp)} className="an-line prev" />}
           <path key={`l${n}-${max}`} d={curve(pc)} className="an-line draw" pathLength={1} />
           {mark != null && mark >= 0 && mark < n && <g className="an-peak">
@@ -118,6 +152,10 @@ export function LineChart({ labels, cur, prev, unit = "", name, prevName = "the 
           {h === null && n > 1 && <g className="an-end">
             <circle cx={x(n - 1)} cy={y(cur[n - 1])} r={9} className="an-end-ring" />
             <circle cx={x(n - 1)} cy={y(cur[n - 1])} r={4} className="an-dot" />
+            <g className="an-endchip" transform={`translate(${Math.min(x(n - 1), W - R - 4)}, ${Math.max(14, y(cur[n - 1]) - 16)})`}>
+              <rect x={-(fmtUnit(cur[n - 1], unit).length * 6.6 + 12)} y={-10} width={fmtUnit(cur[n - 1], unit).length * 6.6 + 12} height={19} rx={9.5} />
+              <text x={-6} y={4} textAnchor="end">{fmtUnit(cur[n - 1], unit)}</text>
+            </g>
           </g>}
           {h !== null && <>
             <line x1={x(h)} x2={x(h)} y1={T - 6} y2={y(0)} className="an-cross" />
@@ -141,6 +179,7 @@ export function LineChart({ labels, cur, prev, unit = "", name, prevName = "the 
   );
 }
 
+const SEGS = 12;
 /** Upright columns, one per label, the best one marked. Hover or focus a column to read it. */
 export function Columns({ labels, values, unit = "", name, best = true, every = 1 }: { labels: string[]; values: number[]; unit?: Kpi["unit"]; name: string; best?: boolean; every?: number }) {
   const max = Math.max(1, ...values);
@@ -151,7 +190,11 @@ export function Columns({ labels, values, unit = "", name, best = true, every = 
       {values.map((v, i) => (
         <div key={i} role="listitem" className="an-col" tabIndex={0} aria-label={`${labels[i]}: ${fmtUnit(v, unit, false)}`}
           onPointerEnter={() => setTip(i)} onPointerLeave={() => setTip(null)} onFocus={() => setTip(i)} onBlur={() => setTip(null)}>
-          <span className="an-col-bar"><i className={i === top && v > 0 ? "top" : ""} style={{ height: `${Math.max(2, (v / max) * 100)}%`, animationDelay: `${Math.min(i, 24) * 22}ms` }}>{tip === null && i === top && v > 0 && <em className="an-col-v mono">{fmtUnit(v, unit)}</em>}</i></span>
+          <span className={`an-col-bar seg ${i === top && v > 0 ? "top" : ""}`}>
+            {/* an equalizer: twelve segments, lit from the bottom as far as the value goes */}
+            {Array.from({ length: SEGS }, (_, k) => SEGS - 1 - k).map((k) => <b key={k} className={k < Math.max(v > 0 ? 1 : 0, Math.round((v / max) * SEGS)) ? "on" : ""} style={{ animationDelay: `${Math.min(i, 24) * 18 + k * 28}ms` }} />)}
+            {tip === null && i === top && v > 0 && <em className="an-col-v mono">{fmtUnit(v, unit)}</em>}
+          </span>
           <span className="an-col-l">{i % every === 0 ? labels[i] : ""}</span>
           {tip === i && <span className="an-cell-tip" role="presentation"><b className="mono">{fmtUnit(v, unit, false)}</b>{labels[i]}</span>}
         </div>
@@ -301,7 +344,7 @@ export function TrendBoard({ id, trend, days, range, extra, height = 260 }: { id
           return (
             <button key={d.key} type="button" role="tab" aria-selected={on} className={`an-kt-b ${on ? "on" : ""}`} onClick={() => setK(d.key)}>
               <span className="an-k">{d.label}</span>
-              <span className="an-kt-v"><span className="mono">{fmtUnit(t, d.unit)}</span>{d.prev.some((v) => v !== 0) && <Trend v={change(t, p)} size="sm" />}</span>
+              <span className="an-kt-v"><span className="mono"><CountUp value={t} unit={d.unit} /></span>{d.prev.some((v) => v !== 0) && <Trend v={change(t, p)} size="sm" />}</span>
               <span className="an-kt-f"><span className="tiny dim">{extra?.[d.key] ?? (d.prev.some((v) => v !== 0) ? `${fmtUnit(p, d.unit)} before` : "\u00a0")}</span><Sparkline values={d.cur} w={72} h={22} /></span>
             </button>
           );

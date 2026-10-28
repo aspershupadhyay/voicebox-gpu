@@ -3,9 +3,9 @@
 // as a step chart by platform, how people responded (likes, comments, shares, saves), and the top posts as a ranked
 // table with a performance gauge and a live dot for posts still being followed minute by minute.
 import { ArrowDownRight, ArrowUpRight, ChartLineUp } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { Analytics as Data, Daily, Item, Kpi } from "@/lib/analytics";
-import { compact, fmtUnit, full, useWidth } from "./anparts";
+import { ChartDefs, compact, CountUp, fmtUnit, full, useWidth } from "./anparts";
 import { PlatformBadge } from "./platform";
 import { Select } from "./pop";
 import { Empty } from "./ui";
@@ -53,7 +53,7 @@ export function KpiStrip({ data }: { data: Data }) {
         return (
           <div key={label} className="fx-kpi" title={k?.about}>
             <span className="fx-k">{label}</span>
-            <span className="fx-v">{cur == null ? "—" : show ? show(cur) : fmtUnit(cur, k?.unit ?? "")}{g ? <small> / {g}</small> : null}</span>
+            <span className="fx-v">{cur == null ? "—" : show ? show(cur) : <CountUp value={cur} unit={k?.unit ?? ""} />}{g ? <small> / {g}</small> : null}</span>
             <span className="fx-ds"><Delta cur={cur} prev={prev} unit={k?.unit} better={k?.better} goal={g} /></span>
             <span className={`fx-hatch t-${tone}`} role="meter" aria-label={g ? `${label}: ${Math.round(fill * 100)}% of the goal` : `${label}: this period's share of the last two`} aria-valuenow={Math.round(fill * 100)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${Math.max(fill ? 4 : 0, fill * 100)}%` }} /></span>
           </div>
@@ -71,6 +71,7 @@ type Series = { name: string; tone: string; values: number[] };
 function StepChart({ labels, series, height = 230, tip }: { labels: string[]; series: Series[]; height?: number; tip: (i: number) => string }) {
   const [box, W] = useWidth<HTMLDivElement>();
   const [h, setH] = useState<number | null>(null);
+  const uid = useId().replace(/:/g, "");
   const n = labels.length, H = height, L = 40, R = 8, T = 14, B = 24;
   const all = series.flatMap((s) => s.values);
   const lo = Math.min(0, ...all), hiRaw = Math.max(1, ...all);
@@ -86,9 +87,12 @@ function StepChart({ labels, series, height = 230, tip }: { labels: string[]; se
       onPointerMove={(e) => { const r = box.current!.getBoundingClientRect(); setH(Math.max(0, Math.min(n - 1, Math.floor((e.clientX - r.left - L) / bw)))); }} onPointerLeave={() => setH(null)}
       onKeyDown={(e) => { if (e.key === "ArrowRight") setH((v) => Math.min(n - 1, (v ?? -1) + 1)); if (e.key === "ArrowLeft") setH((v) => Math.max(0, (v ?? n) - 1)); if (e.key === "Escape") setH(null); }}>
       <svg width={W} height={H} aria-hidden>
+        <ChartDefs id={uid} />
+        <rect x={L} y={T} width={Math.max(0, W - L - R)} height={Math.max(0, H - T - B)} fill={`url(#${uid}-dots)`} />
         {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className="an-grid" /><text x={L - 8} y={y(t) + 4} className="an-axis" textAnchor="end">{compact(t)}</text></g>)}
         {labels.map((lb, i) => i % every === 0 ? <text key={i} x={x(i) + bw / 2} y={H - 6} className="an-axis" textAnchor="middle">{lb}</text> : null)}
         {series[0] && <path d={`${path(series[0].values)} V${y(Math.max(low, 0))} H${x(0)} Z`} className={`fx-area t-${series[0].tone}`} />}
+        {series[0] && <path d={`${path(series[0].values)} V${y(Math.max(low, 0))} H${x(0)} Z`} fill={`url(#${uid}-hatch)`} className={`an-area-h t-${series[0].tone}`} />}
         {series.map((s) => <path key={s.name} d={path(s.values)} className={`fx-step draw t-${s.tone}`} pathLength={1} />)}
         {h != null && <><line x1={x(h) + bw / 2} x2={x(h) + bw / 2} y1={T} y2={H - B} className="fx-cross" />{series.map((s) => <circle key={s.name} cx={x(h) + bw / 2} cy={y(s.values[h])} r={4} className={`fx-dot t-${s.tone}`} />)}</>}
       </svg>

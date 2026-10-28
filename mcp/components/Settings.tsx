@@ -39,7 +39,8 @@ function SetNav({ tab, go }: { tab: Tab; go: (t: Tab) => void }) {
   // on a phone the bar scrolls: keep the open tab in view
   useEffect(() => { document.getElementById(`set-${tab}`)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [tab]);
   return (
-    <nav className="set-nav" aria-label="Settings sections">
+    <nav className="set-nav" aria-label="Settings sections" style={{ "--i": TABS.findIndex((t) => t.id === tab), "--n": TABS.length } as React.CSSProperties}>
+      <span className="set-pill" aria-hidden />
       {TABS.map(({ id, name, icon: Ic, mv }) => (
         <Link key={id} href={`/settings?tab=${id}`} scroll={false} className={tab === id ? "on" : ""} aria-current={tab === id ? "page" : undefined}
           onClick={(e) => { e.preventDefault(); go(id); }}

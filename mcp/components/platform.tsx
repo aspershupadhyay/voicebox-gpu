@@ -19,7 +19,7 @@ function YtMark({ size }: { size: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
       <rect x="1" y="4.5" width="22" height="15" rx="4.6" fill="var(--yt-red)" />
-      <path d="M10 8.9v6.2l5.4-3.1z" fill="var(--on-brand)" />
+      <path className="yt-play" d="M10 8.9v6.2l5.4-3.1z" fill="var(--on-brand)" />
     </svg>
   );
 }
@@ -29,8 +29,8 @@ function IgMark({ size }: { size: number }) {
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
       <rect x="1.5" y="1.5" width="21" height="21" rx="6.2" fill="var(--ig-pink)" />
       <rect x="6" y="6" width="12" height="12" rx="3.6" fill="none" stroke="var(--on-brand)" strokeWidth="1.8" />
-      <circle cx="12" cy="12" r="2.9" fill="none" stroke="var(--on-brand)" strokeWidth="1.8" />
-      <circle cx="15.6" cy="8.4" r="1.05" fill="var(--on-brand)" />
+      <circle className="ig-lens" cx="12" cy="12" r="2.9" fill="none" stroke="var(--on-brand)" strokeWidth="1.8" />
+      <circle className="ig-dot" cx="15.6" cy="8.4" r="1.05" fill="var(--on-brand)" />
     </svg>
   );
 }

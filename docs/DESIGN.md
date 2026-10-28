@@ -148,7 +148,10 @@ status and history under it, and the actions in a footer. It saves as you type.
   `PixelLoader` (three dots) for small waits. No shimmer, no gradient.
 - Charts use one accent, `--chart`, over the surface: lines draw in, the last point carries a ring, hover shows a band,
   a crosshair and the value on the axis; columns and bars grow in. Values are written beside, never only in, the marks.
-- Your character (`PixelAvatar` with `char`) and your cursor are set in Settings → Profile → Look (`components/look.tsx`).
+- Your character (`PixelAvatar` with `char`) and your cursor (Arrow, ASCII, System) are set in Settings → Profile →
+  Look (`components/look.tsx`); every click drops a ginger ripple (`--ginger`, Miso's colour).
+- Charts also carry a dotted plot field and a 45° hatch under lines (`ChartDefs`), the latest value in a chip, numbers
+  that count up (`CountUp`), equalizer columns (twelve segments), tick-meter bars and a dot-size heatmap.
 
 ## Phones
 

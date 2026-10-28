@@ -16,10 +16,11 @@ import { Empty, Notice, PageHeader } from "./ui";
 import { dueLabel } from "./PostDrawer";
 import type { Post } from "@/lib/workspace";
 import type { Item } from "@/lib/analytics";
-import { RhythmRows, TopPosts, trendOf } from "./Analytics";
+import { TopPosts, trendOf } from "./Analytics";
+import { PlatformBadge } from "./platform";
 import { PostDrawer } from "./AnalyticsPlatform";
 import { fmtUnit, TrendBoard } from "./anparts";
-import { useReport } from "./useReport";
+import { useReport, type Report } from "./useReport";
 
 type Lib = {
   id: string; kind?: string; engine: string; voice: string; label?: string; created: number; match?: number | null;
@@ -39,22 +40,76 @@ const TOOLS = [
 
 function UpNext() {
   const { rows, loading } = useLive<Post>("posts", [Query.orderDesc("$updatedAt"), Query.limit(200)]);
-  const next = rows.filter((p) => p.status !== "posted" && p.due_at).sort((a, b) => Date.parse(a.due_at!) - Date.parse(b.due_at!)).slice(0, 4);
-  if (loading) return <div className="skel" style={{ height: 120 }} />;
-  if (!next.length) return <Empty icon={<CalendarBlank size={22} />} title="Nothing scheduled" action={<Link href="/posts?new=1" className="btn sm">New post</Link>}>Give a post a date and it shows up here.</Empty>;
+  const next = rows.filter((p) => p.status !== "posted" && p.due_at).sort((a, b) => Date.parse(a.due_at!) - Date.parse(b.due_at!)).slice(0, 3);
+  if (loading) return <div className="skel" style={{ height: 96 }} />;
+  if (!next.length) return (
+    <div className="wk-none"><CalendarBlank size={16} aria-hidden /><span>Nothing booked yet. Give a post a date and it lines up here.</span><Link href="/posts?new=1" className="btn xs">New post</Link></div>
+  );
   return (
-    <div className="rows">
+    <div className="wk-next">
       {next.map((p) => {
         const late = Date.parse(p.due_at!) < Date.now();
         return (
-          <Link key={p.$id} href={`/posts?post=${p.$id}`} className="list-row">
-            <span className="thumb"><CalendarBlank size={18} /></span>
-            <div style={{ minWidth: 0 }}><div className="t1">{p.title}</div><div className="t2">{p.assignee_name ?? p.owner_name ?? "Nobody yet"}</div></div>
-            <span className={`pill ${late ? "bad" : ""}`}>{late ? "Overdue" : dueLabel(p.due_at)}</span>
+          <Link key={p.$id} href={`/posts?post=${p.$id}`} className="wk-item">
+            <span className={`wk-when ${late ? "late" : ""}`}>{late ? "Overdue" : dueLabel(p.due_at)}</span>
+            <span className="ellipsis wk-t">{p.title}</span>
+            <span className="tiny dim ellipsis hide-sm">{p.assignee_name ?? p.owner_name ?? ""}</span>
           </Link>
         );
       })}
     </div>
+  );
+}
+
+/** This week, at a glance: a ring per format (posted against the weekly goal), the next seven days (booked or open),
+ *  and what's up next. */
+function WeekCard({ data, workspace }: { data: Report; workspace: boolean }) {
+  const fmt = (t: number, o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-US", { timeZone: data.tz, ...o }).format(new Date(t));
+  const days = Array.from({ length: 7 }, (_, d) => {
+    const t = Date.now() + d * 86_400_000;
+    return { t, key: fmt(t, { weekday: "short", day: "numeric", month: "short" }), wd: fmt(t, { weekday: "short" }), n: fmt(t, { day: "numeric" }) };
+  });
+  const open = new Set(data.gaps);
+  const booked = days.filter((d) => !open.has(d.key)).length;
+  const R = 22, C = 2 * Math.PI * R;
+  return (
+    <section className="card an-card wk" aria-labelledby="home-week-h">
+      <div className="card-head">
+        <div><h2 id="home-week-h">This week</h2><p className="sub">{booked ? `${booked} of the next 7 days booked` : "Nothing booked for the next 7 days"}</p></div>
+        <Link href="/posts?view=calendar" className="btn ghost xs"><CalendarBlank size={13} />Calendar</Link>
+      </div>
+      {data.rhythm.length ? (
+        <div className="wk-rings">
+          {data.rhythm.map((r, i) => {
+            const goal = r.goal ?? Math.max(r.week, 1), f = Math.min(1, r.week / goal), met = !!r.goal && r.week >= r.goal;
+            return (
+              <div key={r.space} className={`wk-ring ${met ? "met" : ""}`} title={`${r.label}: ${r.week} posted this week${r.goal ? ` of ${r.goal}` : ""}, ${r.next7} booked${r.last ? `, last ${ago(r.last)}` : ""}`}>
+                <span className="wk-dial">
+                  <svg viewBox="0 0 52 52" aria-hidden>
+                    <circle cx="26" cy="26" r={R} className="wk-track" />
+                    <circle cx="26" cy="26" r={R} className="wk-fill" strokeDasharray={C} style={{ "--off": C * (1 - f), animationDelay: `${i * 90}ms` } as React.CSSProperties} />
+                  </svg>
+                  <PlatformBadge space={r.space} size={18} />
+                </span>
+                <b className="mono">{r.week}{r.goal ? <span className="dim">/{r.goal}</span> : null}</b>
+                <span className="tiny dim ellipsis">{r.label.replace(/^(YouTube|Instagram) /, "")}</span>
+              </div>
+            );
+          })}
+        </div>
+      ) : <p className="small dim">Set weekly goals on the Posts page and post a few times to see your rhythm.</p>}
+      <div className="wk-days" role="list" aria-label="The next 7 days">
+        {days.map((d, i) => {
+          const isOpen = open.has(d.key);
+          return (
+            <span key={d.key} role="listitem" className={`wk-day ${isOpen ? "open" : "booked"} ${i === 0 ? "today" : ""}`} aria-label={`${d.key}: ${isOpen ? "nothing booked" : "booked"}`}>
+              <span className="wk-wd">{i === 0 ? "Today" : d.wd}</span><b className="mono">{d.n}</b><i aria-hidden />
+            </span>
+          );
+        })}
+      </div>
+      {workspace && <><h3 className="an-h3">Up next</h3><UpNext /></>}
+    </section>
   );
 }
 
@@ -79,11 +134,7 @@ function Channels({ workspace }: { workspace: boolean }) {
       <TrendBoard id="home-trend" trend={trendOf(data)} days={data.days} range={data.range} height={200} extra={{ engagements: er?.value != null ? `${fmtUnit(er.value, "pct")} of views` : undefined }} />
       <div className="home-duo">
         <TopPosts data={data} open={setOpen} n={3} title="Top posts lately" id="home-top-h" />
-        <section className="card an-card" aria-labelledby="home-week-h">
-          <div className="card-head"><div><h2 id="home-week-h">This week</h2><p className="sub">Posted against your weekly goals, and what&apos;s booked</p></div><Link href="/posts?view=calendar" className="btn ghost xs">Calendar</Link></div>
-          <RhythmRows data={data} />
-          {workspace && <><h3 className="an-h3">Up next</h3><UpNext /></>}
-        </section>
+        <WeekCard data={data} workspace={workspace} />
       </div>
       {open && <PostDrawer item={open} onClose={() => setOpen(null)} />}
     </section>
@@ -114,7 +165,7 @@ export default function Home() {
     <>
       <PageHeader eyebrow="Your studio" title={`${hello}${first ? `, ${first}` : ""}`}
         sub={active.length ? `${active.length} job${active.length > 1 ? "s" : ""} running on the GPU.` : "Your channels, this week's plan and what you made lately."}
-        actions={<PixelScene className="home-scene" />} />
+        actions={<div className="home-scene-wrap"><PixelScene className="home-scene" /></div>} />
 
       {active.length > 0 && (
         <div className="card pad-sm" style={{ marginBottom: 20 }}>
