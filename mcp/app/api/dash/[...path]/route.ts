@@ -163,6 +163,8 @@ export async function GET(req: Request, ctx: Ctx) {
         // a post's photos and clips as one stack: every carousel, one post's (?post=<id>) or one (/carousels/<id>)
         const id = g.path[2];
         try {
+          if (id && g.path[3] === "checks") return Response.json(await fm.carouselChecks(decodeURIComponent(id)));
+          if (id && g.path[3] === "stats") return Response.json(await fm.carouselStats(decodeURIComponent(id)));
           if (id) return Response.json(await fm.carouselDetail(decodeURIComponent(id)));
           return Response.json({ carousels: await fm.carouselList({ post_id: new URL(req.url).searchParams.get("post") ?? undefined }) });
         } catch (e) {
@@ -527,6 +529,7 @@ async function filesAction(b: string | undefined, c: string | undefined, body: R
       if (!c) return Response.json(await cs.createCarousel({ id: body.id, name: body.name, items: body.items, post: body.post }, actor.name));
       if (!cs.CAROUSEL_RE.test(c) && !cs.POST_GROUP_RE.test(c)) throw new fs.FilesError("bad carousel id");
       if (d === "ungroup") return Response.json(await cs.ungroupCarousel(c));
+      if (d === "publish") return Response.json(await fm.publishCarousel(c, actor));
       return Response.json(await fm.changeCarousel(c, { name: body.name, items: body.items, add: body.add, remove: body.remove }, actor.name));
     }
     if (b === "poster") return Response.json(await fm.savePoster(keys([body.item])[0], String(body.data ?? "")));

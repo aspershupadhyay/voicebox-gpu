@@ -1259,9 +1259,12 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
         "Two or more photos or clips on the same post group themselves (id post-<post id>, named after the post); you can also make one from any files. " +
         "action list (optionally one post_id) or get (carousel) shows each carousel's files in order with links; create groups `items` (file ids, in order) under a `name`; " +
         "update renames, reorders (items: the full new order), adds or removes files; ungroup removes the carousel and leaves its files where they are. " +
-        "To upload straight into one, give save_file / upload_media / add_media a carousel and position.",
+        "To upload straight into one, give save_file / upload_media / add_media a carousel and position. " +
+        "checks: each slide's size and shape for Instagram (4:5 or 1:1 best, 1080 px wide or more, all one shape) and look-alike duplicates. " +
+        "instagram: set it up as an Instagram carousel post (makes a post if it has none, attaches the photos, adds the Instagram Post target, a publish plan with the slides in order and a fitted caption); it doesn't send: publish_post with the returned post_id and space ig_post does. " +
+        "stats: once it's out, its Instagram numbers (views, reach, likes, comments, shares, saves).",
       inputSchema: z.object({
-        action: z.enum(["list", "get", "create", "update", "ungroup"]).default("list"),
+        action: z.enum(["list", "get", "create", "update", "ungroup", "checks", "instagram", "stats"]).default("list"),
         carousel: z.string().min(1).max(120).optional().describe("get / update / ungroup: its id (or name)"),
         post_id: POST_ID.optional().describe("list: only this post's; create: the post it's for"),
         name: z.string().min(1).max(120).optional(),
@@ -1281,6 +1284,9 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       if (!carousel) throw new Error("give the carousel (its id or name)");
       const id = (await fm.carouselDetail(carousel)).id;
       if (action === "get") return fm.carouselDetail(id);
+      if (action === "checks") return fm.carouselChecks(id);
+      if (action === "stats") return fm.carouselStats(id);
+      if (action === "instagram") return fm.publishCarousel(id, CLAUDE);
       if (action === "ungroup") {
         if (cs.POST_GROUP_RE.test(id)) throw new Error("a post's own carousel can't be ungrouped (its files stay together while they're on the post)");
         return cs.ungroupCarousel(id);

@@ -3,7 +3,7 @@
 // PDFs, Word files, spreadsheets, CSV and text read in place (components/docview.tsx), anything else with its details
 // and a download. ← → (or the side arrows) step through the files in the folder; Escape or the backdrop closes it.
 import { ArrowSquareOut, CaretLeft, CaretRight, DownloadSimple, FilePpt, Paperclip, TrashSimple, X } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { MediaKind } from "@/lib/workspace";
 import { docKind, DocxView, PdfView, SheetView, TextView } from "./docview";
 import { AudioStage, VideoPlayer } from "./players";
@@ -68,6 +68,22 @@ export function FileViewer({ file, onClose, onPrev, onNext, onDelete, index, tot
   strip?: React.ReactNode;
 }) {
   const box = useRef<HTMLDivElement>(null);
+  // how the next file comes in: zooming up on open, sliding from the side you stepped towards
+  const last = useRef<{ key: string; index?: number; dir: string } | null>(null);
+  if (last.current?.key !== file.key) {
+    const was = last.current;
+    const back = was && index != null && was.index != null && total ? (index < was.index ? !(was.index === total - 1 && index === 0) : was.index === 0 && index === total - 1) : false;
+    last.current = { key: file.key, index, dir: !was ? "open" : back ? "prev" : "next" };
+  }
+  const dir = last.current.dir;
+  const [leaving, setLeaving] = useState(false);
+  const shut = useRef(onClose);
+  shut.current = onClose;
+  const close = useCallback(() => {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return shut.current();
+    setLeaving(true);
+    setTimeout(() => shut.current(), 190);
+  }, []);
   useEffect(() => {
     const back = document.activeElement as HTMLElement | null;
     box.current?.focus();
@@ -77,7 +93,7 @@ export function FileViewer({ file, onClose, onPrev, onNext, onDelete, index, tot
   }, []);
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector(".modal, .vp-menu")) { if (document.fullscreenElement) return; e.preventDefault(); onClose(); return; }
+      if (e.key === "Escape" && !document.querySelector(".modal, .vp-menu")) { if (document.fullscreenElement) return; e.preventDefault(); close(); return; }
       const t = e.target as HTMLElement;
       if (["INPUT", "TEXTAREA"].includes(t.tagName) || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return; // Shift+← → jump carousels
       // the players take ← → for seeking; PageUp/PageDown always step
@@ -87,11 +103,11 @@ export function FileViewer({ file, onClose, onPrev, onNext, onDelete, index, tot
     };
     addEventListener("keydown", k);
     return () => removeEventListener("keydown", k);
-  }, [file.kind, onClose, onPrev, onNext]);
+  }, [file.kind, close, onPrev, onNext]);
   const meta = [fmtSize(file.size), file.by, file.at ? new Date(file.at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : null].filter(Boolean).join(" · ");
   return (
-    <div className="fv" ref={box} tabIndex={-1} role="dialog" aria-modal="true" aria-label={file.name}>
-      <div className="fv-back" onClick={onClose} />
+    <div className={`fv ${leaving ? "out" : ""}`} ref={box} tabIndex={-1} role="dialog" aria-modal="true" aria-label={file.name}>
+      <div className="fv-back" onClick={close} />
       <div className="fv-top">
         <div className="fv-name">
           <b className="ellipsis">{file.name}</b>
@@ -102,10 +118,10 @@ export function FileViewer({ file, onClose, onPrev, onNext, onDelete, index, tot
           <a className="vp-btn" href={file.url} target="_blank" rel="noreferrer" aria-label="Open in a new tab" title="Open in a new tab"><ArrowSquareOut size={19} /></a>
           <a className="vp-btn" href={file.download} aria-label="Download" title="Download"><DownloadSimple size={19} /></a>
           {onDelete && <button className="vp-btn" onClick={onDelete} aria-label="Move to the trash" title="Move to the trash"><TrashSimple size={19} /></button>}
-          <button className="vp-btn" onClick={onClose} aria-label="Close (Esc)" title="Close (Esc)"><X size={20} /></button>
+          <button className="vp-btn" onClick={close} aria-label="Close (Esc)" title="Close (Esc)"><X size={20} /></button>
         </div>
       </div>
-      <div className={`fv-stage k-${file.kind}`} key={file.key}><Stage f={file} /></div>
+      <div className={`fv-stage k-${file.kind} d-${dir}`} key={file.key}><Stage f={file} /></div>
       {onPrev && <button className="fv-nav l" onClick={onPrev} aria-label="Previous file"><CaretLeft size={22} weight="bold" /></button>}
       {onNext && <button className="fv-nav r" onClick={onNext} aria-label="Next file"><CaretRight size={22} weight="bold" /></button>}
       {strip}

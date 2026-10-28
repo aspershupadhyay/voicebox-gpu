@@ -4,7 +4,19 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (carousel fixes, 2026-10-28)
+## Latest round (carousels to Instagram, 2026-10-28)
+
+- **The carousel stage was laggy and the spacing was off.** The curve is now placed straight on the page while you drag
+  (no re-render per frame, ~60 fps), the cards have even gaps, the labels sit flat under them, and the whole curve fits
+  the stage's width and height. Invisible wrappers were swallowing clicks on the middle card: fixed.
+- **Opening a single file needed motion too**: the viewer zooms the file up on open, slides the next one in from the
+  side you stepped towards, and sinks away on close.
+- **Build the five carousel ideas**: post a carousel to Instagram (the composer opens with the slides in order and a
+  fitted caption), drag a card up to reorder, a phone preview of the feed (P), slide checks (shape, size, duplicates),
+  and its Instagram numbers once it's out. Instagram's API doesn't report which slide people stop on; say so rather
+  than invent it.
+
+## Earlier round (carousel fixes, 2026-10-28)
 
 - **Uploading a carousel through the API failed on every file after the first** ("carousels are busy"). Fixed: the
   conditional write now matches R2's tag, falls back to a checked plain write, and turning a ticket in again retries

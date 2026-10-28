@@ -74,7 +74,11 @@ status and history under it, and the actions in a footer. It saves as you type.
   Opening it stands each photo up from below the screen in turn onto a concave curved row on black (the owner's
   reference), each with `#01` in ginger mono and its name under it. A click opens that photo in the file viewer with
   the carousel as a strip along the bottom. Keys: ← → browse, Enter open, 1–9, Alt+← → reorder, `[` `]` (or Shift+← →)
-  the previous or next post's carousel, Esc back. The motion is transforms only and stops for reduced motion.
+  the previous or next post's carousel, Esc back. Drag a card up (or hold it) and drop it to reorder. The top bar
+  switches Curve / Phone (the feed on a phone, swipeable, cropped to the first slide's shape), shows the slide checks
+  as a chip (a panel lists each slide's size and problems) and, once posted, a Live chip with saves and shares; "Post to
+  Instagram" opens the publish composer with the slides in order. The curve is positioned imperatively (no React
+  render per drag frame). The motion is transforms only and stops for reduced motion.
 - Grow's Overview follows the Flux layout (`components/Flux.tsx`): title and chips on one row (range, compare to,
   platform, live, a white Export, refresh), a strip of five numbers each with a hatched bar (this period's share of the
   last two, or progress to the posting goal), follower growth as a step chart per platform, likes / comments / shares
