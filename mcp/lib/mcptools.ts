@@ -922,12 +922,27 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     "analytics",
     {
       title: "Channel analytics",
-      description: "How the connected YouTube channel(s) and Instagram account(s) are doing over the last 7, 28 or 90 days (same numbers as the dashboard's Analytics page): per format (YouTube Videos / Shorts, Instagram Reels / Posts) views and engagement against the period before, followers gained, every recent post with views, likes, comments, shares, saves, retention (avg % watched), engagement rate and score (views ÷ the median of its format: 2 = twice the usual, the viral signal), YouTube traffic sources and audience, Instagram audience, when posts do best (day × 3-hour slot in the studio's time zone), the length and hashtags that work, posting rhythm vs the weekly goals, and tips. needs lists anything a connection can't read yet (reconnect, or turn on the YouTube Analytics API). Use it before planning or writing, to make more of what works. Cached 30 min; fresh: true asks the platforms again.",
-      inputSchema: z.object({ range: z.union([z.literal(7), z.literal(28), z.literal(90)]).optional(), fresh: z.boolean().optional(), posts: z.number().int().min(0).max(100).optional().describe("how many recent posts to include (default 25)") }),
+      description: "How the connected YouTube channel(s) and Instagram account(s) are doing over the last 7, 28 or 90 days, with the period before for comparison (the dashboard's Analytics page). view overview (default): every platform together (scorecard: views, reach, non-follower reach, watch hours, engagements, engagement rate, shares, followers, net growth, posts, median score, hits), per format (YouTube Videos / Shorts, Instagram Reels / Posts), recent posts with views, likes, comments, shares, saves, retention and score (views ÷ the median of its format: 2 = twice the usual, the viral signal), when posts do best (day × 3-hour slot in the studio's time zone, overall and per network), the lengths and hashtags that work, posting rhythm vs weekly goals, follower history and tips. view youtube: every YouTube Analytics metric (views, engaged views, impressions and click rate when YouTube offers them, watch hours, average duration and % viewed, likes, dislikes, comments, shares, playlist saves, subscribers gained/lost/net and per 1k views), daily series, the weekday views land on, content types, traffic sources with the search terms, external sites, related videos and playlists behind them, playback locations, devices, operating systems, subscribers vs not, sharing services, countries, age and gender. view instagram: views, reach, share of reach and views from non-followers, accounts engaged, interactions, likes, comments, shares, saves, replies, follows, unfollows, link taps, rates per 1k, daily reach and new followers, by format, followers online by hour (Pacific), audience as followers / engaged / reached by age, gender, country and city, and live Stories with taps forward, back and exits. view post with network + post_id (an items[].id): one post in depth (YouTube: lifetime totals, retention curve, views by day since upload with peak day and how front-loaded it is, traffic; Instagram: every metric for its type incl. follows, profile visits, watch time, skip rate). needs lists what a connection can't read yet. Use it before planning or writing, so the next posts build on what works. Cached 30 min; fresh: true asks the platforms again.",
+      inputSchema: z.object({
+        view: z.enum(["overview", "youtube", "instagram", "post"]).optional(),
+        range: z.union([z.literal(7), z.literal(28), z.literal(90)]).optional(), fresh: z.boolean().optional(),
+        posts: z.number().int().min(0).max(100).optional().describe("overview: how many recent posts to include, best score first (default 25)"),
+        network: z.enum(["youtube", "instagram"]).optional().describe("view post: the post's network"),
+        post_id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional().describe("view post: the platform id from items[].id"),
+      }),
     },
-    async ({ range, fresh, posts }) => ws(async () => {
-      const a = await (await import("@/lib/analytics")).getAnalytics(range ?? 28, !!fresh);
-      return { ...a, items: [...a.items].sort((x, y) => (y.score ?? 0) - (x.score ?? 0)).slice(0, posts ?? 25).map(({ thumb: _, ...i }) => i) };
+    async ({ view, range, fresh, posts, network, post_id }) => ws(async () => {
+      const lib = await import("@/lib/analytics");
+      if (view === "post") {
+        if (!network || !post_id) throw new Error("view post needs network and post_id (an id from items)");
+        return lib.getPostDetail(network, post_id, !!fresh);
+      }
+      const a = await lib.getAnalytics(range ?? 28, !!fresh);
+      const common = { at: a.at, range: a.range, from: a.from, to: a.to, tz: a.tz, needs: a.needs };
+      if (view === "youtube") return { ...common, channels: a.youtube, best_times: a.heat_by.youtube ?? null, heat_metric: a.heat_metric };
+      if (view === "instagram") return { ...common, accounts: a.instagram, best_times: a.heat_by.instagram ?? null, heat_metric: a.heat_metric };
+      const { youtube: _y, instagram: _i, ...rest } = a;
+      return { ...rest, items: [...a.items].sort((x, y) => (y.score ?? 0) - (x.score ?? 0)).slice(0, posts ?? 25).map(({ thumb: _, ...i }) => i) };
     }),
   );
 

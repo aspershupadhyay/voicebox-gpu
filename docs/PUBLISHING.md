@@ -77,6 +77,9 @@ Data API; daily views, watch time, retention, traffic and audience need the **Yo
 same Google Cloud project (APIs & Services → Library → YouTube Analytics API → Enable). Instagram reach, views, saves,
 shares and audience need the `instagram_business_manage_insights` permission: channels connected before Analytics
 existed show a **Reconnect** strip once. Instagram's audience details need 100 followers. A report per range is kept
-for 30 minutes in `workspace/analytics/`; Refresh asks the platforms again.
+for 30 minutes in `workspace/analytics/` (and a post's deep dive in `workspace/analytics/posts/`); Refresh asks the
+platforms again. Follower counts are noted once a day in `workspace/analytics/history.json`, so growth shows past the 30
+days Instagram keeps. YouTube gives views by day, not by hour; the hour a post should go out comes from how your posts
+did by when they went out, and on Instagram from when your followers are online.
 
 MCP: `analytics`, `publish_accounts`, `publish_post`, `publish_status`, `automation_rules` (see `docs/API.md`).

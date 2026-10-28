@@ -8,8 +8,10 @@ import {
   ArrowDownRight, ArrowSquareOut, ArrowUpRight, ArrowsClockwise, ChartLineUp, Fire, Lightning, LinkSimple, Plus, Sparkle, TrendUp, Warning,
 } from "@phosphor-icons/react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Analytics as Data, Bar, Fmt, FmtSum, Item, SeriesKey, Tip } from "@/lib/analytics";
+import { Bars, change, compact, day, full, Heatmap, LineChart, pct, Score, Scorecard, Trend } from "./anparts";
+import { InstagramTab, YouTubeTab } from "./AnalyticsPlatform";
 import { spaceName } from "@/lib/spaces";
 import { ago, api } from "./api";
 import { PlatformBadge } from "./platform";
@@ -17,24 +19,9 @@ import { Select } from "./pop";
 import { Empty, Notice, PageHeader } from "./ui";
 
 type Range = 7 | 28 | 90;
+type Tab = "overview" | "youtube" | "instagram";
 const FMTS: Fmt[] = ["yt_video", "yt_short", "ig_reel", "ig_post"];
 const NET_NAME = { youtube: "YouTube", instagram: "Instagram" } as const;
-const compact = (n: number | null | undefined) => (n == null ? "—" : Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(n));
-const full = (n: number | null | undefined) => (n == null ? "—" : Math.round(n).toLocaleString());
-const change = (cur: number | null, prev: number | null) => (cur == null || !prev ? null : (cur - prev) / prev);
-const pct = (x: number | null, d = 0) => (x == null ? "—" : `${(x * 100).toFixed(d)}%`);
-const day = (s: string, opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" }) => new Date(`${s}T12:00:00Z`).toLocaleDateString(undefined, opts);
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const SLOTS = ["12 AM", "3 AM", "6 AM", "9 AM", "12 PM", "3 PM", "6 PM", "9 PM"];
-
-/** ↗ 34% in green, ↘ 12% in red, or nothing to compare against. */
-function Trend({ v, size = "md" }: { v: number | null; size?: "md" | "sm" }) {
-  if (v == null || !isFinite(v)) return <span className={`an-trend flat ${size}`}>new</span>;
-  const up = v >= 0;
-  const Ic = up ? ArrowUpRight : ArrowDownRight;
-  return <span className={`an-trend ${up ? "up" : "down"} ${size}`}><Ic size={size === "sm" ? 12 : 14} weight="bold" aria-hidden /><span className="sr-only">{up ? "up" : "down"}</span>{Math.abs(v * 100) >= 1000 ? `${Math.round(v)}×` : `${Math.abs(v * 100).toFixed(Math.abs(v) < 0.1 ? 1 : 0)}%`}</span>;
-}
-
 function ChannelCard({ f, s, on, onClick }: { f: Fmt; s: FmtSum; on: boolean; onClick: () => void }) {
   return (
     <button type="button" className={`an-ch ${on ? "on" : ""}`} onClick={onClick} aria-pressed={on} aria-label={`${spaceName(f)}: show on the chart`}>
@@ -51,93 +38,41 @@ function ChannelCard({ f, s, on, onClick }: { f: Fmt; s: FmtSum; on: boolean; on
   );
 }
 
-/** A smooth line through the points (monotone, so it never overshoots below zero). */
-function curve(pts: [number, number][]) {
-  if (pts.length < 2) return pts.length ? `M${pts[0][0]},${pts[0][1]}` : "";
-  const n = pts.length, d: number[] = [], m: number[] = [];
-  for (let i = 0; i < n - 1; i++) d.push((pts[i + 1][1] - pts[i][1]) / (pts[i + 1][0] - pts[i][0]));
-  m.push(d[0]);
-  for (let i = 1; i < n - 1; i++) m.push(d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2);
-  m.push(d[n - 2]);
-  let s = `M${pts[0][0]},${pts[0][1]}`;
-  for (let i = 0; i < n - 1; i++) {
-    const h = (pts[i + 1][0] - pts[i][0]) / 3;
-    s += ` C${pts[i][0] + h},${pts[i][1] + m[i] * h} ${pts[i + 1][0] - h},${pts[i + 1][1] - m[i + 1] * h} ${pts[i + 1][0]},${pts[i + 1][1]}`;
-  }
-  return s;
-}
-const niceMax = (v: number) => {
-  if (v <= 4) return 4;
-  const p = 10 ** Math.floor(Math.log10(v)), r = v / p;
-  return (r <= 1 ? 1 : r <= 2 ? 2 : r <= 2.5 ? 2.5 : r <= 5 ? 5 : 10) * p;
-};
-
-function useWidth<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
-  const [w, setW] = useState(640);
-  useEffect(() => {
-    if (!ref.current) return;
-    const o = new ResizeObserver(([e]) => setW(Math.max(260, Math.round(e.contentRect.width))));
-    o.observe(ref.current);
-    return () => o.disconnect();
-  }, []);
-  return [ref, w] as const;
-}
-
 function ViewsChart({ data, k, setK }: { data: Data; k: SeriesKey; setK: (k: SeriesKey) => void }) {
-  const [box, W] = useWidth<HTMLDivElement>();
-  const [hover, setHover] = useState<number | null>(null);
   const opts = (Object.keys(data.series) as SeriesKey[]).map((x) => [x, data.series[x]!.label] as const);
-  const s = data.series[k] ?? data.series[opts[0]?.[0]];
+  const key = k in data.series ? k : opts[0]?.[0];
+  const s = key ? data.series[key] : undefined;
   if (!s) return <section className="card an-card"><h2>Views over time</h2><Empty icon={<ChartLineUp size={22} />} title="No daily numbers yet">They appear once a connected account has posts.</Empty></section>;
-  const H = 240, L = 44, R = 10, T = 26, B = 26;
-  const n = s.cur.length, max = niceMax(Math.max(1, ...s.cur, ...s.prev));
-  const x = (i: number) => L + (n === 1 ? 0 : (i / (n - 1)) * (W - L - R));
-  const y = (v: number) => T + (1 - v / max) * (H - T - B);
-  const cur = s.cur.map((v, i) => [x(i), y(v)] as [number, number]);
-  const prev = s.prev.map((v, i) => [x(i), y(v)] as [number, number]);
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => t * max);
-  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((W - L) / 70))));
-  const pick = (clientX: number) => {
-    const r = box.current!.getBoundingClientRect();
-    setHover(Math.max(0, Math.min(n - 1, Math.round(((clientX - r.left - L) / (W - L - R)) * (n - 1)))));
-  };
-  const h = hover;
   const total = s.cur.reduce((a, b) => a + b, 0), totalPrev = s.prev.reduce((a, b) => a + b, 0);
   return (
     <section className="card an-card an-chart-card" aria-labelledby="an-views-h">
       <div className="card-head">
         <div><h2 id="an-views-h">Views over time</h2><p className="sub">{full(total)} in {data.range} days <Trend v={change(total, totalPrev)} size="sm" /></p></div>
-        <Select className="an-sel" size="sm" label="Channel" value={k in data.series ? k : opts[0][0]} onChange={setK} options={opts} />
+        <Select className="an-sel" size="sm" label="Channel" value={key!} onChange={setK} options={opts} />
       </div>
-      <div ref={box} className="an-chart" onPointerMove={(e) => pick(e.clientX)} onPointerLeave={() => setHover(null)}
-        tabIndex={0} role="img" aria-label={`${s.label}, ${data.range} days: ${full(total)} in all, against ${full(totalPrev)} the period before. Arrow keys read each day.`}
-        onKeyDown={(e) => { if (e.key === "ArrowRight") setHover((v) => Math.min(n - 1, (v ?? -1) + 1)); if (e.key === "ArrowLeft") setHover((v) => Math.max(0, (v ?? n) - 1)); if (e.key === "Escape") setHover(null); }}>
-        <svg width={W} height={H} aria-hidden>
-          {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className="an-grid" /><text x={L - 8} y={y(t) + 4} className="an-axis" textAnchor="end">{compact(t)}</text></g>)}
-          {s.cur.map((_, i) => (i % every === 0 || i === n - 1) && (n - 1 - i >= every / 2 || i === n - 1) ? <text key={i} x={x(i)} y={H - 6} className="an-axis" textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"}>{day(data.days[i])}</text> : null)}
-          <path d={`${curve(cur)} L${x(n - 1)},${y(0)} L${x(0)},${y(0)} Z`} className="an-area" />
-          <path d={curve(prev)} className="an-line prev" />
-          <path d={curve(cur)} className="an-line" />
-          {h !== null && <>
-            <line x1={x(h)} x2={x(h)} y1={T - 6} y2={y(0)} className="an-cross" />
-            <circle cx={x(h)} cy={y(s.prev[h])} r={3.5} className="an-dot prev" />
-            <circle cx={x(h)} cy={y(s.cur[h])} r={4.5} className="an-dot" />
-          </>}
-        </svg>
-        {h !== null && (
-          <div className="an-tip" style={{ left: Math.min(Math.max(x(h), 90), W - 90), top: Math.max(0, y(Math.max(s.cur[h], s.prev[h])) - 70) }} aria-live="polite">
-            <span className="an-tip-d">{day(data.days[h], { weekday: "short", month: "short", day: "numeric" })}</span>
-            <span className="an-tip-row"><i className="k" /><b className="mono">{full(s.cur[h])}</b> this period</span>
-            <span className="an-tip-row"><i className="k prev" /><b className="mono">{full(s.prev[h])}</b> the period before</span>
-            {s.cur[h] !== s.prev[h] && <span className={`an-delta ${s.cur[h] >= s.prev[h] ? "up" : "down"}`}>{s.cur[h] >= s.prev[h] ? "+" : "−"}{full(Math.abs(s.cur[h] - s.prev[h]))}</span>}
-          </div>
-        )}
-      </div>
+      <LineChart labels={data.days.map((d) => day(d))} cur={s.cur} prev={s.prev} name={s.label} tipLabel={(i) => day(data.days[i], { weekday: "short", month: "short", day: "numeric" })} />
       <div className="an-legend">
         <span><i className="k" />Last {data.range} days</span><span><i className="k prev" />The {data.range} days before</span>
         {!s.exact && <span className="dim">By the day each post went out (its views so far)</span>}
       </div>
+    </section>
+  );
+}
+
+/** Followers per account over time: Voicebox keeps one reading a day, so this grows longer than Instagram remembers. */
+function Growth({ data }: { data: Data }) {
+  const accs = data.accounts.filter((a) => data.history.some((h) => h.f[a.id] != null));
+  const [id, setId] = useState(accs[0]?.id ?? "");
+  const a = accs.find((x) => x.id === id) ?? accs[0];
+  const pts = a ? data.history.filter((h) => h.f[a.id] != null) : [];
+  return (
+    <section className="card an-card" aria-labelledby="an-growth-h">
+      <div className="card-head">
+        <div><h2 id="an-growth-h">Followers over time</h2><p className="sub">One reading a day, kept by Voicebox{pts.length ? ` since ${day(pts[0].d, { month: "short", day: "numeric", year: "numeric" })}` : ""}</p></div>
+        {accs.length > 1 && <Select className="an-sel" size="sm" label="Account" value={a?.id ?? ""} onChange={setId} options={accs.map((x) => [x.id, `${NET_NAME[x.network]} · ${x.name}`] as const)} />}
+      </div>
+      {pts.length >= 2 ? <LineChart labels={pts.map((p) => day(p.d))} cur={pts.map((p) => p.f[a!.id])} name="Followers" height={200} tipLabel={(i) => day(pts[i].d, { weekday: "short", month: "short", day: "numeric", year: "numeric" })} />
+        : <p className="small dim">The line starts here: Voicebox notes your follower counts each day you open Analytics (or an AI asks), so the history builds up from today.</p>}
     </section>
   );
 }
@@ -177,42 +112,6 @@ function Audience({ data }: { data: Data }) {
   );
 }
 
-function Heatmap({ data }: { data: Data }) {
-  const vals = data.heat.flat().filter((c) => c.n).map((c) => c.v).sort((a, b) => a - b);
-  const q = (p: number) => vals[Math.min(vals.length - 1, Math.floor(p * vals.length))] ?? 0;
-  const cuts = [q(0.2), q(0.4), q(0.6), q(0.8)];
-  const level = (c: { v: number; n: number }) => (!c.n ? 0 : 1 + cuts.filter((t) => c.v > t).length);
-  const fmt = (v: number) => (data.heat_metric === "engagements" ? compact(v) : `${v >= 10 ? Math.round(v) : v.toFixed(1)}×`);
-  const [tip, setTip] = useState<{ d: number; s: number } | null>(null);
-  const legend = vals.length ? [`Fewest`, fmt(cuts[0]), fmt(cuts[1]), fmt(cuts[2]), fmt(cuts[3]), "Best"] : [];
-  return (
-    <section className="card an-card" aria-labelledby="an-heat-h">
-      <div className="card-head">
-        <div><h2 id="an-heat-h">When to post</h2><p className="sub">How posts did by when they went out ({data.heat_metric}), {data.tz.replace("_", " ")} time</p></div>
-        {!!vals.length && <div className="an-heat-key" aria-label="Legend">{[0, 1, 2, 3, 4, 5].map((l) => <span key={l}><i className={`h${l}`} />{l === 0 ? "No posts" : l === 5 ? "Best" : l === 1 ? "Low" : ""}</span>).filter((_, l) => l === 0 || l === 1 || l === 5)}</div>}
-      </div>
-      {!vals.length ? <Empty icon={<Fire size={22} />} title="Not enough posts yet">After a few posts this shows the days and times that work for you.</Empty> : (
-        <div className="an-heat" role="table" aria-label="Average result by day and time">
-          <div role="row" className="an-heat-r head"><span role="columnheader" />{SLOTS.map((s) => <span role="columnheader" key={s}>{s}</span>)}</div>
-          {data.heat.map((row, d) => (
-            <div role="row" key={d} className="an-heat-r">
-              <span role="rowheader">{DAYS[d]}</span>
-              {row.map((c, s) => (
-                <span key={s} role="cell" tabIndex={c.n ? 0 : -1} className={`an-cell h${level(c)} ${tip?.d === d && tip.s === s ? "hot" : ""}`}
-                  aria-label={`${DAYS[d]} ${SLOTS[s]}: ${c.n ? `${c.n} post${c.n > 1 ? "s" : ""}, ${fmt(c.v)}` : "no posts"}`}
-                  onPointerEnter={() => setTip({ d, s })} onPointerLeave={() => setTip(null)} onFocus={() => setTip({ d, s })} onBlur={() => setTip(null)}>
-                  {tip?.d === d && tip.s === s && <span className="an-cell-tip" role="presentation"><b className="mono">{c.n ? fmt(c.v) : "—"}</b>{DAYS[d]} {SLOTS[s]}–{SLOTS[(s + 1) % 8]} · {c.n} post{c.n === 1 ? "" : "s"}</span>}
-                </span>
-              ))}
-            </div>
-          ))}
-          {legend.length > 0 && <p className="tiny dim" style={{ margin: "10px 0 0" }}>Darker is better. Middle steps: {legend.slice(1, 5).join(", ")}.</p>}
-        </div>
-      )}
-    </section>
-  );
-}
-
 function Insights({ data, onSee }: { data: Data; onSee: (f: Fmt | "all") => void }) {
   const have = FMTS.filter((f) => data.formats[f]);
   const [f, setF] = useState<Fmt | "all">(have[0] ?? "all");
@@ -247,12 +146,6 @@ function Insights({ data, onSee }: { data: Data; onSee: (f: Fmt | "all") => void
       )}
     </section>
   );
-}
-
-function Score({ v }: { v: number | null }) {
-  if (v == null) return <span className="tiny dim">—</span>;
-  const tone = v >= 3 ? "ok" : v >= 1.5 ? "blue" : v >= 0.7 ? "" : "warn";
-  return <span className={`pill ${tone} mono`} title="Views against the usual for this format">{v >= 3 && <Fire size={12} weight="fill" aria-hidden />}{v >= 10 ? Math.round(v) : v.toFixed(1)}×</span>;
 }
 
 function Tips({ tips }: { tips: Tip[] }) {
@@ -327,22 +220,6 @@ function TopPosts({ data, fmt, setFmt }: { data: Data; fmt: Fmt | "all"; setFmt:
       )}
       {rows.length > 10 && <div className="an-pad" style={{ paddingTop: 10 }}><button type="button" className="ghost xs" onClick={() => setMore((m) => !m)}>{more ? "Show the top 10" : `Show ${Math.min(60, rows.length) - 10} more`}</button></div>}
     </section>
-  );
-}
-
-/** A labelled horizontal bar per row, one hue; the value is written beside it, never only in the bar. */
-function Bars({ rows, unit, tone = "c-youtube" }: { rows: Bar[]; unit?: (v: number) => string; tone?: string }) {
-  const max = Math.max(1, ...rows.map((r) => r[1]));
-  return (
-    <div className="an-bars">
-      {rows.map(([k, v]) => (
-        <div key={k} className="an-bar-r">
-          <span className="ellipsis">{k}</span>
-          <span className="an-bar"><i className={tone} style={{ width: `${Math.max(2, (v / max) * 100)}%` }} /></span>
-          <span className="mono">{unit ? unit(v) : compact(v)}</span>
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -431,6 +308,10 @@ export default function Analytics() {
   const [busy, setBusy] = useState(false);
   const [k, setK] = useState<SeriesKey>("youtube");
   const [fmt, setFmt] = useState<Fmt | "all">("all");
+  const [tab, setTabState] = useState<Tab>("overview");
+  // the tab lives in the address (?tab=youtube), so a link or a reload lands on it
+  useEffect(() => { const t = new URLSearchParams(location.search).get("tab"); if (t === "youtube" || t === "instagram") setTabState(t); }, []);
+  const setTab = (t: Tab) => { setTabState(t); const u = new URL(location.href); if (t === "overview") u.searchParams.delete("tab"); else u.searchParams.set("tab", t); history.replaceState(null, "", u); };
   useEffect(() => { try { const r = Number(localStorage.getItem("vb-an-range")); if (r === 7 || r === 28 || r === 90) setRange(r); } catch {} }, []);
   const load = useCallback(async (r: Range, fresh = false) => {
     setBusy(true); setErr(null);
@@ -466,9 +347,19 @@ export default function Analytics() {
           </Empty>
         ) : data && (
           <div className={busy ? "an-wrap busy" : "an-wrap"}>
+            <div className="tabs an-tabs" role="tablist" aria-label="Analytics views">
+              {(["overview", "youtube", "instagram"] as Tab[]).map((t) => (
+                <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
+                  {t !== "overview" && <PlatformBadge net={t} size={18} />}{t === "overview" ? "Overview" : NET_NAME[t]}
+                  <span className="count">{t === "overview" ? data.accounts.length : data.accounts.filter((a) => a.network === t).length}</span>
+                </button>
+              ))}
+              <span className="tiny dim an-upd-tab">{day(data.from)} – {day(data.to)} · updated {ago(data.at)}</span>
+            </div>
+            {tab === "youtube" ? <YouTubeTab key={`yt-${data.at}`} data={data} /> : tab === "instagram" ? <InstagramTab key={`ig-${data.at}`} data={data} /> : <>
             <div className="an-sec-h">
               <h2>My channels</h2>
-              <span className="tiny dim an-upd">{day(data.from)} – {day(data.to)} · updated {ago(data.at)}</span>
+              <span className="tiny dim an-upd">Every platform together</span>
               <Link href="/posts?view=autopilot" className="an-add"><Plus size={14} weight="bold" />Add channel</Link>
             </div>
             <div className="an-board">
@@ -478,10 +369,16 @@ export default function Analytics() {
                 <Audience data={data} />
               </div>
               <div className="an-row">
-                <Heatmap data={data} />
+                <Heatmap id="an-heat-h" heat={data.heat} metric={data.heat_metric} tz={data.tz} />
                 <Insights key={data.at} data={data} onSee={see} />
               </div>
             </div>
+            {data.overview.length > 0 && (
+              <section className="card an-card" aria-labelledby="an-sc-h">
+                <div className="card-head"><div><h2 id="an-sc-h">Scorecard</h2><p className="sub">Every platform together, against the {data.range} days before. Open a platform tab for all of its numbers.</p></div></div>
+                <Scorecard kpis={data.overview} range={data.range} />
+              </section>
+            )}
             <Tips tips={data.tips} />
             <TopPosts data={data} fmt={fmt} setFmt={setFmt} />
             <div className="an-trio">
@@ -493,6 +390,8 @@ export default function Analytics() {
               <Tags data={data} />
               <Rhythm data={data} />
             </div>
+            <Growth key={`g-${data.at}`} data={data} />
+            </>}
           </div>
         )}
     </>

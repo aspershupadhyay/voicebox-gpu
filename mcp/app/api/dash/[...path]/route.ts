@@ -47,6 +47,11 @@ export async function GET(req: Request, ctx: Ctx) {
   const [a, b, c] = g.path;
   try {
     if (a === "publish") return await (await import("@/lib/publish/api")).publishGet(g.path.slice(1));
+    if (a === "analytics" && b === "post" && (c === "youtube" || c === "instagram") && g.path[3] && ID.test(g.path[3])) {
+      // one post in depth: analytics/post/<youtube|instagram>/<platform id>
+      const { getPostDetail } = await import("@/lib/analytics");
+      return Response.json(await getPostDetail(c, g.path[3], new URL(req.url).searchParams.get("fresh") === "1"));
+    }
     if (a === "analytics" && !b) {
       // the Analytics page: ?range=7|28|90, &fresh=1 asks YouTube and Instagram again instead of the 30-minute copy
       const q = new URL(req.url).searchParams;

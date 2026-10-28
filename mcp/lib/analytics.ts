@@ -4,6 +4,10 @@
 // watch time, retention, traffic, audience) and Instagram's insights (reach, views, saves, shares, audience). Anything a
 // connection can't read yet comes back as a `needs` line instead of failing the page.
 //
+// The overview (every platform together) is here; each platform in depth is lib/analytics-yt.ts and analytics-ig.ts,
+// and one post in depth is getPostDetail(). A follower count per account is kept each day (workspace/analytics/
+// history.json), so growth shows past the 30 days Instagram remembers.
+//
 // One report per range is kept in R2 (workspace/analytics/<days>.json) for 30 minutes, so opening the page is quick
 // and the platforms' quotas last; `fresh` asks the platforms again.
 import { getJson, putJson } from "./store";
@@ -14,13 +18,19 @@ import * as YT from "./publish/youtube";
 import { getSpaces } from "./spacestore";
 import { spaceName, type SpaceId } from "./spaces";
 import { listPosts } from "./appwrite";
+import { DAY, hashtagsOf, iso, median, msg, report, settle, sum, windows, type Bar, type Kpi, type Range, type Win } from "./analytics-util";
+import { AGE, DEVICES, TRAFFIC, ytDeep, ytPost, type PostDetail, type YtDeep } from "./analytics-yt";
+import { igDeep, igPost, type IgDeep } from "./analytics-ig";
+
+export { RANGES } from "./analytics-util";
+export type { Bar, Daily, Kpi, Range } from "./analytics-util";
+export type { PostDetail, YtDeep } from "./analytics-yt";
+export type { IgDeep } from "./analytics-ig";
 
 export type Fmt = "yt_video" | "yt_short" | "ig_reel" | "ig_post";
 export const FMTS: Fmt[] = ["yt_video", "yt_short", "ig_reel", "ig_post"];
 /** What the chart can show: a whole network, or one format of it. */
 export type SeriesKey = "youtube" | "instagram" | Fmt;
-export const RANGES = [7, 28, 90] as const;
-export type Range = (typeof RANGES)[number];
 
 export type Item = {
   id: string; account: string; network: "youtube" | "instagram"; fmt: Fmt;
@@ -42,7 +52,6 @@ export type AccountSum = {
   id: string; network: "youtube" | "instagram"; name: string; handle: string | null; avatar: string | null;
   followers: number | null; gained: number | null; lost: number | null; prev_gained: number | null; posts: number | null;
 };
-export type Bar = [string, number];
 export type Tip = { tone: "ok" | "warn" | "blue" | "violet"; title: string; body: string; href?: string };
 export type Need = { network: "youtube" | "instagram"; text: string; action: "reconnect" | "enable" | "wait" };
 
@@ -57,6 +66,14 @@ export type Analytics = {
   /** 7 days (Sun first) × 8 three-hour slots (12 AM first), in the studio's time zone: how posts that went out then did */
   heat: { v: number; n: number }[][];
   heat_metric: string;
+  /** the same, per network */
+  heat_by: Partial<Record<"youtube" | "instagram", { v: number; n: number }[][]>>;
+  /** every platform together: views, engagement, followers, output, with the period before */
+  overview: Kpi[];
+  /** each platform in depth (one per connected account) */
+  youtube: YtDeep[]; instagram: IgDeep[];
+  /** followers per account, one point a day, kept by Voicebox (newest last) */
+  history: { d: string; f: Record<string, number> }[];
   yt: { traffic: Bar[]; countries: Bar[]; ages: Bar[]; genders: Bar[]; devices: Bar[]; subs_per_1k: number | null; avg_pct: number | null } | null;
   ig: { countries: Bar[]; cities: Bar[]; ages: Bar[]; genders: Bar[]; online: number[] | null; reach: number | null; interactions: number | null } | null;
   lengths: { label: string; n: number; median: number }[];
@@ -67,51 +84,13 @@ export type Analytics = {
   needs: Need[];
 };
 
-const DAY = 864e5;
-const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
-const median = (xs: number[]) => {
-  if (!xs.length) return 0;
-  const s = [...xs].sort((a, b) => a - b), m = s.length >> 1;
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-};
-const sum = (xs: (number | null | undefined)[]) => xs.reduce<number>((a, b) => a + (b ?? 0), 0);
-const settle = async <T>(p: Promise<T>): Promise<T | null> => p.catch(() => null);
-const msg = (e: unknown) => (e as Error)?.message ?? String(e);
-const hashtagsOf = (s: string) => [...new Set((s.match(/#[\p{L}\p{N}_]+/gu) ?? []).map((h) => h.toLowerCase()))];
-
-/** The window: `range` whole days ending yesterday (today's numbers are still coming in), and the one before it. */
-function windows(range: Range) {
-  const end = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()) - DAY;
-  const start = end - (range - 1) * DAY;
-  const days = Array.from({ length: range }, (_, i) => iso(start + i * DAY));
-  return { start, end, prevStart: start - range * DAY, prevEnd: start - DAY, days };
-}
-
 /* ───────────── YouTube */
 
-type YtReport = { columnHeaders?: { name: string }[]; rows?: (string | number)[][] };
-const YTA = "https://youtubeanalytics.googleapis.com/v2/reports";
-function report(token: string, q: Record<string, string>) {
-  return YT.ytGet<YtReport>(`${YTA}?${new URLSearchParams({ ids: "channel==MINE", ...q })}`, token).then((r) => {
-    const cols = (r.columnHeaders ?? []).map((c) => c.name);
-    return (r.rows ?? []).map((row) => Object.fromEntries(cols.map((c, i) => [c, row[i]])) as Record<string, string | number>);
-  });
-}
 const isoDur = (d?: string) => {
   const m = /P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(d ?? "");
   return m ? (+(m[1] ?? 0)) * 86400 + (+(m[2] ?? 0)) * 3600 + (+(m[3] ?? 0)) * 60 + (+(m[4] ?? 0)) : null;
 };
-const TRAFFIC: Record<string, string> = {
-  YT_SEARCH: "YouTube search", SUGGESTED: "Suggested videos", BROWSE: "Browse & home", SHORTS: "Shorts feed", EXT_URL: "External sites",
-  SUBSCRIBER: "Subscriptions", PLAYLIST: "Playlists", YT_CHANNEL: "Channel pages", NOTIFICATION: "Notifications", NO_LINK_OTHER: "Direct or unknown",
-  RELATED_VIDEO: "Related videos", YT_OTHER_PAGE: "Other YouTube pages", END_SCREEN: "End screens", ANNOTATION: "Cards", HASHTAGS: "Hashtag pages",
-  SOUND_PAGE: "Sound pages", VIDEO_REMIXES: "Remixes", LIVE_REDIRECT: "Live redirects", CAMPAIGN_CARD: "Campaign cards", ADVERTISING: "Ads",
-  PRODUCT_PAGE: "Product pages", IMMERSIVE_LIVE: "Live feed", SHORTS_CONTENT_LINKS: "Links in Shorts",
-};
-const DEVICES: Record<string, string> = { MOBILE: "Phone", DESKTOP: "Computer", TABLET: "Tablet", TV: "TV", GAME_CONSOLE: "Console", UNKNOWN_PLATFORM: "Other" };
-const AGE = (s: string) => s.replace("age", "").replace("-", "–").replace("65–", "65+");
-
-type YtOut = { acc: AccountSum; items: Item[]; series: Partial<Record<SeriesKey, { cur: number[]; prev: number[]; exact: boolean }>>; fmt: Partial<Record<Fmt, FmtSum>>; yt: NonNullable<Analytics["yt"]>; needs: Need[] };
+type YtOut = { token: string; analytics: boolean; acc: AccountSum; items: Item[]; series: Partial<Record<SeriesKey, { cur: number[]; prev: number[]; exact: boolean }>>; fmt: Partial<Record<Fmt, FmtSum>>; yt: NonNullable<Analytics["yt"]>; needs: Need[] };
 
 async function youtube(a: Account & { tokens: Parameters<typeof YT.accessToken>[0]["tokens"] }, range: Range, shortsOf: Set<string>): Promise<YtOut> {
   const w = windows(range);
@@ -250,11 +229,11 @@ async function youtube(a: Account & { tokens: Parameters<typeof YT.accessToken>[
     followers: ch?.statistics?.subscriberCount != null ? Number(ch.statistics.subscriberCount) : a.subscribers ?? null,
     gained, lost, prev_gained: prevGained, posts: ch?.statistics?.videoCount != null ? Number(ch.statistics.videoCount) : null,
   };
-  return { acc, items, series, fmt, yt, needs };
+  return { token, acc, items, series, fmt, yt, needs, analytics };
 }
 
 /** Views of what went out each day (lifetime), for when there's no daily report. */
-function byPublishDay(items: Item[], w: ReturnType<typeof windows>, range: Range) {
+function byPublishDay(items: Item[], w: Win, range: Range) {
   const cur = new Array(range).fill(0), prev = new Array(range).fill(0);
   for (const i of items) {
     const d = Math.floor((i.at - w.start) / DAY), p = Math.floor((i.at - w.prevStart) / DAY);
@@ -271,7 +250,7 @@ type Insight = { name: string; values?: { value: number | Record<string, number>
 const val = (x?: Insight) => (x?.total_value?.value ?? (typeof x?.values?.[0]?.value === "number" ? (x.values[0].value as number) : null));
 const isPerm = (m: string) => /permission|\(#10\)|\(#200\)|scope|not authorized/i.test(m);
 
-type IgOut = { acc: AccountSum; items: Item[]; series: YtOut["series"]; fmt: Partial<Record<Fmt, FmtSum>>; ig: NonNullable<Analytics["ig"]>; needs: Need[] };
+type IgOut = { token: string; insights: boolean; acc: AccountSum; items: Item[]; series: YtOut["series"]; fmt: Partial<Record<Fmt, FmtSum>>; ig: NonNullable<Analytics["ig"]>; needs: Need[] };
 
 async function instagram(a: Account & { tokens: Parameters<typeof IG.accessToken>[0]["tokens"] }, range: Range): Promise<IgOut> {
   const w = windows(range);
@@ -388,7 +367,7 @@ async function instagram(a: Account & { tokens: Parameters<typeof IG.accessToken
     id: a.id, network: "instagram", name: a.name, handle: a.handle, avatar: a.avatar,
     followers: me.followers_count ?? a.subscribers ?? null, gained, lost: null, prev_gained: prevGained, posts: me.media_count ?? null,
   };
-  return { acc, items, series, fmt, ig, needs };
+  return { token, insights, acc, items, series, fmt, ig, needs };
 }
 
 /* ───────────── putting it together */
@@ -418,8 +397,11 @@ export async function buildAnalytics(range: Range): Promise<Analytics> {
 
   const out: Analytics = {
     at: Date.now(), range, from: iso(w.start), to: iso(w.end), tz, accounts: [], formats: {}, days: w.days, series: {}, items: [],
-    heat: [], heat_metric: "", yt: null, ig: null, lengths: [], tags: [], rhythm: [], gaps: [], tips: [], needs: [],
+    heat: [], heat_metric: "", heat_by: {}, overview: [], youtube: [], instagram: [], history: [],
+    yt: null, ig: null, lengths: [], tags: [], rhythm: [], gaps: [], tips: [], needs: [],
   };
+  // each platform in depth runs once the posts are scored
+  const deep: (() => Promise<void>)[] = [];
   const parts: Partial<Record<SeriesKey, { cur: number[]; prev: number[]; exact: boolean }>>[] = [];
   const fmts: Partial<Record<Fmt, FmtSum>>[] = [];
   await Promise.all(accounts.map(async (acc) => {
@@ -430,10 +412,12 @@ export async function buildAnalytics(range: Range): Promise<Analytics> {
         const r = await youtube(a, range, shortsOf);
         out.accounts.push(r.acc); out.items.push(...r.items); parts.push(r.series); fmts.push(r.fmt); out.needs.push(...r.needs);
         out.yt = out.yt ?? r.yt;
+        if (r.analytics) deep.push(async () => { out.youtube.push(await ytDeep(r.token, r.acc, r.items, w, range)); });
       } else {
         const r = await instagram(a, range);
         out.accounts.push(r.acc); out.items.push(...r.items); parts.push(r.series); fmts.push(r.fmt); out.needs.push(...r.needs);
         out.ig = out.ig ?? r.ig;
+        if (r.insights) deep.push(async () => { out.instagram.push(await igDeep(r.token, r.acc, r.items, w, range)); });
       }
     } catch (e) {
       out.accounts.push({ id: a.id, network: a.network, name: a.name, handle: a.handle, avatar: a.avatar, followers: a.subscribers ?? null, gained: null, lost: null, prev_gained: null, posts: null });
@@ -467,14 +451,24 @@ export async function buildAnalytics(range: Range): Promise<Analytics> {
   // when to post: how posts that went out in each slot did (the viral signal, else engagement)
   const scored = out.items.some((i) => i.score !== null);
   out.heat_metric = scored ? "times your usual views" : "engagements";
-  const cells = Array.from({ length: 7 }, () => Array.from({ length: 8 }, () => ({ t: 0, n: 0 })));
-  for (const i of out.items) {
-    const z = zoned(i.at, tz);
-    const v = scored ? i.score : i.likes + i.comments + (i.shares ?? 0) + (i.saves ?? 0);
-    if (v == null) continue;
-    cells[z.day][Math.floor(z.hour / 3)].t += v; cells[z.day][Math.floor(z.hour / 3)].n++;
-  }
-  out.heat = cells.map((r) => r.map((c) => ({ v: c.n ? Math.round((c.t / c.n) * 100) / 100 : 0, n: c.n })));
+  const heatOf = (items: Item[]) => {
+    const cells = Array.from({ length: 7 }, () => Array.from({ length: 8 }, () => ({ t: 0, n: 0 })));
+    for (const i of items) {
+      const z = zoned(i.at, tz);
+      const v = scored ? i.score : i.likes + i.comments + (i.shares ?? 0) + (i.saves ?? 0);
+      if (v == null) continue;
+      cells[z.day][Math.floor(z.hour / 3)].t += v; cells[z.day][Math.floor(z.hour / 3)].n++;
+    }
+    return cells.map((r) => r.map((c) => ({ v: c.n ? Math.round((c.t / c.n) * 100) / 100 : 0, n: c.n })));
+  };
+  out.heat = heatOf(out.items);
+  for (const n of ["youtube", "instagram"] as const) if (out.items.some((i) => i.network === n)) out.heat_by[n] = heatOf(out.items.filter((i) => i.network === n));
+
+  await Promise.all(deep.map((f) => f().catch(() => null)));
+  out.youtube.sort((a, b) => a.account.name.localeCompare(b.account.name));
+  out.instagram.sort((a, b) => a.account.name.localeCompare(b.account.name));
+  out.overview = overviewOf(out, w);
+  out.history = await keepHistory(out.accounts);
 
   // what length works (video, any network that tells the length)
   const timed = out.items.filter((i) => i.duration && (i.views ?? 0) > 0);
@@ -512,6 +506,62 @@ export async function buildAnalytics(range: Range): Promise<Analytics> {
 
   out.tips = tipsFor(out, rules.crosspost.length > 0, await listPosts({ limit: 100 }).catch(() => []));
   return out;
+}
+
+/** Every platform together, for the overview scorecard (and for an AI deciding where to put effort). */
+function overviewOf(a: Analytics, w: Win): Kpi[] {
+  const kp = (deep: { kpis: Kpi[] }[], key: string, which: "value" | "prev") => {
+    const got = deep.map((d) => d.kpis.find((k) => k.key === key)?.[which]).filter((v) => v != null) as number[];
+    return got.length ? sum(got) : null;
+  };
+  const both = (yk: string, ik: string, which: "value" | "prev") => {
+    const y = kp(a.youtube, yk, which), i = kp(a.instagram, ik, which);
+    return y == null && i == null ? null : (y ?? 0) + (i ?? 0);
+  };
+  // without the deep reports, what the format cards know
+  const fmtViews = (which: "value" | "prev") => sum(Object.values(a.formats).map((f) => (f!.a.label === "Views" ? f!.a[which] : 0)));
+  const views = both("views", "views", "value") ?? fmtViews("value"), pViews = both("views", "views", "prev") ?? fmtViews("prev");
+  const eng = (which: "value" | "prev") => {
+    const y = ["likes", "comments", "shares"].map((k) => kp(a.youtube, k, which)), i = kp(a.instagram, "interactions", which);
+    return y.every((v) => v == null) && i == null ? null : sum(y) + (i ?? 0);
+  };
+  const followers = sum(a.accounts.map((x) => x.followers));
+  const net = sum(a.accounts.map((x) => (x.gained ?? 0) - (x.lost ?? 0)));
+  const posted = (s: number, e: number) => a.items.filter((i) => i.at >= s && i.at < e + DAY).length;
+  const score = (s: number, e: number) => { const xs = a.items.filter((i) => i.at >= s && i.at < e + DAY && i.score != null).map((i) => i.score!); return xs.length ? median(xs) : null; };
+  const hits = (s: number, e: number) => a.items.filter((i) => i.at >= s && i.at < e + DAY && (i.score ?? 0) >= 2).length;
+  const r = (v: number | null, d = 1) => (v == null || !isFinite(v) ? null : Math.round(v * 10 ** d) / 10 ** d);
+  const e = eng("value"), pe = eng("prev");
+  const nonF = kp(a.instagram, "non_follower_reach", "value");
+  const out: Kpi[] = [
+    { key: "views", label: "Views, every platform", group: "Reach", value: views, prev: pViews, about: "YouTube views plus Instagram views." },
+    { key: "reach", label: "Instagram accounts reached", group: "Reach", value: kp(a.instagram, "reach", "value"), prev: kp(a.instagram, "reach", "prev"), about: "Unique Instagram accounts that saw something." },
+    { key: "non_follower", label: "Instagram reach from non-followers", group: "Reach", value: nonF, prev: null, unit: "pct", about: "How far past your followers Instagram is taking you." },
+    { key: "watch_h", label: "YouTube watch hours", group: "Reach", value: kp(a.youtube, "watch_h", "value"), prev: kp(a.youtube, "watch_h", "prev"), unit: "h", about: "Hours watched on YouTube." },
+    { key: "engagements", label: "Engagements", group: "Engagement", value: e, prev: pe, about: "YouTube likes, comments and shares plus Instagram interactions." },
+    { key: "er", label: "Engagement rate", group: "Engagement", value: r(e != null && views ? (e / views) * 100 : null, 2), prev: r(pe != null && pViews ? (pe / pViews) * 100 : null, 2), unit: "pct", about: "Engagements ÷ views across platforms." },
+    { key: "shares", label: "Shares", group: "Engagement", value: both("shares", "shares", "value"), prev: both("shares", "shares", "prev"), about: "Shares on both platforms: the clearest sign content travels." },
+    { key: "followers", label: "Followers, every platform", group: "Growth", value: followers, prev: null, about: "YouTube subscribers plus Instagram followers." },
+    { key: "net", label: "Net new followers", group: "Growth", value: a.accounts.some((x) => x.gained != null) ? net : null, prev: a.accounts.some((x) => x.prev_gained != null) ? sum(a.accounts.map((x) => x.prev_gained)) : null, about: "Gained minus lost, every platform (Instagram unfollows are counted on its own tab)." },
+    { key: "posts", label: "Posts published", group: "Output", value: posted(w.start, w.end), prev: posted(w.prevStart, w.prevEnd), about: "Everything that went out on a connected account." },
+    { key: "median_score", label: "Median score of new posts", group: "Output", value: r(score(w.start, w.end), 2), prev: r(score(w.prevStart, w.prevEnd), 2), unit: "x", about: "How the period's posts did against your usual: above 1 means the new work beats the old." },
+    { key: "hits", label: "Posts that took off (2× or more)", group: "Output", value: hits(w.start, w.end), prev: hits(w.prevStart, w.prevEnd), about: "Posts with at least twice your usual views." },
+  ];
+  return out.filter((k) => k.value != null);
+}
+
+const HISTORY = "workspace/analytics/history.json";
+/** Followers per account, one point a day (the latest reading of the day wins), two years at most. */
+async function keepHistory(accounts: AccountSum[]) {
+  const h = (await getJson<{ d: string; f: Record<string, number> }[]>(HISTORY).catch(() => null)) ?? [];
+  const today = iso(Date.now());
+  const f = Object.fromEntries(accounts.filter((x) => x.followers != null).map((x) => [x.id, x.followers!]));
+  if (!Object.keys(f).length) return h;
+  const last = h.at(-1);
+  if (last?.d === today) last.f = { ...last.f, ...f }; else h.push({ d: today, f });
+  const kept = h.slice(-730);
+  await putJson(HISTORY, kept).catch(() => null);
+  return kept;
 }
 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
@@ -587,4 +637,28 @@ export async function getAnalytics(range: Range, fresh = false): Promise<Analyti
   const a = await buildAnalytics(range);
   await putJson(KEY(range), a).catch(() => null);
   return { ...a, cached: false };
+}
+
+/** One post in depth (YouTube: retention curve, views by day since upload, traffic; Instagram: every metric for its
+ *  type), kept 30 minutes. `id` is the platform's id for it, as in Analytics.items. */
+export async function getPostDetail(network: "youtube" | "instagram", id: string, fresh = false): Promise<PostDetail> {
+  const key = `workspace/analytics/posts/${network}-${id.replace(/[^A-Za-z0-9_-]/g, "_")}.json`;
+  if (!fresh) {
+    const kept = await getJson<PostDetail & { kept: number }>(key).catch(() => null);
+    if (kept && Date.now() - kept.kept < FRESH_MS) return kept;
+  }
+  const report28 = await getJson<Analytics>(KEY(28)).catch(() => null);
+  const item = report28?.items.find((i) => i.id === id && i.network === network);
+  const accounts = (await listAccounts()).filter((a) => a.network === network && (!item || a.id === item.account));
+  let last: unknown = new Error(`No ${network === "youtube" ? "YouTube channel" : "Instagram account"} connected`);
+  for (const acc of accounts) {
+    const a = await getAccount(acc.id);
+    if (!a) continue;
+    try {
+      const d = network === "youtube" ? await ytPost(await YT.accessToken(a), id, item) : await igPost(await IG.accessToken(a), id, item);
+      await putJson(key, { ...d, kept: Date.now() }).catch(() => null);
+      return d;
+    } catch (e) { last = e; }
+  }
+  throw last;
 }
