@@ -46,7 +46,7 @@ function Result({ jobId, id, name, src, heard, duration, match }: { jobId: strin
       {src ? <Player src={src} words={words} duration={duration} /> : <div className="words">{heard}</div>}
       {cues.length > 0 && (
         <details style={{ marginTop: 12 }}>
-          <summary className="dim small" style={{ cursor: "pointer" }}>{cues.length} subtitle cues</summary>
+          <summary className="dim small" style={{ cursor: "var(--cur-pointer, pointer)" }}>{cues.length} subtitle cues</summary>
           <table className="table small" style={{ marginTop: 8 }}><tbody>
             {cues.map((c, i) => <tr key={i}><td className="mono dim" style={{ width: 150, whiteSpace: "nowrap" }}>{c.s.toFixed(2)} → {c.e.toFixed(2)}</td><td>{c.text}</td></tr>)}
           </tbody></table>

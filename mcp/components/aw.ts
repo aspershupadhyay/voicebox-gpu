@@ -35,6 +35,7 @@ export async function signIn(email: string, password: string, name?: string) {
 }
 
 export async function signOut() {
+  (await import("./cache")).clearCache();
   await aw().account.deleteSession({ sessionId: "current" }).catch(() => {});
   await fetch("/api/login", { method: "DELETE" });
 }

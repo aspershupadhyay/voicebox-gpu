@@ -140,10 +140,15 @@ status and history under it, and the actions in a footer. It saves as you type.
 - Pages rise in once (0.3 s). Hover changes colour or border, never layout.
 - Only live things loop: the GPU meter, a recording, a running job. `prefers-reduced-motion` stops them all, including
   the login's reading animation.
-- Pixel icons (`PixelIcon`) are the icons of the frame. Each has its own short move on hover or focus (`data-move`, in
-  globals.css), never the same move twice. The page scenes loop slowly (twinkles, steam, a breathing lamp): calm, cozy.
-- Loading is pixel: `.skel` is a flat tile with pixel static and a stepped band of pixel blocks; `PixelLoader` (three
-  hopping pixels) for small waits. No shimmer gradients.
+- The frame's icons are Phosphor, duotone, with `className="mv" data-move="…"`: the soft fill fades in on hover and on
+  the current page, and each icon has its own springy move (globals.css, "icons in the frame"). The page scenes loop
+  slowly (twinkles, steam, a breathing lamp): calm, cozy.
+- Loading should go unnoticed: `api()` keeps a copy of every read (`components/cache.ts`), pages seed from it with
+  `useSeed`, the report and live numbers come back from IndexedDB. `.skel` only appears after 180 ms and breathes;
+  `PixelLoader` (three dots) for small waits. No shimmer, no gradient.
+- Charts use one accent, `--chart`, over the surface: lines draw in, the last point carries a ring, hover shows a band,
+  a crosshair and the value on the axis; columns and bars grow in. Values are written beside, never only in, the marks.
+- Your character (`PixelAvatar` with `char`) and your cursor are set in Settings → Profile → Look (`components/look.tsx`).
 
 ## Phones
 

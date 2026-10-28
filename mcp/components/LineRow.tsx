@@ -71,7 +71,7 @@ export default function LineRow({ jobId, line, audio, slug, onEnded, playRef, wo
           {line.review && line.review.fixed > 0 && <span className="pill ok" title="The review heard a sentence miss the script or the voice and re-voiced it">fixed {line.review.fixed}</span>}
           {line.takes && line.takes.n > 1 && <span className="pill" title={`Best of ${line.takes.n}: picked take ${line.takes.picked.join(", ")} (per sentence)`}>best of {line.takes.n}</span>}
           {line.engine && <span className="pill" title="Voiced by a different engine in the same voice">{line.engine}</span>}
-          {line.match != null && <button className={`pill ${matchClass(line.match)}`} style={{ cursor: "pointer" }} onClick={() => setShowHeard(!showHeard)} title="How closely the subtitles match your script (click to see what was heard)">match {pct(line.match)}</button>}
+          {line.match != null && <button className={`pill ${matchClass(line.match)}`} style={{ cursor: "var(--cur-pointer, pointer)" }} onClick={() => setShowHeard(!showHeard)} title="How closely the subtitles match your script (click to see what was heard)">match {pct(line.match)}</button>}
         </div>
         <div className="dl">
           {rate && audio && <Rate jobId={jobId} line={line} voice={rate} />}

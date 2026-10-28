@@ -89,7 +89,7 @@ function StepChart({ labels, series, height = 230, tip }: { labels: string[]; se
         {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className="an-grid" /><text x={L - 8} y={y(t) + 4} className="an-axis" textAnchor="end">{compact(t)}</text></g>)}
         {labels.map((lb, i) => i % every === 0 ? <text key={i} x={x(i) + bw / 2} y={H - 6} className="an-axis" textAnchor="middle">{lb}</text> : null)}
         {series[0] && <path d={`${path(series[0].values)} V${y(Math.max(low, 0))} H${x(0)} Z`} className={`fx-area t-${series[0].tone}`} />}
-        {series.map((s) => <path key={s.name} d={path(s.values)} className={`fx-step t-${s.tone}`} />)}
+        {series.map((s) => <path key={s.name} d={path(s.values)} className={`fx-step draw t-${s.tone}`} pathLength={1} />)}
         {h != null && <><line x1={x(h) + bw / 2} x2={x(h) + bw / 2} y1={T} y2={H - B} className="fx-cross" />{series.map((s) => <circle key={s.name} cx={x(h) + bw / 2} cy={y(s.values[h])} r={4} className={`fx-dot t-${s.tone}`} />)}</>}
       </svg>
       {h != null && (

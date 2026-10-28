@@ -17,6 +17,7 @@ import { Bars, Columns, compact, DailyCard, DAYS, day, fmtUnit, full, Heatmap, h
 import { PlatformBadge } from "./platform";
 import { Select } from "./pop";
 import { Empty, Notice } from "./ui";
+import { savedRange, useReport } from "./useReport";
 
 const region = (c: string) => { try { return new Intl.DisplayNames(undefined, { type: "region" }).of(c) ?? c; } catch { return c; } };
 
@@ -116,8 +117,53 @@ export function PostList({ items, net, open, fmt0 = "all" }: { items: Item[]; ne
 }
 
 /** One post in depth, in a drawer. */
+/** This post against your usual for its format: the median of your other posts of the same kind, metric by metric. */
+function VsUsual({ item, peers }: { item: Item; peers: Item[] }) {
+  const same = peers.filter((p) => p.fmt === item.fmt && p.id !== item.id);
+  if (same.length < 3) return null;
+  const med = (f: (i: Item) => number | null | undefined) => {
+    const v = same.map(f).filter((x): x is number => x != null && isFinite(x)).sort((a, b) => a - b);
+    return v.length ? v[Math.floor(v.length / 2)] : null;
+  };
+  const rows: [string, number | null | undefined, number | null, (v: number) => string][] = [
+    ["Views", item.views ?? item.reach, med((i) => i.views ?? i.reach), (v) => compact(v)],
+    ["Engagement rate", item.er, med((i) => i.er), (v) => pct(v, 1)],
+    ["Likes", item.likes, med((i) => i.likes), (v) => compact(v)],
+    ["Comments", item.comments, med((i) => i.comments), (v) => compact(v)],
+    ["Shares", item.shares, med((i) => i.shares), (v) => compact(v)],
+    ...(item.network === "instagram" ? [["Saves", item.saves, med((i) => i.saves), (v: number) => compact(v)] as [string, number | null | undefined, number | null, (v: number) => string]] : [["New subscribers", item.subs, med((i) => i.subs), (v: number) => compact(v)] as [string, number | null | undefined, number | null, (v: number) => string]]),
+    ...(item.avg_pct != null ? [["Average % viewed", item.avg_pct, med((i) => i.avg_pct), (v: number) => `${Math.round(v)}%`] as [string, number | null | undefined, number | null, (v: number) => string]] : []),
+  ];
+  const shown = rows.filter(([, v, m]) => v != null && m != null && m > 0);
+  if (!shown.length) return null;
+  return (
+    <div className="an-dsec">
+      <h3>Against your usual</h3>
+      <p className="small dim">Each number next to the median of your other {same.length} {spaceName(item.fmt)} posts. The bar is how far above or below it is.</p>
+      <div className="an-vs">
+        {shown.map(([k, v, m, f]) => {
+          const r = (v as number) / (m as number), w = Math.min(100, Math.abs(Math.log2(r)) * 33);
+          return (
+            <div key={k} className="an-vs-r">
+              <span>{k}</span>
+              <b className="mono">{f(v as number)}</b>
+              <span className="an-vs-track" aria-hidden><i className={r >= 1 ? "up" : "down"} style={{ width: `${w / 2}%` }} /></span>
+              <span className={`mono an-vs-x ${r >= 1.05 ? "up" : r <= 0.95 ? "down" : ""}`}>{r >= 10 ? Math.round(r) : r.toFixed(1)}× <span className="dim">vs {f(m as number)}</span></span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+type VelKey = "views" | "watch_h" | "likes" | "subs";
+const VEL: Record<VelKey, string> = { views: "Views", watch_h: "Watch hours", likes: "Likes", subs: "New subscribers" };
+
 export function PostDrawer({ item, onClose }: { item: Item; onClose: () => void }) {
   const [d, setD] = useState<PostDetail | null>(null);
+  const [vel, setVel] = useState<VelKey>("views");
+  const { data: rep } = useReport(savedRange());
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     setD(null); setErr(null);
@@ -169,10 +215,29 @@ export function PostDrawer({ item, onClose }: { item: Item; onClose: () => void 
             <div className="an-dsec">
               <h3>Views day by day since it went out</h3>
               <p className="small dim">{v.peak && <>Peak on <b className="an-ink">{day(v.peak, { weekday: "short", month: "short", day: "numeric" })}</b>. </>}{v.first2 != null && <>{Math.round(v.first2)}% of these views came in the first 2 days, {Math.round(v.first7 ?? 0)}% in the first week{v.first2 > 60 ? " (a quick burst: it was pushed early, then stopped)" : v.first2 < 30 ? " (a slow burn: search or suggestions keep finding it)" : ""}.</>}</p>
-              <LineChart labels={v.days.map((x, i) => `Day ${i + 1}`)} cur={v.views} name="Views" height={200} mark={peakI} tipLabel={(i) => `Day ${i + 1} · ${day(v.days[i], { weekday: "short", month: "short", day: "numeric" })}`} />
+              {(["watch_h", "likes", "subs"] as const).some((k) => v[k]?.length) && (
+                <div className="seg an-vel" role="group" aria-label="Metric">
+                  {(Object.keys(VEL) as VelKey[]).filter((k) => k === "views" || v[k]?.length).map((k) => <button key={k} className={vel === k ? "on" : ""} aria-pressed={vel === k} onClick={() => setVel(k)}>{VEL[k]}</button>)}
+                </div>
+              )}
+              <LineChart labels={v.days.map((x, i) => `Day ${i + 1}`)} cur={(vel !== "views" && v[vel]) || v.views} unit={vel === "watch_h" ? "h" : ""} name={VEL[vel !== "views" && v[vel] ? vel : "views"]} height={220} mark={vel === "views" ? peakI : null} tipLabel={(i) => `Day ${i + 1} · ${day(v.days[i], { weekday: "short", month: "short", day: "numeric" })}`} />
             </div>
           )}
+          {rep && <VsUsual item={item} peers={rep.items} />}
           {d.traffic.length > 0 && <div className="an-dsec"><h3>Where its views came from</h3><Bars rows={d.traffic} unit={share(d.traffic)} /></div>}
+          {!!d.breakdowns?.length && (
+            <div className="an-dsec">
+              <h3>Who watched it, and how</h3>
+              <div className="an-bd">
+                {d.breakdowns.map((b) => (
+                  <div key={b.id} className="an-bd-c">
+                    <h4>{b.title}</h4>{b.sub && <p className="tiny dim">{b.sub}</p>}
+                    <Bars rows={b.id === "countries" ? b.rows.map(([k, x]) => [region(k), x]) : b.rows} unit={b.pct ? (x) => `${Math.round(x)}%` : share(b.rows)} limit={6} tone={b.id === "sharing" ? "c-ok" : "c-youtube"} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {d.actions.length > 0 && <div className="an-dsec"><h3>What people did on your profile after</h3><Bars rows={d.actions} tone="c-instagram" /></div>}
         </>}
       </aside>

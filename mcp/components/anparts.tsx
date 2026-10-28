@@ -107,13 +107,24 @@ export function LineChart({ labels, cur, prev, unit = "", name, prevName = "the 
         <svg width={W} height={H} aria-hidden>
           {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className="an-grid" /><text x={L - 8} y={y(t) + 4} className="an-axis" textAnchor="end">{fmtUnit(t, unit)}</text></g>)}
           {labels.map((lb, i) => (i % every === 0 || i === n - 1) && (n - 1 - i > every / 2 || i === n - 1) ? <text key={i} x={x(i)} y={H - 6} className="an-axis" textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"}>{lb}</text> : null)}
-          <path d={`${curve(pc)} L${x(n - 1)},${y(0)} L${x(0)},${y(0)} Z`} className="an-area" />
+          {h !== null && n > 1 && <rect x={x(h) - (W - L - R) / (n - 1) / 2} y={T - 6} width={(W - L - R) / (n - 1)} height={y(0) - T + 6} className="an-band" />}
+          <path key={`a${n}-${max}`} d={`${curve(pc)} L${x(n - 1)},${y(0)} L${x(0)},${y(0)} Z`} className="an-area" />
           {pp && <path d={curve(pp)} className="an-line prev" />}
-          <path d={curve(pc)} className="an-line" />
-          {mark != null && mark >= 0 && mark < n && <circle cx={x(mark)} cy={y(cur[mark])} r={4.5} className="an-dot mark" />}
+          <path key={`l${n}-${max}`} d={curve(pc)} className="an-line draw" pathLength={1} />
+          {mark != null && mark >= 0 && mark < n && <g className="an-peak">
+            <circle cx={x(mark)} cy={y(cur[mark])} r={4.5} className="an-dot mark" />
+            <text x={Math.min(Math.max(x(mark), L + 24), W - R - 24)} y={Math.max(12, y(cur[mark]) - 12)} textAnchor="middle" className="an-peak-t">{fmtUnit(cur[mark], unit)}</text>
+          </g>}
+          {h === null && n > 1 && <g className="an-end">
+            <circle cx={x(n - 1)} cy={y(cur[n - 1])} r={9} className="an-end-ring" />
+            <circle cx={x(n - 1)} cy={y(cur[n - 1])} r={4} className="an-dot" />
+          </g>}
           {h !== null && <>
             <line x1={x(h)} x2={x(h)} y1={T - 6} y2={y(0)} className="an-cross" />
+            <line x1={L} x2={x(h)} y1={y(cur[h])} y2={y(cur[h])} className="an-cross h" />
+            <g className="an-ychip"><rect x={1} y={y(cur[h]) - 9} width={L - 6} height={18} rx={5} /><text x={L - 9} y={y(cur[h]) + 4} textAnchor="end">{fmtUnit(cur[h], unit)}</text></g>
             {prev && <circle cx={x(h)} cy={y(prev[h])} r={3.5} className="an-dot prev" />}
+            <circle cx={x(h)} cy={y(cur[h])} r={8} className="an-dot-halo" />
             <circle cx={x(h)} cy={y(cur[h])} r={4.5} className="an-dot" />
           </>}
         </svg>
@@ -140,7 +151,7 @@ export function Columns({ labels, values, unit = "", name, best = true, every = 
       {values.map((v, i) => (
         <div key={i} role="listitem" className="an-col" tabIndex={0} aria-label={`${labels[i]}: ${fmtUnit(v, unit, false)}`}
           onPointerEnter={() => setTip(i)} onPointerLeave={() => setTip(null)} onFocus={() => setTip(i)} onBlur={() => setTip(null)}>
-          <span className="an-col-bar"><i className={i === top && v > 0 ? "top" : ""} style={{ height: `${Math.max(2, (v / max) * 100)}%` }} /></span>
+          <span className="an-col-bar"><i className={i === top && v > 0 ? "top" : ""} style={{ height: `${Math.max(2, (v / max) * 100)}%`, animationDelay: `${Math.min(i, 24) * 22}ms` }}>{tip === null && i === top && v > 0 && <em className="an-col-v mono">{fmtUnit(v, unit)}</em>}</i></span>
           <span className="an-col-l">{i % every === 0 ? labels[i] : ""}</span>
           {tip === i && <span className="an-cell-tip" role="presentation"><b className="mono">{fmtUnit(v, unit, false)}</b>{labels[i]}</span>}
         </div>
@@ -159,7 +170,7 @@ export function Bars({ rows, unit, tone = "c-youtube", limit = 10 }: { rows: Bar
       {shown.map(([k, v], i) => (
         <div key={`${k}-${i}`} className="an-bar-r">
           <span className="ellipsis" title={k}>{k}</span>
-          <span className="an-bar"><i className={tone} style={{ width: `${Math.max(2, (v / max) * 100)}%` }} /></span>
+          <span className="an-bar"><i className={tone} style={{ width: `${Math.max(2, (v / max) * 100)}%`, animationDelay: `${Math.min(i, 12) * 40}ms` }} /></span>
           <span className="mono">{unit ? unit(v) : compact(v)}</span>
         </div>
       ))}

@@ -144,8 +144,13 @@ export type PostDetail = {
   /** YouTube: share of the audience still watching at each 1% of the video, and how that compares with similar videos */
   retention: { x: number[]; watch: number[]; relative: number[] } | null;
   /** YouTube: views each day since it went out (up to 60 days) */
-  velocity: { days: string[]; views: number[]; peak: string | null; first2: number | null; first7: number | null } | null;
+  velocity: { days: string[]; views: number[]; peak: string | null; first2: number | null; first7: number | null;
+    /** the same days: hours watched, likes, subscribers gained (when YouTube reports them) */
+    watch_h?: number[]; likes?: number[]; subs?: number[] } | null;
   traffic: Bar[];
+  /** YouTube: this one video sliced every way the Analytics API allows (devices, countries, subscribers or not,
+   *  sharing services, search terms, playback locations, age, gender). `share` rows are percentages already. */
+  breakdowns?: { id: string; title: string; sub?: string; rows: Bar[]; pct?: boolean }[];
   /** Instagram: what people did on the profile after seeing it, story taps, where it was seen */
   actions: Bar[];
   notes: string[];
@@ -160,11 +165,22 @@ export async function ytPost(token: string, id: string, item?: Item): Promise<Po
   const today = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
   const end = Math.min(today - DAY, Math.floor(at / DAY) * DAY + 59 * DAY);
   const f = `video==${id}`;
-  const [tot, ret, days, traffic] = await Promise.all([
+  const life = { startDate: iso(at), endDate: iso(today), filters: f };
+  const [tot, ret, days, traffic, devices, countries, subscribed, sharing, search, playback, demo] = await Promise.all([
     tryReport(token, { startDate: iso(at), endDate: iso(today), metrics: `${CORE},engagedViews`, filters: f }).then((r) => (r.length ? r : tryReport(token, { startDate: iso(at), endDate: iso(today), metrics: CORE, filters: f }))),
     tryReport(token, { startDate: iso(at), endDate: iso(today), dimensions: "elapsedVideoTimeRatio", metrics: "audienceWatchRatio,relativeRetentionPerformance", filters: f }),
-    end >= Math.floor(at / DAY) * DAY ? tryReport(token, { startDate: iso(at), endDate: iso(end), dimensions: "day", metrics: "views", filters: f, sort: "day" }) : Promise.resolve([] as Row[]),
-    tryReport(token, { startDate: iso(at), endDate: iso(today), dimensions: "insightTrafficSourceType", metrics: "views", filters: f, sort: "-views" }),
+    end >= Math.floor(at / DAY) * DAY
+      ? tryReport(token, { startDate: iso(at), endDate: iso(end), dimensions: "day", metrics: "views,estimatedMinutesWatched,likes,subscribersGained", filters: f, sort: "day" })
+          .then((r) => (r.length ? r : tryReport(token, { startDate: iso(at), endDate: iso(end), dimensions: "day", metrics: "views", filters: f, sort: "day" })))
+      : Promise.resolve([] as Row[]),
+    tryReport(token, { ...life, dimensions: "insightTrafficSourceType", metrics: "views", sort: "-views" }),
+    tryReport(token, { ...life, dimensions: "deviceType", metrics: "views", sort: "-views" }),
+    tryReport(token, { ...life, dimensions: "country", metrics: "views", sort: "-views", maxResults: "15" }),
+    tryReport(token, { ...life, dimensions: "subscribedStatus", metrics: "views" }),
+    tryReport(token, { ...life, dimensions: "sharingService", metrics: "shares", sort: "-shares", maxResults: "10" }),
+    tryReport(token, { ...life, dimensions: "insightTrafficSourceDetail", metrics: "views", filters: `${f};insightTrafficSourceType==YT_SEARCH`, sort: "-views", maxResults: "15" }),
+    tryReport(token, { ...life, dimensions: "insightPlaybackLocationType", metrics: "views", sort: "-views" }),
+    tryReport(token, { ...life, dimensions: "ageGroup,gender", metrics: "viewerPercentage" }),
   ]);
   const T = tot[0] ?? {};
   const n = (k: string) => (T[k] == null ? null : Number(T[k]));
@@ -184,6 +200,24 @@ export async function ytPost(token: string, id: string, item?: Item): Promise<Po
   ].filter((x) => x.value != null);
   const r = ret.sort((a, b) => Number(a.elapsedVideoTimeRatio) - Number(b.elapsedVideoTimeRatio));
   const vd: [string, number][] = days.map((d) => [String(d.day), Number(d.views)]);
+  const col = (k: string) => (days.length && days[0][k] != null ? days.map((d) => round(Number(d[k]) / (k === "estimatedMinutesWatched" ? 60 : 1), 1)!) : undefined);
+  const bars = (rows: Row[], dim: string, met: string, map?: Record<string, string>, label?: (k: string) => string): Bar[] =>
+    rows.map((r) => [label ? label(String(r[dim])) : map ? name(map, String(r[dim])) : String(r[dim]), Number(r[met])] as Bar).filter((b) => b[1] > 0);
+  const ages = new Map<string, number>(), genders = new Map<string, number>();
+  for (const r of demo) {
+    const a = AGE(String(r.ageGroup)), g = String(r.gender).toLowerCase().replace("user_specified", "other");
+    ages.set(a, (ages.get(a) ?? 0) + Number(r.viewerPercentage)); genders.set(g[0].toUpperCase() + g.slice(1), (genders.get(g[0].toUpperCase() + g.slice(1)) ?? 0) + Number(r.viewerPercentage));
+  }
+  const breakdowns = [
+    { id: "devices", title: "Devices", sub: "What it was watched on", rows: bars(devices, "deviceType", "views", DEVICES) },
+    { id: "subscribed", title: "Subscribers vs not", sub: "Who watched it", rows: bars(subscribed, "subscribedStatus", "views", { SUBSCRIBED: "Subscribers", UNSUBSCRIBED: "Not subscribed" }) },
+    { id: "countries", title: "Countries", sub: "Top countries by views", rows: bars(countries, "country", "views", undefined, (c) => c) },
+    { id: "search", title: "Search terms", sub: "What people typed before watching it", rows: bars(search, "insightTrafficSourceDetail", "views", undefined, (k) => k) },
+    { id: "playback", title: "Where it played", sub: "Playback locations", rows: bars(playback, "insightPlaybackLocationType", "views", PLAYBACK) },
+    { id: "sharing", title: "Where it was shared", sub: "Shares by service", rows: bars(sharing, "sharingService", "shares", SHARING) },
+    { id: "age", title: "Age", sub: "Share of signed-in viewers", rows: [...ages].sort((x, y) => x[0].localeCompare(y[0])).map(([a, v]) => [a, round(v)!] as Bar).filter((b) => b[1] > 0), pct: true },
+    { id: "gender", title: "Gender", sub: "Share of signed-in viewers", rows: [...genders].map(([g, v]) => [g, round(v)!] as Bar).filter((b) => b[1] > 0), pct: true },
+  ].filter((b) => b.rows.length);
   const total = sum(vd.map((d) => d[1]));
   const peak = vd.length ? vd.reduce((a, b) => (b[1] > a[1] ? b : a))[0] : null;
   const notes: string[] = [];
@@ -202,8 +236,9 @@ export async function ytPost(token: string, id: string, item?: Item): Promise<Po
   return {
     network: "youtube", id, title: v.snippet.title, url: item?.url ?? `https://youtu.be/${id}`, at, kind: item?.fmt === "yt_short" ? "Short" : "Video", kpis,
     retention: r.length ? { x: r.map((x) => Math.round(Number(x.elapsedVideoTimeRatio) * 100)), watch: r.map((x) => round(Number(x.audienceWatchRatio) * 100)!), relative: r.map((x) => round(Number(x.relativeRetentionPerformance), 2)!) } : null,
-    velocity: vd.length ? { days: vd.map((d) => d[0]), views: vd.map((d) => d[1]), peak, first2: total ? round(((vd[0][1] + (vd[1]?.[1] ?? 0)) / total) * 100) : null, first7: total ? round((sum(vd.slice(0, 7).map((d) => d[1])) / total) * 100) : null } : null,
+    velocity: vd.length ? { days: vd.map((d) => d[0]), views: vd.map((d) => d[1]), peak, first2: total ? round(((vd[0][1] + (vd[1]?.[1] ?? 0)) / total) * 100) : null, first7: total ? round((sum(vd.slice(0, 7).map((d) => d[1])) / total) * 100) : null,
+      watch_h: col("estimatedMinutesWatched"), likes: col("likes"), subs: col("subscribersGained") } : null,
     traffic: traffic.map((t) => [name(TRAFFIC, t.insightTrafficSourceType), Number(t.views)] as Bar).filter((b) => b[1] > 0),
-    actions: [], notes,
+    actions: [], notes, breakdowns,
   };
 }

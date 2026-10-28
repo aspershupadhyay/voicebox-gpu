@@ -5,10 +5,11 @@
 import { useCallback, useEffect, useState } from "react";
 import type { LiveView } from "@/lib/live-shared";
 import { api } from "./api";
+import { bigGet, bigSet } from "./cache";
 
 let kept: LiveView | null = null;
 let asking: Promise<LiveView> | null = null;
-const ask = () => (asking ??= api<LiveView>("live").then((r) => { kept = r; return r; }).finally(() => { asking = null; }));
+const ask = () => (asking ??= api<LiveView>("live").then((r) => { kept = r; bigSet("live", r); return r; }).finally(() => { asking = null; }));
 
 const IDLE_MS = 5 * 60_000;
 let lastActive = Date.now();
@@ -25,6 +26,7 @@ export function useLive(every = 30_000) {
   const [paused, setPaused] = useState(false);
   const load = useCallback(() => ask().then((r) => { setData(r); setErr(null); }, (e) => setErr((e as Error).message)), []);
   useEffect(() => {
+    if (!kept) bigGet<LiveView>("live").then((r) => { if (r) setData((d) => d ?? r); });
     let off = false; // paused, as the listeners see it
     const beat = () => {
       off = !watching();

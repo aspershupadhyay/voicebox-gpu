@@ -3,14 +3,15 @@
 // Security, Claude & API. Each tab is a bento of cards. Studio-wide defaults are stored with the library so the dashboard
 // and every MCP client share them; changes collect until you press Save (a bar appears while anything is unsaved, on any
 // tab, and leaving asks first). Security, upload keys and the GPU act at once.
-import { CheckCircle, Copy, Megaphone, SignOut, SlidersHorizontal } from "@phosphor-icons/react";
+import { ChartLineUp, CheckCircle, Code, Copy, Cpu, Megaphone, RocketLaunch, ShieldCheck, SignOut, SlidersHorizontal, UserCircle, Waveform } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { signOut, useMe } from "./aw";
 import Gpu from "./Gpu";
-import { PixelAvatar, PixelIcon, PixelScene } from "./pixel";
-import { api, type MyVoice } from "./api";
+import { PixelAvatar, PixelScene } from "./pixel";
+import { LookCard, useLook } from "./look";
+import { api, useSeed, type MyVoice } from "./api";
 import { useDialog } from "./Dialog";
 import SecurityCard from "./SecurityCard";
 import UploadKeys from "./UploadKeys";
@@ -24,12 +25,12 @@ type S = {
 };
 
 const TABS = [
-  { id: "profile", name: "Profile", icon: "user" },
-  { id: "voice", name: "Voice & sound", icon: "wave" },
-  { id: "publishing", name: "Publishing", icon: "rocket" },
-  { id: "gpu", name: "GPU & engines", icon: "chip" },
-  { id: "security", name: "Security", icon: "shield" },
-  { id: "api", name: "Claude & API", icon: "code" },
+  { id: "profile", name: "Profile", icon: UserCircle, mv: "voices" },
+  { id: "voice", name: "Voice & sound", icon: Waveform, mv: "cc" },
+  { id: "publishing", name: "Publishing", icon: RocketLaunch, mv: "chart" },
+  { id: "gpu", name: "GPU & engines", icon: Cpu, mv: "chip" },
+  { id: "security", name: "Security", icon: ShieldCheck, mv: "trophy" },
+  { id: "api", name: "Claude & API", icon: Code, mv: "rows" },
 ] as const;
 type Tab = (typeof TABS)[number]["id"];
 
@@ -39,14 +40,14 @@ function SetNav({ tab, go }: { tab: Tab; go: (t: Tab) => void }) {
   useEffect(() => { document.getElementById(`set-${tab}`)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [tab]);
   return (
     <nav className="set-nav" aria-label="Settings sections">
-      {TABS.map(({ id, name, icon }) => (
+      {TABS.map(({ id, name, icon: Ic, mv }) => (
         <Link key={id} href={`/settings?tab=${id}`} scroll={false} className={tab === id ? "on" : ""} aria-current={tab === id ? "page" : undefined}
           onClick={(e) => { e.preventDefault(); go(id); }}
           onKeyDown={(e) => {
             const i = TABS.findIndex((t) => t.id === id);
             if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); const n = TABS[(i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]; go(n.id); document.getElementById(`set-${n.id}`)?.focus(); }
           }} id={`set-${id}`}>
-          <PixelIcon name={icon} size={15} />{name}
+          <Ic size={16} weight="duotone" className="mv" data-move={mv} />{name}
         </Link>
       ))}
     </nav>
@@ -60,11 +61,13 @@ export default function Settings() {
   const params = useSearchParams();
   const router = useRouter();
   const me = useMe();
+  const look = useLook();
   const tab = (TABS.some((t) => t.id === params.get("tab")) ? params.get("tab") : "profile") as Tab;
   const go = (t: Tab) => router.replace(`/settings?tab=${t}`, { scroll: false });
   const [saved, setSaved] = useState<S | null>(null);
   const [s, setS] = useState<S | null>(null);
   const [mine, setMine] = useState<MyVoice[]>([]);
+  useSeed<S>("settings", (x) => { setS((c) => c ?? x); setSaved((c) => c ?? x); setLex((c) => c || lexText(x.pronounce)); });
   const [models, setModels] = useState<string[]>([]);
   const [signedIn, setSignedIn] = useState(false);
   const [lex, setLex] = useState("");
@@ -131,7 +134,7 @@ export default function Settings() {
             <section className="card b-4 set-me-card">
               <div className="set-banner"><PixelScene /></div>
               <div className="set-me">
-              <PixelAvatar name={me?.user?.email ?? me?.user?.name ?? "access token"} size={76} />
+              <PixelAvatar name={me?.user?.email ?? me?.user?.name ?? "access token"} char={look.avatar} size={76} />
               <div style={{ minWidth: 0, flex: 1 }}>
                 <h2 className="ellipsis">{me?.user?.name ?? (me ? "Access token" : " ")}</h2>
                 <p className="dim small ellipsis" style={{ margin: "2px 0 0" }}>{me?.user?.email ?? (me ? "Signed in with the access token: studio only, no shared workspace" : " ")}</p>
@@ -145,10 +148,11 @@ export default function Settings() {
             </section>
             <section className="card b-2 set-jump">
               <div className="card-head"><div><h2>Jump to</h2><p className="sub">Where the studio&apos;s other controls live</p></div></div>
-              <Link href="/analytics" className="set-j"><PixelIcon name="chart" size={16} />Grow<span className="dim tiny">analytics, live, rivals</span></Link>
-              <Link href="/posts?view=autopilot" className="set-j"><PixelIcon name="rocket" size={16} />Connected accounts<span className="dim tiny">Posts → Autopilot</span></Link>
-              <button type="button" className="set-j" onClick={() => go("gpu")}><PixelIcon name="chip" size={16} />The GPU<span className="dim tiny">start, stop, engines</span></button>
+              <Link href="/analytics" className="set-j"><ChartLineUp size={17} weight="duotone" className="mv" data-move="chart" />Grow<span className="dim tiny">analytics, live, rivals</span></Link>
+              <Link href="/posts?view=autopilot" className="set-j"><RocketLaunch size={17} weight="duotone" className="mv" data-move="chart" />Connected accounts<span className="dim tiny">Posts → Autopilot</span></Link>
+              <button type="button" className="set-j" onClick={() => go("gpu")}><Cpu size={17} weight="duotone" className="mv" data-move="chip" />The GPU<span className="dim tiny">start, stop, engines</span></button>
             </section>
+            <LookCard name={me?.user?.email ?? me?.user?.name ?? "access token"} />
             <div className="b-3"><SecurityCard part="device" /></div>
             <section className="card b-3">
               <div className="card-head"><div><h2>Your voice settings</h2><p className="sub">Just yours, or the studio&apos;s</p></div><SlidersHorizontal size={18} className="dim" /></div>
