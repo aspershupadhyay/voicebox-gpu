@@ -919,6 +919,34 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
   );
 
   server.registerTool(
+    "analytics",
+    {
+      title: "Channel analytics",
+      description: "How the connected YouTube channel(s) and Instagram account(s) are doing over the last 7, 28 or 90 days, with the period before for comparison (the dashboard's Analytics page). view overview (default): every platform together (scorecard: views, reach, non-follower reach, watch hours, engagements, engagement rate, shares, followers, net growth, posts, median score, hits), per format (YouTube Videos / Shorts, Instagram Reels / Posts), recent posts with views, likes, comments, shares, saves, retention and score (views ÷ the median of its format: 2 = twice the usual, the viral signal), when posts do best (day × 3-hour slot in the studio's time zone, overall and per network), the lengths and hashtags that work, posting rhythm vs weekly goals, follower history and tips. view youtube: every YouTube Analytics metric (views, engaged views, impressions and click rate when YouTube offers them, watch hours, average duration and % viewed, likes, dislikes, comments, shares, playlist saves, subscribers gained/lost/net and per 1k views), daily series, the weekday views land on, content types, traffic sources with the search terms, external sites, related videos and playlists behind them, playback locations, devices, operating systems, subscribers vs not, sharing services, countries, age and gender. view instagram: views, reach, share of reach and views from non-followers, accounts engaged, interactions, likes, comments, shares, saves, replies, follows, unfollows, link taps, rates per 1k, daily reach and new followers, by format, followers online by hour (Pacific), audience as followers / engaged / reached by age, gender, country and city, and live Stories with taps forward, back and exits. view post with network + post_id (an items[].id): one post in depth (YouTube: lifetime totals, retention curve, views by day since upload with peak day and how front-loaded it is, traffic; Instagram: every metric for its type incl. follows, profile visits, watch time, skip rate). needs lists what a connection can't read yet. Use it before planning or writing, so the next posts build on what works. Cached 30 min; fresh: true asks the platforms again.",
+      inputSchema: z.object({
+        view: z.enum(["overview", "youtube", "instagram", "post"]).optional(),
+        range: z.union([z.literal(7), z.literal(28), z.literal(90)]).optional(), fresh: z.boolean().optional(),
+        posts: z.number().int().min(0).max(100).optional().describe("overview: how many recent posts to include, best score first (default 25)"),
+        network: z.enum(["youtube", "instagram"]).optional().describe("view post: the post's network"),
+        post_id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional().describe("view post: the platform id from items[].id"),
+      }),
+    },
+    async ({ view, range, fresh, posts, network, post_id }) => ws(async () => {
+      const lib = await import("@/lib/analytics");
+      if (view === "post") {
+        if (!network || !post_id) throw new Error("view post needs network and post_id (an id from items)");
+        return lib.getPostDetail(network, post_id, !!fresh);
+      }
+      const a = await lib.getAnalytics(range ?? 28, !!fresh);
+      const common = { at: a.at, range: a.range, from: a.from, to: a.to, tz: a.tz, needs: a.needs };
+      if (view === "youtube") return { ...common, channels: a.youtube, best_times: a.heat_by.youtube ?? null, heat_metric: a.heat_metric };
+      if (view === "instagram") return { ...common, accounts: a.instagram, best_times: a.heat_by.instagram ?? null, heat_metric: a.heat_metric };
+      const { youtube: _y, instagram: _i, ...rest } = a;
+      return { ...rest, items: [...a.items].sort((x, y) => (y.score ?? 0) - (x.score ?? 0)).slice(0, posts ?? 25).map(({ thumb: _, ...i }) => i) };
+    }),
+  );
+
+  server.registerTool(
     "publish_post",
     {
       title: "Publish a post",
@@ -1235,7 +1263,7 @@ export const INSTRUCTIONS = [
     "6) The user's own voice model: voice_dataset to see or grow the training data, then the training notebook; once trained it is engine myvoice with voice = that person's name (my_voices lists both people's). benchmark_voices compares it with their clones on held-out sentences. voice_coach shows how a trained voice is doing and writes the next recording script around its weak spots; recording it makes the voice more natural (retrains only go live when they beat the current model).",
     "Content spaces: each post goes to one or more spaces (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast), each with its own stage and publish time; cross-post by adding targets (update_post targets, merge). Files: upload_media (bytes) or add_media (a link); delete_media / delete_post only when asked.",
     "Files page (a Drive-like file manager over uploads and generated items; category folders Videos, Images, Audio, Docs & scripts and Other file things by kind on their own): list_files browses folders and searches; get_file gives download links; create_folder / update_folder / move_files / rename_file / star_files keep it tidy (upload_media and add_media take a folder). delete_files and delete_folder move things to the trash (30 days, restore_files brings them back) and only when asked; forever / empty_trash only when asked for that.",
-    "Publishing: publish_accounts shows the connected YouTube / Instagram accounts and the queue; publish_post sets up a target (files, cover, every YouTube or Instagram option) and saves, arms it for its publish time, or sends it now (only when asked); publish_status follows it; automation_rules reads or changes cross-posting, posting slots, retries and footers. X, TikTok, LinkedIn and podcasts stay hand-offs: the user posts those and marks them posted.",
+    "Publishing: publish_accounts shows the connected YouTube / Instagram accounts and the queue; publish_post sets up a target (files, cover, every YouTube or Instagram option) and saves, arms it for its publish time, or sends it now (only when asked); publish_status follows it; automation_rules reads or changes cross-posting, posting slots, retries and footers. analytics shows how the channels are doing (per format, every post's score against the usual, best times, lengths, hashtags, tips): read it before planning so the next posts build on what works. X, TikTok, LinkedIn and podcasts stay hand-offs: the user posts those and marks them posted.",
     "7) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",
     "Scores: match = how closely Whisper heard the script (>=0.95 good); similarity = voice match vs the recording (>=0.86 same speaker).",
 ].join("\n");

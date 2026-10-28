@@ -7,7 +7,7 @@ import type { IgOptions } from "./shared";
 
 const V = "v24.0";
 const GRAPH = `https://graph.instagram.com/${V}`;
-export const SCOPES = ["instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_comments"];
+export const SCOPES = ["instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_comments", "instagram_business_manage_insights"];
 
 export class IgError extends Error {
   constructor(message: string, public status = 0, public code = 0, public transient_ = false) { super(message); }
@@ -38,6 +38,9 @@ async function ig<T>(path: string, token: string, init: { method?: string; param
   if (!r.ok || j.error) throw igErr(r.status, j);
   return j;
 }
+
+/** A read for the Analytics page (media, insights), with the same errors as everything else. */
+export const igGet = <T>(path: string, token: string, params: Record<string, string | undefined> = {}) => ig<T>(path, token, { params });
 
 export function authUrl(redirect: string, state: string) {
   const u = new URL("https://www.instagram.com/oauth/authorize");

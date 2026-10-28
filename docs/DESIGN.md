@@ -8,13 +8,14 @@ build or change any screen. Tokens live in `mcp/app/globals.css`; the shared par
 
 ## Structure
 
-The sidebar has eight destinations, grouped by what you're doing, not by which backend stores the data:
+The sidebar has nine destinations, grouped by what you're doing, not by which backend stores the data:
 
 | Group | Page | Route | Job |
 |---|---|---|---|
 | — | Home | `/` | Greeting with the GPU's state, tool tiles, latest takes, ways to make a voice, what's due next |
 | — | Voices | `/voices` | Make a voice (three cards), then your voices and the built-in voices |
 | — | Posts | `/posts` | Every post as a Board, Calendar, List or Gallery, filtered by platform; the post drawer; Autopilot (`?view=autopilot`): accounts, the publishing queue, rules |
+| — | Analytics | `/analytics` | Three tabs (`?tab=youtube`, `?tab=instagram`). Overview: every platform together: a card per format (Videos, Shorts, Reels, Posts) with its trend, views over time vs the period before, audience, when to post (day × time heatmap), insights, next moves, top posts with a viral score, traffic, audience, length, hashtags, rhythm, scorecard, followers over time. YouTube / Instagram: that platform in depth (every KPI, daily charts, days and hours the audience shows up, traffic, audience, best times) and every post, each opening a deep-dive drawer (retention curve, views day by day since upload) |
 | — | Files | `/files` | A Drive-like file manager: category folders (Videos, Images, Audio, Docs & scripts, Other) and yours, Recent, search, filters, drag-and-drop, paste, trash (`?view=trash`) |
 | Create | Voiceover | `/voiceover` | Write, pick a voice, generate; Script and Lines views |
 | Create | Clean-up, Subtitles, Images | `/clean-up`, `/subtitles`, `/images` | One tool each, in the tool layout |
@@ -59,6 +60,11 @@ status and history under it, and the actions in a footer. It saves as you type.
   category folders come first and file things by kind on their own; deleting goes to the trash with an Undo snackbar;
   uploads show as cards at once (with a progress ring) and in a panel bottom right. Every change shows at once and is
   saved behind it. The sidebar lists starred things under Favourites.
+- Analytics (`components/Analytics.tsx`) is a marketing-hub board on `--side`: four tinted channel cards (`--blue-soft`,
+  name, ↗ trend, two numbers), then chart cards in two rows (views over time + audience; when to post + insights). The
+  chart's current period is a solid ink line over a flat 6% ink fill, the period before a dashed `--mute` line; the
+  heatmap steps `--ok` over the surface; networks are `--c-yt` / `--c-ig` (validated for colour blindness). Every chart
+  has a hover and keyboard read-out, and values are written beside bars, never only in them.
 - Making a voice uses the voice art (`components/Orb.tsx`): a flat disc with a waveform inside a dotted arc that runs
   from nothing to the best length of audio, with the minimum ticked.
 
