@@ -184,7 +184,7 @@ export function FolderCard({ f, count, people, over, ...ev }: { f: Folder; count
       onClick={ev.onOpen}
       onContextMenu={(e) => { e.preventDefault(); ev.onMenu({ x: e.clientX, y: e.clientY, w: 0, h: 0, align: "start" }); }}>
       <Hit label={`Open folder ${f.name}, ${count} item${count === 1 ? "" : "s"}`} />
-      <span className="fold-tab" aria-hidden /><span className="fold-back" aria-hidden />
+      <span className="fold-tab" aria-hidden /><span className="fold-back" aria-hidden /><span className="fold-paper" aria-hidden />
       <div className="fold-front">
         <input type="checkbox" className="selbox fold-check" checked={ev.selected} aria-label={`Select folder ${f.name}`} onClick={(e) => { e.stopPropagation(); ev.onToggle(e.shiftKey); }} onChange={() => {}} />
         <button type="button" className="fc-more" aria-label={`More for folder ${f.name}`} title="More" onClick={(e) => { e.stopPropagation(); ev.onMenu(anchorOf(e.currentTarget)); }}><DotsThree size={18} weight="bold" /></button>

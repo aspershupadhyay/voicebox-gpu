@@ -4,7 +4,7 @@
 // mastered one by one on the worker, then joined), playing by itself while it is still being made.
 // Every take lands in Files with word-timed subtitles. From a post (?post=) the script loads and the result is attached
 // back to the post; from Voices (?engine=&voice=) the voice is preselected.
-import { ArrowSquareOut, CaretDown, CaretUp, ClosedCaptioning, DownloadSimple, Microphone, Pause, Play, Plus, Power, SlidersHorizontal, Sparkle, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowSquareOut, CaretDown, CaretUp, ClosedCaptioning, DownloadSimple, Microphone, Pause, Play, Plus, Power, SlidersHorizontal, Sparkle, X } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useResumeJob } from "./jobs";
@@ -12,6 +12,7 @@ import { ago, api, clock, fileUrl, fmtS, rangeFill, type Job, type MyVoice } fro
 import { decode, joinWav } from "./audio";
 import { Info } from "./Info";
 import { VoiceGlyph } from "./art";
+import { PageScene, PixelLoader } from "./pixel";
 import { GuideButton } from "./GuideDrawer";
 import { describeVoice, KOKORO_LANG, KOKORO_VOICES, LANGUAGES, ORPHEUS_VOICES, QWEN_LANG } from "./guides";
 import JobProgress from "./JobProgress";
@@ -118,7 +119,7 @@ function Generation({ g }: { g: Gen }) {
   const name = (g.label || `${g.engine}-${g.voice}`).replace(/[^A-Za-z0-9._-]/g, "_");
   return (
     <div className="vo-gen">
-      <div className="vo-gen-play">{url ? <Player src={url} compact /> : <span className="small dim">{failed ? "Couldn't load this one. It's in Files." : "Loading…"}</span>}</div>
+      <div className="vo-gen-play">{url ? <Player src={url} compact /> : <span className="small dim">{failed ? "Couldn't play this take here. It's saved in Files." : <PixelLoader label="Loading the last take" />}</span>}</div>
       <div className="vo-gen-acts">
         {g.subs && <a className="icon-btn" href={`/api/file/${g.job}/subtitles.srt?download&name=${name}.srt`} aria-label="Download subtitles (.srt)" title="Subtitles (.srt)"><ClosedCaptioning size={16} /></a>}
         <Link className="icon-btn" href={`/files#${g.job}`} aria-label="Open in Files" title="Open in Files"><ArrowSquareOut size={16} /></Link>
@@ -527,11 +528,6 @@ export default function Voiceover() {
       <div className="tts-main">
         <h1 className="sr-only">Voiceover</h1>
         <div className="tts-canvas">
-          {offline && (
-            <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/settings?tab=gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}>
-              <b>The GPU is off.</b> Write and set up now; this page connects by itself once it&apos;s on.
-            </Notice>
-          )}
           {catErr && <p className="err" role="alert">{catErr}</p>}
           {forPost && (
             <Notice icon={<Microphone size={16} />} action={<Link className="btn ghost sm" href={`/posts?post=${forPost.$id}`}>Open post</Link>}>
@@ -545,6 +541,7 @@ export default function Voiceover() {
               {voiceLabel(voice)} <span className="dim">· {NAME[engine]}</span>
             </button>
             <span className="grow" />
+            <PageScene name="voiceover" className="tts-scene" />
             <GuideButton engine={engine} />
           </div>
 
@@ -560,8 +557,8 @@ export default function Voiceover() {
             : gens[0] && <Generation key={gens[0].job} g={gens[0]} />}
 
           <div className="tts-foot tts-gen-bar">
-            <span className="tts-status"><span className={`dot ${status?.online ? (ready ? "ok" : "off") : status ? "bad" : "off"}`} />
-              {!status ? "Connecting" : offline ? "GPU off" : ready ? `${NAME[engine]} warm` : `${NAME[engine]} loads on first use`}</span>
+            {/* the GPU shows once on this page: as the button on the right while it's off */}
+            {status?.online && <span className="tts-status"><span className={`dot ${ready ? "ok" : "off"}`} />{ready ? `${NAME[engine]} warm` : `${NAME[engine]} loads on first use`}</span>}
             <PopMenu align="left" up width={300} trigger={({ toggle, ref, open }) => <button ref={ref} className="ghost sm" onClick={toggle} aria-expanded={open}><Plus size={14} weight="bold" />Insert</button>}>
               {(close) => (
                 <div className="insert-pop">
@@ -573,7 +570,7 @@ export default function Voiceover() {
             </PopMenu>
             <span className="count">{chars.toLocaleString()} characters · ≈{fmtS(audioS)}{status?.online ? ` · ready in ≈${fmtS(estS)}` : ""}</span>
             {offline
-              ? <Link href="/settings?tab=gpu" className="btn"><Power size={15} weight="bold" />Start the GPU</Link>
+              ? <Link href="/settings?tab=gpu" className="btn" title="Write and set up now; this page connects by itself once the GPU is on"><Power size={15} weight="bold" />Start the GPU</Link>
               : <button disabled={!!blocked} onClick={() => submit()} title={blocked || undefined}><Microphone size={16} weight="bold" />{running ? "Generating…" : gens.length ? "Generate again" : "Generate speech"}</button>}
           </div>
           {err && <p className="err" role="alert">{err}</p>}

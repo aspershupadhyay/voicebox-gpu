@@ -47,7 +47,10 @@ status and history under it, and the actions in a footer. It saves as you type.
 
 - `PageHeader`: an optional small eyebrow (Home only), the page name as the H1, one sub line under ~90 characters,
   and at most two actions on the right (one black primary, one ghost).
-- System state goes in a `Notice` strip directly under the header ("The GPU is off" + the action that fixes it).
+- System state goes in a `Notice` strip directly under the header, except the GPU: a page that needs it shows it once,
+  as its primary button ("Start the GPU" in place of Generate while it's off), never a banner or a status pill too.
+- `PageHeader` shows the page's own pixel scene (`PageScene`, picked from the address in `pixel.tsx`) between the title
+  and the actions; it hides on phones.
 - Summary numbers go in a row of `StatCard`s (icon tile, number, what it counts, an optional link). Use them only when
   the numbers help decide what to do next (Posts, GPU).
 - Then the content. Lists are rows inside one bordered container (`.lib-list`, `.erows`, `.table-wrap`), not a card per
@@ -137,6 +140,10 @@ status and history under it, and the actions in a footer. It saves as you type.
 - Pages rise in once (0.3 s). Hover changes colour or border, never layout.
 - Only live things loop: the GPU meter, a recording, a running job. `prefers-reduced-motion` stops them all, including
   the login's reading animation.
+- Pixel icons (`PixelIcon`) are the icons of the frame. Each has its own short move on hover or focus (`data-move`, in
+  globals.css), never the same move twice. The page scenes loop slowly (twinkles, steam, a breathing lamp): calm, cozy.
+- Loading is pixel: `.skel` is a flat tile with pixel static and a stepped band of pixel blocks; `PixelLoader` (three
+  hopping pixels) for small waits. No shimmer gradients.
 
 ## Phones
 

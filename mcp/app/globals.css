@@ -149,6 +149,9 @@ code { font: 12.5px var(--mono); background: var(--fill); padding: 1px 5px; bord
 .ph .eyebrow { font: 500 13px var(--sans); color: var(--mute); margin-bottom: 4px; }
 .ph .sub { margin: 6px 0 0; color: var(--dim); font-size: 14.5px; max-width: 680px; }
 .ph-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ph-scene { flex: 0 1 184px; min-width: 120px; margin-left: auto; align-self: flex-end; }
+.ph-scene + .ph-actions { margin-left: 0; }
+@media (max-width: 760px) { .ph-scene { display: none; } }
 @media (max-width: 640px) { h1 { font-size: 22px; } .ph-actions { width: 100%; } }
 .section { margin-top: 32px; }
 .section-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
@@ -332,9 +335,26 @@ button.stat-card:hover, a.stat-card:hover { border-color: var(--line2); backgrou
 .empty span { font-size: 13.5px; max-width: 420px; }
 .empty .illus { max-width: 180px; margin-bottom: 4px; }
 .empty .e-ic { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--fill); color: var(--ink2); margin-bottom: 4px; }
-.skel { border-radius: var(--r); background: linear-gradient(90deg, var(--fill), var(--fill2), var(--fill)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
-.ws-skel { height: 320px; border-radius: var(--r); background: linear-gradient(90deg, var(--fill), var(--fill2), var(--fill)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
-@keyframes shimmer { to { background-position: -200% 0; } }
+/* loading, the pixel way: a flat tile whose pixels drift like quiet static, and a band of pixel blocks that steps
+   across (no shimmer, no gradient; the patterns are hard-edged squares) */
+.skel, .ws-skel { position: relative; overflow: hidden; border-radius: var(--r); background: var(--fill); isolation: isolate; }
+.ws-skel { height: 320px; }
+.skel::before, .ws-skel::before { content: ""; position: absolute; inset: 0; background: var(--fill2); opacity: .9;
+  -webkit-mask: var(--px-dither) 0 0 / 24px 24px; mask: var(--px-dither) 0 0 / 24px 24px; animation: px-dither 1.8s steps(1) infinite; }
+.skel::after, .ws-skel::after { content: ""; position: absolute; top: 0; bottom: 0; left: -72px; width: 72px; background: var(--line3); opacity: .55;
+  -webkit-mask: var(--px-band) 0 0 / 72px 24px; mask: var(--px-band) 0 0 / 72px 24px; animation: px-sweep 2.2s steps(16) infinite; }
+:root {
+  --px-dither: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='6' shape-rendering='crispEdges'%3E%3Crect x='0' y='0' width='1' height='1'/%3E%3Crect x='3' y='1' width='1' height='1'/%3E%3Crect x='5' y='3' width='1' height='1'/%3E%3Crect x='1' y='4' width='1' height='1'/%3E%3Crect x='4' y='5' width='1' height='1'/%3E%3C/svg%3E");
+  --px-band: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='6' shape-rendering='crispEdges'%3E%3Crect x='0' y='1' width='1' height='1'/%3E%3Crect x='2' y='4' width='1' height='1'/%3E%3Crect x='3' y='0' width='2' height='6'/%3E%3Crect x='6' y='0' width='3' height='6'/%3E%3Crect x='9' y='0' width='3' height='6' fill-opacity='.7'/%3E%3Crect x='13' y='0' width='2' height='6' fill-opacity='.45'/%3E%3Crect x='16' y='2' width='1' height='1'/%3E%3Crect x='15' y='5' width='1' height='1'/%3E%3C/svg%3E");
+}
+@keyframes px-dither { 0% { -webkit-mask-position: 0 0; mask-position: 0 0; } 25% { -webkit-mask-position: 8px 4px; mask-position: 8px 4px; } 50% { -webkit-mask-position: 4px 12px; mask-position: 4px 12px; } 75% { -webkit-mask-position: 12px 8px; mask-position: 12px 8px; } }
+@keyframes px-sweep { to { left: 100%; } }
+/* three pixels hopping in turn, in place of "Loading…" */
+.px-load { display: inline-flex; align-items: flex-end; gap: 3px; height: 14px; vertical-align: middle; }
+.px-load i { width: 5px; height: 5px; background: var(--ink2); animation: px-hop3 1.05s steps(3) infinite; }
+.px-load i:nth-child(2) { animation-delay: .17s; background: var(--dim); } .px-load i:nth-child(3) { animation-delay: .34s; background: var(--mute); }
+@keyframes px-hop3 { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
+@media (prefers-reduced-motion: reduce) { .skel::before, .skel::after, .ws-skel::before, .ws-skel::after, .px-load i { animation: none !important; } .skel::after, .ws-skel::after { display: none; } }
 
 /* ───────────── overlays */
 .scrim, .scrim-modal { position: fixed; inset: 0; background: var(--scrim); z-index: 50; animation: fade .18s; }
@@ -2403,3 +2423,210 @@ a.gr-who:hover .ellipsis, .gr-who a:hover { text-decoration: underline; }
 .gr-side .gr-fresh { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; margin-right: -8px; padding-right: 8px; }
 .gr-side .gr-subs-h { margin-top: auto; padding-top: 14px; }
 @media (max-width: 1100px) { .gr-side { height: auto; min-height: 0; } }
+
+/* ───────────── pixel icons (components/pixel.tsx): each one has its own move when its link or button is hovered or
+   focused. Transforms and opacity only, so they stay cheap; nothing moves for reduced motion. */
+.px-ic rect { transform-box: fill-box; transform-origin: center; }
+.px-ic .p-h { opacity: .5; }
+.px-ic .p-L { fill: var(--live); animation: px-beat 1.6s ease-in-out infinite; }
+.navlink .px-ic, .mode-sw .px-ic, .tabbar .px-ic { flex: none; }
+.navlink .px-ic { color: var(--dim); }
+.navlink:hover .px-ic, .navlink.on .px-ic { color: var(--ink); }
+@keyframes px-beat { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: no-preference) {
+  :is(a, button, label, .px-hov):is(:hover, :focus-visible) .px-ic {
+    --hov: 1;
+  }
+  /* home: hops and lands with a little squash; smoke curls from the chimney */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="home"] { animation: pxm-hop .55s var(--ease); transform-origin: 50% 100%; }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="home"] .p-s { animation: pxm-smoke .9s ease-out both; animation-delay: calc((8 - var(--y)) * -60ms); }
+  /* voices: the sound waves ripple outward */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="voices"] .p-s { animation: pxm-ripple .8s ease-in-out infinite; animation-delay: calc(var(--x) * 90ms); }
+  /* posts: the back card shuffles up and to the right */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="posts"] .p-s { animation: pxm-shuffle .5s var(--ease) both; }
+  /* files: the paper pops out of the folder */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="files"] .p-s { animation: pxm-paper .6s var(--ease) both; }
+  /* voiceover: the mic bobs, its arcs pulse */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="mic"] { animation: pxm-bob .7s ease-in-out infinite alternate; }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="mic"] .p-s { animation: pxm-ripple .7s ease-in-out infinite; animation-delay: calc(var(--y) * 60ms); }
+  /* clean-up: the wand flicks, its sparkles twinkle */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="wand"] { animation: pxm-flick .6s var(--ease); transform-origin: 0 100%; }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="wand"] .p-s { animation: pxm-twinkle .5s steps(2) 3; animation-delay: calc(var(--x) * 40ms); }
+  /* subtitles: CC types itself out */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="cc"] .p-s { animation: pxm-type .6s steps(1) both; animation-delay: calc(var(--x) * 70ms); }
+  /* images: the sun rises over the hills */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="image"] .p-s { animation: pxm-sun .7s var(--ease) both; }
+  /* overview: the four tiles light up in turn */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="grid"] rect { animation: pxm-tile .6s steps(2) both; animation-delay: calc(var(--q) * 90ms); }
+  /* live: the rings go out, inner then outer */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="live"] .p-t { animation: pxm-ripple .9s ease-in-out infinite; }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="live"] .p-s { animation: pxm-ripple .9s ease-in-out .2s infinite; }
+  /* content: the rows slide in, one after another */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="rows"] rect { animation: pxm-slide .45s var(--ease) both; animation-delay: calc(var(--y) * 40ms); }
+  /* audience: the two people hop in turn */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="users"] rect { animation: pxm-hop1 .5s var(--ease); }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="users"] .p-s { animation-delay: .15s; }
+  /* when to post: the page flips, today blinks */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="calendar"] { animation: pxm-flip .6s var(--ease); }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="calendar"] .p-s { animation: pxm-twinkle .4s steps(2) 3; }
+  /* competitors: the trophy wobbles, its shine glints */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="trophy"] { animation: pxm-wobble .6s var(--ease); transform-origin: 50% 100%; }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="trophy"] .p-h { animation: pxm-glint .6s steps(2) 2; }
+  /* settings: the gear turns a quarter, in pixel steps */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="gear"] { animation: pxm-turn .6s steps(4) both; }
+  /* search: the lens looks around */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="search"] { animation: pxm-look .8s ease-in-out; }
+  /* new: the plus spins a quarter */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="plus"] { animation: pxm-turn .35s var(--ease) both; }
+  /* create: the sparkle spins and sparkles */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="sparkle"] { animation: pxm-spin .7s var(--ease); }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="sparkle"] .p-s { animation: pxm-twinkle .35s steps(2) 3; }
+  /* grow: the bars grow, left to right */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="chart"] rect { animation: pxm-grow .5s var(--ease) both; animation-delay: calc(var(--x) * 45ms); }
+  /* menu and more: the lines slide, the dots bounce */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="menu"] rect { animation: pxm-slide .4s var(--ease) both; animation-delay: calc(var(--y) * 35ms); }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="more"] rect { animation: pxm-hop1 .45s var(--ease); animation-delay: calc(var(--x) * 50ms); }
+  /* the sidebar toggle: its panel pulses */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="side"] .p-s { animation: pxm-panel .5s steps(2) both; }
+  /* YouTube and Instagram: the play button pulses, the lens flashes */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="tv"] .p-s { animation: pxm-twinkle .4s steps(2) 3; }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="camera"] .p-s { animation: pxm-twinkle .25s steps(2) 2; }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="camera"] { animation: pxm-bob .3s ease-in-out 2 alternate; }
+  /* Settings' tabs and shortcuts */
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="chip"] .p-h { animation: pxm-twinkle .4s steps(2) 3; animation-delay: calc(var(--x) * 30ms); }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="rocket"] { animation: pxm-launch .6s var(--ease); }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="user"] { animation: pxm-hop .5s var(--ease); }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="wave"] rect { animation: pxm-eq .5s ease-in-out 2 alternate; animation-delay: calc(var(--x) * 50ms); }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="shield"] { animation: pxm-wobble .5s var(--ease); }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="code"] rect { animation: pxm-type .5s steps(1) both; animation-delay: calc(var(--x) * 45ms); }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="heart"] { animation: pxm-beat2 .7s ease-in-out; }
+  :is(a, button):is(:hover, :focus-visible) .px-ic[data-move="bolt"] { animation: pxm-zap .45s steps(3); }
+}
+@keyframes pxm-hop { 0%, 100% { transform: translateY(0) scale(1); } 40% { transform: translateY(-3px) scale(1.04, .96); } 70% { transform: translateY(0) scale(1.08, .9); } }
+@keyframes pxm-hop1 { 40% { transform: translateY(-2px); } }
+@keyframes pxm-smoke { 0% { opacity: 0; transform: translateY(1px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateY(-2px); } }
+@keyframes pxm-ripple { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
+@keyframes pxm-shuffle { 50% { transform: translate(1px, -1px); } }
+@keyframes pxm-paper { 0% { transform: translateY(0); } 55% { transform: translateY(-3px); } 100% { transform: translateY(-1px); } }
+@keyframes pxm-bob { to { transform: translateY(-1.5px); } }
+@keyframes pxm-flick { 30% { transform: rotate(-14deg); } 65% { transform: rotate(8deg); } }
+@keyframes pxm-twinkle { 50% { opacity: .1; } }
+@keyframes pxm-type { 0% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes pxm-sun { 0% { transform: translateY(3px); opacity: .2; } 100% { transform: translateY(0); opacity: 1; } }
+@keyframes pxm-tile { 0% { opacity: .15; } 100% { opacity: 1; } }
+@keyframes pxm-slide { 0% { transform: translateX(-3px); opacity: 0; } }
+@keyframes pxm-flip { 50% { transform: perspective(40px) rotateX(55deg); } }
+@keyframes pxm-wobble { 25% { transform: rotate(-12deg); } 50% { transform: rotate(9deg); } 75% { transform: rotate(-4deg); } }
+@keyframes pxm-glint { 50% { opacity: 1; fill: var(--ink); } }
+@keyframes pxm-turn { to { transform: rotate(90deg); } }
+@keyframes pxm-look { 25% { transform: translate(-1.5px, -1px); } 50% { transform: translate(1px, -1.5px); } 75% { transform: translate(1.5px, 1px); } }
+@keyframes pxm-spin { to { transform: rotate(180deg) scale(1); } 50% { transform: rotate(90deg) scale(1.2); } }
+@keyframes pxm-grow { 0% { transform: translateY(4px); opacity: 0; } }
+@keyframes pxm-panel { 50% { opacity: .2; } }
+@keyframes pxm-launch { 40% { transform: translateY(-4px); } 41% { transform: translateY(5px); opacity: 0; } 42% { opacity: 1; } }
+@keyframes pxm-eq { to { transform: scaleY(.4); } }
+@keyframes pxm-beat2 { 30% { transform: scale(1.2); } 60% { transform: scale(.95); } }
+@keyframes pxm-zap { 33% { transform: translateX(-1px); opacity: .4; } 66% { transform: translateX(1px); } }
+
+/* the sidebar's live dot stays a beating pixel */
+.navlink .px-ic[data-move="live"] { color: var(--dim); }
+
+/* ───────────── each page's own small scene (PageScene) */
+.px-page rect { transform-box: fill-box; }
+.px-page .k-ink { fill: var(--ink); } .px-page .k-ink2 { fill: var(--ink2); } .px-page .k-mute { fill: var(--mute); }
+.px-page .k-d { fill: var(--line3); } .px-page .k-D { fill: var(--line2); } .px-page .k-f { fill: var(--fill2); } .px-page .k-side { fill: var(--side); }
+.px-page .k-y { fill: var(--warn); } .px-page .k-yd { fill: color-mix(in srgb, var(--warn) 55%, var(--side)); } .px-page .k-yl { fill: color-mix(in srgb, var(--warn) 45%, transparent); }
+.px-page .k-yglow { fill: color-mix(in srgb, var(--warn) 13%, transparent); }
+.px-page .k-r { fill: var(--bad); } .px-page .k-rd { fill: color-mix(in srgb, var(--bad) 45%, var(--side)); } .px-page .k-rglow { fill: color-mix(in srgb, var(--bad) 16%, transparent); }
+.px-page .k-g { fill: var(--ok); } .px-page .k-gd { fill: color-mix(in srgb, var(--ok) 50%, var(--side)); }
+.px-page .k-b { fill: var(--blue); } .px-page .k-bd { fill: color-mix(in srgb, var(--blue) 50%, var(--side)); }
+.px-page .k-v { fill: var(--violet); } .px-page .k-vd { fill: color-mix(in srgb, var(--violet) 50%, var(--side)); }
+.px-page .k-p { fill: var(--c-ig); } .px-page .k-P { fill: var(--c-yt); } .px-page .k-live { fill: var(--live); }
+.px-page .k-wood { fill: color-mix(in srgb, var(--warn) 30%, var(--line2)); } .px-page .k-wood2 { fill: color-mix(in srgb, var(--warn) 50%, var(--line3)); }
+.px-page .k-cork { fill: color-mix(in srgb, var(--warn) 16%, var(--side)); }
+.px-page .k-pot { fill: color-mix(in srgb, var(--bad) 70%, var(--warn)); }
+.px-page .k-box { fill: color-mix(in srgb, var(--warn) 34%, var(--line2)); } .px-page .k-box2 { fill: color-mix(in srgb, var(--warn) 24%, var(--line2)); }
+.px-page .k-cat { fill: color-mix(in srgb, var(--warn) 78%, var(--bad)); }
+.px-page .k-screen { fill: color-mix(in srgb, var(--brand) 20%, var(--side)); } .px-page .k-skyb { fill: var(--blue-soft); }
+.px-page .k-moon { fill: color-mix(in srgb, var(--warn) 55%, var(--ink)); }
+.px-page .k-star { fill: var(--ink2); animation: px-twinkle 4.2s ease-in-out infinite; }
+.px-page .k-spark { fill: var(--ink); animation: px-spark 2.6s ease-in-out infinite; }
+.px-page .k-steam { fill: var(--mute); animation: px-steam 2.7s ease-in-out infinite; }
+.px-page .k-ring { fill: var(--violet); animation: px-ring 2.1s ease-in-out infinite; }
+.px-page .k-ringg { fill: var(--live); animation: px-ring 2.1s ease-in-out infinite; }
+.px-page .k-glow { animation: px-breathe 5s ease-in-out infinite; }
+.px-page .k-blink { animation: px-blink 1.4s steps(1) infinite; }
+.px-page .k-blink2 { animation: px-blink 3.1s steps(1) infinite; animation-delay: .7s; }
+.px-page .k-bob { animation: px-bob 3s ease-in-out infinite; } .px-page .k-bob2 { animation: px-bob 3.6s ease-in-out 1.2s infinite; }
+.px-page .k-fly { animation: px-fly 5s ease-in-out infinite alternate; }
+.px-page .k-sweep { animation: px-sweep2 1.4s ease-in-out infinite alternate; }
+.px-page .k-eq { transform-origin: 50% 100%; animation: px-eq .9s ease-in-out infinite alternate; }
+.px-page .k-eq2 { transform-origin: 50% 100%; animation: px-eq2 3.2s ease-in-out infinite alternate; }
+.px-page .k-type { animation: px-type 5.4s steps(1) infinite; } .px-page .k-type2 { animation: px-type2 5.4s steps(1) infinite; }
+.px-page .k-hop { animation: px-hop 1.2s steps(1) infinite; }
+.px-page .k-float { opacity: 0; animation: px-float 3.2s ease-out infinite; }
+.px-page .k-fall { opacity: 0; animation: px-fall 3.9s linear infinite; }
+.px-page .k-tick { animation: px-blink 2s steps(1) infinite; } .px-page .k-tick2 { animation: px-blink 2s steps(1) 1s infinite; }
+.px-page .k-swing { animation: px-swing 1s ease-in-out infinite alternate; }
+.px-page .k-flash { opacity: 0; animation: px-flash 4.6s steps(1) infinite; }
+.px-page .k-drift { animation: px-drift 3.4s ease-in-out infinite alternate; }
+.px-page .k-scan { fill: var(--ink); opacity: .16; animation: px-scan 2.4s steps(7) infinite; }
+@keyframes px-spark { 0%, 100% { opacity: .15; } 50% { opacity: 1; } }
+@keyframes px-ring { 0%, 100% { opacity: .12; } 35% { opacity: .95; } }
+@keyframes px-bob { 50% { transform: translateY(-1px); } }
+@keyframes px-fly { from { transform: translate(0, 0); } to { transform: translate(-4px, 1px); } }
+@keyframes px-sweep2 { from { transform: translateX(-1px); } to { transform: translateX(1.5px); } }
+@keyframes px-eq { from { transform: scaleY(.3); } to { transform: scaleY(1); } }
+@keyframes px-eq2 { from { transform: scaleY(.55); } to { transform: scaleY(1); } }
+@keyframes px-type { 0% { opacity: 0; } 6% { opacity: 1; } 82% { opacity: 0; } }
+@keyframes px-type2 { 0% { opacity: 0; } 34% { opacity: 1; } 82% { opacity: 0; } }
+@keyframes px-hop { 50% { transform: translateY(-1px); } }
+@keyframes px-float { 0% { opacity: 0; transform: translateY(1px); } 25% { opacity: 1; } 100% { opacity: 0; transform: translateY(-4px); } }
+@keyframes px-fall { 0% { opacity: 0; transform: translateY(0); } 10% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; transform: translateY(14px); } }
+@keyframes px-swing { from { transform: translateX(-1px); } to { transform: translateX(1px); } }
+@keyframes px-flash { 0%, 100% { opacity: 0; } 88% { opacity: 1; } 92% { opacity: 0; } }
+@keyframes px-drift { from { transform: translate(0, 0); } to { transform: translate(1px, 1px); } }
+@keyframes px-scan { from { transform: translateY(0); } to { transform: translateY(7px); } }
+@media (prefers-reduced-motion: reduce) { .px-page *, .px-ic, .px-ic * { animation: none !important; } .px-page .k-float, .px-page .k-fall, .px-page .k-flash { opacity: 0; } }
+.fx-head .ph-scene { flex-basis: 150px; }
+@media (max-width: 1280px) { .fx-head .ph-scene { display: none; } }
+.tts-scene { width: 132px; flex: none; margin: 0 8px 0 auto; opacity: .95; }
+@media (max-width: 1100px) { .tts-scene { display: none; } }
+
+/* ───────────── Files, with some life in it: cards build in from pixel blocks, folders open on hover and the paper inside
+   peeks out, file covers zoom and audio waves dance. Transforms and opacity only (and a stepped clip for the build-in). */
+@media (prefers-reduced-motion: no-preference) {
+  .fm-folders > .fold:not(.fold-skel), .fm-grid > .fcard { animation: fm-build .5s steps(5) backwards; animation-delay: calc(min(var(--i, 0), 14) * 35ms); }
+  .fm-folders > :nth-child(1) { --i: 0; } .fm-folders > :nth-child(2) { --i: 1; } .fm-folders > :nth-child(3) { --i: 2; } .fm-folders > :nth-child(4) { --i: 3; }
+  .fm-folders > :nth-child(5) { --i: 4; } .fm-folders > :nth-child(6) { --i: 5; } .fm-folders > :nth-child(7) { --i: 6; } .fm-folders > :nth-child(n + 8) { --i: 7; }
+  .fm-grid > :nth-child(1) { --i: 2; } .fm-grid > :nth-child(2) { --i: 3; } .fm-grid > :nth-child(3) { --i: 4; } .fm-grid > :nth-child(4) { --i: 5; }
+  .fm-grid > :nth-child(5) { --i: 6; } .fm-grid > :nth-child(6) { --i: 7; } .fm-grid > :nth-child(7) { --i: 8; } .fm-grid > :nth-child(8) { --i: 9; }
+  .fm-grid > :nth-child(n + 9) { --i: 10; }
+  .fold-front { transform-origin: 50% 100%; transition: transform .35s var(--ease), box-shadow .15s, background .15s; }
+  .fold:hover .fold-front, .fold:focus-within .fold-front { transform: perspective(700px) rotateX(-9deg) translateY(2px); }
+  .fold.over .fold-front { transform: perspective(700px) rotateX(-16deg) translateY(4px); }
+  .fold-paper { transition: transform .4s var(--ease) .04s; }
+  .fold:hover .fold-paper, .fold:focus-within .fold-paper { transform: translateY(-14px) rotate(-2deg); }
+  .fold.over .fold-paper { transform: translateY(-22px) rotate(-3deg); }
+  .fcard { transition: transform .25s var(--ease), border-color .15s, box-shadow .15s, opacity .15s; }
+  .fcard:hover { transform: translateY(-3px); }
+  .fc-cover img, .fc-cover video { transition: transform .5s var(--ease); }
+  .fcard:hover .fc-cover img, .fcard:hover .fc-cover video { transform: scale(1.06); }
+  .fc-wave rect { transform-box: fill-box; transform-origin: center; }
+  .fcard:hover .fc-wave rect { animation: px-eq .45s ease-in-out infinite alternate; }
+  .fcard:hover .fc-wave rect:nth-child(3n) { animation-delay: .15s; } .fcard:hover .fc-wave rect:nth-child(3n + 1) { animation-delay: .3s; }
+  .fc-glyph { transition: transform .35s var(--ease); }
+  .fcard:hover .fc-glyph { transform: translateY(-3px) rotate(-6deg) scale(1.08); }
+  .fm-count { transition: transform .2s; }
+  .fm-sec-h:hover .fm-count { transform: translateY(-2px); }
+}
+/* a sheet of paper inside each folder, peeking out when you hover */
+.fold-paper { position: absolute; left: 14%; right: 16%; top: 30px; height: 60px; border-radius: 8px 8px 0 0; background: var(--ink2); opacity: .92; pointer-events: none; }
+.fold-paper::before, .fold-paper::after { content: ""; position: absolute; left: 12px; height: 3px; background: var(--line3); }
+.fold-paper::before { top: 10px; width: 46%; } .fold-paper::after { top: 18px; width: 30%; }
+.fold-skel .fold-paper { display: none; }
+@keyframes fm-build {
+  0% { opacity: 0; clip-path: inset(0 0 100% 0); transform: translateY(8px); }
+  40% { opacity: 1; }
+  100% { opacity: 1; clip-path: inset(0 0 0 0); transform: none; }
+}

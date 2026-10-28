@@ -12,7 +12,7 @@ import { Select } from "./pop";
 import Recorder, { FilePreview } from "./Recorder";
 import { PLATFORMS, SourcePick } from "./Revoice";
 import { useStatus } from "./Shell";
-import { DropZone, Empty, Notice, SideRow, ToolPage } from "./ui";
+import { DropZone, Empty, SideRow, ToolPage } from "./ui";
 
 function usePoll() {
   const [job, setJob] = useState<Job | null>(null);
@@ -102,7 +102,6 @@ export default function Studio() {
 
   return (
     <ToolPage title="Clean-up" sub="A rough recording in, studio sound out, same length so it stays in sync."
-      notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/settings?tab=gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}><b>The GPU is off.</b> Add your recording now; cleaning it needs the GPU.</Notice>}
       side={
         <>
           <SideRow label="Mode" htmlFor="cu-mode" info="It measures the noise, the room echo and how much of the voice the mic captured, runs only what the recording needs, and checks it still sounds like you.">

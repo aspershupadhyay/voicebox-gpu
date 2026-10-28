@@ -1,7 +1,7 @@
 "use client";
 import {
   ArrowsClockwise, CheckCircle, DiceFive, DownloadSimple, FilmSlate, ImageSquare, Lightning, Plus, Prohibit, Sparkle,
-  StackSimple, UserFocus, WarningCircle, X,
+  StackSimple, UserFocus, X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -12,7 +12,7 @@ import { GuideButton } from "./GuideDrawer";
 import { useStatus } from "./Shell";
 import { Select } from "./pop";
 import { useReleaseBlobs } from "./blobs";
-import { Empty, Notice, SideRow, ToolPage } from "./ui";
+import { Empty, SideRow, ToolPage } from "./ui";
 
 type Spec = { about: string; sizes: Record<string, [number, number]>; qualities: Record<string, { steps: number; about: string }>; disk_gb: number;
   max_count: number; edit?: boolean; max_refs?: number; transparent?: boolean; commercial?: boolean; license?: string; downloaded?: boolean };
@@ -173,7 +173,6 @@ export default function Images() {
     <>
       <ToolPage title="Images" sub="Stills, thumbnails and video start frames from a prompt."
         actions={<GuideButton engine={model} label="Prompting guide" />}
-        notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/settings?tab=gpu" className="btn sm">Start the GPU</Link>}><b>The GPU is off.</b> Write your prompt now; this page connects by itself once it&apos;s on.</Notice>}
         side={
           <>
             <SideRow label="Model" htmlFor="img-model" info={spec.about}>

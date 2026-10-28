@@ -4,6 +4,23 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
+## Latest round (pixel pass)
+
+- **The GPU once per page, at most.** The Voiceover page showed it three times (a "GPU is off" banner, a "GPU off"
+  status and a "Start the GPU" button). A page that needs the GPU shows only its one action button ("Start the GPU", in
+  place of Generate / Create); no banner, no status pill. The tool pages and the instant clone follow the same rule.
+- **Pixel icons everywhere in the frame**: the sidebar, the Create / Grow switch, the top bar (menu, sidebar, search,
+  Settings, Create) and the phone tab bar use the pixel icons from `components/pixel.tsx`, not the line icons.
+- **Each icon has its own hover move**, the way the Settings gear turns: the house hops, the waves ripple, the cards
+  shuffle, the folder's paper pops out, the mic bobs, the wand flicks, CC types itself, the sun rises, tiles light up in
+  turn, rings go out, rows slide in, people hop, the calendar flips, the trophy wobbles, the gear turns in pixel steps.
+- **Each page has its own calm pixel scene** next to its title (a mic and ripples on Voices, a corkboard on Posts, a cat
+  asleep on a filing cabinet on Files, an on-air sign on Voiceover, a radio tower on Live…).
+- **Loading is pixel, never shiny**: skeletons are flat tiles with drifting pixel static and a stepped band of pixel
+  blocks; small waits show three hopping pixels. No shimmer gradients.
+- **Files gets the most life**: cards build in from pixel blocks, folders tip open with a sheet of paper peeking out,
+  covers zoom, audio waves dance on hover. Keep it light: transforms and opacity only, nothing for reduced motion.
+
 ## How to work with this owner
 
 - They send screenshots and inspiration images. Build to the look they show, not to a reinterpretation. When they
