@@ -16,7 +16,7 @@ own phone tabs (Overview, Live, Content, Competitors, More). Page by page:
 
 | Group | Page | Route | Job |
 |---|---|---|---|
-| — | Home | `/` | Greeting with the GPU's state, the channels at a glance (headline tiles over one chart, top posts lately, this week against the goals and what's due), tool tiles, latest takes, ways to make a voice |
+| — | Home | `/home` | Greeting, the channels at a glance (headline tiles over one chart, top posts lately, this week against the goals and what's due), tool tiles, latest takes, ways to make a voice |
 | — | Voices | `/voices` | Make a voice (three cards), then your voices and the built-in voices |
 | — | Posts | `/posts` | Every post as a Board, Calendar, List or Gallery, filtered by platform; the post drawer; Autopilot (`?view=autopilot`): accounts, the publishing queue, rules |
 | Grow | Live | `/analytics/live` | Every post under 72 hours old, yours and your rivals', checked every minute (`lib/live.ts`, a Cloudflare cron in `workers/live-timer.js`): views by age against the usual post at the same age (dashed, the middle half shaded), views in the last hour, a verdict (Taking off, Ahead, On par, Behind), followers as they move |
@@ -25,8 +25,7 @@ own phone tabs (Overview, Live, Content, Competitors, More). Page by page:
 | — | Files | `/files` | A Drive-like file manager: category folders (Videos, Images, Audio, Docs & scripts, Other) and yours, Recent, search, filters, drag-and-drop, paste, trash (`?view=trash`) |
 | Create | Voiceover | `/voiceover` | Write, pick a voice, generate; Script and Lines views |
 | Create | Clean-up, Subtitles, Images | `/clean-up`, `/subtitles`, `/images` | One tool each, in the tool layout |
-| Studio | GPU & engines | `/gpu` | Start/stop the Colab GPU, engines, machine, worker, failures |
-| Studio | Settings | `/settings` | Defaults, security, MCP access |
+| Studio | Settings | `/settings` | Tabs along the top with their own addresses (`?tab=`): Profile, Voice & sound, Publishing, GPU & engines (start/stop the Colab GPU, engines, machine, worker, failures; `/gpu` lands here), Security, Claude & API (MCP, upload keys). Each tab is a bento of cards; no H1, the breadcrumb names the page |
 
 Making a voice opens from the Voices cards: Instant voice clone (`/voices/new`), Professional voice clone (`/voices/professional`,
 your trained model) and Re-voice (`/voices/revoice`). Old addresses redirect (`next.config.ts`), `/model` included. Add a
@@ -66,6 +65,14 @@ status and history under it, and the actions in a footer. It saves as you type.
   category folders come first and file things by kind on their own; deleting goes to the trash with an Undo snackbar;
   uploads show as cards at once (with a progress ring) and in a panel bottom right. Every change shows at once and is
   saved behind it. The sidebar lists starred things under Favourites.
+- Grow's Overview follows the Flux layout (`components/Flux.tsx`): title and chips on one row (range, compare to,
+  platform, live, a white Export, refresh), a strip of five numbers each with a hatched bar (this period's share of the
+  last two, or progress to the posting goal), follower growth as a step chart per platform, likes / comments / shares
+  as a split bar and table with one sentence on what it means, and the top posts as a ranked table with a half-ring
+  performance gauge and a live dot for posts still followed.
+- Live numbers are only read while someone is watching: a Grow page polls only while its tab is visible and someone
+  touched it in the last 5 minutes; each poll marks the studio as watched, and the minute timer skips YouTube and
+  Instagram entirely when nobody has been for 2½ minutes. The live chip says "Paused · you're away" meanwhile.
 - Grow's live pages (`components/Grow.tsx`, `useLive`) poll every 30 s; the live chip (a beating `--live` dot and how long
   ago the last check landed) sits in every Grow page's top bar, which also holds the range, "Compare to" (the same
   number of days just before), Export (every post as CSV, or the page as PDF) and Refresh.
@@ -108,7 +115,11 @@ status and history under it, and the actions in a footer. It saves as you type.
   or sub line, never only behind an ⓘ.
 - Don't disable a primary button without saying why next to it; better, keep it enabled and validate on submit with
   the message beside the field (`role="alert"`, `aria-invalid`).
-- Shortcuts use a modifier: ⌘K / Ctrl+K opens search, Alt+1–9 jumps to a page. No bare single-letter shortcuts.
+- Shortcuts use a modifier: ⌘K / Ctrl+K opens search, ⌘B / Ctrl+B folds the sidebar to an icon rail, Alt+1–9 jumps to
+  a page. No bare single-letter shortcuts.
+- The top bar's right side holds search (a wide field with ⌘K; an icon on phones) and Settings (icon and word; the icon
+  on phones), whose gear carries a dot while the GPU is on. The GPU appears nowhere else in the frame: no sidebar card,
+  no top-bar pill, no Home banner. The studio opens on Grow (`/` → `/analytics`).
 - Never a native `<select>` (it shows the device's menu): use `Select` from `components/pop.tsx`, which floats in a
   portal and stays on screen. `Info` tips, `PopMenu`s and `Select`s float the same way.
 - Every popup closes on Escape and on a click outside (`useDismiss`); drawers and dialogs close on their scrim.

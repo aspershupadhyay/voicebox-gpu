@@ -23,7 +23,7 @@ const ENGINES: Record<string, { role: string; lang: string; mem: string }> = {
 };
 const STATE: Record<string, [string, string]> = { ready: ["Warm", "ok"], parked: ["In RAM", "blue"], loading: ["Loading", "warn"], installing: ["Installing", "warn"], busy: ["Busy", "warn"], error: ["Error", "bad"], idle: ["Off", ""] };
 
-export default function Gpu() {
+export default function Gpu({ embedded }: { embedded?: boolean }) {
   const { status: st, refresh } = useStatus();
   const { toast, confirm } = useDialog();
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -69,7 +69,7 @@ export default function Gpu() {
 
   return (
     <>
-      <PageHeader title="GPU & engines" sub={!st ? "Checking on the GPU…" : !st.online ? (st.reason === "heartbeat stale" ? "The Colab GPU stopped. Start it below." : "The GPU is off. Start it below; engines load on first use.") : `${gpu ?? "GPU"} is on with ${warm} engine${warm === 1 ? "" : "s"} warm.`} />
+      {embedded ? <p className="set-lead">{!st ? "Checking on the GPU…" : !st.online ? (st.reason === "heartbeat stale" ? "The Colab GPU stopped. Start it below." : "The GPU is off. Start it below; engines load on first use.") : `${gpu ?? "GPU"} is on with ${warm} engine${warm === 1 ? "" : "s"} warm.`}</p> : <PageHeader title="GPU & engines" sub={!st ? "Checking on the GPU…" : !st.online ? (st.reason === "heartbeat stale" ? "The Colab GPU stopped. Start it below." : "The GPU is off. Start it below; engines load on first use.") : `${gpu ?? "GPU"} is on with ${warm} engine${warm === 1 ? "" : "s"} warm.`} />}
 
       <div className="stats-row">
         <StatCard icon={<Gauge size={17} weight="bold" />} value={st?.gpu ? <>{st.gpu.used_gb}<small>/ {st.gpu.total_gb} GB</small></> : "—"} label="GPU memory in use">

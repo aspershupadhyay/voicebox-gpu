@@ -77,7 +77,7 @@ export default function Revoice() {
   return (
     <ToolPage title="Re-voice" sub="A rough take of yourself in, your clean voice out. Timing and emotion stay yours."
       actions={<Link href="/voices" className="btn ghost"><ArrowLeft size={15} />Voices</Link>}
-      notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}><b>The GPU is off.</b> Add your take now; re-voicing needs the GPU.</Notice>}
+      notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/settings?tab=gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}><b>The GPU is off.</b> Add your take now; re-voicing needs the GPU.</Notice>}
       side={
         <>
           <SideRow label="Speak it as" htmlFor="rv-voice" aside={<Link href="/voices/new" className="linkish u">New voice</Link>}>
@@ -89,7 +89,7 @@ export default function Revoice() {
           <div className="set-row"><div className="set-line"><span>Subtitles and voice match</span>
             <button role="switch" aria-checked={subtitles} className={`switch ${subtitles ? "on" : ""}`} onClick={() => setSubtitles(!subtitles)} aria-label="Subtitles and voice match" /></div></div>
           <div className="tool-go">
-            {offline ? <Link href="/gpu" className="btn block"><Power size={15} weight="bold" />Start the GPU</Link>
+            {offline ? <Link href="/settings?tab=gpu" className="btn block"><Power size={15} weight="bold" />Start the GPU</Link>
               : <button className="block" onClick={go} disabled={busy || !status}><ArrowsClockwise size={16} weight="bold" />{busy ? "Re-voicing…" : "Re-voice"}</button>}
             <span className="tiny dim">Up to 15 minutes. It lines up with your video frame for frame.</span>
           </div>

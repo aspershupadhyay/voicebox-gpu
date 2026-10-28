@@ -18,6 +18,7 @@ import { spaceName } from "@/lib/spaces";
 import { Bars, change, Columns, compact, DAYS, day, fmtUnit, full, Heatmap, hour, LineChart, pct, Quadrant, Score, Scorecard, SLOTS, Trend, TrendBoard } from "./anparts";
 import { InstagramTab, PostDrawer, PostList, YouTubeTab } from "./AnalyticsPlatform";
 import { useAn } from "./AnalyticsShell";
+import { FollowerGrowth, KpiStrip, Responses, TopTable } from "./Flux";
 import { ago } from "./api";
 import { PlatformBadge } from "./platform";
 import { Select } from "./pop";
@@ -43,27 +44,6 @@ export function trendOf(d: Data): Daily[] {
 }
 
 /* ───────────── Overview */
-
-function Headline({ data, trend }: { data: Data; trend: Daily[] }) {
-  const v = trend.find((t) => t.key === "views");
-  const tot = v ? sumOf(v.cur) : null, ch = v ? change(sumOf(v.cur), sumOf(v.prev)) : null;
-  const net = kpiOf(data, "net")?.value, hits = kpiOf(data, "hits")?.value;
-  const movers = FMTS.filter((f) => data.formats[f]).map((f) => ({ f, c: change(data.formats[f]!.a.value, data.formats[f]!.a.prev) }));
-  return (
-    <section className="card an-card an-headline" aria-label="Summary">
-      <p className="an-hl">
-        {tot != null ? <>Your channels got <b className="mono">{compact(tot)}</b> views and reach in the last {data.range} days</> : <>Here&apos;s the last {data.range} days</>}
-        {ch != null && isFinite(ch) && <>, <span className={ch >= 0 ? "an-up" : "an-down"}>{ch >= 0 ? "up" : "down"} {moved(ch)}</span> on the {data.range} days before</>}.
-        {net != null && <> You {net >= 0 ? "gained" : "lost"} <b className="mono">{full(Math.abs(net))}</b> follower{Math.abs(net) === 1 ? "" : "s"}{hits ? <> and <b className="mono">{hits}</b> post{hits === 1 ? "" : "s"} took off</> : null}.</>}
-      </p>
-      {movers.length > 0 && (
-        <div className="an-movers" aria-label="Each format against the period before">
-          {movers.map(({ f, c }) => <Link key={f} href={`/analytics/content?fmt=${f}`} className="an-mover"><PlatformBadge space={f} size={16} />{short(f)}<Trend v={c} size="sm" /></Link>)}
-        </div>
-      )}
-    </section>
-  );
-}
 
 /** Every format side by side: its main number, its share of views, the trend, output and how a typical post did. */
 function Formats({ data }: { data: Data }) {
@@ -163,16 +143,24 @@ export function Overview() {
   const data = useAn();
   const [open, setOpen] = useState<Item | null>(null);
   const trend = trendOf(data);
-  const er = kpiOf(data, "er");
+  const views = trend.find((t) => t.key === "views");
   return (
     <>
-      <Headline data={data} trend={trend} />
-      <TrendBoard id="an-ov-trend" trend={trend} days={data.days} range={data.range} extra={{ engagements: er?.value != null ? `${fmtUnit(er.value, "pct")} of views` : undefined }} />
+      <KpiStrip data={data} />
       <div className="an-row">
-        <Formats data={data} />
+        <FollowerGrowth data={data} />
+        <Responses data={data} />
+      </div>
+      <div className="an-row">
+        <section className="card an-card" aria-labelledby="an-ov-views-h">
+          <div className="card-head"><div><h2 id="an-ov-views-h">Views and reach, day by day</h2><p className="sub">The last {data.range} days against the {data.range} before</p></div></div>
+          {views ? <LineChart labels={data.days.map((d) => day(d))} cur={views.cur} prev={views.prev} name="Views and reach" height={240} /> : <Empty icon={<ChartLineUp size={22} />} title="No daily views yet" />}
+          <div className="an-legend"><span><i className="k" />Last {data.range} days</span><span><i className="k prev" />The {data.range} days before</span></div>
+        </section>
         <Tips tips={data.tips} />
       </div>
-      <TopPosts data={data} open={setOpen} />
+      <TopTable data={data} open={setOpen} />
+      <Formats data={data} />
       {open && <PostDrawer item={open} onClose={() => setOpen(null)} />}
     </>
   );

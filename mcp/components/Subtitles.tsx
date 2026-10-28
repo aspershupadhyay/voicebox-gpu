@@ -122,7 +122,7 @@ export default function Subtitles() {
   return (
     <ToolPage title="Subtitles" sub="Word-timed subtitles for any audio or video, in 99 languages."
       actions={<GuideButton engine="whisper" label="Subtitle guide" />}
-      notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}><b>The GPU is off.</b> Add your files now; subtitling needs the GPU.</Notice>}
+      notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/settings?tab=gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}><b>The GPU is off.</b> Add your files now; subtitling needs the GPU.</Notice>}
       side={
         <>
           <SideRow label="Language" htmlFor="sub-lang" info="Auto-detect works for most recordings. Pick the language when a file mixes languages or starts with music.">
@@ -133,7 +133,7 @@ export default function Subtitles() {
             <p className="small dim" style={{ margin: 0 }}>SRT and VTT files plus word timings (JSON) for every file, and one combined timeline when you add several.</p>
           </div>
           <div className="tool-go">
-            {offline ? <Link href="/gpu" className="btn block"><Power size={15} weight="bold" />Start the GPU</Link>
+            {offline ? <Link href="/settings?tab=gpu" className="btn block"><Power size={15} weight="bold" />Start the GPU</Link>
               : mode === "library" ? <span className="small dim">Pick a voiceover on the left and press Subtitles.</span>
               : <button className="block" onClick={start} disabled={busy || !status}><ClosedCaptioning size={16} weight="bold" />{busy ? "Working…" : `Make subtitles${items.length > 1 ? ` for ${items.length} files` : ""}`}</button>}
           </div>

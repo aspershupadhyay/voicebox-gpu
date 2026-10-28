@@ -21,10 +21,12 @@ const config: NextConfig = {
   async redirects() {
     const to = (source: string, destination: string) => ({ source, destination, permanent: false });
     return [
-      to("/generate", "/voiceover"), to("/studio", "/clean-up"), to("/image", "/images"), to("/health", "/gpu"),
+      to("/generate", "/voiceover"), to("/studio", "/clean-up"), to("/image", "/images"), to("/health", "/settings?tab=gpu"),
       to("/content", "/posts"), to("/workspace", "/posts?view=board"), to("/calendar", "/posts?view=calendar"),
       to("/library", "/files"), to("/media", "/files?tab=uploads"), to("/board", "/posts?view=board"),
       to("/model", "/voices/professional"),
+      // the studio opens on Grow (Home lives at /home), and GPU & engines is a Settings tab
+      to("/", "/analytics"), to("/gpu", "/settings?tab=gpu"),
       // Analytics' platform tabs became views with their own addresses
       ...(["youtube", "instagram"] as const).map((t) => ({ ...to("/analytics", `/analytics/${t}`), has: [{ type: "query" as const, key: "tab", value: t }] })),
     ];

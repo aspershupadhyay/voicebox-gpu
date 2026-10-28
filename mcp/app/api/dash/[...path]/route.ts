@@ -71,10 +71,12 @@ export async function GET(req: Request, ctx: Ctx) {
       }) });
     }
     if (a === "live" && !b) {
-      // Grow → Live and Competitors: the minute-by-minute state. While a page is open and the timer hasn't run for 90 s
-      // (not set up, or down), the page's own poll runs a check after the response, so the numbers stay live anyway
-      const { liveView, loadLive, loadRivals, tick } = await import("@/lib/live");
+      // Grow's minute-by-minute state. The page only asks while it's visible and in use, and each ask marks someone as
+      // watching, which is what lets the minute timer read the platforms. If the timer hasn't run for 90 s (down, or
+      // the first visit after a quiet spell), the check runs right after this response instead
+      const { liveView, loadLive, loadRivals, markSeen, tick } = await import("@/lib/live");
       const [s, rivals] = await Promise.all([loadLive(), loadRivals()]);
+      after(() => markSeen().catch(() => {}));
       if (Date.now() - s.at > 90_000) after(() => tick(40_000).then(() => {}, () => {}));
       return Response.json(liveView(s, rivals));
     }

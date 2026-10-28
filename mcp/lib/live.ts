@@ -90,6 +90,20 @@ function point(t: Track, views: number, likes: number, comments: number) {
 }
 
 /** One check. `n` is the run number: some reads happen every run, others every few. */
+const SEEN = "workspace/live/seen.json";
+/** Someone has a Grow page open and is active on it (each poll of /api/dash/live says so). */
+export const markSeen = () => putJson(SEEN, { at: Date.now() });
+/** How long after the last sign of a viewer the timer keeps checking. */
+export const WATCH_MS = 150_000;
+
+/** The minute timer's check: only while someone is watching (see markSeen); otherwise nothing is asked of YouTube or
+ *  Instagram, so an unwatched studio spends no quota. */
+export async function timerTick() {
+  const seen = await getJson<{ at: number }>(SEEN).catch(() => null);
+  if (!seen || Date.now() - seen.at > WATCH_MS) return { ran: false, idle: true, seen: seen?.at ?? null };
+  return tick(45_000);
+}
+
 export async function tick(budgetMs = 45_000): Promise<{ ran: boolean; at: number; tracks: number; units: number; errors: string[] }> {
   const started = Date.now();
   const lock = await getJson<{ at: number }>(LOCK).catch(() => null);

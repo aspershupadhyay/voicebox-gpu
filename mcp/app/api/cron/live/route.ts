@@ -1,8 +1,10 @@
 // The minute timer's knock (Grow → Live): a Cloudflare cron (workers/live-timer.js) POSTs here every minute and
-// lib/live.ts reads every fresh post's counters. Locked like the other worker routes: WORKER_SECRET, or the timer's own
-// secret, which only lives in Cloudflare; this file keeps its SHA-256 (LIVE_TIMER_HASH on Vercel overrides it).
+// lib/live.ts reads every fresh post's counters, only while someone has a Grow page open and in use (otherwise it
+// answers { idle: true } without asking YouTube or Instagram anything). Locked like the other worker routes:
+// WORKER_SECRET, or the timer's own secret, which only lives in Cloudflare; this file keeps its SHA-256
+// (LIVE_TIMER_HASH on Vercel overrides it).
 import { createHash } from "node:crypto";
-import { tick } from "@/lib/live";
+import { timerTick } from "@/lib/live";
 import { safeEqual } from "@/lib/worker";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +23,7 @@ function allowed(req: Request) {
 export async function POST(req: Request) {
   if (!allowed(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
   try {
-    return Response.json(await tick(45_000));
+    return Response.json(await timerTick());
   } catch (e) {
     return Response.json({ error: (e as Error).message }, { status: 502 });
   }

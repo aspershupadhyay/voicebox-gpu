@@ -102,7 +102,7 @@ export default function Studio() {
 
   return (
     <ToolPage title="Clean-up" sub="A rough recording in, studio sound out, same length so it stays in sync."
-      notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}><b>The GPU is off.</b> Add your recording now; cleaning it needs the GPU.</Notice>}
+      notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/settings?tab=gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}><b>The GPU is off.</b> Add your recording now; cleaning it needs the GPU.</Notice>}
       side={
         <>
           <SideRow label="Mode" htmlFor="cu-mode" info="It measures the noise, the room echo and how much of the voice the mic captured, runs only what the recording needs, and checks it still sounds like you.">
@@ -121,7 +121,7 @@ export default function Studio() {
           <div className="set-row"><div className="set-line"><span>Also make subtitles</span>
             <button role="switch" aria-checked={subtitles} className={`switch ${subtitles ? "on" : ""}`} onClick={() => setSubtitles(!subtitles)} aria-label="Also make subtitles" /></div></div>
           <div className="tool-go">
-            {offline ? <Link href="/gpu" className="btn block"><Power size={15} weight="bold" />Start the GPU</Link>
+            {offline ? <Link href="/settings?tab=gpu" className="btn block"><Power size={15} weight="bold" />Start the GPU</Link>
               : <button className="block" onClick={go} disabled={working || !status}><MagicWand size={16} weight="bold" />{working ? "Cleaning…" : "Clean it up"}</button>}
             <span className="tiny dim">Same length as the original, so it drops back onto your edit.</span>
           </div>

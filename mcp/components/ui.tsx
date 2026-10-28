@@ -9,9 +9,9 @@ import { Info } from "./Info";
 import { Floating, useDismiss } from "./pop";
 
 /** Every page opens with this: the page's name as the H1, one short line under it, and at most two actions. */
-export function PageHeader({ title, eyebrow, sub, actions }: { title: React.ReactNode; eyebrow?: React.ReactNode; sub?: React.ReactNode; actions?: React.ReactNode }) {
+export function PageHeader({ title, eyebrow, sub, actions, className }: { title: React.ReactNode; eyebrow?: React.ReactNode; sub?: React.ReactNode; actions?: React.ReactNode; className?: string }) {
   return (
-    <header className="ph">
+    <header className={`ph ${className ?? ""}`}>
       <div className="ph-text">
         {eyebrow && <div className="eyebrow">{eyebrow}</div>}
         <h1>{title}</h1>

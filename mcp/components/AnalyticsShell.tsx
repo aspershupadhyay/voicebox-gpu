@@ -6,7 +6,7 @@
 // on the minute-by-minute numbers instead (useLive) and don't wait for the report.
 import { ArrowsClockwise, ArrowSquareOut, ChartLineUp, DownloadSimple, FileCsv, LinkSimple, Plus, Printer, Warning } from "@phosphor-icons/react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
 import type { Range } from "@/lib/analytics";
 import { day } from "./anparts";
@@ -72,12 +72,21 @@ function Tabs({ path, tail }: { path: string; tail?: React.ReactNode }) {
 }
 
 /** Live, Competitors and a rival's page: the minute-by-minute numbers, no report to wait on. */
+/** Which platform the page shows: Overview is every platform, the YouTube and Instagram pages one each. Picking one
+ *  goes to its page. */
+function PlatformChip({ path }: { path: string }) {
+  const router = useRouter();
+  const v = path.startsWith("/analytics/youtube") ? "youtube" : path.startsWith("/analytics/instagram") ? "instagram" : "all";
+  return <Select className="fx-chip-sel" size="sm" label="Platform" value={v} onChange={(n) => router.push(n === "all" ? "/analytics" : `/analytics/${n}`)}
+    options={[["all", "All platforms"], ["youtube", "YouTube"], ["instagram", "Instagram"]]} />;
+}
+
 function LiveShell({ view, children }: { view: (typeof VIEWS)[number]; children: React.ReactNode }) {
   const path = usePathname();
-  const { data } = useLive();
+  const { data, paused } = useLive();
   return (
     <>
-      <PageHeader title={view.name} sub={view.sub} actions={<LiveChip at={data?.at} />} />
+      <PageHeader className="fx-head" title={view.name} actions={<LiveChip at={data?.at} paused={paused} />} />
       <Tabs path={path} />
       <div key={path} className="an-wrap an-view">{children}</div>
     </>
@@ -86,7 +95,7 @@ function LiveShell({ view, children }: { view: (typeof VIEWS)[number]; children:
 
 function ReportShell({ view, children }: { view: (typeof VIEWS)[number]; children: React.ReactNode }) {
   const path = usePathname();
-  const live = useLive(60_000).data;
+  const { data: live, paused } = useLive(60_000);
   const [range, setRange] = useState<Range>(28);
   useEffect(() => { setRange(savedRange()); }, []);
   const { data, err, busy, reload } = useReport(range);
@@ -94,13 +103,14 @@ function ReportShell({ view, children }: { view: (typeof VIEWS)[number]; childre
 
   return (
     <>
-      <PageHeader title={view.name} sub={view.sub}
+      <PageHeader className="fx-head" title={view.name}
         actions={<>
-          <Select className="an-sel" label="Range" value={range} onChange={pickRange} options={[[7, "Last 7 days"], [28, "Last 28 days"], [90, "Last 90 days"]]} />
-          {data && <span className="gr-chip hide-sm" title="Every change on these pages compares with the same number of days just before">Compare to · {day(before(data.from, data.range)[0])} – {day(before(data.from, data.range)[1])}</span>}
-          <LiveChip at={live?.at} href="/analytics/live" />
+          <Select className="fx-chip-sel" size="sm" label="Range" value={range} onChange={pickRange} options={[[7, "Last 7 days"], [28, "Last 28 days"], [90, "Last 90 days"]]} />
+          {data && <span className="fx-chip hide-sm" title="Every change on these pages compares with the same number of days just before">Compare to · {day(before(data.from, data.range)[0])} – {day(before(data.from, data.range)[1])}</span>}
+          <PlatformChip path={path} />
+          <LiveChip at={live?.at} paused={paused} href="/analytics/live" />
           <PopMenu width={230} trigger={({ toggle, ref, open }) => (
-            <button ref={ref} type="button" className="ghost" onClick={toggle} aria-expanded={open} aria-haspopup="menu" disabled={!data}><DownloadSimple size={15} />Export</button>
+            <button ref={ref} type="button" className="fx-export" onClick={toggle} aria-expanded={open} aria-haspopup="menu" disabled={!data}><DownloadSimple size={14} weight="bold" />Export</button>
           )}>
             {(close) => (
               <>
@@ -109,7 +119,7 @@ function ReportShell({ view, children }: { view: (typeof VIEWS)[number]; childre
               </>
             )}
           </PopMenu>
-          <button type="button" className="ghost" onClick={() => reload(true)} disabled={busy} aria-label="Refresh from YouTube and Instagram"><ArrowsClockwise size={15} className={busy ? "spin" : ""} />Refresh</button>
+          <button type="button" className="fx-icon" onClick={() => reload(true)} disabled={busy} aria-label="Refresh from YouTube and Instagram" title="Refresh from YouTube and Instagram"><ArrowsClockwise size={15} className={busy ? "spin" : ""} /></button>
         </>} />
       {err && <Notice icon={<Warning size={18} />} tone="bad" action={<button className="ghost sm" onClick={() => reload()}>Try again</button>}>Couldn&apos;t load analytics: {err}</Notice>}
       {data?.needs.map((n, i) => (

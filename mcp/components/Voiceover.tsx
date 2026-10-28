@@ -528,7 +528,7 @@ export default function Voiceover() {
         <h1 className="sr-only">Voiceover</h1>
         <div className="tts-canvas">
           {offline && (
-            <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}>
+            <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/settings?tab=gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}>
               <b>The GPU is off.</b> Write and set up now; this page connects by itself once it&apos;s on.
             </Notice>
           )}
@@ -573,7 +573,7 @@ export default function Voiceover() {
             </PopMenu>
             <span className="count">{chars.toLocaleString()} characters · ≈{fmtS(audioS)}{status?.online ? ` · ready in ≈${fmtS(estS)}` : ""}</span>
             {offline
-              ? <Link href="/gpu" className="btn"><Power size={15} weight="bold" />Start the GPU</Link>
+              ? <Link href="/settings?tab=gpu" className="btn"><Power size={15} weight="bold" />Start the GPU</Link>
               : <button disabled={!!blocked} onClick={() => submit()} title={blocked || undefined}><Microphone size={16} weight="bold" />{running ? "Generating…" : gens.length ? "Generate again" : "Generate speech"}</button>}
           </div>
           {err && <p className="err" role="alert">{err}</p>}

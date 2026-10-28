@@ -4,7 +4,7 @@
 // sidebar as a drawer. Create is the studio (voices, audio, images, files); Grow is analytics (everything under
 // /analytics), with its own pages, its own tabs on phones and the rivals you pinned. The switch remembers where you were.
 import {
-  ArrowsClockwise, Broadcast, CalendarDots, CaretDown, ChartLineUp, Rows, SquaresFour, Trophy, UsersThree, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
+  ArrowsClockwise, Broadcast, CalendarDots, SidebarSimple, CaretDown, ChartLineUp, Rows, SquaresFour, Trophy, UsersThree, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
   FileAudio, FileText, FilmStrip, Folder, Folders, MagicWand, MagnifyingGlass, Microphone, Paperclip, Plus, Power, SignOut, Star, UserSound, X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
@@ -24,7 +24,7 @@ export const useStatus = () => useContext(StatusCtx);
 
 type Nav = { href: string; name: string; Icon: typeof House; sec: "main" | "create" | "studio"; match?: string[] };
 export const NAV: Nav[] = [
-  { href: "/", name: "Home", Icon: House, sec: "main" },
+  { href: "/home", name: "Home", Icon: House, sec: "main" },
   { href: "/voices", name: "Voices", Icon: UserSound, sec: "main" },
   { href: "/posts", name: "Posts", Icon: Kanban, sec: "main" },
   { href: "/analytics", name: "Analytics", Icon: ChartLineUp, sec: "main" },
@@ -33,10 +33,10 @@ export const NAV: Nav[] = [
   { href: "/clean-up", name: "Clean-up", Icon: MagicWand, sec: "create" },
   { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning, sec: "create" },
   { href: "/images", name: "Images", Icon: ImageSquare, sec: "create" },
-  { href: "/gpu", name: "GPU & engines", Icon: Cpu, sec: "studio" },
+  { href: "/settings?tab=gpu", name: "GPU & engines", Icon: Cpu, sec: "studio" },
   { href: "/settings", name: "Settings", Icon: GearSix, sec: "studio" },
 ];
-const TABS = ["/", "/voiceover", "/posts", "/voices"];
+const TABS = ["/home", "/voiceover", "/posts", "/voices"];
 
 /** Grow mode's pages (all under /analytics; the Analytics shell renders them). */
 export const GROW: { href: string; name: string; Icon: typeof House; net?: "youtube" | "instagram" }[] = [
@@ -58,12 +58,12 @@ const LAST = { create: "vb-last-create", grow: "vb-last-grow" };
  *  you were last on there. */
 function ModeSwitch({ grow, compact }: { grow: boolean; compact?: boolean }) {
   const last = (k: keyof typeof LAST, fallback: string) => { try { return localStorage.getItem(LAST[k]) || fallback; } catch { return fallback; } };
-  const [hrefs, setHrefs] = useState({ create: "/", grow: "/analytics" });
-  useEffect(() => setHrefs({ create: last("create", "/"), grow: last("grow", "/analytics") }), [grow]);
+  const [hrefs, setHrefs] = useState({ create: "/home", grow: "/analytics" });
+  useEffect(() => setHrefs({ create: last("create", "/home"), grow: last("grow", "/analytics") }), [grow]);
   return (
     <nav className={`mode-sw ${compact ? "compact" : ""}`} aria-label="Mode">
-      <Link href={hrefs.create} className={grow ? "" : "on"} aria-current={grow ? undefined : "page"}><MagicWand size={15} weight={grow ? "regular" : "duotone"} aria-hidden />Create</Link>
-      <Link href={hrefs.grow} className={grow ? "on" : ""} aria-current={grow ? "page" : undefined}><ChartLineUp size={15} weight={grow ? "duotone" : "regular"} aria-hidden />Grow</Link>
+      <Link href={hrefs.create} className={grow ? "" : "on"} aria-current={grow ? undefined : "page"} title="Create: voices, audio, images, files"><MagicWand size={15} weight={grow ? "regular" : "duotone"} aria-hidden /><span className="nl">Create</span></Link>
+      <Link href={hrefs.grow} className={grow ? "on" : ""} aria-current={grow ? "page" : undefined} title="Grow: analytics, live numbers, rivals"><ChartLineUp size={15} weight={grow ? "duotone" : "regular"} aria-hidden /><span className="nl">Grow</span></Link>
     </nav>
   );
 }
@@ -84,8 +84,8 @@ function PinnedRivals({ path }: { path: string }) {
     <>
       <div className="navsec">Pinned rivals</div>
       {pins.map((p) => (
-        <Link key={p.key} href={p.href} className={`navlink pin-link ${path === p.href ? "on" : ""}`} aria-current={path === p.href ? "page" : undefined}>
-          <span className="pin-av">{p.avatar ? <img src={p.avatar} alt="" loading="lazy" /> : initials(p.name)}</span><span className="ellipsis">{p.name}</span>
+        <Link key={p.key} href={p.href} className={`navlink pin-link ${path === p.href ? "on" : ""}`} aria-current={path === p.href ? "page" : undefined} title={p.name}>
+          <span className="pin-av">{p.avatar ? <img src={p.avatar} alt="" loading="lazy" /> : initials(p.name)}</span><span className="ellipsis nl">{p.name}</span>
         </Link>
       ))}
     </>
@@ -199,26 +199,6 @@ function Palette({ open, onClose, cmds }: { open: boolean; onClose: () => void; 
   );
 }
 
-/** The GPU in the sidebar: on or off at a glance, how full its memory is, and the one action that matters. */
-function GpuCard({ status }: { status: Status | null }) {
-  const busy = !!(status?.running?.length || status?.queue);
-  const vram = status?.gpu?.total_gb ? status.gpu.used_gb / status.gpu.total_gb : 0;
-  const ready = Object.values(status?.engines ?? {}).filter((x) => x === "ready").length;
-  return (
-    <div className="side-card">
-      <div className="sc-head">
-        <span className="sc-ic"><span className={`onair ${status?.online ? "live" : ""}`} aria-hidden><i style={{ height: "55%" }} /><i style={{ height: "90%" }} /><i style={{ height: "40%" }} /><i style={{ height: "75%" }} /><i style={{ height: "50%" }} /></span></span>
-        <div style={{ minWidth: 0 }}>
-          <b>{!status ? "Connecting…" : status.online ? (busy ? "GPU busy" : "GPU on") : "GPU off"}</b>
-          <p className="ellipsis">{status?.online ? `${status.gpu?.name?.replace("NVIDIA ", "") ?? "GPU"} · ${ready} engine${ready === 1 ? "" : "s"} warm` : "Voice work needs the GPU."}</p>
-        </div>
-      </div>
-      {status?.online && <div className="gm-bar" role="meter" aria-label="GPU memory" aria-valuenow={Math.round(vram * 100)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${Math.round(vram * 100)}%` }} /></div>}
-      <Link href="/gpu" className="btn ghost sm block">{status?.online ? "Open GPU & engines" : <><Power size={14} weight="bold" /> Start the GPU</>}</Link>
-    </div>
-  );
-}
-
 function Frame({ children, status }: { children: React.ReactNode; status: Status | null }) {
   const path = usePathname();
   const router = useRouter();
@@ -231,9 +211,13 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
   const grow = isGrow(path);
   const growHere = grow ? [...GROW].reverse().find((g) => growOn(path, g.href)) ?? (path.startsWith("/analytics/competitors") ? GROW[5] : GROW[0]) : null;
   useEffect(() => { try { localStorage.setItem(grow ? LAST.grow : LAST.create, path); } catch {} }, [grow, path]);
-  const on = (href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`));
+  const on = (href: string) => path === href || path.startsWith(`${href}/`);
   const busy = !!(status?.running?.length || status?.queue);
   useEffect(() => setDrawer(false), [path]);
+  // the sidebar folds to an icon rail (the button at the top left, or ⌘B / Ctrl+B); remembered in this browser
+  const [mini, setMini] = useState(false);
+  useEffect(() => { try { setMini(localStorage.getItem("vb-side-mini") === "1"); } catch {} }, []);
+  const fold = useCallback(() => setMini((m) => { try { localStorage.setItem("vb-side-mini", m ? "0" : "1"); } catch {} return !m; }), []);
 
   const cmds = useMemo<Cmd[]>(() => {
     const engine = (name: string, action: "load" | "unload") => async () => {
@@ -255,6 +239,8 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((p) => !p); return; }
+      const t = e.target as HTMLElement | null;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b" && !t?.closest("input, textarea, [contenteditable=true]")) { e.preventDefault(); fold(); return; }
       // page shortcuts need Alt, so typing or dictating a digit never navigates (WCAG 2.1.4)
       if (e.altKey && !e.metaKey && !e.ctrlKey && /^Digit[1-9]$/.test(e.code)) {
         const n = NAV[Number(e.code.slice(5)) - 1];
@@ -263,42 +249,41 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [router]);
+  }, [router, fold]);
 
   const section = (sec: Nav["sec"]) => NAV.filter((n) => n.sec === sec && n.href !== "/analytics").map(({ href, name, Icon }) => (
-    <Link key={href} href={href} className={`navlink ${on(href) ? "on" : ""}`} aria-current={on(href) ? "page" : undefined}>
-      <Icon size={18} weight={on(href) ? "duotone" : "regular"} className="ic" />{name}
+    <Link key={href} href={href} className={`navlink ${on(href) ? "on" : ""}`} aria-current={on(href) ? "page" : undefined} title={mini ? name : undefined}>
+      <Icon size={18} weight={on(href) ? "duotone" : "regular"} className="ic" /><span className="nl">{name}</span>
     </Link>
   ));
 
   return (
-    <div className="app">
+    <div className={`app ${mini ? "mini" : ""}`}>
       <a href="#main" className="skip">Skip to content</a>
       {drawer && <div className="side-scrim" onClick={() => setDrawer(false)} />}
       <aside className={`side ${drawer ? "open" : ""}`} aria-label="Sidebar">
         <PopMenu align="left" width={230} trigger={({ toggle, ref, open }) => (
           <button ref={ref} className="ws-btn" onClick={toggle} aria-expanded={open} aria-haspopup="menu">
             <Logo size={28} />
-            <span className="ws-name"><b>Voicebox Studio</b><span>Shared studio</span></span>
-            <CaretUpDown size={14} className="dim" />
+            <span className="ws-name nl"><b>Voicebox Studio</b><span>Shared studio</span></span>
+            <CaretUpDown size={14} className="dim nl" />
           </button>
         )}>
           {(close) => (
             <>
               <Link className="pm-item" role="menuitem" href="/settings" onClick={close}><GearSix size={16} className="ic" />Settings</Link>
-              <Link className="pm-item" role="menuitem" href="/gpu" onClick={close}><Cpu size={16} className="ic" />GPU &amp; engines</Link>
+              <Link className="pm-item" role="menuitem" href="/settings?tab=gpu" onClick={close}><Cpu size={16} className="ic" />GPU &amp; engines</Link>
               <hr />
               <button className="pm-item" role="menuitem" onClick={leave}><SignOut size={16} className="ic" />Sign out</button>
             </>
           )}
         </PopMenu>
         <ModeSwitch grow={grow} />
-        <button className="side-search" onClick={() => setPalette(true)}><MagnifyingGlass size={16} />Search<kbd>⌘K</kbd></button>
         {grow ? (
           <nav className="side-nav" aria-label="Grow pages">
             {GROW.map(({ href, name, Icon, net }) => { const on = growOn(path, href); return (
-              <Link key={href} href={href} className={`navlink ${on ? "on" : ""}`} aria-current={on ? "page" : undefined}>
-                {net ? <span className="ic nav-pb"><PlatformBadge net={net} size={16} /></span> : href === "/analytics/live" ? <span className="ic nav-live" aria-hidden><i /></span> : <Icon size={18} weight={on ? "duotone" : "regular"} className="ic" />}{name}
+              <Link key={href} href={href} className={`navlink ${on ? "on" : ""}`} aria-current={on ? "page" : undefined} title={mini ? name : undefined}>
+                {net ? <span className="ic nav-pb"><PlatformBadge net={net} size={16} /></span> : href === "/analytics/live" ? <span className="ic nav-live" aria-hidden><i /></span> : <Icon size={18} weight={on ? "duotone" : "regular"} className="ic" />}<span className="nl">{name}</span>
               </Link>
             ); })}
             <PinnedRivals path={path} />
@@ -306,22 +291,21 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
         ) : (
           <nav className="side-nav" aria-label="Pages">
             {section("main")}
-            <div className="navsec">Create</div>
+            <div className="navsec nl">Create</div>
             {section("create")}
             <Favourites />
           </nav>
         )}
-        {!grow && <GpuCard status={status} />}
-        <div className="side-foot">{section("studio")}</div>
         <PopMenu align="left" up width={230} trigger={({ toggle, ref, open }) => (
           <button ref={ref} className="me-btn" onClick={toggle} aria-expanded={open} aria-haspopup="menu">
             <span className="avatar">{initials(me?.user?.name ?? (me ? "T" : ""))}</span>
-            <span className="me-name"><b className="ellipsis">{me?.user?.name ?? (me ? "Access token" : " ")}</b><span className="ellipsis">{me?.user?.email ?? (me ? "Studio only, no shared workspace" : " ")}</span></span>
-            <CaretUpDown size={14} className="dim" />
+            <span className="me-name nl"><b className="ellipsis">{me?.user?.name ?? (me ? "Access token" : " ")}</b><span className="ellipsis">{me?.user?.email ?? (me ? "Studio only, no shared workspace" : " ")}</span></span>
+            <CaretUpDown size={14} className="dim nl" />
           </button>
         )}>
           {(close) => (
             <>
+              <Link className="pm-item" role="menuitem" href="/settings?tab=profile" onClick={close}><UserSound size={16} className="ic" />Profile</Link>
               <Link className="pm-item" role="menuitem" href="/settings" onClick={close}><GearSix size={16} className="ic" />Settings</Link>
               <hr />
               <button className="pm-item" role="menuitem" onClick={leave}><SignOut size={16} className="ic" />Sign out</button>
@@ -333,15 +317,22 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
       <div className="main">
         <header className="topbar">
           <button className="icon-btn menu-btn" onClick={() => setDrawer(true)} aria-label="Open menu" aria-expanded={drawer}><List size={20} /></button>
+          <button type="button" className="side-tg" onClick={fold} aria-pressed={mini} aria-label={mini ? "Expand the sidebar" : "Collapse the sidebar"}>
+            <SidebarSimple size={18} weight={mini ? "regular" : "duotone"} aria-hidden />
+            <span className="side-tg-tip" aria-hidden>{mini ? "Expand" : "Collapse"} sidebar <kbd>⌘B</kbd></span>
+          </button>
           <div className="crumb">{growHere ? <><span className="hide-sm">Grow<span aria-hidden> /</span></span><b>{growHere.name}</b></> : <>{here && here.sec !== "main" && <span className="hide-sm">{here.sec === "create" ? "Create" : "Studio"}<span aria-hidden> /</span></span>}<b>{here?.name ?? "Voicebox"}</b></>}</div>
           <ModeSwitch grow={grow} compact />
           <div className="top-actions">
-            <Link href="/gpu" className="status-pill" title="GPU & engines">
-              <span className={`dot ${status?.online ? (busy ? "warn" : "ok") : status ? "bad" : "off"}`} />
-              {!status ? "Connecting" : status.online ? (busy ? `Working · ${status.queue ?? 0} queued` : `${status.gpu?.name?.replace("NVIDIA ", "") ?? "GPU"} ready`) : "GPU off"}
+            <button type="button" className="top-search" onClick={() => setPalette(true)} aria-label="Search pages, rivals and commands (⌘K)">
+              <MagnifyingGlass size={16} aria-hidden /><span className="ts-t">Search pages, rivals, engines…</span><kbd className="ts-k">⌘K</kbd>
+            </button>
+            <Link href="/settings" className={`top-set ${path.startsWith("/settings") ? "on" : ""}`} aria-label={`Settings. GPU ${status?.online ? (busy ? "busy" : "on") : "off"}`}
+              title={`Settings · GPU ${!status ? "connecting" : status.online ? (busy ? `working, ${status.queue ?? 0} queued` : "on") : "off"}`}>
+              <span className="ts-ic"><GearSix size={17} aria-hidden /><i className={`ts-dot ${status?.online ? (busy ? "warn" : "ok") : "off"}`} aria-hidden /></span><span className="ts-t">Settings</span>
             </Link>
-            <PopMenu width={220} trigger={({ toggle, ref, open }) => (
-              <button ref={ref} className="sm" onClick={toggle} aria-expanded={open} aria-haspopup="menu"><Plus size={15} weight="bold" /><span className="hide-sm">Create</span><CaretDown size={12} className="hide-sm" /></button>
+            {!grow && <PopMenu width={220} trigger={({ toggle, ref, open }) => (
+              <button ref={ref} className="sm" onClick={toggle} aria-expanded={open} aria-haspopup="menu" aria-label="Create"><Plus size={15} weight="bold" /><span className="hide-sm">Create</span><CaretDown size={12} className="hide-sm" /></button>
             )}>
               {(close) => (
                 <>
@@ -352,7 +343,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
                   <Link className="pm-item" role="menuitem" href="/clean-up" onClick={close}><MagicWand size={16} className="ic" />Clean-up</Link>
                 </>
               )}
-            </PopMenu>
+            </PopMenu>}
           </div>
         </header>
         <main id="main" className="main-inner" tabIndex={-1}>{children}</main>
