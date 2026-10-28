@@ -9,14 +9,14 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useResumeJob } from "./jobs";
 import { ago, api, clock, fileUrl, fmtS, rangeFill, useSeed, type Job, type MyVoice } from "./api";
-import { decode, joinWav } from "./audio";
+import { audioCtx, decode, joinWav } from "./audio";
+import { bigGet, bigSet } from "./cache";
 import { Info } from "./Info";
 import { VoiceGlyph } from "./art";
-import { PageScene, PixelLoader } from "./pixel";
+import { PageScene } from "./pixel";
 import { GuideButton } from "./GuideDrawer";
 import { describeVoice, KOKORO_LANG, KOKORO_VOICES, LANGUAGES, ORPHEUS_VOICES, QWEN_LANG } from "./guides";
 import JobProgress from "./JobProgress";
-import Player from "./Player";
 import { Select, useDismiss } from "./pop";
 import { SampleButton, useSamples } from "./Sample";
 import { useStatus } from "./Shell";
@@ -104,24 +104,90 @@ function History({ refreshKey }: { refreshKey: string | null }) {
 type Gen = { job: string; ids: string[]; engine: string; voice: string; label?: string; subs?: boolean; at: number }; // a finished voiceover
 const GENS_KEY = "vb-gens"; // the latest one is shown
 
-/** One finished voiceover as a single take: its lines joined in script order (in the browser, from the line files). */
+type Take = { blob: Blob; bars: number[]; dur: number };
+
+/** The joined take: from this browser's copy if it has one (so a refresh shows it at once), else built from the line
+ *  files in the library (signed storage links), skipping any line that has no audio. Kept for next time. */
+async function loadTake(g: Gen): Promise<Take> {
+  const kept = await bigGet<Take>(`take:${g.job}`);
+  if (kept?.blob) return kept;
+  const lib = await api<{ results: { id: string; audio?: string | null }[] }>(`library/${g.job}`).catch(() => null);
+  // each line from its signed storage link, or through the dashboard if storage won't answer this browser
+  const lines = lib?.results?.length ? lib.results.map((r) => [r.audio, fileUrl(g.job, `${r.id}.wav`)]) : g.ids.map((id) => [null, fileUrl(g.job, `${id}.wav`)]);
+  const get = async (u: string) => { const r = await fetch(u); if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer(); };
+  const got = await Promise.allSettled(lines.map(async ([signed, proxy]) =>
+    audioCtx().decodeAudioData(await (signed ? get(signed).catch(() => get(proxy!)) : get(proxy!)))));
+  const bufs = got.flatMap((x) => (x.status === "fulfilled" ? [x.value] : []));
+  if (!bufs.length) throw new Error("no audio");
+  const blob = joinWav(bufs, 0.35);
+  const whole = await decode(blob);
+  const take = { blob, bars: barsOf(whole, 120), dur: whole.duration };
+  bigSet(`take:${g.job}`, take);
+  return take;
+}
+
+/** One finished voiceover as a single take, on its own little deck: a disc that turns while it plays (its rim fills with
+ *  the progress), the take's name and voice, and its whole waveform as the scrubber (drag or arrow keys to seek). */
 function Generation({ g }: { g: Gen }) {
+  const [take, setTake] = useState<Take | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [t, setT] = useState(0);
+  const [hover, setHover] = useState<number | null>(null);
+  const el = useRef<HTMLAudioElement | null>(null);
+  const wave = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let gone = false, made: string | null = null;
-    Promise.all(g.ids.map((id) => decode(fileUrl(g.job, `${id}.wav`)))).then((bufs) => {
-      if (gone) return;
-      made = URL.createObjectURL(joinWav(bufs, 0.35));
-      setUrl(made);
-    }).catch(() => !gone && setFailed(true));
+    setTake(null); setFailed(false);
+    loadTake(g).then((k) => { if (gone) return; made = URL.createObjectURL(k.blob); setUrl(made); setTake(k); }).catch(() => !gone && setFailed(true));
     return () => { gone = true; if (made) URL.revokeObjectURL(made); };
-  }, [g.job, g.ids]);
+  }, [g]);
+  useEffect(() => { // follow the playhead smoothly while it plays
+    if (!playing) return;
+    let raf = 0;
+    const step = () => { setT(el.current?.currentTime ?? 0); raf = requestAnimationFrame(step); };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [playing]);
+  const dur = take?.dur ?? 0, frac = dur ? Math.min(1, t / dur) : 0;
   const name = (g.label || `${g.engine}-${g.voice}`).replace(/[^A-Za-z0-9._-]/g, "_");
+  const toggle = () => { const a = el.current; if (!a) return; if (a.paused) a.play().catch(() => {}); else a.pause(); };
+  const seekTo = (f: number) => { const a = el.current; if (!a || !dur) return; a.currentTime = Math.max(0, Math.min(dur, f * dur)); setT(a.currentTime); };
+  const fracAt = (x: number) => { const r = wave.current!.getBoundingClientRect(); return Math.max(0, Math.min(1, (x - r.left) / r.width)); };
+  const R = 21, C = 2 * Math.PI * R;
   return (
-    <div className="vo-gen">
-      <div className="vo-gen-play">{url ? <Player src={url} compact /> : <span className="small dim">{failed ? "Couldn't play this take here. It's saved in Files." : <PixelLoader label="Loading the last take" />}</span>}</div>
-      <div className="vo-gen-acts">
+    <div className={`take ${playing ? "on" : ""} ${take ? "" : "wait"}`}>
+      {url && <audio ref={el} src={url} preload="auto" onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => { setPlaying(false); setT(0); }} />}
+      <button type="button" className="take-disc" onClick={toggle} disabled={!take} aria-label={playing ? "Pause the take" : "Play the take"}>
+        <svg viewBox="0 0 48 48" aria-hidden>
+          <circle cx="24" cy="24" r={R} className="td-track" />
+          <circle cx="24" cy="24" r={R} className="td-prog" strokeDasharray={C} strokeDashoffset={C * (1 - frac)} />
+          <g className="td-vinyl"><circle cx="24" cy="24" r="15" className="td-face" /><circle cx="24" cy="24" r="10.5" className="td-groove" /><circle cx="24" cy="24" r="6" className="td-label" /><rect x="23" y="10.5" width="2" height="3.4" rx="1" className="td-mark" /></g>
+        </svg>
+        <span className="td-ic">{playing ? <Pause size={15} weight="fill" /> : <Play size={15} weight="fill" />}</span>
+      </button>
+      <div className="take-main">
+        <div className="take-top">
+          <b className="ellipsis">{g.label || "Latest take"}</b>
+          <span className="tiny dim ellipsis">{NAME[g.engine] ?? g.engine} · {g.voice} · {ago(g.at)}</span>
+          <span className="take-time mono">{clock(hover != null ? hover * dur : t)}<span className="dim"> / {take ? clock(dur) : "–:––"}</span></span>
+        </div>
+        {failed ? <p className="small dim take-miss">This take&apos;s audio isn&apos;t in the library any more. Older takes are in Files.</p> : (
+          <div ref={wave} className="take-wave" role="slider" tabIndex={take ? 0 : -1} aria-label="Position in the take" aria-valuemin={0} aria-valuemax={Math.round(dur)} aria-valuenow={Math.round(t)} aria-valuetext={`${clock(t)} of ${clock(dur)}`}
+            onPointerDown={(e) => { if (!take) return; (e.target as HTMLElement).setPointerCapture?.(e.pointerId); seekTo(fracAt(e.clientX)); }}
+            onPointerMove={(e) => { if (!take) return; setHover(fracAt(e.clientX)); if (e.buttons) seekTo(fracAt(e.clientX)); }}
+            onPointerLeave={() => setHover(null)}
+            onKeyDown={(e) => { if (e.key === "ArrowRight") seekTo(frac + 5 / Math.max(dur, 1)); if (e.key === "ArrowLeft") seekTo(frac - 5 / Math.max(dur, 1)); if (e.key === " ") { e.preventDefault(); toggle(); } }}>
+            {(take?.bars ?? Array.from({ length: 120 }, (_, i) => 0.18 + 0.12 * Math.sin(i / 3))).map((h, i, all) => {
+              const at = i / all.length;
+              return <i key={i} className={!take ? "" : at < frac ? "p" : hover != null && at < hover ? "h" : ""} style={{ height: `${Math.round(h * 100)}%`, animationDelay: `${(i % 24) * 40}ms` }} />;
+            })}
+            {take && <span className="take-head" style={{ left: `${frac * 100}%` }} aria-hidden />}
+          </div>
+        )}
+      </div>
+      <div className="take-acts">
         {g.subs && <a className="icon-btn" href={`/api/file/${g.job}/subtitles.srt?download&name=${name}.srt`} aria-label="Download subtitles (.srt)" title="Subtitles (.srt)"><ClosedCaptioning size={16} /></a>}
         <Link className="icon-btn" href={`/files#${g.job}`} aria-label="Open in Files" title="Open in Files"><ArrowSquareOut size={16} /></Link>
         {url && <a className="icon-btn" href={url} download={`${name}.wav`} aria-label="Download" title="Download WAV"><DownloadSimple size={16} /></a>}
@@ -276,6 +342,15 @@ function LiveGeneration({ job, sent, onActive, onCancel }: { job: Job; sent: { i
   }, [on, madeEnd, finished]);
 
   useEffect(() => { onActive(on); }, [on, onActive]);
+  // made in full: keep the joined take in this browser, so the finished card (and a refresh) shows it at once
+  useEffect(() => {
+    if (!finished || job.status !== "done") return;
+    const parts = order.map((l) => bufs.current[l.id]).filter(Boolean);
+    if (!parts.length) return;
+    const blob = joinWav(parts, GAP);
+    decode(blob).then((whole) => bigSet(`take:${job.id}`, { blob, bars: barsOf(whole, 120), dur: whole.duration })).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finished, job.status, job.id]);
   useEffect(() => () => { silence(); ctx.current?.close().catch(() => {}); }, []);
 
   function toggle() {
@@ -325,23 +400,32 @@ function LiveGeneration({ job, sent, onActive, onCancel }: { job: Job; sent: { i
     if (b) seek(li, Math.min(1, (to - starts[li]) / b.duration));
   }
   return (
-    <div className="vo-gen live">
-      <div className="player compact">
-        <button className={`pp ${on ? "on" : ""} ${on && (buffering || !contiguous) ? "buffering" : ""}`} onClick={toggle}
-          aria-label={on ? (buffering || !contiguous ? "Buffering, press to pause" : "Pause") : "Play"}>
-          {on ? <Pause size={16} weight="fill" /> : <Play size={16} weight="fill" />}
-        </button>
-        <div className="vo-bars" role="slider" tabIndex={0} aria-label="Voiceover so far: click to jump, arrows to skip 5 s" onKeyDown={onKey}
+    <div className={`take live ${on ? "on" : ""} ${making ? "making" : ""}`}>
+      <button type="button" className={`take-disc ${on && (buffering || !contiguous) ? "buffering" : ""}`} onClick={toggle}
+        aria-label={on ? (buffering || !contiguous ? "Buffering, press to pause" : "Pause") : "Play"}>
+        <svg viewBox="0 0 48 48" aria-hidden>
+          <circle cx="24" cy="24" r="21" className="td-track" />
+          <circle cx="24" cy="24" r="21" className="td-prog" strokeDasharray={2 * Math.PI * 21} strokeDashoffset={2 * Math.PI * 21 * (1 - (order.length ? contiguous / order.length : 0))} />
+          <g className="td-vinyl"><circle cx="24" cy="24" r="15" className="td-face" /><circle cx="24" cy="24" r="10.5" className="td-groove" /><circle cx="24" cy="24" r="6" className="td-label" /><rect x="23" y="10.5" width="2" height="3.4" rx="1" className="td-mark" /></g>
+        </svg>
+        <span className="td-ic">{on ? <Pause size={15} weight="fill" /> : <Play size={15} weight="fill" />}</span>
+      </button>
+      <div className="take-main">
+        <div className="take-top">
+          <b className="ellipsis">{making ? "Making your voiceover" : "Your voiceover"}</b>
+          <span className="tiny dim ellipsis">{making ? `${contiguous} of ${order.length} lines ready · it plays as it's made` : `${order.length} lines`}</span>
+          <span className="take-time mono">{clock(pos)}<span className="dim"> / {clock(madeEnd)}</span></span>
+        </div>
+        <div className="vo-bars take-bars" role="slider" tabIndex={0} aria-label="Voiceover so far: click to jump, arrows to skip 5 s" onKeyDown={onKey}
           aria-valuemin={0} aria-valuemax={Math.round(madeEnd)} aria-valuenow={Math.round(pos)} aria-valuetext={`${clock(pos)} of ${clock(madeEnd)} made`}>
           <svg ref={wave} viewBox={`0 0 ${BARS * 3} 40`} preserveAspectRatio="none" onClick={onWave} aria-hidden>
             {bars.map((b, i) => b.made
               ? <rect key={i} className={b.played ? "on" : ""} x={i * 3} y={20 - b.h * 19} width="1.9" height={Math.max(1, b.h * 38)} />
-              : i % 2 ? null : <rect key={i} className="todo" x={i * 3 + 0.4} y={19.2} width="1.1" height="1.6" />)}
+              : i % 2 ? null : <rect key={i} className="todo" x={i * 3 + 0.4} y={19.2} width="1.1" height="1.6" style={{ animationDelay: `${(i % 16) * 70}ms` }} />)}
           </svg>
         </div>
-        <span className="vo-time">{clock(pos)}</span>
       </div>
-      {making && <div className="vo-gen-acts"><button className="icon-btn" onClick={() => { silence(); clockRef.current.running = false; setOn(false); onCancel(); }} aria-label="Stop generating" title="Stop"><X size={16} /></button></div>}
+      <div className="take-acts">{making && <button className="icon-btn" onClick={() => { silence(); clockRef.current.running = false; setOn(false); onCancel(); }} aria-label="Stop generating" title="Stop"><X size={16} /></button>}</div>
     </div>
   );
 }

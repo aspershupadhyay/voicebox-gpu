@@ -4,7 +4,22 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (premium pass, 2026-10-28)
+## Latest round (deck, cursor and charts, 2026-10-28)
+
+- **A take you made must still be there after a refresh**, and play: it's kept in this browser (IndexedDB) and rebuilt
+  from the library when it isn't, never "Couldn't play this take". Its player is our own: a turning disc with a ginger
+  progress rim, the waveform as the scrubber. The voiceover being made uses the same deck.
+- **Cursor: the white arrowhead the owner showed** (no "Studio" arrow). Every click drops a ginger water ripple (Miso's
+  colour).
+- **Settings' tabs are one centred pill bar**, sections sharing it equally, the white pill sliding to the open one.
+- **Home → This week was cluttered**: now a ring per format, the next seven days as a strip, a slim Up next.
+- **The YouTube and Instagram marks were rendering 4 px wide** in the sidebar (a flex item shrinking): fixed, and they
+  have their own hover moves. Check a fix in the real frame, not only in isolation.
+- **Charts must be visibly creative**: a dotted plot field, hatched areas, the latest value in a chip, numbers counting
+  up, equalizer columns (fits an audio studio), tick-meter bars, a dot-size heatmap. Still flat.
+- **Home's pixel desk is bigger** (up to 380 px) and handled with the header; gone on phones.
+
+## Earlier round (premium pass, 2026-10-28)
 
 - **Pixel icons didn't look good: undone.** The frame uses premium line icons (Phosphor, duotone) again. Keep a move per
   icon, but make it feel premium: smooth springy transitions that settle back, the soft duotone fill fading in on hover.

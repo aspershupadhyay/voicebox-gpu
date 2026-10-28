@@ -4,7 +4,7 @@
 // play (wav, mp3, m4a, webm, most video) works.
 
 let ctx: AudioContext | null = null;
-const audioCtx = () => (ctx ??= new AudioContext());
+export const audioCtx = () => (ctx ??= new AudioContext());
 
 /** Decode a file or URL to PCM. */
 export async function decode(src: Blob | string): Promise<AudioBuffer> {
