@@ -1,14 +1,17 @@
 "use client";
-// The studio's frame (dark only): a sidebar (studio switcher, search, the pages, a GPU card, you), a top bar with the page
-// name and the GPU's state, the ⌘K command palette, and on phones a bottom tab bar plus the sidebar as a drawer.
+// The studio's frame (dark only): a sidebar (studio switcher, the Create / Grow switch, search, the pages, a GPU card, you),
+// a top bar with the page name and the GPU's state, the ⌘K command palette, and on phones a bottom tab bar plus the
+// sidebar as a drawer. Create is the studio (voices, audio, images, files); Grow is analytics (everything under
+// /analytics), with its own pages, its own tabs on phones and the rivals you pinned. The switch remembers where you were.
 import {
-  ArrowsClockwise, CaretDown, ChartLineUp, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
+  ArrowsClockwise, Broadcast, CalendarDots, CaretDown, ChartLineUp, Rows, SquaresFour, Trophy, UsersThree, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
   FileAudio, FileText, FilmStrip, Folder, Folders, MagicWand, MagnifyingGlass, Microphone, Paperclip, Plus, Power, SignOut, Star, UserSound, X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, type Status } from "./api";
+import { PlatformBadge } from "./platform";
 import { Logo } from "./art";
 import { signOut, useMe } from "./aw";
 import { DialogProvider, useDialog } from "./Dialog";
@@ -34,6 +37,60 @@ export const NAV: Nav[] = [
   { href: "/settings", name: "Settings", Icon: GearSix, sec: "studio" },
 ];
 const TABS = ["/", "/voiceover", "/posts", "/voices"];
+
+/** Grow mode's pages (all under /analytics; the Analytics shell renders them). */
+export const GROW: { href: string; name: string; Icon: typeof House; net?: "youtube" | "instagram" }[] = [
+  { href: "/analytics", name: "Overview", Icon: SquaresFour },
+  { href: "/analytics/live", name: "Live", Icon: Broadcast },
+  { href: "/analytics/content", name: "Content", Icon: Rows },
+  { href: "/analytics/audience", name: "Audience", Icon: UsersThree },
+  { href: "/analytics/when-to-post", name: "When to post", Icon: CalendarDots },
+  { href: "/analytics/competitors", name: "Competitors", Icon: Trophy },
+  { href: "/analytics/youtube", name: "YouTube", Icon: ChartLineUp, net: "youtube" },
+  { href: "/analytics/instagram", name: "Instagram", Icon: ChartLineUp, net: "instagram" },
+];
+const GROW_TABS = ["/analytics", "/analytics/live", "/analytics/content", "/analytics/competitors"];
+const isGrow = (path: string) => path === "/analytics" || path.startsWith("/analytics/");
+const growOn = (path: string, href: string) => (href === "/analytics" ? path === href : path === href || path.startsWith(`${href}/`));
+const LAST = { create: "vb-last-create", grow: "vb-last-grow" };
+
+/** Create or Grow: one switch at the top of the sidebar (and in the top bar on phones). Each side goes back to the page
+ *  you were last on there. */
+function ModeSwitch({ grow, compact }: { grow: boolean; compact?: boolean }) {
+  const last = (k: keyof typeof LAST, fallback: string) => { try { return localStorage.getItem(LAST[k]) || fallback; } catch { return fallback; } };
+  const [hrefs, setHrefs] = useState({ create: "/", grow: "/analytics" });
+  useEffect(() => setHrefs({ create: last("create", "/"), grow: last("grow", "/analytics") }), [grow]);
+  return (
+    <nav className={`mode-sw ${compact ? "compact" : ""}`} aria-label="Mode">
+      <Link href={hrefs.create} className={grow ? "" : "on"} aria-current={grow ? undefined : "page"}><MagicWand size={15} weight={grow ? "regular" : "duotone"} aria-hidden />Create</Link>
+      <Link href={hrefs.grow} className={grow ? "on" : ""} aria-current={grow ? "page" : undefined}><ChartLineUp size={15} weight={grow ? "duotone" : "regular"} aria-hidden />Grow</Link>
+    </nav>
+  );
+}
+
+type Pin = { key: string; name: string; avatar: string | null; href: string; net: "youtube" | "instagram" };
+/** Grow's sidebar: rivals you pinned on Competitors, each opening its own report. */
+function PinnedRivals({ path }: { path: string }) {
+  const [pins, setPins] = useState<Pin[]>([]);
+  useEffect(() => {
+    try { setPins(JSON.parse(localStorage.getItem("vb-pins") ?? "[]")); } catch {}
+    const load = () => api<{ pins: Pin[] }>("live/pins").then((r) => { setPins(r.pins); try { localStorage.setItem("vb-pins", JSON.stringify(r.pins)); } catch {} }).catch(() => null);
+    load();
+    addEventListener("vb-rivals-changed", load);
+    return () => removeEventListener("vb-rivals-changed", load);
+  }, []);
+  if (!pins.length) return null;
+  return (
+    <>
+      <div className="navsec">Pinned rivals</div>
+      {pins.map((p) => (
+        <Link key={p.key} href={p.href} className={`navlink pin-link ${path === p.href ? "on" : ""}`} aria-current={path === p.href ? "page" : undefined}>
+          <span className="pin-av">{p.avatar ? <img src={p.avatar} alt="" loading="lazy" /> : initials(p.name)}</span><span className="ellipsis">{p.name}</span>
+        </Link>
+      ))}
+    </>
+  );
+}
 const ALL_ENGINES = ["orpheus", "myvoice", "chatterbox", "kokoro", "qwen", "whisper", "enhance", "zimage", "qwenimage"];
 
 type Fav = { key: string; name: string; kind: string; color: string | null; thumb: string | null; href: string };
@@ -171,6 +228,9 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
   const [drawer, setDrawer] = useState(false);
   const me = useMe();
   const here = pageOf(path);
+  const grow = isGrow(path);
+  const growHere = grow ? [...GROW].reverse().find((g) => growOn(path, g.href)) ?? (path.startsWith("/analytics/competitors") ? GROW[5] : GROW[0]) : null;
+  useEffect(() => { try { localStorage.setItem(grow ? LAST.grow : LAST.create, path); } catch {} }, [grow, path]);
   const on = (href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`));
   const busy = !!(status?.running?.length || status?.queue);
   useEffect(() => setDrawer(false), [path]);
@@ -181,7 +241,8 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
       catch (e) { toast((e as Error).message, "bad"); }
     };
     return [
-      ...NAV.map((n) => ({ id: `go-${n.href}`, label: n.name, group: "Pages", Icon: n.Icon as typeof Fire, run: () => router.push(n.href) })),
+      ...NAV.filter((n) => n.href !== "/analytics").map((n) => ({ id: `go-${n.href}`, label: n.name, group: "Pages", Icon: n.Icon as typeof Fire, run: () => router.push(n.href) })),
+      ...GROW.map((n) => ({ id: `grow-${n.href}`, label: n.name, group: "Grow", Icon: n.Icon as typeof Fire, run: () => router.push(n.href) })),
       { id: "new-post", label: "New post", group: "Create", Icon: Plus, run: () => router.push("/posts?new=1") },
       { id: "new-vo", label: "New voiceover", group: "Create", Icon: Microphone, run: () => router.push("/voiceover") },
       ...ALL_ENGINES.map((n) => ({ id: `warm-${n}`, label: `Warm up ${n}`, group: "Engines", Icon: Fire, run: engine(n, "load") })),
@@ -204,7 +265,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
     return () => window.removeEventListener("keydown", onKey);
   }, [router]);
 
-  const section = (sec: Nav["sec"]) => NAV.filter((n) => n.sec === sec).map(({ href, name, Icon }) => (
+  const section = (sec: Nav["sec"]) => NAV.filter((n) => n.sec === sec && n.href !== "/analytics").map(({ href, name, Icon }) => (
     <Link key={href} href={href} className={`navlink ${on(href) ? "on" : ""}`} aria-current={on(href) ? "page" : undefined}>
       <Icon size={18} weight={on(href) ? "duotone" : "regular"} className="ic" />{name}
     </Link>
@@ -231,14 +292,26 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
             </>
           )}
         </PopMenu>
+        <ModeSwitch grow={grow} />
         <button className="side-search" onClick={() => setPalette(true)}><MagnifyingGlass size={16} />Search<kbd>⌘K</kbd></button>
-        <nav className="side-nav" aria-label="Pages">
-          {section("main")}
-          <div className="navsec">Create</div>
-          {section("create")}
-          <Favourites />
-        </nav>
-        <GpuCard status={status} />
+        {grow ? (
+          <nav className="side-nav" aria-label="Grow pages">
+            {GROW.map(({ href, name, Icon, net }) => { const on = growOn(path, href); return (
+              <Link key={href} href={href} className={`navlink ${on ? "on" : ""}`} aria-current={on ? "page" : undefined}>
+                {net ? <span className="ic nav-pb"><PlatformBadge net={net} size={16} /></span> : href === "/analytics/live" ? <span className="ic nav-live" aria-hidden><i /></span> : <Icon size={18} weight={on ? "duotone" : "regular"} className="ic" />}{name}
+              </Link>
+            ); })}
+            <PinnedRivals path={path} />
+          </nav>
+        ) : (
+          <nav className="side-nav" aria-label="Pages">
+            {section("main")}
+            <div className="navsec">Create</div>
+            {section("create")}
+            <Favourites />
+          </nav>
+        )}
+        {!grow && <GpuCard status={status} />}
         <div className="side-foot">{section("studio")}</div>
         <PopMenu align="left" up width={230} trigger={({ toggle, ref, open }) => (
           <button ref={ref} className="me-btn" onClick={toggle} aria-expanded={open} aria-haspopup="menu">
@@ -260,7 +333,8 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
       <div className="main">
         <header className="topbar">
           <button className="icon-btn menu-btn" onClick={() => setDrawer(true)} aria-label="Open menu" aria-expanded={drawer}><List size={20} /></button>
-          <div className="crumb">{here && here.sec !== "main" && <span className="hide-sm">{here.sec === "create" ? "Create" : "Studio"}<span aria-hidden> /</span></span>}<b>{here?.name ?? "Voicebox"}</b></div>
+          <div className="crumb">{growHere ? <><span className="hide-sm">Grow<span aria-hidden> /</span></span><b>{growHere.name}</b></> : <>{here && here.sec !== "main" && <span className="hide-sm">{here.sec === "create" ? "Create" : "Studio"}<span aria-hidden> /</span></span>}<b>{here?.name ?? "Voicebox"}</b></>}</div>
+          <ModeSwitch grow={grow} compact />
           <div className="top-actions">
             <Link href="/gpu" className="status-pill" title="GPU & engines">
               <span className={`dot ${status?.online ? (busy ? "warn" : "ok") : status ? "bad" : "off"}`} />
@@ -285,7 +359,9 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
       </div>
 
       <nav className="tabbar" aria-label="Main">
-        {TABS.map((href) => { const n = NAV.find((x) => x.href === href)!; return (
+        {grow ? GROW_TABS.map((href) => { const n = GROW.find((x) => x.href === href)!, o = growOn(path, href); return (
+          <Link key={href} href={href} className={o ? "on" : ""} aria-current={o ? "page" : undefined}><n.Icon size={22} weight={o ? "duotone" : "regular"} /><span>{n.name}</span></Link>
+        ); }) : TABS.map((href) => { const n = NAV.find((x) => x.href === href)!; return (
           <Link key={href} href={href} className={on(href) ? "on" : ""} aria-current={on(href) ? "page" : undefined}><n.Icon size={22} weight={on(href) ? "duotone" : "regular"} /><span>{n.name}</span></Link>
         ); })}
         <button onClick={() => setDrawer(true)} aria-label="More pages"><DotsThreeOutline size={22} /><span>More</span></button>

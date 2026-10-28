@@ -27,6 +27,14 @@ export async function getObj(key: string): Promise<Response | null> {
   return r;
 }
 
+/** An object's size and type, or null when it doesn't exist. */
+export async function headObj(key: string): Promise<{ size: number; type: string } | null> {
+  const r = await aws().fetch(url(key), { method: "HEAD", cache: "no-store" });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`storage HEAD ${key}: ${r.status}`);
+  return { size: Number(r.headers.get("content-length") ?? 0), type: r.headers.get("content-type") ?? "" };
+}
+
 export async function getJson<T>(key: string): Promise<T | null> {
   const r = await getObj(key);
   return r ? ((await r.json()) as T) : null;

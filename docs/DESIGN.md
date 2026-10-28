@@ -8,14 +8,20 @@ build or change any screen. Tokens live in `mcp/app/globals.css`; the shared par
 
 ## Structure
 
-The sidebar has nine destinations, grouped by what you're doing, not by which backend stores the data:
+The app has two modes, switched at the top of the sidebar (in the top bar on phones), each remembering the page you were
+last on. **Create** is the studio: its sidebar has the destinations below except Analytics, grouped by what you're doing,
+not by which backend stores the data. **Grow** is analytics: everything under `/analytics`, with its own sidebar
+(Overview, Live, Content, Audience, When to post, Competitors, YouTube, Instagram, then the rivals you pinned) and its
+own phone tabs (Overview, Live, Content, Competitors, More). Page by page:
 
 | Group | Page | Route | Job |
 |---|---|---|---|
 | — | Home | `/` | Greeting with the GPU's state, the channels at a glance (headline tiles over one chart, top posts lately, this week against the goals and what's due), tool tiles, latest takes, ways to make a voice |
 | — | Voices | `/voices` | Make a voice (three cards), then your voices and the built-in voices |
 | — | Posts | `/posts` | Every post as a Board, Calendar, List or Gallery, filtered by platform; the post drawer; Autopilot (`?view=autopilot`): accounts, the publishing queue, rules |
-| — | Analytics | `/analytics` | Six views, each a tab with its own address and 8–12 numbers at most: Overview (a one-line summary, the headline metrics as tiles that pick one big chart, this period against the one before, every format side by side, the next moves, top posts), Content (`/analytics/content`: output and hit rate, the performance map, every post with its deep dive, lengths and tags), Audience (`/analytics/audience`: followers and growth, followers over time, accounts, who's watching, how they find you), When to post (`/analytics/when-to-post`: the day × time heatmap, best slots, the days and hours the audience shows up, rhythm), YouTube and Instagram (`/analytics/youtube`, `/analytics/instagram`: that platform in depth in four views, `?view=` overview, reach, audience, posts) |
+| Grow | Live | `/analytics/live` | Every post under 72 hours old, yours and your rivals', checked every minute (`lib/live.ts`, a Cloudflare cron in `workers/live-timer.js`): views by age against the usual post at the same age (dashed, the middle half shaded), views in the last hour, a verdict (Taking off, Ahead, On par, Behind), followers as they move |
+| Grow | Competitors | `/analytics/competitors` | You and each rival side by side (account cards, You vs them), the outlier feed (their videos beating their own usual), their fresh uploads live, when they post, the title habits of their hits, and following / pinning / removing rivals; each pinned rival gets `/analytics/competitors/<handle>` |
+| Grow | Analytics | `/analytics` | Six views, each a tab with its own address and 8–12 numbers at most: Overview (a one-line summary, the headline metrics as tiles that pick one big chart, this period against the one before, every format side by side, the next moves, top posts), Content (`/analytics/content`: output and hit rate, the performance map, every post with its deep dive, lengths and tags), Audience (`/analytics/audience`: followers and growth, followers over time, accounts, who's watching, how they find you), When to post (`/analytics/when-to-post`: the day × time heatmap, best slots, the days and hours the audience shows up, rhythm), YouTube and Instagram (`/analytics/youtube`, `/analytics/instagram`: that platform in depth in four views, `?view=` overview, reach, audience, posts) |
 | — | Files | `/files` | A Drive-like file manager: category folders (Videos, Images, Audio, Docs & scripts, Other) and yours, Recent, search, filters, drag-and-drop, paste, trash (`?view=trash`) |
 | Create | Voiceover | `/voiceover` | Write, pick a voice, generate; Script and Lines views |
 | Create | Clean-up, Subtitles, Images | `/clean-up`, `/subtitles`, `/images` | One tool each, in the tool layout |
@@ -60,6 +66,9 @@ status and history under it, and the actions in a footer. It saves as you type.
   category folders come first and file things by kind on their own; deleting goes to the trash with an Undo snackbar;
   uploads show as cards at once (with a progress ring) and in a panel bottom right. Every change shows at once and is
   saved behind it. The sidebar lists starred things under Favourites.
+- Grow's live pages (`components/Grow.tsx`, `useLive`) poll every 30 s; the live chip (a beating `--live` dot and how long
+  ago the last check landed) sits in every Grow page's top bar, which also holds the range, "Compare to" (the same
+  number of days just before), Export (every post as CSV, or the page as PDF) and Refresh.
 - Analytics (`components/AnalyticsShell.tsx`, `Analytics.tsx`, `AnalyticsPlatform.tsx`) answers one question per view, the
   way YouTube Studio and the social suites split theirs, never every number on one screen. The shell holds the header,
   the range, the strips and the view tabs, and loads the report once for every view (`useReport`, shared with Home), so
@@ -115,7 +124,8 @@ status and history under it, and the actions in a footer. It saves as you type.
 
 ## Phones
 
-- Below 960px the sidebar becomes a drawer, and a bottom tab bar shows Home, Voiceover, Posts, Voices and More.
+- Below 960px the sidebar becomes a drawer, and a bottom tab bar shows Home, Voiceover, Posts, Voices and More (in Grow:
+  Overview, Live, Content, Competitors and More).
 - Stat cards go two-up, the board scrolls one column per screen, settings panels stack under their canvas.
 
 ## Before you ship UI

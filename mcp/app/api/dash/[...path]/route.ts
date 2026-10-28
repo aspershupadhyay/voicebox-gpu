@@ -60,6 +60,24 @@ export async function GET(req: Request, ctx: Ctx) {
       const range = (RANGES as readonly number[]).includes(Number(q.get("range"))) ? (Number(q.get("range")) as (typeof RANGES)[number]) : 28;
       return Response.json(await getAnalytics(range, q.get("fresh") === "1", (p) => after(p)));
     }
+    if (a === "upload-keys" && !b) return Response.json({ keys: await (await import("@/lib/inbox")).listKeys() });
+    if (a === "live" && b === "pins") {
+      // Grow's sidebar: the rivals you pinned, with the name and picture YouTube gave
+      const { loadLive, loadRivals, rivalSlug } = await import("@/lib/live");
+      const [s, rivals] = await Promise.all([loadLive(), loadRivals()]);
+      return Response.json({ pins: rivals.filter((r) => r.pinned).map((r) => {
+        const c = Object.values(s.chans).find((x) => x.id === s.found[`${r.net}:${r.handle.toLowerCase()}`]?.id);
+        return { key: `${r.net}:${r.handle}`, net: r.net, name: c?.name ?? r.handle.replace(/^@/, ""), avatar: c?.avatar ?? null, href: `/analytics/competitors/${rivalSlug(r)}` };
+      }) });
+    }
+    if (a === "live" && !b) {
+      // Grow → Live and Competitors: the minute-by-minute state. While a page is open and the timer hasn't run for 90 s
+      // (not set up, or down), the page's own poll runs a check after the response, so the numbers stay live anyway
+      const { liveView, loadLive, loadRivals, tick } = await import("@/lib/live");
+      const [s, rivals] = await Promise.all([loadLive(), loadRivals()]);
+      if (Date.now() - s.at > 90_000) after(() => tick(40_000).then(() => {}, () => {}));
+      return Response.json(liveView(s, rivals));
+    }
     if (a === "status") {
       const rec = await loadWorker();
       if (!rec) return Response.json({ online: false, reason: "never registered" });
@@ -191,6 +209,22 @@ export async function POST(req: Request, ctx: Ctx) {
     if (a === "settings") {
       const who = (await currentUser())?.id;
       return Response.json(settingsFor(await updateSettings(body, who), who));
+    }
+    if (a === "upload-keys") {
+      const inbox = await import("@/lib/inbox");
+      if (b === "revoke") { await inbox.revokeKey(String(body.id ?? "")); return Response.json({ ok: true }); }
+      const who = await currentUser();
+      return Response.json(await inbox.createKey(String(body.name ?? ""), who?.name ?? "Access token"));
+    }
+    if (a === "live" && b === "rivals") {
+      // { add: { handle, net } } | { remove: "youtube:@handle" } | { pin: { handle: "youtube:@handle", on } }
+      const { editRivals } = await import("@/lib/live");
+      const net = body.add?.net === "instagram" ? "instagram" : "youtube";
+      return Response.json({ rivals: await editRivals({
+        add: body.add?.handle ? { handle: String(body.add.handle).slice(0, 200), net } : undefined,
+        remove: body.remove ? String(body.remove).slice(0, 200) : undefined,
+        pin: body.pin?.handle ? { handle: String(body.pin.handle).slice(0, 200), on: !!body.pin.on } : undefined,
+      }) });
     }
     if (a === "speakable") return Response.json(await call("/speakable", { body }));
     if (a === "coach") {
