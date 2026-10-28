@@ -77,10 +77,10 @@ function pickPost(data: Record<string, unknown>) {
   return out;
 }
 
-export async function createPost(data: Partial<Post>, actor: { id?: string; name: string }) {
+export async function createPost(data: Partial<Post>, actor: { id?: string; name: string }, rowId = "unique()") {
   const row = await aw<Post>(rows("posts"), {
     method: "POST",
-    body: { rowId: "unique()", data: { status: "idea", platforms: [], jobs: [], ...pickPost(data), owner_id: actor.id ?? null, owner_name: actor.name }, permissions: PERMS },
+    body: { rowId, data: { status: "idea", platforms: [], jobs: [], ...pickPost(data), owner_id: actor.id ?? null, owner_name: actor.name }, permissions: PERMS },
   });
   await logActivity({ post_id: row.$id, verb: "created", text: row.title }, actor);
   return row;
@@ -193,6 +193,10 @@ export async function renameMedia(id: string, name: string, actor: { id?: string
 }
 
 /** Attach an upload to a post (or take it off one with null). */
+/** A view token for one stored file that stops working at `expire` (share links: lib/shares.ts). */
+export const createFileToken = (fileId: string, expire: string) => aw<{ $id: string; secret: string }>(`/tokens/buckets/${AW.bucket}/files/${encodeURIComponent(fileId)}`, { method: "POST", body: { expire } });
+export const deleteFileToken = (tokenId: string) => aw(`/tokens/${encodeURIComponent(tokenId)}`, { method: "DELETE" }).catch(() => null);
+
 export async function setMediaPost(id: string, postId: string | null) {
   return aw<Media>(`${rows("media")}/${encodeURIComponent(id)}`, { method: "PATCH", body: { data: { post_id: postId } } });
 }

@@ -31,7 +31,7 @@ function Photo({ src, preview, name }: { src: string; preview?: string | null; n
   const shown = full || bad || !preview ? src : preview;
   return (
     <div className={`fv-photo ${z > 1 ? "zoomed" : ""}`}
-      onWheel={(e) => { const nz = Math.min(6, Math.max(1, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); setZ(nz); if (nz === 1) setP({ x: 0, y: 0 }); }}
+      onWheel={(e) => { if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return; const nz = Math.min(6, Math.max(1, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); setZ(nz); if (nz === 1) setP({ x: 0, y: 0 }); }}
       onPointerDown={(e) => { drag.current = { x: e.clientX, y: e.clientY, px: p.x, py: p.y, moved: false }; (e.target as HTMLElement).setPointerCapture?.(e.pointerId); }}
       onPointerMove={(e) => { const d = drag.current; if (!d || z === 1) return; if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 4) d.moved = true; setP({ x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) }); }}
       onPointerUp={() => { const d = drag.current; drag.current = null; if (d && !d.moved) { if (z > 1) { setZ(1); setP({ x: 0, y: 0 }); } else setZ(2.2); } }}>
@@ -78,6 +78,33 @@ export function FileViewer({ file, onClose, onPrev, onNext, onDelete, index, tot
   const dir = last.current.dir;
   const [leaving, setLeaving] = useState(false);
   const shut = useRef(onClose);
+  // a sideways trackpad swipe or a finger flick steps to the next or previous file (never the browser's Back)
+  const nav = useRef({ onPrev, onNext });
+  nav.current = { onPrev, onNext };
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    let acc = 0, t = 0, touch: { x: number; y: number } | null = null;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      const now = Date.now();
+      if (now - t > 300) acc = 0;
+      t = now; acc += e.deltaX;
+      if (Math.abs(acc) > 80) { (acc > 0 ? nav.current.onNext : nav.current.onPrev)?.(); acc = -Math.sign(acc) * 400; } // one step per swipe
+    };
+    const onStart = (e: TouchEvent) => { touch = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null; };
+    const onEnd = (e: TouchEvent) => {
+      const s0 = touch; touch = null;
+      if (!s0 || document.querySelector(".fv-photo.zoomed")) return;
+      const dx = e.changedTouches[0].clientX - s0.x, dy = e.changedTouches[0].clientY - s0.y;
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) (dx < 0 ? nav.current.onNext : nav.current.onPrev)?.();
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchend", onEnd, { passive: true });
+    return () => { el.removeEventListener("wheel", onWheel); el.removeEventListener("touchstart", onStart); el.removeEventListener("touchend", onEnd); };
+  }, []);
   shut.current = onClose;
   const close = useCallback(() => {
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return shut.current();

@@ -14,7 +14,7 @@ import { spaceOf, type SpaceId } from "../spaces";
 import { configured, getAccount, listAccounts, removeAccount } from "./accounts";
 import * as IG from "./instagram";
 import { dropPlan, editPlan, getPlan, getRules, listPlans, putPlan, setRules } from "./plans";
-import { drive, readiness, sweep } from "./run";
+import { drive, liveTwin, readiness, sweep } from "./run";
 import { BUSY, networkOf } from "./shared";
 import * as YT from "./youtube";
 
@@ -83,6 +83,9 @@ export async function publishPost(path: string[], body: Record<string, unknown>)
     if (cur.state === "published" && !body.again) return bad("It's already live. Pass again: true to post it a second time.", 409);
     const problems = await readiness(cur);
     if (problems.length) return Response.json({ error: problems[0], problems }, { status: 422 });
+    const twin = await liveTwin(cur);
+    if (twin && !body.again) return Response.json({ error: `These files are already live (${twin.result!.url}). Pass again: true to post them a second time.`, live: twin.result }, { status: 409 });
+    if (twin) cur.log.push({ at: Date.now(), text: "Posting again on purpose (the same files are already live)" });
     if (cur.state === "published") { cur.run = null; cur.result = null; }
     cur.attempts = 0; cur.error = null; cur.next_try = null; cur.progress = 0;
     if (mode === "arm") {

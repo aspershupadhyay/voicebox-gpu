@@ -1532,7 +1532,11 @@ input.cs-title { height: 32px; padding: 0 10px; border-radius: 8px; background: 
 .cs-live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ig-pink); flex: none; box-shadow: 0 0 0 3px rgb(225 48 108 / .22); }
 .cs-ig { gap: 7px; }
 /* the curve */
-.cs-stage { position: relative; z-index: 1; flex: 1; min-height: 0; perspective: 1300px; perspective-origin: 50% 44%; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; contain: layout paint; }
+/* sideways swipes stay inside the carousel and the viewer: the browser never takes one as Back */
+html:has(.cs), html:has(.fv) { overscroll-behavior-x: none; }
+html:has(.cs) body, html:has(.fv) body { overscroll-behavior-x: none; }
+.cs, .fv { overscroll-behavior: contain; }
+.cs-stage { position: relative; z-index: 1; flex: 1; min-height: 0; perspective: 1300px; perspective-origin: 50% 44%; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; contain: layout paint; }
 .cs-stage.dragging, .cs-stage.lifting { cursor: grabbing; }
 .cs-ring { position: absolute; inset: 0; transform-style: preserve-3d; }
 .cs-slot { position: absolute; left: 50%; top: 46%; width: var(--pw); margin-left: calc(var(--pw) / -2); transform-style: preserve-3d;
@@ -1554,7 +1558,9 @@ input.cs-title { height: 32px; padding: 0 10px; border-radius: 8px; background: 
 .cs-stage.dragging .cs-card { transition: border-color .2s; }
 .cs-card img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .cs-stage:not(.dragging):not(.lifting) .cs-card:hover { translate: 0 -8px; border-color: #4a4a4a; opacity: 1; }
-.cs-card.on { border-color: #f5f5f2; }
+.cs-card.on { border-color: #f5f5f2; box-shadow: 0 0 0 1px #f5f5f2; }
+.cs-pos:has(.cs-card.on) .cs-num { color: #fff; }
+.cs-pos:has(.cs-card.on) .cs-cap { color: #f5f5f2; }
 .cs-pos.lifted .cs-card { border-color: var(--ginger); outline: 2px solid var(--ginger); outline-offset: 2px; }
 .cs-card:focus-visible { outline: 2px solid var(--ginger); outline-offset: 3px; }
 .cs-vid { position: absolute; top: 8px; left: 8px; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 99px; background: rgb(13 13 13 / .7); color: #fff; font: 500 11px var(--mono); }
@@ -1575,7 +1581,8 @@ input.cs-title { height: 32px; padding: 0 10px; border-radius: 8px; background: 
 .cs-ph-sig { width: 22px; height: 9px; border-radius: 3px; border: 1px solid #8e8e88; }
 .cs-ph-head { display: flex; align-items: center; gap: 9px; padding: 6px 12px 8px; font-size: 13px; }
 .cs-ph-head svg { margin-left: auto; }
-.cs-ph-av { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--ig-pink); background: #222; flex: none; }
+.cs-ph-av { width: 30px; height: 30px; border-radius: 50%; padding: 2px; border: 2px solid var(--ig-pink); background: #0d0d0d; flex: none; overflow: hidden; display: grid; place-items: center; }
+.cs-ph-av img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; background: #0d0d0d; }
 .cs-ph-track { position: relative; display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; background: #111; flex: none; overscroll-behavior-x: contain; }
 .cs-ph-track::-webkit-scrollbar { display: none; }
 .cs-ph-slide { position: relative; flex: 0 0 100%; scroll-snap-align: center; scroll-snap-stop: always; display: grid; place-items: center; }
@@ -3213,3 +3220,61 @@ html.cur-custom :is(input:not([type="range"]):not([type="checkbox"]):not([type="
   .wr-table td { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
   .wr-table td::before { content: attr(data-label); font: 500 11px var(--sans); color: var(--mute); }
 }
+
+/* the post pipeline (components/Pipeline.tsx): six steps on a rail, lit as they're done */
+.pl-steps { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 2px; }
+.pl-step { position: relative; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 44px; padding: 4px 0; }
+.pl-dot { position: relative; z-index: 1; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--line); background: var(--bg); color: var(--dim); }
+.pl-line { position: absolute; left: 12.5px; top: 34px; bottom: -6px; width: 1px; background: var(--line); }
+.pl-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pl-text b { font-size: 13.5px; font-weight: 550; }
+.pl-step.done .pl-dot { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.pl-step.done .pl-line { background: var(--ok); opacity: .45; }
+.pl-step.running .pl-dot { border-color: var(--ginger); }
+.pl-step.warn .pl-dot { background: var(--warn-soft, var(--grey-soft)); color: var(--warn); border-color: transparent; }
+.pl-step.failed .pl-dot { background: var(--bad-soft, var(--grey-soft)); color: var(--bad); border-color: transparent; }
+.pl-step.blocked { opacity: .55; }
+.pl-act { display: flex; gap: 4px; }
+.pl-note { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 8px 0 0; }
+.pl-note.bad { color: var(--bad); }
+
+/* a share link's page (components/SharePage.tsx): the studio's black, for someone without an account */
+.sh { min-height: 100dvh; background: var(--bg); color: var(--ink); padding: 0 0 48px; }
+.sh-head { display: flex; flex-direction: column; gap: 18px; padding: 22px 24px 8px; max-width: 1200px; margin: 0 auto; }
+.sh-logo { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
+.sh-title { display: flex; flex-direction: column; gap: 4px; animation: rise .4s var(--ease) both; }
+.sh-title h1 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -.01em; }
+.sh-grid { list-style: none; margin: 0 auto; padding: 18px 24px; max-width: 1200px; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+.sh-grid li { display: flex; flex-direction: column; gap: 6px; min-width: 0; animation: rise .45s var(--ease) both; }
+.sh-card { position: relative; display: block; width: 100%; height: auto; aspect-ratio: 1; padding: 0; border-radius: 12px; overflow: hidden; background: #141414; border: 1px solid var(--line); cursor: zoom-in; }
+.sh-grid.car .sh-card { aspect-ratio: 4 / 5; }
+.sh-card:hover { border-color: #4a4a4a; opacity: 1; }
+.sh-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sh-glyph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); }
+.sh-num { position: absolute; left: 8px; top: 8px; font-size: 11px; padding: 2px 7px; border-radius: 99px; background: rgb(13 13 13 / .7); color: var(--ginger); }
+.sh-tag { position: absolute; right: 8px; top: 8px; display: inline-flex; gap: 4px; align-items: center; font: 500 11px var(--mono); padding: 2px 7px; border-radius: 99px; background: rgb(13 13 13 / .7); color: #fff; }
+.sh-name { font-size: 12.5px; color: var(--dim); }
+.sh-view { position: fixed; inset: 0; z-index: 50; background: #050505; display: flex; flex-direction: column; animation: fade .2s; overscroll-behavior: contain; }
+.sh-view-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px 10px 20px; min-height: 58px; }
+.sh-view-body { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; padding: 0 64px 24px; animation: fv-open .32s var(--ease) both; }
+.sh-view-body img, .sh-view-body video { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; }
+.sh-other { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--dim); }
+.sh-gone { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; padding: 24px; }
+.sh-gone h1 { font-size: 22px; margin: 16px 0 0; }
+@media (max-width: 600px) {
+  .sh-head, .sh-grid { padding-left: 16px; padding-right: 16px; }
+  .sh-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .sh-view-body { padding: 0 8px 16px; }
+  .sh-view .fv-nav { top: auto; bottom: 18px; transform: none; }
+}
+
+/* the share dialog (components/filetools.tsx) */
+.sh-dlg { width: min(480px, calc(100vw - 32px)); z-index: 95; }
+.scrim-modal:has(+ .sh-dlg) { z-index: 94; }
+.sh-form { display: flex; flex-direction: column; gap: 12px; }
+.sh-form label { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sh-made { display: flex; gap: 8px; }
+.sh-made input { flex: 1; min-width: 0; font: 500 12.5px var(--mono); }
+.sh-list { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 4px; }
+.sh-row { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.sh-row .small { flex: 1; min-width: 0; }

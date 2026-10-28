@@ -10,7 +10,7 @@
 // photo opens full size, and [ ] jump between posts. Parts in fileparts.tsx; rules in docs/DESIGN.md.
 import {
   ArrowClockwise, ArrowCounterClockwise, ArrowSquareOut, ArrowsDownUp, CaretRight, Check, CheckSquare, ClosedCaptioning, Copy, DownloadSimple, FolderOpen,
-  FolderPlus, FolderSimple, LinkSimple, ListBullets, MagnifyingGlass, PencilSimple, Scissors, SquaresFour, StackMinus, StackPlus, Star, Trash, TrashSimple,
+  FolderPlus, FolderSimple, LinkSimple, ShareNetwork, ListBullets, MagnifyingGlass, PencilSimple, Scissors, SquaresFour, StackMinus, StackPlus, Star, Trash, TrashSimple,
   UploadSimple, UsersThree, X, Cards,
 } from "@phosphor-icons/react";
 import Link from "next/link";
@@ -34,10 +34,13 @@ import { useStatus } from "./Shell";
 import { Notice, PageHeader } from "./ui";
 import { useUploader } from "./wsparts";
 import { FileViewer, type ViewFile } from "./Viewer";
+import { ShareDialog } from "./filetools";
+import { useSmartSearch } from "./smartsearch";
 
 type Sort = "new" | "old" | "name" | "size";
 type Tree = FileTree & { poster_urls?: Record<string, string>; carousels?: Carousel[] };
 type Entry = Item | Stack;
+const COLORS = [["any", "Any"], ["red", "Red"], ["orange", "Orange"], ["yellow", "Yellow"], ["green", "Green"], ["teal", "Teal"], ["blue", "Blue"], ["purple", "Purple"], ["pink", "Pink"], ["brown", "Brown"], ["black", "Black"], ["white", "White"], ["grey", "Grey"]] as const;
 const TYPES = [["all", "All"], ["image", "Images"], ["video", "Videos"], ["audio", "Audio"], ["doc", "Docs & scripts"], ["other", "Other"]] as const;
 const SOURCES = [["any", "Any"], ["upload", "Uploads"], ["generated", "Generated"]] as const;
 const DATES = [["any", "Any"], ["1", "Today"], ["7", "Last 7 days"], ["30", "Last 30 days"], ["365", "This year"]] as const;
@@ -142,6 +145,9 @@ export default function Files() {
   const [date, setDate] = useState<(typeof DATES)[number][0]>("any");
   const [by, setBy] = useState("anyone");
   const [starOnly, setStarOnly] = useState(false);
+  const [color, setColor] = useState<(typeof COLORS)[number][0]>("any");
+  const [smart, setSmart] = useState<Map<string, number> | null>(null); // photos that fit the search's meaning (components/smartsearch.ts)
+  const [sharing, setSharing] = useState<{ kind: "carousel" | "folder"; ref: string; name: string } | null>(null);
   const [sort, setSort] = useState<Sort>("new");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -162,7 +168,8 @@ export default function Files() {
   const [cv, setCv] = useState<{ id: string; i: number } | null>(null); // one of its photos, full size
   const [checks, setChecks] = useState<Record<string, Checks>>({}); // slide checks per carousel, once it's opened
   const [stats, setStats] = useState<Record<string, Stats>>({}); // Instagram numbers per posted carousel
-  const [compose, setCompose] = useState<string | null>(null); // a post id: the Instagram composer, once the post is here
+  const [compose, setCompose] = useState<{ id: string; post: Post } | null>(null); // the Instagram composer on a carousel's post
+  const [igBusy, setIgBusy] = useState<string | null>(null); // a carousel being set up for Instagram (one click at a time)
   const { accounts } = usePublish();
   const anchor = useRef<string | null>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -231,6 +238,9 @@ export default function Files() {
   }, [media, jobs, t, starred, local, wsOn, me, cachedMedia.length, uploads, pendingUp]);
   const items = useMemo(() => allItems.filter((i) => !isTrashed(t, i.key)), [allItems, t]);
   const byKey = useMemo(() => new Map(allItems.map((i) => [i.key, i])), [allItems]);
+  // smart search: what every photo looks like (colours, tags) and meaning search, seen by a small model in this browser
+  const covers = useMemo(() => new Map(items.filter((i) => i.kind === "image" && i.cover && !i.key.startsWith("u:")).map((i) => [i.key, i.cover!])), [items]);
+  const { looks, left: seeing, search: smartSearch } = useSmartSearch(covers, !!tree && !!jobs);
 
   // ── carousels: a post's photos and clips (or files you grouped) as one stack (lib/carouselrules.ts)
   const titles = useMemo(() => new Map(posts.map((p) => [p.$id, p.title])), [posts]);
@@ -299,15 +309,32 @@ export default function Files() {
 
   // ── what's shown: this folder; everything when searching, filtering at the top or showing starred; or the trash
   const ql = q.trim().toLowerCase();
-  const filtered = type !== "all" || source !== "any" || date !== "any" || by !== "anyone";
+  useEffect(() => {
+    if (ql.length < 3) { setSmart(null); return; }
+    let dead = false;
+    const t = setTimeout(() => { smartSearch(ql).then((r) => { if (!dead) setSmart(r.size ? r : null); }).catch(() => { if (!dead) setSmart(null); }); }, 350);
+    return () => { dead = true; clearTimeout(t); };
+  }, [ql, smartSearch]);
+  const qWords = useMemo(() => ql.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1), [ql]);
+  /** How well a file fits the search: its name, then its tags and colours, then the photo's meaning. 0 = not at all. */
+  const relevance = useCallback((i: Item) => {
+    if (!ql) return 1;
+    const l = looks[i.key];
+    let r = `${i.name} ${i.type} ${i.j ? `${i.j.engine} ${i.j.voice} ${i.j.text}` : ""}`.toLowerCase().includes(ql) ? 2 : 0;
+    if (l && qWords.length && qWords.every((w) => l.c.includes(w) || l.t?.some((t) => t === w || t === w.replace(/s$/, "") || t.split(" ").includes(w.replace(/s$/, ""))))) r = Math.max(r, 1.5);
+    const sm = smart?.get(i.key);
+    if (sm) r = Math.max(r, 1 + sm);
+    return r;
+  }, [ql, qWords, looks, smart]);
+  const filtered = type !== "all" || source !== "any" || date !== "any" || by !== "anyone" || color !== "any";
   const global = !trashView && (!!ql || starOnly || (filtered && !cwdId));
   const atRoot = !trashView && !global && !cwdId;
   const match = useCallback((i: Item) => {
     const since = date === "any" ? 0 : date === "1" ? new Date().setHours(0, 0, 0, 0) : Date.now() - Number(date) * 864e5;
     return (!starOnly || i.starred) && (type === "all" || i.kind === type) && (source === "any" || i.src === source) && i.at >= since &&
       (by === "anyone" || (by === "gpu" ? i.src === "generated" : by === "me" ? i.byId === me?.user?.id : i.by === by.slice(2))) &&
-      (!ql || `${i.name} ${i.type} ${i.j ? `${i.j.engine} ${i.j.voice} ${i.j.text}` : ""}`.toLowerCase().includes(ql));
-  }, [date, starOnly, type, source, by, me, ql]);
+      (color === "any" || !!looks[i.key]?.c.includes(color)) && relevance(i) > 0;
+  }, [date, starOnly, type, source, by, me, color, looks, relevance]);
   const cmp = useMemo(() => ({
     new: (a: Item, b: Item) => b.at - a.at, old: (a: Item, b: Item) => a.at - b.at,
     name: (a: Item, b: Item) => a.name.localeCompare(b.name, undefined, { numeric: true }), size: (a: Item, b: Item) => (b.size ?? b.seconds ?? 0) - (a.size ?? a.seconds ?? 0),
@@ -316,8 +343,9 @@ export default function Files() {
   const shownFiles = useMemo(() => {
     if (trashView) return trashFiles;
     if (atRoot) return items.filter((i) => i.folder === null).sort(cmp); // only what you put at the top yourself
-    return items.filter((i) => (global || i.folder === cwdId) && match(i)).sort(cmp);
-  }, [trashView, trashFiles, atRoot, items, global, cwdId, match, cmp]);
+    const list = items.filter((i) => (global || i.folder === cwdId) && match(i));
+    return ql ? list.sort((a, b) => relevance(b) - relevance(a) || cmp(a, b)) : list.sort(cmp); // a search shows the best fits first
+  }, [trashView, trashFiles, atRoot, items, global, cwdId, match, cmp, ql, relevance]);
   // carousels have their own row at the top, so Recent keeps to loose files
   const recent = useMemo(() => (atRoot && !filtered ? [...items].filter((i) => !stackOf.has(i.key)).sort((a, b) => b.at - a.at).slice(0, RECENT) : []), [atRoot, filtered, items, stackOf]);
   const shownEntries = useMemo(() => (trashView ? shownFiles : collapse(shownFiles)), [trashView, shownFiles, collapse]);
@@ -714,9 +742,8 @@ export default function Files() {
   useEffect(() => {
     const id = stage?.id;
     if (!id) return;
-    const c = stacks.get(`c:${id}`);
     api<Checks>(`files/carousels/${encodeURIComponent(id)}/checks`).then((r) => setChecks((x) => ({ ...x, [id]: r }))).catch(() => null);
-    if (c?.g.post) api<Stats>(`files/carousels/${encodeURIComponent(id)}/stats`).then((r) => setStats((x) => ({ ...x, [id]: r }))).catch(() => null);
+    api<Stats>(`files/carousels/${encodeURIComponent(id)}/stats`).then((r) => setStats((x) => ({ ...x, [id]: r }))).catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage?.id, stacks.get(`c:${stage?.id}`)?.g.items.join(",")]);
   // posted carousels show their saves and shares on the card
@@ -728,19 +755,28 @@ export default function Files() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [posted.join(",")]);
-  /** Set the carousel up as an Instagram post (a post, its photos, the target and the plan), then open the composer. */
+  /** Set the carousel up as an Instagram post (its post, its photos, the target and the plan), then open the composer.
+   *  The server reuses the post the photos already belong to and refuses photos that are already live. */
   async function toInstagram(id: string) {
-    setSnack({ text: "Setting up the Instagram post…" });
+    if (igBusy) return;
+    setIgBusy(id);
     try {
-      const r = await api<{ post_id: string; carousel: string; slides: number; skipped: string[]; over: number }>(`files/carousels/${encodeURIComponent(id)}/publish`, { body: {} });
+      const r = await api<{ post_id: string; post: Post; carousel: string; slides: number; skipped: string[]; over: number; made_post: boolean }>(`files/carousels/${encodeURIComponent(id)}/publish`, { body: {} });
       setStage(null);
-      setCompose(r.post_id);
+      setCompose({ id: r.post_id, post: r.post });
       const left = [r.skipped.length && `${r.skipped.length} made on the GPU stay out`, r.over && `${r.over} over Instagram's 20 stay out`].filter(Boolean).join("; ");
-      setSnack({ text: `${r.slides} slides in order, ready to check and send${left ? ` (${left})` : ""}` });
+      setSnack({ text: `${r.slides} slides in order on ${r.made_post ? "a new post" : `"${r.post.title}"`}, ready to check and send${left ? ` (${left})` : ""}` });
       if (r.carousel !== id) loadTree();
-    } catch (e) { toast((e as Error).message, "bad"); setSnack(null); }
+    } catch (e) {
+      const live = (e as { body?: { live?: { url: string } } }).body?.live;
+      if (live) {
+        setStats((x) => ({ ...x, [id]: { ...(x[id] ?? {}), live: true, url: live.url } }));
+        setSnack({ text: "Already live on Instagram: it won't be posted twice", action: "Open", run: () => window.open(live.url, "_blank", "noopener") });
+        api<Stats>(`files/carousels/${encodeURIComponent(id)}/stats`).then((r) => setStats((x) => ({ ...x, [id]: r }))).catch(() => null);
+      } else toast((e as Error).message, "bad");
+    } finally { setIgBusy(null); }
   }
-  const composePost = compose ? posts.find((p) => p.$id === compose) : undefined;
+  const composePost = compose ? posts.find((p) => p.$id === compose.id) ?? compose.post : undefined;
 
   // photos open instantly: the screen-size copies of the ones around the open one are fetched ahead
   useEffect(() => {
@@ -822,6 +858,7 @@ export default function Files() {
         title: f.name,
         entries: [{ label: "Open", icon: <FolderOpen size={16} />, run: () => open(k) }, { label: "Rename", icon: <PencilSimple size={16} />, kbd: "F2", run: () => setRenaming(k) },
           { label: "New folder inside", icon: <FolderPlus size={16} />, run: () => { renameNext.current = `f:${newFolder(f.id, "Untitled folder", false)}`; go(f.id); } },
+          ...(f.system ? [] : [{ label: "Share link…", icon: <LinkSimple size={16} />, run: () => setSharing({ kind: "folder" as const, ref: f.id, name: f.name }) }]),
           ...common, { colors: f.color, pick: (c) => recolor(f.id, c) },
           ...(f.system ? [] : ["-" as const, { label: "Move to the trash", icon: <TrashSimple size={16} />, danger: true, run: () => remove(keys) }])],
       };
@@ -860,6 +897,7 @@ export default function Files() {
         { label: s.starred ? "Remove star" : "Star all", icon: <Star size={16} />, run: () => star(files, !s.starred) },
         { label: `Download all ${files.length}`, icon: <DownloadSimple size={16} />, run: () => download(files) },
         { label: "Copy links", icon: <LinkSimple size={16} />, run: () => copyLinks(files) },
+        { label: "Share link…", icon: <ShareNetwork size={16} />, run: () => setSharing({ kind: "carousel", ref: s.g.id, name: s.g.name }) },
         ...(s.g.post ? [{ label: "Open its post", icon: <ArrowSquareOut size={16} />, run: () => router.push(`/posts?post=${s.g.post}`) }] : []),
         ...(s.g.made ? [{ label: "Ungroup (files stay)", icon: <StackMinus size={16} />, run: () => ungroup(s.g.id) }] : []),
         "-",
@@ -937,7 +975,7 @@ export default function Files() {
         <div className="fm-bar">
           <div className="fm-search">
             <MagnifyingGlass size={16} className="ic" aria-hidden />
-            <input ref={search} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" aria-label="Search every file and folder"
+            <input ref={search} value={q} onChange={(e) => setQ(e.target.value)} placeholder={seeing ? `Search, or describe a photo… (seeing ${seeing} new)` : "Search, or describe a photo…"} aria-label="Search every file and folder, or describe a photo"
               onKeyDown={(e) => { if (e.key === "Escape") { setQ(""); e.currentTarget.blur(); } }} />
             {q ? <button className="icon-btn xs" aria-label="Clear search" onClick={() => setQ("")}><X size={13} /></button>
               : <span className="fm-kbd" aria-hidden><kbd>{mod === "⌘" ? "⌘" : "Ctrl"}</kbd><kbd>F</kbd></span>}
@@ -947,8 +985,9 @@ export default function Files() {
             <FilterPill label="Source" value={source} options={SOURCES} onChange={setSource} />
             <FilterPill label="Date" value={date} options={DATES} onChange={setDate} />
             <FilterPill label="Added by" value={by} options={BY} onChange={setBy} />
+            <FilterPill label="Colour" value={color} options={COLORS} onChange={setColor} />
             <button type="button" className={`fpill ${starOnly ? "on" : ""}`} aria-pressed={starOnly} onClick={() => setStarOnly((s) => !s)}><Star size={13} weight={starOnly ? "fill" : "regular"} />Starred</button>
-            {filtered && <button type="button" className="fpill quiet" onClick={() => { setType("all"); setSource("any"); setDate("any"); setBy("anyone"); }}>Clear</button>}
+            {filtered && <button type="button" className="fpill quiet" onClick={() => { setType("all"); setSource("any"); setDate("any"); setBy("anyone"); setColor("any"); }}>Clear</button>}
           </div>
           <div className="fm-tools">
             <button ref={sortBtn} type="button" className="icon-btn boxed" aria-label={`Sort: ${SORTS.find((s) => s[0] === sort)?.[1]}`} title="Sort" aria-haspopup="menu"
@@ -1056,7 +1095,7 @@ export default function Files() {
                 <div className="empty"><Trash size={26} weight="duotone" /><b>{shownFolders.length ? "No loose files in the trash" : "The trash is empty"}</b><span>Anything you delete waits here for 30 days.</span></div>
               ) : global || filtered ? (
                 <div className="empty"><MagnifyingGlass size={22} /><b>Nothing matches</b><span>Try another word or filter.</span>
-                  <button className="ghost sm" onClick={() => { setQ(""); setStarOnly(false); setType("all"); setSource("any"); setDate("any"); setBy("anyone"); }}>Clear search and filters</button></div>
+                  <button className="ghost sm" onClick={() => { setQ(""); setStarOnly(false); setType("all"); setSource("any"); setDate("any"); setBy("anyone"); setColor("any"); }}>Clear search and filters</button></div>
               ) : (
                 <button type="button" className={`drop fm-drop ${over === (cwdId ?? "root") ? "over" : ""}`} onClick={() => (wsOn ? input.current?.click() : needWs())} {...dropOn(cwdId)}>
                   <span className="d-ic"><UploadSimple size={22} weight="duotone" /></span>
@@ -1109,10 +1148,10 @@ export default function Files() {
                 onOpen={(i) => setCv({ id: st.g.id, i })} onPrev={near(st, -1, false)} onNext={near(st, 1, false)}
                 onRename={(n) => renameStack(st.g.id, n)}
                 onUngroup={st.g.made ? () => ungroup(st.g.id) : undefined} onMove={(a, b) => reorder(st.g.id, a, b)}
-                onDownload={() => download(st.g.items)} onStar={() => star(st.g.items, !st.starred)}
+                onDownload={() => download(st.g.items)} onShare={() => setSharing({ kind: "carousel", ref: st.g.id, name: st.g.name })} onStar={() => star(st.g.items, !st.starred)}
                 onPost={st.g.post ? () => router.push(`/posts?post=${st.g.post}`) : undefined}
-                onInstagram={wsOn ? () => toInstagram(st.g.id) : undefined} checks={checks[st.g.id] ?? null} stats={stats[st.g.id] ?? null}
-                handle={accounts.find((a) => a.network === "instagram")?.handle ?? null} />
+                onInstagram={wsOn ? () => toInstagram(st.g.id) : undefined} igBusy={igBusy === st.g.id} checks={checks[st.g.id] ?? null} stats={stats[st.g.id] ?? null}
+                handle={accounts.find((a) => a.network === "instagram")?.handle ?? null} avatar={accounts.find((a) => a.network === "instagram")?.avatar ?? null} />
             )}
             {vs && m && (
               <FileViewer file={m.m ? viewFile(m) : { key: m.key, name: m.name, kind: m.kind, url: m.kind === "video" && m.j ? libFileUrl(m.j.id, "video.mp4") : m.cover ?? "", download: downloadHref(m), poster: m.cover, at: m.at }}
@@ -1137,6 +1176,7 @@ export default function Files() {
       )}
 
       {<UploadPanel rows={upRows} onClose={clearUploads} onOpenFolder={(name) => { const f = liveFolders.find((x) => x.name === name); go(f?.id ?? null); }} />}
+      {sharing && <ShareDialog kind={sharing.kind} refId={sharing.ref} name={sharing.name} onClose={() => setSharing(null)} />}
       {snack && <Snack text={snack.text} action={snack.action} onAction={snack.run} onClose={() => setSnack(null)} />}
     </div>
   );

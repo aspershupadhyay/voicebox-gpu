@@ -8,7 +8,7 @@
 // shapes and sizes Instagram crops and look-alike duplicates; once it's posted, its Instagram numbers show here. State lives in components/Files.tsx; styles under "carousels" in app/globals.css.
 import {
   ArrowSquareOut, BookmarkSimple, CaretLeft, CaretRight, Cards, ChatCircle, CheckCircle, DeviceMobile, DotsThree, DownloadSimple, FilmStrip, Heart, InstagramLogo,
-  PaperPlaneTilt, PencilSimple, Play, StackMinus, Star, Warning, X,
+  PaperPlaneTilt, PencilSimple, Play, ShareNetwork, StackMinus, Star, Warning, X,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Group } from "@/lib/carouselrules";
@@ -100,15 +100,16 @@ export type Stats = { live: boolean; state?: string | null; url?: string; at?: n
 export const short = (n?: number | null) => (n == null ? "—" : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
 
 const GAP = 1.1; // card centres, in card widths
+const BIG = 0.38; // the card in focus stands this much bigger than the rest
 
 /** Card size and how many show either side, so the whole curve fits the stage (width and height). */
 function geometry(w: number, h: number, n: number) {
   const phone = w < 640;
-  const span = phone ? 1.3 : Math.max(1, Math.min(3.5, (n - 1) / 2 + 0.3));
+  const span = phone ? 1.3 : Math.max(1, Math.min(2.4, (n - 1) / 2 + 0.3));
   const edge = 1 + Math.pow(span, 1.6) * 0.17 * 0.9; // the outer cards come nearer and look bigger
-  const byW = (w / 2 - 18) / (span * GAP + span * span * 0.025 + edge / 2);
-  const byH = (h - 92) / (1.4 * edge);
-  const pw = phone ? Math.max(120, Math.min(w * 0.56, byH, 260)) : Math.max(96, Math.min(byW, byH, 212));
+  const byW = (w / 2 - 18) / (span * GAP + span * span * 0.025 + BIG * 0.6 + edge / 2);
+  const byH = (h - 92) / (1.4 * Math.max(edge, 1 + BIG) + 0.1);
+  const pw = phone ? Math.max(120, Math.min(w * 0.5, byH, 260)) : Math.max(96, Math.min(byW, byH, 250));
   return { pw, span };
 }
 
@@ -116,20 +117,22 @@ function geometry(w: number, h: number, n: number) {
  *  standing inside a ring of photos. */
 function placeOf(o: number, pw: number, span: number) {
   const a = Math.abs(o), s = Math.sign(o);
-  return { x: s * (a * pw * GAP + a * a * pw * 0.025), z: Math.pow(a, 1.6) * pw * 0.17, ry: -o * 12, op: Math.max(0, Math.min(1, span + 0.65 - a)) };
+  // the one in focus grows; its neighbours step aside by as much, so nothing overlaps while you drag between them
+  const sc = 1 + BIG * Math.max(0, 1 - a);
+  return { x: s * (a * pw * GAP + a * a * pw * 0.025 + Math.min(1, a) * pw * BIG * 0.6), z: Math.pow(a, 1.6) * pw * 0.17, ry: -o * 12 * Math.min(1, a), op: Math.max(0, Math.min(1, span + 0.65 - a)), sc };
 }
 const moved = (n: number, from: number, to: number) => { const o = Array.from({ length: n }, (_, i) => i); o.splice(to, 0, o.splice(from, 1)[0]); return o; };
 
 /** The opened carousel: the photos rise from the bottom onto a curved row. The row is placed straight on the DOM
  *  (no re-render while you drag), so it keeps up at 60 fps. Drag sideways to browse; lift a card (drag it up, or press
  *  and hold) and drop it elsewhere to reorder. */
-export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, onUngroup, onMove, onDownload, onPost, onStar, onInstagram, at, checks, stats, handle }: {
+export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, onUngroup, onMove, onDownload, onShare, onPost, onStar, onInstagram, igBusy, at, checks, stats, handle, avatar }: {
   s: Stack; onClose: () => void; onOpen: (i: number) => void; onPrev: Near; onNext: Near; at?: number;
-  onRename?: (name: string) => void; onUngroup?: () => void; onMove?: (from: number, to: number) => void; onDownload: () => void; onPost?: () => void; onStar: () => void;
-  onInstagram?: () => void; checks?: Checks | null; stats?: Stats | null; handle?: string | null;
+  onRename?: (name: string) => void; onUngroup?: () => void; onMove?: (from: number, to: number) => void; onDownload: () => void; onShare?: () => void; onPost?: () => void; onStar: () => void;
+  onInstagram?: () => void; igBusy?: boolean; checks?: Checks | null; stats?: Stats | null; handle?: string | null; avatar?: string | null;
 }) {
   const n = s.members.length;
-  const [focus, setFocus] = useState(() => Math.min(n - 1, Math.max(0, at ?? Math.floor((n - 1) / 2))));
+  const [focus, setFocus] = useState(() => Math.min(n - 1, Math.max(0, at ?? 0))); // opens on the first photo
   const [leaving, setLeaving] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [mode, setMode] = useState<"curve" | "phone">("curve");
@@ -168,13 +171,13 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
       if (!el || !card) continue;
       if (lift && i === lift.i) {
         const home = placeOf(i - cur, pw, span);
-        el.style.transform = `translate3d(${home.x + lift.dx}px, ${lift.dy - 26}px, ${home.z + 90}px)`;
+        el.style.transform = `translate3d(${home.x + lift.dx}px, ${lift.dy - 26}px, ${home.z + 90}px) scale(${home.sc})`;
         el.style.opacity = "1";
         card.style.transform = "rotateY(0deg) scale(1.04)";
         continue;
       }
       const p = placeOf((order ? order.indexOf(i) : i) - cur, pw, span);
-      el.style.transform = `translate3d(${p.x}px, 0, ${p.z}px)`;
+      el.style.transform = `translate3d(${p.x}px, 0, ${p.z}px) scale(${p.sc})`;
       el.style.opacity = String(p.op);
       el.style.visibility = p.op < 0.02 ? "hidden" : "";
       card.style.transform = `rotateY(${p.ry}deg)`;
@@ -196,6 +199,22 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
 
   const close = useCallback(() => { setLeaving(true); setTimeout(onClose, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 340); }, [onClose]);
   const step = useCallback((d: number) => setFocus((f) => Math.min(n - 1, Math.max(0, f + d))), [n]);
+  // a trackpad's sideways swipe browses the photos; it never reaches the browser, where it would go Back a page
+  useEffect(() => {
+    const el = stage.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) return; // pinch zoom
+      e.preventDefault();
+      const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      const now = Date.now(), wh = wheel.current;
+      if (now - wh.t > 260) wh.acc = 0;
+      wh.t = now; wh.acc += d;
+      if (Math.abs(wh.acc) > 60) { step(Math.sign(wh.acc)); wh.acc = 0; }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [mode, step]);
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
@@ -305,12 +324,19 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
               <i className="cs-live-dot" />Live · {short(stats.saves)} saves<span className="cs-more"> · {short(stats.shares)} shares</span>
             </button>
           )}
-          {onInstagram && <button type="button" className="sm cs-ig" onClick={onInstagram} aria-label={stats?.live ? "Post to Instagram again" : "Post to Instagram"} title="Post to Instagram"><InstagramLogo size={15} weight="bold" /><span>{stats?.live ? "Post again" : "Post to Instagram"}</span></button>}
+          {stats?.live && stats.url ? (
+            <a className="btn sm cs-ig" href={stats.url} target="_blank" rel="noreferrer" title="It's live: it won't be posted again"><InstagramLogo size={15} weight="bold" /><span>Live on Instagram</span></a>
+          ) : onInstagram && (
+            <button type="button" className="sm cs-ig" onClick={onInstagram} disabled={igBusy} aria-busy={igBusy} aria-label="Post to Instagram" title="Post to Instagram">
+              {igBusy ? <span className="vp-spin sm" /> : <InstagramLogo size={15} weight="bold" />}<span>{igBusy ? "Setting up…" : "Post to Instagram"}</span>
+            </button>
+          )}
         </div>
         <div className="fv-acts">
           <button className="vp-btn" onClick={onStar} aria-label={s.starred ? "Remove star" : "Star every file"} title={s.starred ? "Remove star" : "Star"}><Star size={19} weight={s.starred ? "fill" : "regular"} className={s.starred ? "fm-star" : ""} /></button>
           {onRename && <button className="vp-btn" onClick={() => setRenaming(true)} aria-label="Rename the carousel" title="Rename"><PencilSimple size={19} /></button>}
           {onPost && <button className="vp-btn" onClick={onPost} aria-label="Open its post" title="Open its post"><ArrowSquareOut size={19} /></button>}
+          {onShare && <button className="vp-btn" onClick={onShare} aria-label="Share a link (no account needed)" title="Share a link"><ShareNetwork size={19} /></button>}
           <button className="vp-btn" onClick={onDownload} aria-label={`Download all ${n}`} title={`Download all ${n}`}><DownloadSimple size={19} /></button>
           {onUngroup && <button className="vp-btn" onClick={onUngroup} aria-label="Ungroup (the files stay)" title="Ungroup"><StackMinus size={19} /></button>}
           <button className="vp-btn" onClick={close} aria-label="Close (Esc)" title="Close (Esc)"><X size={20} /></button>
@@ -319,13 +345,7 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
 
       {mode === "curve" ? (
         <div ref={stage} className="cs-stage" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
-          onWheel={(e) => {
-            const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-            const now = Date.now(), wh = wheel.current;
-            if (now - wh.t > 260) wh.acc = 0;
-            wh.t = now; wh.acc += d;
-            if (Math.abs(wh.acc) > 60) { step(Math.sign(wh.acc)); wh.acc = 0; }
-          }}>
+          >
           <div className="cs-ring" key={s.key} style={{ "--pw": `${pw}px` } as React.CSSProperties}>
             {s.members.map((m, i) => {
               const near = Math.abs(i - focus) <= span + 1;
@@ -350,7 +370,7 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
           </div>
         </div>
       ) : (
-        <Phone s={s} index={focus} onIndex={setFocus} ratio={ratio} handle={handle} issues={issues} onOpen={onOpen} />
+        <Phone s={s} index={focus} onIndex={setFocus} ratio={ratio} handle={handle} avatar={avatar} issues={issues} onOpen={onOpen} />
       )}
 
       {panel === "checks" && checks && (
@@ -410,8 +430,8 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
 }
 
 /** The carousel as it shows in the Instagram feed: a phone, the slides cropped to the first one's shape, swipeable. */
-function Phone({ s, index, onIndex, ratio, handle, issues, onOpen }: {
-  s: Stack; index: number; onIndex: (i: number) => void; ratio: number; handle?: string | null; issues: Map<string, SlideCheck["issues"]>; onOpen: (i: number) => void;
+function Phone({ s, index, onIndex, ratio, handle, avatar, issues, onOpen }: {
+  s: Stack; index: number; onIndex: (i: number) => void; ratio: number; handle?: string | null; avatar?: string | null; issues: Map<string, SlideCheck["issues"]>; onOpen: (i: number) => void;
 }) {
   const track = useRef<HTMLDivElement>(null);
   const n = s.members.length;
@@ -442,7 +462,7 @@ function Phone({ s, index, onIndex, ratio, handle, issues, onOpen }: {
       <button type="button" className="fv-nav l" onClick={() => onIndex(Math.max(0, index - 1))} disabled={index === 0} aria-label="Previous slide"><CaretLeft size={20} weight="bold" /></button>
       <div className="cs-phone" aria-label="Instagram preview">
         <div className="cs-ph-bar"><span className="mono">9:41</span><span className="cs-ph-notch" /><span className="cs-ph-sig" /></div>
-        <div className="cs-ph-head"><span className="cs-ph-av" />{handle ? <b>{handle}</b> : <b>your_account</b>}<DotsThree size={18} weight="bold" className="dim" /></div>
+        <div className="cs-ph-head"><PhoneAvatar src={avatar} />{handle ? <b>{handle}</b> : <b>your_account</b>}<DotsThree size={18} weight="bold" className="dim" /></div>
         <div className="cs-ph-track" ref={track} onScroll={onScroll} style={{ aspectRatio: String(ratio) }}>
           {s.members.slice(0, shown).map((m, i) => (
             <div key={m.key} className="cs-ph-slide" onDoubleClick={() => onOpen(i)}>
@@ -462,6 +482,16 @@ function Phone({ s, index, onIndex, ratio, handle, issues, onOpen }: {
       </div>
       <button type="button" className="fv-nav r" onClick={() => onIndex(Math.min(shown - 1, index + 1))} disabled={index >= shown - 1} aria-label="Next slide"><CaretRight size={20} weight="bold" /></button>
     </div>
+  );
+}
+
+/** The account's picture in the phone preview (Instagram's link can expire: then the studio's logo). */
+function PhoneAvatar({ src }: { src?: string | null }) {
+  const [broken, setBroken] = useState(false);
+  return (
+    <span className="cs-ph-av">
+      <img src={src && !broken ? src : "/icon.svg"} alt="" referrerPolicy="no-referrer" onError={() => setBroken(true)} draggable={false} />
+    </span>
   );
 }
 
