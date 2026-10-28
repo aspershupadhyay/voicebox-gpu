@@ -31,10 +31,10 @@ function Av({ c, size = 28 }: { c?: Pick<LiveChan, "name" | "avatar"> | null; si
 }
 
 /** The live chip: a beating dot and when the last check landed. */
-export function LiveChip({ at, href }: { at: number | null | undefined; href?: string }) {
+export function LiveChip({ at, href, paused }: { at: number | null | undefined; href?: string; /** nobody's active here: no checks run */ paused?: boolean }) {
   const ago = useAgo(at);
   const stale = !at || Date.now() - at > 5 * 60_000;
-  const body = <><span className={`gr-dot ${stale ? "off" : ""}`} aria-hidden />{!at ? "Live · starting" : stale ? `Last check ${ago}` : `Live · ${ago}`}</>;
+  const body = <><span className={`gr-dot ${stale || paused ? "off" : ""}`} aria-hidden />{paused ? "Paused · you're away" : !at ? "Live · starting" : stale ? `Last check ${ago}` : `Live · ${ago}`}</>;
   return href ? <Link href={href} className="gr-chip" aria-label={`Live numbers, ${ago ?? "starting"}`}>{body}</Link> : <span className="gr-chip" role="status">{body}</span>;
 }
 

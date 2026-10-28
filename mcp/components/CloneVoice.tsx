@@ -179,7 +179,7 @@ export default function CloneVoice() {
       <PageHeader title="Instant voice clone" sub="Read the script or upload recordings of your voice. 20 seconds to a minute works best."
         actions={<Link href="/voices" className="btn ghost"><ArrowLeft size={15} />Voices</Link>} />
       {offline && (
-        <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}>
+        <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/settings?tab=gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}>
           <b>The GPU is off.</b> Record your samples now; creating the voice needs the GPU.
         </Notice>
       )}
@@ -259,7 +259,7 @@ export default function CloneVoice() {
                 <input id="clone-name" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Sparsh, energetic" disabled={phase !== "edit"} maxLength={60} />
               </div>
               {offline
-                ? <Link href="/gpu" className="btn block"><Power size={15} weight="bold" />Start the GPU to create</Link>
+                ? <Link href="/settings?tab=gpu" className="btn block"><Power size={15} weight="bold" />Start the GPU to create</Link>
                 : <button className="block" onClick={create} disabled={phase !== "edit" || !status}>{phase === "saving" ? "Creating…" : "Create voice"}</button>}
             </div>
           )}

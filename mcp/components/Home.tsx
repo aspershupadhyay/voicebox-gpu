@@ -1,9 +1,9 @@
 "use client";
-// Home: the studio at a glance. A greeting with the GPU's state, then how the channels are doing (the headline metrics
+// Home: the studio at a glance. A greeting (the GPU lives in Settings), then how the channels are doing (the headline metrics
 // as tiles over one chart, the last 28 days against the 28 before, the top posts lately, this week's rhythm against the
 // goals and what's due next), then the tools as tiles, your latest takes and ways to make a voice. The channel numbers
 // are Analytics' own report (useReport), so opening Analytics after Home is instant.
-import { ArrowRight, ArrowsClockwise, Brain, CalendarBlank, ChartLineUp, ClosedCaptioning, ImageSquare, MagicWand, Microphone, Plus, Power, WarningCircle } from "@phosphor-icons/react";
+import { ArrowRight, ArrowsClockwise, Brain, CalendarBlank, ChartLineUp, ClosedCaptioning, ImageSquare, MagicWand, Microphone, Plus } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ago, api, fmtS, type Job } from "./api";
@@ -106,19 +106,13 @@ export default function Home() {
 
   const first = me?.user?.name?.split(" ")[0];
   const active = jobs.filter((j) => ["queued", "running"].includes(j.status));
-  const warm = Object.entries(st?.engines ?? {}).filter(([, s]) => s === "ready").length;
   const workspace = !!(me?.user && me.session && me.workspace);
 
   return (
     <>
       <PageHeader eyebrow="Your studio" title={`${hello}${first ? `, ${first}` : ""}`}
-        sub={!st ? "Checking on the GPU…" : !st.online ? "The GPU is off. Writing and planning work without it." : active.length ? `${active.length} job${active.length > 1 ? "s" : ""} running on the GPU.` : `The GPU is on with ${warm} engine${warm === 1 ? "" : "s"} warm.`} />
+        sub={active.length ? `${active.length} job${active.length > 1 ? "s" : ""} running on the GPU.` : "Your channels, this week's plan and what you made lately."} />
 
-      {st && !st.online && (
-        <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}>
-          <b>Voice, subtitles and images need the GPU.</b> Start it from here; it stops by itself when it&apos;s idle.
-        </Notice>
-      )}
       {active.length > 0 && (
         <div className="card pad-sm" style={{ marginBottom: 20 }}>
           {active.map((j) => (

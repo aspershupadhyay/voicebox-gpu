@@ -173,7 +173,7 @@ export default function Images() {
     <>
       <ToolPage title="Images" sub="Stills, thumbnails and video start frames from a prompt."
         actions={<GuideButton engine={model} label="Prompting guide" />}
-        notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/gpu" className="btn sm">Start the GPU</Link>}><b>The GPU is off.</b> Write your prompt now; this page connects by itself once it&apos;s on.</Notice>}
+        notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/settings?tab=gpu" className="btn sm">Start the GPU</Link>}><b>The GPU is off.</b> Write your prompt now; this page connects by itself once it&apos;s on.</Notice>}
         side={
           <>
             <SideRow label="Model" htmlFor="img-model" info={spec.about}>
@@ -204,7 +204,7 @@ export default function Images() {
               <div className="tiny dim" style={{ marginTop: 6 }}>The same seed and prompt reproduce an image.</div>
             </div>
             <div className="tool-go">
-              {offline ? <Link href="/gpu" className="btn block">Start the GPU</Link>
+              {offline ? <Link href="/settings?tab=gpu" className="btn block">Start the GPU</Link>
                 : <button className="block" disabled={busy || !status} onClick={() => (prompt.trim().length < 3 ? setErr("Write a prompt first.") : generate())}>
                   <Sparkle size={16} weight="fill" />Generate{count > 1 ? ` ${count}` : ""}<span className="est">≈{fmtS(estS)}</span></button>}
               {!downloaded && <span className="tiny dim"><DownloadSimple size={12} weight="bold" /> First use downloads ~{spec.disk_gb} GB onto the GPU machine, once per runtime.</span>}

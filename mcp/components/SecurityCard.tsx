@@ -14,7 +14,9 @@ type Sec = { session: { how: string; who: string; since: number; until: number }
 const ago = (t: number) => { const m = Math.round((Date.now() - t) / 60_000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 const device = (ua: string) => `${/iPhone|iPad/.test(ua) ? "iPhone/iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "Device"}${/Edg\//.test(ua) ? " · Edge" : /Chrome\//.test(ua) ? " · Chrome" : /Safari\//.test(ua) ? " · Safari" : /Firefox\//.test(ua) ? " · Firefox" : ""}`;
 
-export default function SecurityCard() {
+/** The whole card, or one part of it for Settings' bento: who can sign in, this device, or the sign-in log. */
+export default function SecurityCard({ part }: { part?: "people" | "device" | "log" }) {
+  const show = (p: "people" | "device" | "log") => !part || part === p;
   const { toast, confirm } = useDialog();
   const [d, setD] = useState<Sec | null>(null);
   const [email, setEmail] = useState("");
@@ -30,7 +32,10 @@ export default function SecurityCard() {
 
   return (
     <div className="card">
-      <div className="card-head"><h2><ShieldCheck size={17} /> Security</h2>
+      {part === "device" && <div className="card-head"><div><h2>This device</h2><p className="sub">How you&apos;re signed in here</p></div></div>}
+      {part === "log" && <div className="card-head"><div><h2>Recent sign-ins</h2><p className="sub">Every attempt, refused ones included</p></div></div>}
+      {show("people") && <>
+      <div className="card-head"><h2><ShieldCheck size={17} /> {part ? "Who can sign in" : "Security"}</h2>
         <span className="row" style={{ gap: 4 }}><span className="pill ok"><CheckCircle size={12} weight="fill" /> Invite-only</span>
           <Info label="Security">Only the people below can sign in. Removing someone locks them out within a minute, on every device.</Info></span></div>
 
@@ -56,10 +61,10 @@ export default function SecurityCard() {
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="partner@email.com" aria-label="Email to invite" style={{ flex: 1, minWidth: 200 }} />
         <button className="ghost" disabled={busy || !email.trim()}><UserPlus size={15} /> Invite</button>
       </form>
-
-      <div className="row between" style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--line)", gap: 12 }}>
+      </>}
+      {show("device") && <div className="row between" style={part ? { gap: 12 } : { marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--line)", gap: 12 }}>
         <div className="small">
-          <b>This device</b>
+          {!part && <b>This device</b>}
           <div className="tiny dim">{d?.session ? `${d.session.how === "user" ? "Account" : d.session.how === "github" ? "GitHub" : "Access token"} · signed in ${ago(d.session.since)} · until ${new Date(d.session.until).toLocaleDateString()}` : "—"}
             <Info label="Session length">Sessions last {d?.session_days ?? 14} days, then you sign in again.</Info></div>
         </div>
@@ -69,9 +74,8 @@ export default function SecurityCard() {
             location.href = "/login";
           }
         }}><SignOut size={14} /> Sign out everywhere</button>
-      </div>
-
-      <details style={{ marginTop: 14 }}>
+      </div>}
+      {show("log") && <details style={{ marginTop: part ? 0 : 14 }} open={part === "log"}>
         <summary className="small">Recent sign-ins {d?.log.some((l) => !l.ok) ? <span className="pill bad" style={{ marginLeft: 6 }}>{d.log.filter((l) => !l.ok).length} refused</span> : null}</summary>
         <div style={{ marginTop: 8 }}>
           {!d?.log.length ? <p className="tiny dim">None recorded yet.</p> : d.log.slice(0, 20).map((l, k) => (
@@ -83,7 +87,7 @@ export default function SecurityCard() {
             </div>
           ))}
         </div>
-      </details>
+      </details>}
     </div>
   );
 }
