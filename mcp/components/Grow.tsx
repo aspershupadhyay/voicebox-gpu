@@ -8,13 +8,14 @@
 //   Rival         one rival in depth (pinned rivals open it from the sidebar).
 import { ArrowSquareOut, Broadcast, Fire, MagnifyingGlass, PushPin, Plus, Trash, Trophy, Warning } from "@phosphor-icons/react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Fmt } from "@/lib/analytics";
 import { bandAt, rivalSlug, type LiveChan, type LivePost, type LiveView, type Rival, type Vid } from "@/lib/live-shared";
-import { compact, full, Heatmap, LineChart, Score, Sparkline, useWidth } from "./anparts";
+import { compact, full, Heatmap, LineChart, Score, Sparkline } from "./anparts";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
 import { PlatformBadge } from "./platform";
+import { PixelScene } from "./pixel";
 import { Select } from "./pop";
 import { Empty, Notice } from "./ui";
 import { useAgo, useLive } from "./useLive";
@@ -41,10 +42,29 @@ export function LiveChip({ at, href, paused }: { at: number | null | undefined; 
 /* ───────────── a post against the usual at the same age */
 
 /** Views by age since upload: the post (solid), the usual post at the same age (dashed, the middle half shaded). */
+/** The width and height of a box that's sized by its parent (the chart fills it, so there's no feedback loop). */
+function useBox<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [wh, setWh] = useState<[number, number]>([640, 260]);
+  useEffect(() => {
+    if (!ref.current) return;
+    const o = new ResizeObserver(([e]) => setWh([Math.max(240, Math.round(e.contentRect.width)), Math.round(e.contentRect.height)]));
+    o.observe(ref.current);
+    return () => o.disconnect();
+  }, []);
+  return [ref, wh[0], wh[1]] as const;
+}
+
+/** Fills whatever height its card has to spare (at least `height`), so a tall neighbour never leaves a gap under it. */
 function AgeChart({ p, height = 260 }: { p: LivePost; height?: number }) {
-  const [box, W] = useWidth<HTMLDivElement>();
+  const [frame, FW, FH] = useBox<HTMLDivElement>();
+  return <div ref={frame} className="gr-fill" style={{ minHeight: height }}><AgeChartIn p={p} W={FW} H={Math.max(height, FH)} /></div>;
+}
+
+function AgeChartIn({ p, W, H }: { p: LivePost; W: number; H: number }) {
+  const box = useRef<HTMLDivElement>(null);
   const [h, setH] = useState<number | null>(null);
-  const H = height, L = 48, R = 14, T = 22, B = 26;
+  const L = 48, R = 14, T = 22, B = 26;
   const start = Math.floor(p.at / 60_000);
   const pts = p.pts.map(([m, v]) => [Math.max(0, m - start), v] as [number, number]);
   const span = Math.min(4320, Math.max(60, p.age_min * 1.15, ...(p.band ? [Math.min(p.age_min * 1.6, 4320)] : [])));
@@ -141,7 +161,7 @@ export function LiveView() {
       <Status d={d} />
       {!d.at && <Notice icon={<Broadcast size={18} />}>The first check is running. Fresh posts show up here within a minute or two.</Notice>}
       <div className="an-row">
-        <section className="card an-card" aria-labelledby="gr-now-h">
+        <section className="card an-card gr-nowcard" aria-labelledby="gr-now-h">
           {p ? (
             <>
               <div className="card-head">
@@ -164,15 +184,15 @@ export function LiveView() {
               <p className="small dim" style={{ margin: "12px 0 0" }}>{whatItMeans(p)}</p>
             </>
           ) : (
-            <Empty icon={<Broadcast size={22} />} title="Nothing posted in the last 72 hours">
+            <><PixelScene className="gr-empty-scene" label="A quiet desk at night: nothing new right now" /><Empty title="Nothing posted in the last 72 hours">
               The next upload, yours or a rival&apos;s, shows up here within 10 minutes and is checked every minute for three days.
-            </Empty>
+            </Empty></>
           )}
         </section>
-        <section className="card an-card" aria-labelledby="gr-mine-h">
+        <section className="card an-card gr-side" aria-labelledby="gr-mine-h">
           <div className="card-head"><div><h2 id="gr-mine-h">Your fresh posts</h2><p className="sub">Under 72 hours old, newest first</p></div></div>
           {mine.length ? <FreshList posts={mine} chans={chans} pick={setSel} on={p?.id ?? null} label="Your fresh posts" narrow /> : <p className="small dim" style={{ margin: 0 }}>None right now. Post something and watch it here from its first minutes.</p>}
-          <h3 className="an-h3">Subscribers and followers, live</h3>
+          <h3 className="an-h3 gr-subs-h">Subscribers and followers, live</h3>
           <div className="gr-subs">
             {own.map((c) => (
               <div key={c.id} className="gr-sub">

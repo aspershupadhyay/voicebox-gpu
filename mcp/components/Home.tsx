@@ -11,6 +11,7 @@ import { CassetteArt, EngineArt, MicArt, VoiceGlyph } from "./art";
 import { Query, useLive, useMe } from "./aw";
 import { SampleButton } from "./Sample";
 import { useStatus } from "./Shell";
+import { PixelScene } from "./pixel";
 import { Empty, Notice, PageHeader } from "./ui";
 import { dueLabel } from "./PostDrawer";
 import type { Post } from "@/lib/workspace";
@@ -111,7 +112,8 @@ export default function Home() {
   return (
     <>
       <PageHeader eyebrow="Your studio" title={`${hello}${first ? `, ${first}` : ""}`}
-        sub={active.length ? `${active.length} job${active.length > 1 ? "s" : ""} running on the GPU.` : "Your channels, this week's plan and what you made lately."} />
+        sub={active.length ? `${active.length} job${active.length > 1 ? "s" : ""} running on the GPU.` : "Your channels, this week's plan and what you made lately."}
+        actions={<PixelScene className="home-scene" />} />
 
       {active.length > 0 && (
         <div className="card pad-sm" style={{ marginBottom: 20 }}>

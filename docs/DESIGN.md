@@ -90,6 +90,11 @@ status and history under it, and the actions in a footer. It saves as you type.
 
 ## Colour
 
+- Matte black (the owner's call, see `docs/FEEDBACK.md`): canvas `#0a0a0a`, sidebar `#070707`, cards `#0f0f0f` with
+  `#1c1c1c` hairlines, radii 12 / 9 / 7 px and no drop shadows, so cards read sharp. The logo sits plainly at the top of
+  the sidebar (mark and name, no button). Pixel accents (`components/pixel.tsx`) add warmth: a pixel avatar from your
+  name, a cozy pixel desk scene (Profile banner, Home's greeting, Live with nothing fresh, the 404), pixel icons on the
+  Settings tabs. They animate slowly and stop for reduced motion.
 - Dark only: near-black canvas (`--bg`), a darker sidebar (`--side`), `--fill` for tiles, tracks and inputs. There is
   no light theme and no theme switch. Every colour is a token; never write a hex in a component.
 - Text: `--ink`, `--ink2`, `--dim`, `--mute`. All are 4.5:1 or better on their backgrounds in both themes. There is
