@@ -4,7 +4,7 @@
 import { CAROUSEL_RE, MAX_ITEMS, placeAt, POST_GROUP_RE, type Carousel } from "./carouselrules";
 import { FilesError } from "./files";
 import { ITEM_RE, newFolderId } from "./filetree";
-import { getJsonTagged, putJsonIf } from "./store";
+import { getJsonTagged, putJson, putJsonIf } from "./store";
 
 export { CAROUSEL_RE, POST_GROUP_RE, type Carousel };
 
@@ -16,16 +16,25 @@ export async function getCarousels(): Promise<Carousel[]> {
   return (await getJsonTagged<Doc>(KEY)).value?.carousels ?? [];
 }
 
-/** Read, change, write if nobody wrote in between; else again (a few times, with a little jitter). */
-async function change<T>(fn: (list: Carousel[]) => T): Promise<T> {
-  for (let i = 0; i < 8; i++) {
+/** Read, change, write if nobody wrote in between; else again (with a little jitter). If the store keeps refusing
+ *  the conditional write, the change is written plainly and read back, so a change never fails for being "busy". */
+async function change<T>(fn: (list: Carousel[]) => T, landed?: (list: Carousel[]) => boolean): Promise<T> {
+  for (let i = 0; i < 5; i++) {
     const { value, etag } = await getJsonTagged<Doc>(KEY);
     const list = structuredClone(value?.carousels ?? []);
     const out = fn(list);
-    if (await putJsonIf(KEY, { carousels: list }, etag)) return out;
-    await new Promise((r) => setTimeout(r, 40 + Math.random() * 120 * (i + 1)));
+    if (await putJsonIf(KEY, { carousels: list }, etag).catch(() => false)) return out;
+    await new Promise((r) => setTimeout(r, 30 + Math.random() * 90 * (i + 1)));
   }
-  throw new FilesError("carousels are busy: try again", 409);
+  for (let i = 0; i < 3; i++) {
+    const list = structuredClone((await getJsonTagged<Doc>(KEY)).value?.carousels ?? []);
+    const out = fn(list);
+    await putJson(KEY, { carousels: list });
+    if (!landed) return out;
+    await new Promise((r) => setTimeout(r, 150 + Math.random() * 250));
+    if (landed((await getJsonTagged<Doc>(KEY)).value?.carousels ?? [])) return out;
+  }
+  throw new FilesError("couldn't save the carousel: try again", 503);
 }
 
 const cleanName = (s: unknown) => String(s ?? "").replace(/[\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
@@ -92,21 +101,36 @@ export async function ungroupCarousel(id: string) {
 
 /** An uploaded file joins a carousel by id or by name; a name not used yet makes a new one (the upload API, save_file). */
 export async function joinCarousel(ref: string, key: string, opts: { position?: number | null; post?: string | null; by: string | null }) {
-  if (!ITEM_RE.test(key)) throw new FilesError(`not a file: ${key}`);
+  const r = await joinMany(ref, [{ key, position: opts.position }], opts);
+  return { id: r.id, name: r.name, position: r.placed[0].position, files: r.files };
+}
+
+/** Files (new or already in Files) join a carousel in one write, each at its position (1 = first) or at the end. */
+export async function joinMany(ref: string, files: { key: string; position?: number | null }[], opts: { post?: string | null; by: string | null }) {
+  if (!files.length) throw new FilesError("give files to add");
+  for (const f of files) {
+    if (!ITEM_RE.test(f.key)) throw new FilesError(`not a file: ${f.key}`);
+    if (f.position != null && (!Number.isInteger(f.position) || f.position < 1 || f.position > MAX_ITEMS)) throw new FilesError(`position: 1 to ${MAX_ITEMS}`);
+  }
+  if (POST_GROUP_RE.test(ref)) throw new FilesError("a post's own carousel fills itself: attach the files to the post, or give a carousel name");
+  const name = cleanName(ref);
+  if (!name) throw new FilesError("give the carousel's id or a name");
+  let id = "";
   return change((list) => {
     let c = find(list, ref);
     if (!c) {
-      if (POST_GROUP_RE.test(ref)) throw new FilesError("a post's own carousel fills itself: upload with post_id instead");
       if (list.length >= MAX) throw new FilesError(`up to ${MAX} carousels`);
-      c = { id: CAROUSEL_RE.test(ref) ? ref : newFolderId(), name: cleanName(ref) || "Carousel", items: [], post: opts.post ?? null, created: Date.now(), by: opts.by };
+      c = { id: id || (id = newFolderId()), name, items: [], post: opts.post ?? null, created: Date.now(), by: opts.by };
       list.push(c);
     }
-    release(list, [key], c.id);
-    if (c.items.length >= MAX_ITEMS && !c.items.includes(key)) throw new FilesError(`a carousel holds up to ${MAX_ITEMS} files`);
-    Object.assign(c, placeAt(c, key, opts.position));
+    id = c.id;
+    release(list, files.map((f) => f.key), c.id);
+    for (const f of [...files].sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9))) Object.assign(c, placeAt(c, f.key, f.position));
+    if (c.items.length > MAX_ITEMS) throw new FilesError(`a carousel holds up to ${MAX_ITEMS} files`);
     if (!c.post && opts.post) c.post = opts.post;
-    return { id: c.id, name: c.name, position: c.items.indexOf(key) + 1, files: c.items.length };
-  });
+    const items = c.items;
+    return { id: c.id, name: c.name, files: items.length, placed: files.map((f) => ({ file_id: f.key, position: items.indexOf(f.key) + 1 })) };
+  }, (list) => { const c = list.find((x) => x.id === id); return !!c && files.every((f) => c.items.includes(f.key)); });
 }
 
 /** Files deleted for good leave their carousels. */

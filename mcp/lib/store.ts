@@ -53,8 +53,12 @@ export const putJson = (key: string, value: unknown) => putObj(key, JSON.stringi
 
 /** A JSON object with its ETag, for a write that must not overwrite someone else's (putJsonIf). */
 export async function getJsonTagged<T>(key: string): Promise<{ value: T | null; etag: string | null }> {
-  const r = await getObj(key);
-  return r ? { value: (await r.json()) as T, etag: r.headers.get("etag") } : { value: null, etag: null };
+  // uncompressed, or the tag comes back weak (W/"…", for the gzipped copy) and never matches on the write
+  const r = await aws().fetch(url(key), { cache: "no-store", headers: { "Accept-Encoding": "identity" } });
+  if (r.status === 404) return { value: null, etag: null };
+  if (!r.ok) throw new Error(`storage GET ${key}: ${r.status}`);
+  const etag = r.headers.get("etag")?.replace(/^W\//, "") ?? null;
+  return { value: (await r.json()) as T, etag };
 }
 
 /** Write only if the object is still the copy we read (its ETag), or still missing (etag null). False when someone
@@ -64,7 +68,7 @@ export async function putJsonIf(key: string, value: unknown, etag: string | null
   const cond: Record<string, string> = etag ? { "If-Match": etag } : { "If-None-Match": "*" };
   const signed = await aws().sign(url(key), { method: "PUT", headers: { "Content-Type": "application/json", "X-Amz-Content-Sha256": "UNSIGNED-PAYLOAD", ...cond } });
   const r = await fetch(signed.url, { method: "PUT", headers: signed.headers, body: bytes });
-  if (r.status === 412) return false;
+  if (r.status === 412 || r.status === 409) return false;
   if (!r.ok) throw new Error(`storage PUT ${key}: ${r.status} ${(await r.text()).slice(0, 200)}`);
   return true;
 }

@@ -4,7 +4,18 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (carousels in Files, 2026-10-28)
+## Latest round (carousel fixes, 2026-10-28)
+
+- **Uploading a carousel through the API failed on every file after the first** ("carousels are busy"). Fixed: the
+  conditional write now matches R2's tag, falls back to a checked plain write, and turning a ticket in again retries
+  the join. Files already uploaded can join a carousel without a re-upload (`/api/files/carousels`), and upload keys
+  can do that too (the owner's call). Batch uploads take several files in one call.
+- **"I don't see the UI"**: carousels now have their own row at the top of Files, not only inside their folder.
+- **Uploads and image loading must be fast**: uploads go straight to storage; the copy into the workspace reads ahead,
+  previews are made when the upload lands, the photos around the open one load ahead, and the Appwrite connection
+  opens early.
+
+## Earlier round (carousels in Files, 2026-10-28)
 
 - **A post's photos must not scatter across Files.** A ten-photo post showed as ten loose files. Now they're one
   carousel card (the owner's reference: a curved fan of tall photo cards, each numbered #01… with a label under it).

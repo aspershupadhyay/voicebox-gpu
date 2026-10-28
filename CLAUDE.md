@@ -40,8 +40,8 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
 
 - The dashboard is invite-only: see `mcp/lib/access.ts` and `mcp/lib/session.ts`.
 - Never add a route without `isAuthed(req)` (worker routes use `WORKER_SECRET`; `/api/cron/live` also takes the
-  Cloudflare live timer's secret, kept only as a SHA-256; `/api/files/upload` and `/complete` also take an upload key,
-  which can do nothing else).
+  Cloudflare live timer's secret, kept only as a SHA-256; `/api/files/upload`, `/complete` and `/api/files/carousels` also take an
+  upload key, which can save files and arrange carousels and nothing else: no reading other files, no deleting).
 - Never loosen the allow-list, the same-origin check or the session expiry.
 
 ## Checks before pushing
