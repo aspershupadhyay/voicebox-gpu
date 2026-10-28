@@ -192,6 +192,11 @@ export async function renameMedia(id: string, name: string, actor: { id?: string
   return row;
 }
 
+/** Attach an upload to a post (or take it off one with null). */
+export async function setMediaPost(id: string, postId: string | null) {
+  return aw<Media>(`${rows("media")}/${encodeURIComponent(id)}`, { method: "PATCH", body: { data: { post_id: postId } } });
+}
+
 export async function deletePost(id: string, actor: { id?: string; name: string }) {
   const p = await getPost(id);
   await aw(`${rows("posts")}/${encodeURIComponent(id)}`, { method: "DELETE" });

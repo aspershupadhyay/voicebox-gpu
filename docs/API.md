@@ -62,7 +62,7 @@ scripts `sysdocs` and Other `sysother`, file everything by kind unless you move 
 | `rename_file` / `star_files` | Rename an upload or a generated item; star or unstar files and folders. |
 | `delete_files` / `delete_folder` | Only when asked. To the trash for 30 days (a folder with everything in it); `delete_files` with `forever: true` deletes for good (an upload's R2 backup stays). |
 | `restore_files` / `empty_trash` | Bring things back from the trash; empty it (only when asked). |
-| `carousels` | `{action: list\|get\|create\|update\|ungroup, carousel?, post_id?, name?, items?, add?, remove?}` → a post's photos and clips as one stack on the Files page. Two or more on the same post group themselves (id `post-<post id>`, named after the post); `create` groups any files. Each carousel lists its files in order with view links. |
+| `carousels` | `{action: list\|get\|create\|update\|ungroup\|checks\|instagram\|stats, carousel?, post_id?, name?, items?, add?, remove?}` → a post's photos and clips as one stack on the Files page. Two or more on the same post group themselves (id `post-<post id>`, named after the post); `create` groups any files. Each carousel lists its files in order with view links. |
 
 **Carousels.** On the Files page a carousel shows as one card instead of loose files; opening it stands the photos up
 on a curved row, and each opens full size with the carousel along the bottom (`[` `]` jump between posts). Made ones
@@ -93,7 +93,11 @@ The dashboard uses the same operations under `/api/dash/files`: `GET` (the tree,
 `POST rename {item, name}`, `POST delete {items, forever?}`, `POST restore {items}`, `POST empty-trash`,
 `POST poster {item, data}`, `POST import {url, folder?}`, and carousels: `GET carousels` (`?post=<id>` for one post's),
 `GET carousels/<id>`, `POST carousels {id?, name, items, post?}`, `POST carousels/<id> {name?, items?, add?, remove?}`
-(a post's own `post-<id>` becomes a made one first), `POST carousels/<id>/ungroup` (or `DELETE carousels/<id>`).
+(a post's own `post-<id>` becomes a made one first), `POST carousels/<id>/ungroup` (or `DELETE carousels/<id>`),
+`GET carousels/<id>/checks` (each slide's size, shape and look-alikes for Instagram, `lib/carouselcheck.ts`),
+`GET carousels/<id>/stats` (its Instagram numbers once posted) and `POST carousels/<id>/publish` (makes or reuses its post,
+attaches the photos, adds the Instagram Post target and a publish plan with the slides in order and a fitted caption; it
+doesn't send).
 
 `voice` resolves as: `female` / `male` preset → engine voice name (`tara`, `af_heart`, …) → a recorded voice (`my_voices`).
 Recorded voices live in R2 (`voices/<name>/reference.wav` + transcript); the dashboard passes the worker a signed link

@@ -3,10 +3,12 @@
 // of ten loose files. Opening one stands the photos up from the bottom of the screen, one after another, onto a curved
 // row (the owner's reference: a concave fan of tall cards, each numbered #01, #02… with its name under it). Click a
 // photo to open it full size; the viewer gets a strip of the carousel along the bottom. Keys on the stage: ← → browse,
-// Enter opens, 1–9 open that photo, Alt+← → move the photo in the order, [ ] (or Shift+← →) jump to the previous or
-// next post's carousel, Esc closes. State lives in components/Files.tsx; styles under "carousels" in app/globals.css.
+// Enter opens, 1–9 open that photo, drag a card up (or Alt+← →) to move it, [ ] (or Shift+← →) jump to the previous
+// or next post's carousel, P shows it on a phone as Instagram will, Esc closes. Slide checks (lib/carouselcheck.ts) flag
+// shapes and sizes Instagram crops and look-alike duplicates; once it's posted, its Instagram numbers show here. State lives in components/Files.tsx; styles under "carousels" in app/globals.css.
 import {
-  ArrowSquareOut, CaretLeft, CaretRight, Cards, DotsThree, DownloadSimple, FilmStrip, PencilSimple, Play, StackMinus, Star, X,
+  ArrowSquareOut, BookmarkSimple, CaretLeft, CaretRight, Cards, ChatCircle, CheckCircle, DeviceMobile, DotsThree, DownloadSimple, FilmStrip, Heart, InstagramLogo,
+  PaperPlaneTilt, PencilSimple, Play, StackMinus, Star, Warning, X,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Group } from "@/lib/carouselrules";
@@ -28,7 +30,7 @@ function Thumb({ it, eager }: { it: Item; eager?: boolean }) {
 }
 
 /** The card in the grid: the first photos fanned like a hand of cards (they spread on hover), and how many. */
-export function CarouselCard({ s, ...ev }: { s: Stack } & CardEvents) {
+export function CarouselCard({ s, stats, ...ev }: { s: Stack; stats?: Stats | null } & CardEvents) {
   const shown = s.members.slice(0, 5);
   const mid = (shown.length - 1) / 2;
   return (
@@ -56,7 +58,11 @@ export function CarouselCard({ s, ...ev }: { s: Stack } & CardEvents) {
         <Name value={s.g.name} renaming={ev.renaming} onRename={ev.onRename} className="fc-name" />
         <div className="fc-foot">
           <span className="row" style={{ gap: 8 }}><ByMark it={s.members[0]} /><span className="tiny dim mono">{s.g.post ? "On a post" : "Grouped"}</span></span>
-          <span className="cc-dots" aria-hidden>{s.members.slice(0, 10).map((m) => <i key={m.key} />)}</span>
+          {stats?.live ? (
+            <span className="cc-live" title={`On Instagram: ${short(stats.views)} views, ${short(stats.saves)} saves, ${short(stats.shares)} shares`}>
+              <i className="cs-live-dot" /><BookmarkSimple size={12} weight="bold" />{short(stats.saves)}<PaperPlaneTilt size={12} weight="bold" />{short(stats.shares)}
+            </span>
+          ) : <span className="cc-dots" aria-hidden>{s.members.slice(0, 10).map((m) => <i key={m.key} />)}</span>}
         </div>
       </div>
     </div>
@@ -86,47 +92,99 @@ export function CarouselRow({ s, folderName, ...ev }: { s: Stack; folderName?: s
 }
 
 type Near = { name: string; go: () => void } | null;
+export type SlideCheck = { file_id: string; position: number; w: number | null; h: number | null; issues: { level: "bad" | "warn"; text: string }[] };
+export type Checks = { slides: SlideCheck[]; bad: number; warn: number; ok: number; notes: string[] };
+export type Stats = { live: boolean; state?: string | null; url?: string; at?: number; views?: number | null; reach?: number | null; likes?: number | null;
+  comments?: number | null; shares?: number | null; saves?: number | null; er?: number | null; notes?: string[]; error?: string };
+
+export const short = (n?: number | null) => (n == null ? "—" : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
+
+const GAP = 1.1; // card centres, in card widths
+
+/** Card size and how many show either side, so the whole curve fits the stage (width and height). */
+function geometry(w: number, h: number, n: number) {
+  const phone = w < 640;
+  const span = phone ? 1.3 : Math.max(1, Math.min(3.5, (n - 1) / 2 + 0.3));
+  const edge = 1 + Math.pow(span, 1.6) * 0.17 * 0.9; // the outer cards come nearer and look bigger
+  const byW = (w / 2 - 18) / (span * GAP + span * span * 0.025 + edge / 2);
+  const byH = (h - 92) / (1.4 * edge);
+  const pw = phone ? Math.max(120, Math.min(w * 0.56, byH, 260)) : Math.max(96, Math.min(byW, byH, 212));
+  return { pw, span };
+}
 
 /** Where a card sits on the curve, `o` places from the one in focus: further out is nearer to you and turned in, like
  *  standing inside a ring of photos. */
 function placeOf(o: number, pw: number, span: number) {
   const a = Math.abs(o), s = Math.sign(o);
-  const x = s * (a * pw * 0.97 + a * a * pw * 0.02);
-  const z = Math.pow(a, 1.6) * pw * 0.17;
-  const ry = -o * 13;
-  const fade = Math.max(0, Math.min(1, span + 0.6 - a));
-  return { transform: `translate3d(${x}px, 0, ${z}px) rotateY(${ry}deg)`, opacity: fade, zIndex: 100 - Math.round(a * 4), hidden: fade <= 0.02 };
+  return { x: s * (a * pw * GAP + a * a * pw * 0.025), z: Math.pow(a, 1.6) * pw * 0.17, ry: -o * 12, op: Math.max(0, Math.min(1, span + 0.65 - a)) };
 }
+const moved = (n: number, from: number, to: number) => { const o = Array.from({ length: n }, (_, i) => i); o.splice(to, 0, o.splice(from, 1)[0]); return o; };
 
-/** The opened carousel: the photos rise from the bottom onto a curved row. */
-export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, onUngroup, onMove, onDownload, onPost, onStar, at }: {
+/** The opened carousel: the photos rise from the bottom onto a curved row. The row is placed straight on the DOM
+ *  (no re-render while you drag), so it keeps up at 60 fps. Drag sideways to browse; lift a card (drag it up, or press
+ *  and hold) and drop it elsewhere to reorder. */
+export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, onUngroup, onMove, onDownload, onPost, onStar, onInstagram, at, checks, stats, handle }: {
   s: Stack; onClose: () => void; onOpen: (i: number) => void; onPrev: Near; onNext: Near; at?: number;
   onRename?: (name: string) => void; onUngroup?: () => void; onMove?: (from: number, to: number) => void; onDownload: () => void; onPost?: () => void; onStar: () => void;
+  onInstagram?: () => void; checks?: Checks | null; stats?: Stats | null; handle?: string | null;
 }) {
   const n = s.members.length;
   const [focus, setFocus] = useState(() => Math.min(n - 1, Math.max(0, at ?? Math.floor((n - 1) / 2))));
-  const [drag, setDrag] = useState<number | null>(null); // the focus while dragging (a fraction)
   const [leaving, setLeaving] = useState(false);
   const [renaming, setRenaming] = useState(false);
-  const [w, setW] = useState(1200);
+  const [mode, setMode] = useState<"curve" | "phone">("curve");
+  const [panel, setPanel] = useState<"checks" | "stats" | null>(null);
+  const [size, setSize] = useState({ w: 1200, h: 600 });
   const box = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
-  const press = useRef<{ x: number; f: number; moved: boolean } | null>(null);
+  const pos = useRef<(HTMLDivElement | null)[]>([]);
+  const cards = useRef<(HTMLButtonElement | null)[]>([]);
+  const view = useRef<{ cur: number; lift: { i: number; to: number; dx: number; dy: number } | null }>({ cur: focus, lift: null });
+  const press = useRef<{ x: number; y: number; f: number; i: number | null; mode: "" | "scroll" | "lift"; timer?: ReturnType<typeof setTimeout> } | null>(null);
+  const quiet = useRef(false); // the click after a drag doesn't open the photo
+  const raf = useRef(0);
   const wheel = useRef({ acc: 0, t: 0 });
+  const { pw, span } = geometry(size.w, size.h, n);
+  const issues = new Map((checks?.slides ?? []).map((c) => [c.file_id, c.issues]));
+
   useEffect(() => { setFocus((f) => Math.min(n - 1, Math.max(0, f))); }, [n]);
   useEffect(() => { if (at != null) setFocus(Math.min(n - 1, Math.max(0, at))); }, [at, n]);
-
   useLayoutEffect(() => {
     const el = stage.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setW(el.clientWidth));
+    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
     ro.observe(el);
-    setW(el.clientWidth);
+    setSize({ w: el.clientWidth, h: el.clientHeight });
     return () => ro.disconnect();
-  }, []);
-  const phone = w < 640;
-  const pw = phone ? Math.min(w * 0.5, 230) : Math.max(112, Math.min(196, w / 9.8));
-  const span = phone ? 1.4 : 3.5;
+  }, [mode]);
+
+  /** Put every card where it belongs right now (focus, a drag, a lifted card). */
+  const apply = useCallback(() => {
+    raf.current = 0;
+    const { cur, lift } = view.current;
+    const order = lift ? moved(n, lift.i, lift.to) : null;
+    for (let i = 0; i < n; i++) {
+      const el = pos.current[i], card = cards.current[i];
+      if (!el || !card) continue;
+      if (lift && i === lift.i) {
+        const home = placeOf(i - cur, pw, span);
+        el.style.transform = `translate3d(${home.x + lift.dx}px, ${lift.dy - 26}px, ${home.z + 90}px)`;
+        el.style.opacity = "1";
+        card.style.transform = "rotateY(0deg) scale(1.04)";
+        continue;
+      }
+      const p = placeOf((order ? order.indexOf(i) : i) - cur, pw, span);
+      el.style.transform = `translate3d(${p.x}px, 0, ${p.z}px)`;
+      el.style.opacity = String(p.op);
+      el.style.visibility = p.op < 0.02 ? "hidden" : "";
+      card.style.transform = `rotateY(${p.ry}deg)`;
+    }
+  }, [n, pw, span]);
+  const schedule = useCallback(() => { if (!raf.current) raf.current = requestAnimationFrame(apply); }, [apply]);
+  useLayoutEffect(() => { if (!press.current) view.current.cur = focus; apply(); }, [focus, apply, s.members, mode]);
+  // cards glide between places once they're placed (not from the middle on the first frame)
+  useEffect(() => { const id = requestAnimationFrame(() => stage.current?.classList.add("ready")); return () => cancelAnimationFrame(id); }, [mode]);
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
 
   useEffect(() => {
     const back = document.activeElement as HTMLElement | null;
@@ -136,15 +194,15 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
     return () => { document.body.style.overflow = prev; back?.focus?.(); };
   }, []);
 
-  const close = useCallback(() => { setLeaving(true); setTimeout(onClose, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 380); }, [onClose]);
+  const close = useCallback(() => { setLeaving(true); setTimeout(onClose, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 340); }, [onClose]);
   const step = useCallback((d: number) => setFocus((f) => Math.min(n - 1, Math.max(0, f + d))), [n]);
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || document.querySelector(".fv, .modal, .fm-menu")) return;
+      if (e.defaultPrevented || document.querySelector(".fv, .modal, .fm-menu, .pub")) return;
       const t = e.target as HTMLElement;
       if (t.closest?.("input, textarea, [contenteditable=true]")) return;
-      if (e.key === "Escape") { e.preventDefault(); close(); return; }
+      if (e.key === "Escape") { e.preventDefault(); if (panel) setPanel(null); else if (mode === "phone") setMode("curve"); else close(); return; }
       const jump = e.key === "[" || e.key === "]" || (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight"));
       if (jump) { e.preventDefault(); const d = e.key === "[" || e.key === "ArrowLeft" ? onPrev : onNext; d?.go(); return; }
       if (e.altKey && onMove && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
@@ -153,6 +211,7 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
         if (to >= 0 && to < n) { onMove(focus, to); setFocus(to); }
         return;
       }
+      if (e.key === "p" || e.key === "P") { e.preventDefault(); setMode((m) => (m === "phone" ? "curve" : "phone")); return; }
       if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
       else if (e.key === "ArrowRight") { e.preventDefault(); step(1); }
       else if (e.key === "Home") { e.preventDefault(); setFocus(0); }
@@ -162,12 +221,69 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
     };
     addEventListener("keydown", k);
     return () => removeEventListener("keydown", k);
-  }, [close, focus, n, onMove, onNext, onOpen, onPrev, step]);
+  }, [close, focus, mode, n, onMove, onNext, onOpen, onPrev, panel, step]);
 
-  const cur = drag ?? focus;
+  // ── pointer: drag sideways to browse; lift a card (drag up, or hold) to move it
+  const cardAt = (e: React.PointerEvent) => { const el = (e.target as HTMLElement).closest<HTMLElement>("[data-i]"); return el ? Number(el.dataset.i) : null; };
+  const startLift = (p: NonNullable<typeof press.current>) => {
+    if (p.i == null || !onMove) return;
+    p.mode = "lift";
+    view.current.lift = { i: p.i, to: p.i, dx: 0, dy: 0 };
+    stage.current?.classList.add("lifting");
+    pos.current[p.i]?.classList.add("lifted");
+    schedule();
+  };
+  const down = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    quiet.current = false;
+    const p = { x: e.clientX, y: e.clientY, f: view.current.cur, i: cardAt(e), mode: "" as const };
+    press.current = p;
+    if (p.i != null && onMove && e.pointerType !== "mouse") (press.current as { timer?: ReturnType<typeof setTimeout> }).timer = setTimeout(() => { if (press.current === p && !p.mode) { startLift(p); navigator.vibrate?.(8); } }, 320);
+  };
+  const move = (e: React.PointerEvent) => {
+    const p = press.current;
+    if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    if (!p.mode) {
+      if (Math.hypot(dx, dy) < 7) return;
+      clearTimeout(p.timer);
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      if (p.i != null && onMove && dy < 0 && Math.abs(dy) > Math.abs(dx) * 1.1) startLift(p);
+      else { p.mode = "scroll"; stage.current?.classList.add("dragging"); }
+      quiet.current = true;
+    }
+    if (p.mode === "lift" && view.current.lift) {
+      const l = view.current.lift;
+      l.dx = dx; l.dy = Math.min(40, dy);
+      l.to = Math.max(0, Math.min(n - 1, Math.round(l.i + dx / (pw * GAP))));
+    } else if (p.mode === "scroll") view.current.cur = Math.max(-0.45, Math.min(n - 0.55, p.f - dx / (pw * GAP)));
+    schedule();
+  };
+  const up = () => {
+    const p = press.current;
+    press.current = null;
+    if (!p) return;
+    clearTimeout(p.timer);
+    stage.current?.classList.remove("dragging", "lifting");
+    if (p.mode === "lift" && view.current.lift) {
+      const { i, to } = view.current.lift;
+      pos.current[i]?.classList.remove("lifted");
+      view.current.lift = null;
+      if (to !== i) { onMove!(i, to); view.current.cur = to; setFocus(to); }
+      schedule();
+    } else if (p.mode === "scroll") {
+      const f = Math.max(0, Math.min(n - 1, Math.round(view.current.cur)));
+      view.current.cur = f;
+      if (f === focus) schedule(); else setFocus(f);
+    }
+  };
+
   const meta = [countOf(s.members), s.g.post ? "on a post" : "grouped by hand", s.members[0]?.by].filter(Boolean).join(" · ");
+  const flagged = (checks?.bad ?? 0) + (checks?.warn ?? 0);
+  const first = checks?.slides.find((c) => c.w && c.h);
+  const ratio = first ? Math.max(0.8, Math.min(1.91, first.w! / first.h!)) : 0.8;
   return (
-    <div className={`cs ${leaving ? "out" : ""}`} ref={box} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`Carousel ${s.g.name}`}>
+    <div className={`cs ${leaving ? "out" : ""} m-${mode}`} ref={box} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`Carousel ${s.g.name}`}>
       <div className="cs-back" onClick={close} />
       <div className="cs-top">
         <div className="cs-name">
@@ -175,6 +291,21 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
           {onRename ? <Name value={s.g.name} renaming={renaming} onRename={(v) => { setRenaming(false); if (v && v !== s.g.name) onRename(v); }} className="cs-title ellipsis" />
             : <b className="cs-title ellipsis">{s.g.name}</b>}
           <span className="ellipsis">{meta}</span>
+        </div>
+        <div className="cs-tools">
+          <div className="seg cs-seg" role="radiogroup" aria-label="View">
+            <button role="radio" aria-checked={mode === "curve"} className={mode === "curve" ? "on" : ""} onClick={() => setMode("curve")} title="The curve"><Cards size={15} /><span>Curve</span></button>
+            <button role="radio" aria-checked={mode === "phone"} className={mode === "phone" ? "on" : ""} onClick={() => setMode("phone")} title="As it looks on Instagram (P)"><DeviceMobile size={15} /><span>Phone</span></button>
+          </div>
+          <button type="button" className={`cs-chip ${checks ? (checks.bad ? "bad" : checks.warn ? "warn" : "ok") : ""} ${panel === "checks" ? "on" : ""}`} onClick={() => setPanel(panel === "checks" ? null : "checks")} aria-pressed={panel === "checks"}>
+            {!checks ? <><span className="vp-spin sm" />Checking</> : flagged ? <><Warning size={14} weight="bold" />{flagged} to look at</> : <><CheckCircle size={14} weight="bold" />Slides look good</>}
+          </button>
+          {stats?.live && (
+            <button type="button" className={`cs-chip live ${panel === "stats" ? "on" : ""}`} onClick={() => setPanel(panel === "stats" ? null : "stats")} aria-pressed={panel === "stats"}>
+              <i className="cs-live-dot" />Live · {short(stats.saves)} saves<span className="cs-more"> · {short(stats.shares)} shares</span>
+            </button>
+          )}
+          {onInstagram && <button type="button" className="sm cs-ig" onClick={onInstagram} aria-label={stats?.live ? "Post to Instagram again" : "Post to Instagram"} title="Post to Instagram"><InstagramLogo size={15} weight="bold" /><span>{stats?.live ? "Post again" : "Post to Instagram"}</span></button>}
         </div>
         <div className="fv-acts">
           <button className="vp-btn" onClick={onStar} aria-label={s.starred ? "Remove star" : "Star every file"} title={s.starred ? "Remove star" : "Star"}><Star size={19} weight={s.starred ? "fill" : "regular"} className={s.starred ? "fm-star" : ""} /></button>
@@ -186,49 +317,78 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
         </div>
       </div>
 
-      <div ref={stage} className={`cs-stage ${drag != null ? "dragging" : ""}`} style={{ "--pw": `${pw}px` } as React.CSSProperties}
-        onWheel={(e) => {
-          const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-          const now = Date.now(), wh = wheel.current;
-          if (now - wh.t > 300) wh.acc = 0;
-          wh.t = now; wh.acc += d;
-          if (Math.abs(wh.acc) > 70) { step(Math.sign(wh.acc)); wh.acc = 0; }
-        }}
-        onPointerDown={(e) => { if (e.button === 0) press.current = { x: e.clientX, f: focus, moved: false }; }}
-        onPointerMove={(e) => {
-          const p = press.current;
-          if (!p) return;
-          const dx = e.clientX - p.x;
-          if (!p.moved && Math.abs(dx) < 7) return;
-          if (!p.moved) { p.moved = true; (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); }
-          setDrag(Math.min(n - 1 + 0.4, Math.max(-0.4, p.f - dx / (pw * 1.04))));
-        }}
-        onPointerUp={() => { const p = press.current; press.current = null; if (p?.moved && drag != null) setFocus(Math.min(n - 1, Math.max(0, Math.round(drag)))); setDrag(null); }}
-        onPointerCancel={() => { press.current = null; setDrag(null); }}
-        onClickCapture={(e) => { if (drag != null) { e.stopPropagation(); e.preventDefault(); } }}>
-        <div className="cs-ring" key={s.key}>
-          {s.members.map((m, i) => {
-            const o = i - cur;
-            const p = placeOf(o, pw, span);
-            const visible = Math.abs(i - focus) <= span + 0.6;
-            return (
-              <div key={m.key} className="cs-slot" style={{ zIndex: p.zIndex, "--d": `${Math.max(0, (i - focus + span) * 70)}ms`, "--d2": `${Math.max(0, (span - Math.abs(i - focus)) * 40)}ms`, "--tilt": `${(i % 2 ? 1 : -1) * 5}deg` } as React.CSSProperties}>
-                <div className="cs-pos" style={{ transform: p.transform, opacity: p.opacity, pointerEvents: p.hidden ? "none" : undefined }}>
-                  <button type="button" className={`cs-card ${i === focus ? "on" : ""}`} tabIndex={visible ? 0 : -1} aria-hidden={p.hidden || undefined}
-                    aria-label={`Open ${m.name}, ${i + 1} of ${n}`} onFocus={() => setFocus(i)} onClick={() => onOpen(i)}>
-                    {m.cover ? <img src={m.cover} alt="" loading={visible ? "eager" : "lazy"} decoding="async" draggable={false} /> : <span className="cc-glyph"><KindIcon kind={m.kind} src={m.src} size={34} /></span>}
-                    {m.kind === "video" && <span className="cs-vid"><FilmStrip size={12} weight="bold" />Clip</span>}
-                  </button>
-                  <div className="cs-label" aria-hidden>
-                    <span className="cs-num">#{pad(i + 1)}</span>
-                    <span className="cs-cap ellipsis">{m.name.replace(/\.[A-Za-z0-9]{2,5}$/, "")}</span>
+      {mode === "curve" ? (
+        <div ref={stage} className="cs-stage" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+          onWheel={(e) => {
+            const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+            const now = Date.now(), wh = wheel.current;
+            if (now - wh.t > 260) wh.acc = 0;
+            wh.t = now; wh.acc += d;
+            if (Math.abs(wh.acc) > 60) { step(Math.sign(wh.acc)); wh.acc = 0; }
+          }}>
+          <div className="cs-ring" key={s.key} style={{ "--pw": `${pw}px` } as React.CSSProperties}>
+            {s.members.map((m, i) => {
+              const near = Math.abs(i - focus) <= span + 1;
+              const bad = issues.get(m.key);
+              return (
+                <div key={m.key} className="cs-slot" style={{ "--d": `${Math.max(0, Math.round((i - focus + span) * 65))}ms`, "--d2": `${Math.max(0, Math.round((span - Math.abs(i - focus)) * 35))}ms`, "--tilt": `${(i % 2 ? 1 : -1) * 4}deg` } as React.CSSProperties}>
+                  <div className="cs-pos" data-i={i} ref={(el) => { pos.current[i] = el; }}>
+                    <button type="button" ref={(el) => { cards.current[i] = el; }} className={`cs-card ${i === focus ? "on" : ""}`} tabIndex={near ? 0 : -1}
+                      aria-label={`Open ${m.name}, ${i + 1} of ${n}`} onFocus={() => { if (!press.current) setFocus(i); }} onClick={() => { if (!quiet.current) onOpen(i); quiet.current = false; }}>
+                      {m.cover ? <img src={m.cover} alt="" loading={near ? "eager" : "lazy"} fetchPriority={i === focus ? "high" : "auto"} decoding="async" draggable={false} /> : <span className="cc-glyph"><KindIcon kind={m.kind} src={m.src} size={34} /></span>}
+                      {m.kind === "video" && <span className="cs-vid"><FilmStrip size={12} weight="bold" />Clip</span>}
+                      {bad?.length ? <span className={`cs-flag ${bad.some((x) => x.level === "bad") ? "bad" : ""}`} title={bad.map((x) => x.text).join("\n")}><Warning size={12} weight="bold" /></span> : null}
+                    </button>
+                    <div className="cs-label" aria-hidden>
+                      <span className="cs-num">#{pad(i + 1)}</span>
+                      <span className="cs-cap ellipsis">{m.name.replace(/\.[A-Za-z0-9]{2,5}$/, "")}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
+      ) : (
+        <Phone s={s} index={focus} onIndex={setFocus} ratio={ratio} handle={handle} issues={issues} onOpen={onOpen} />
+      )}
+
+      {panel === "checks" && checks && (
+        <aside className="cs-panel" aria-label="Slide checks">
+          <div className="cs-panel-h"><b>Slide checks</b><span className="tiny dim">{checks.ok} good · {checks.warn} to look at · {checks.bad} won&apos;t work</span><button className="vp-btn" onClick={() => setPanel(null)} aria-label="Close checks"><X size={16} /></button></div>
+          {checks.notes.map((x) => <p key={x} className="cs-note bad">{x}</p>)}
+          <ol className="cs-checks">
+            {s.members.map((m, i) => {
+              const c = checks.slides.find((x) => x.file_id === m.key);
+              return (
+                <li key={m.key}>
+                  <button type="button" onClick={() => { setFocus(i); if (mode === "phone") return; }} className="cs-check-row">
+                    <span className="cs-check-th"><Thumb it={m} /></span>
+                    <span className="cs-check-t">
+                      <b>#{pad(i + 1)} <span className="dim mono tiny">{c?.w ? `${c.w}×${c.h}` : ""}</span></b>
+                      {c?.issues.length ? c.issues.map((x) => <span key={x.text} className={`cs-iss ${x.level}`}>{x.text}</span>) : <span className="cs-iss ok">Good for Instagram</span>}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </aside>
+      )}
+      {panel === "stats" && stats?.live && (
+        <aside className="cs-panel" aria-label="How it did">
+          <div className="cs-panel-h"><b>On Instagram</b>{stats.url && <a className="tiny" href={stats.url} target="_blank" rel="noreferrer">Open the post</a>}<button className="vp-btn" onClick={() => setPanel(null)} aria-label="Close"><X size={16} /></button></div>
+          {stats.error ? <p className="cs-note bad">{stats.error}</p> : (
+            <div className="cs-kpis">
+              {([["Views", stats.views], ["Reach", stats.reach], ["Likes", stats.likes], ["Comments", stats.comments], ["Shares", stats.shares], ["Saves", stats.saves]] as const).map(([l, v]) => (
+                <div key={l}><span className="tiny dim">{l}</span><b className="mono">{short(v)}</b></div>
+              ))}
+              {stats.er != null && <div><span className="tiny dim">Engagement</span><b className="mono">{stats.er.toFixed(1)}%</b></div>}
+            </div>
+          )}
+          {stats.notes?.map((x) => <p key={x} className="cs-note">{x}</p>)}
+        </aside>
+      )}
 
       <div className="cs-foot">
         <button type="button" className="cs-jump l" onClick={onPrev?.go} disabled={!onPrev} aria-label={onPrev ? `Previous carousel: ${onPrev.name}` : "No previous carousel"}>
@@ -239,12 +399,68 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
             {s.members.map((m, i) => <button key={m.key} type="button" role="tab" aria-selected={i === focus} aria-label={`Photo ${i + 1}`} className={i === focus ? "on" : ""} onClick={() => setFocus(i)} />)}
           </div>
           <span className="cs-count mono"><b>{pad(focus + 1)}</b> / {pad(n)}</span>
-          <span className="cs-keys" aria-hidden><kbd>←</kbd><kbd>→</kbd> browse <kbd>↵</kbd> open <kbd>[</kbd><kbd>]</kbd> other posts{onMove ? <> <kbd>Alt</kbd>+<kbd>←</kbd> reorder</> : null}</span>
+          <span className="cs-keys" aria-hidden><kbd>←</kbd><kbd>→</kbd> browse <kbd>↵</kbd> open <kbd>[</kbd><kbd>]</kbd> other posts <kbd>P</kbd> phone{onMove ? <> · drag a card up to move it</> : null}</span>
         </div>
         <button type="button" className="cs-jump r" onClick={onNext?.go} disabled={!onNext} aria-label={onNext ? `Next carousel: ${onNext.name}` : "No next carousel"}>
           <span className="cs-jump-t"><em>Next post</em><b className="ellipsis">{onNext?.name ?? "—"}</b></span><CaretRight size={15} weight="bold" />
         </button>
       </div>
+    </div>
+  );
+}
+
+/** The carousel as it shows in the Instagram feed: a phone, the slides cropped to the first one's shape, swipeable. */
+function Phone({ s, index, onIndex, ratio, handle, issues, onOpen }: {
+  s: Stack; index: number; onIndex: (i: number) => void; ratio: number; handle?: string | null; issues: Map<string, SlideCheck["issues"]>; onOpen: (i: number) => void;
+}) {
+  const track = useRef<HTMLDivElement>(null);
+  const n = s.members.length;
+  const shown = Math.min(n, 20);
+  const syncing = useRef(false);
+  const placed = useRef(false);
+  useEffect(() => {
+    const el = track.current;
+    if (!el) return;
+    const want = index * el.clientWidth;
+    if (Math.abs(el.scrollLeft - want) > 2) {
+      syncing.current = true;
+      el.scrollTo({ left: want, behavior: placed.current ? "smooth" : "instant" }); // opens on the slide you were on
+      setTimeout(() => { syncing.current = false; }, placed.current ? 400 : 50);
+    }
+    placed.current = true;
+  }, [index]);
+  const onScroll = () => {
+    const el = track.current;
+    if (!el || syncing.current) return;
+    const i = Math.round(el.scrollLeft / el.clientWidth);
+    if (i !== index) onIndex(Math.min(shown - 1, i));
+  };
+  const cur = s.members[index];
+  const bad = cur ? issues.get(cur.key) : undefined;
+  return (
+    <div className="cs-phone-wrap">
+      <button type="button" className="fv-nav l" onClick={() => onIndex(Math.max(0, index - 1))} disabled={index === 0} aria-label="Previous slide"><CaretLeft size={20} weight="bold" /></button>
+      <div className="cs-phone" aria-label="Instagram preview">
+        <div className="cs-ph-bar"><span className="mono">9:41</span><span className="cs-ph-notch" /><span className="cs-ph-sig" /></div>
+        <div className="cs-ph-head"><span className="cs-ph-av" />{handle ? <b>{handle}</b> : <b>your_account</b>}<DotsThree size={18} weight="bold" className="dim" /></div>
+        <div className="cs-ph-track" ref={track} onScroll={onScroll} style={{ aspectRatio: String(ratio) }}>
+          {s.members.slice(0, shown).map((m, i) => (
+            <div key={m.key} className="cs-ph-slide" onDoubleClick={() => onOpen(i)}>
+              {m.cover ? <img src={m.cover} alt={`Slide ${i + 1}`} loading={Math.abs(i - index) < 3 ? "eager" : "lazy"} decoding="async" draggable={false} /> : <span className="cc-glyph"><KindIcon kind={m.kind} src={m.src} size={34} /></span>}
+              {m.kind === "video" && <span className="cs-vid"><Play size={11} weight="fill" />Clip</span>}
+            </div>
+          ))}
+          <span className="cs-ph-count mono">{index + 1}/{shown}</span>
+        </div>
+        <div className="cs-ph-acts">
+          <Heart size={22} /><ChatCircle size={22} /><PaperPlaneTilt size={22} />
+          <span className="cs-ph-dots">{s.members.slice(0, shown).map((m, i) => <i key={m.key} className={i === index ? "on" : Math.abs(i - index) > 4 ? "far" : ""} />)}</span>
+          <BookmarkSimple size={22} />
+        </div>
+        <div className="cs-ph-cap"><b>{handle ?? "your_account"}</b> {s.g.name}</div>
+        {bad?.length ? <div className={`cs-ph-warn ${bad.some((x) => x.level === "bad") ? "bad" : ""}`}><Warning size={13} weight="bold" />{bad[0].text}</div> : null}
+      </div>
+      <button type="button" className="fv-nav r" onClick={() => onIndex(Math.min(shown - 1, index + 1))} disabled={index >= shown - 1} aria-label="Next slide"><CaretRight size={20} weight="bold" /></button>
     </div>
   );
 }

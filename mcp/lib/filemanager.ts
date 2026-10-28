@@ -213,3 +213,71 @@ export async function favourites() {
   }));
   return out.filter(Boolean);
 }
+
+// ── a carousel to Instagram: one post (made if it has none) with its photos attached, an Instagram Post target and a
+// publish plan holding the slides in order and a caption fitted to Instagram; the composer opens on it to check and send
+
+export async function publishCarousel(id: string, actor: Actor) {
+  const { createPost, getPost, setMediaPost } = await import("./appwrite");
+  const { getPlan, putPlan, editPlan, getRules } = await import("./publish/plans");
+  const { BUSY, LIMITS } = await import("./publish/shared");
+  const { getTargets, setTargets } = await import("./spacestore");
+  const { captionFor } = await import("./captions");
+  const { adaptCaption } = await import("./writing");
+  const { listAccounts } = await import("./publish/accounts");
+  if (!hasKey()) throw new FilesError("the shared workspace isn't connected (APPWRITE_API_KEY)");
+  let g = (await catalog()).allGroups.find((x) => x.id === id);
+  if (!g) throw new FilesError(`no carousel ${id}`, 404);
+  const { items } = await catalog();
+  const kind = new Map(items.map((i) => [i.id, i.kind]));
+  const send = g.items.filter((k) => k.startsWith("m:") && (kind.get(k) === "image" || kind.get(k) === "video"));
+  const skipped = g.items.filter((k) => !send.includes(k));
+  if (!send.length) throw new FilesError("nothing in this carousel can go to Instagram: it needs uploaded photos or videos");
+  // the post: the carousel's own, else a new one named after it
+  let post = g.post ? await getPost(g.post).catch(() => null) : null;
+  if (!post) {
+    post = await createPost({ title: g.name, status: "draft", platforms: ["instagram"] }, actor);
+    if (g.made) await updateCarousel(g.id, { post: post.$id });
+    else { const c = await createCarousel({ name: g.name, items: g.items, post: post.$id }, actor.name); g = { ...g, id: c.id }; }
+  }
+  await Promise.all(send.map((k) => setMediaPost(k.slice(2), post!.$id)));
+  const targets = (await getTargets())[post.$id] ?? [];
+  if (!targets.some((t) => t.space === "ig_post")) await setTargets(post.$id, [...targets, { space: "ig_post", status: "draft" }], actor);
+  const cur = await getPlan(post.$id, "ig_post");
+  if (cur && BUSY.includes(cur.state)) throw new FilesError("it's going out to Instagram right now", 409);
+  const rules = await getRules();
+  const base = (await captionFor(post.$id, "ig_post")) ?? post.caption ?? "";
+  const ig = (await listAccounts()).filter((a) => a.network === "instagram");
+  const patch: Record<string, unknown> = { media: send.slice(0, LIMITS.ig_carousel), cover: null };
+  if (!cur?.account && ig.length === 1) patch.account = ig[0].id;
+  let plan = editPlan(cur, post.$id, "ig_post", patch, actor.name, rules, { title: post.title, caption: adaptCaption(base, "ig_post", { title: post.title }) });
+  if (cur && !cur.ig?.caption?.trim()) plan = editPlan(plan, post.$id, "ig_post", { ig: { caption: adaptCaption(base, "ig_post", { title: post.title }) } }, actor.name, rules, { title: post.title, caption: base });
+  await putPlan(plan);
+  return { post_id: post.$id, space: "ig_post", carousel: g.id, slides: plan.media.length, skipped, over: Math.max(0, send.length - LIMITS.ig_carousel) };
+}
+
+/** Each slide's size, shape and look-alikes, before it goes to Instagram (lib/carouselcheck.ts). */
+export async function carouselChecks(id: string) {
+  const g = await carouselDetail(id);
+  const { checkSlides } = await import("./carouselcheck");
+  return { id: g.id, ...(await checkSlides(g.items.map((i) => ({ id: i.id, name: i.name, kind: i.kind })))) };
+}
+
+/** How the carousel did once it's out: its Instagram post's numbers (Instagram doesn't say which slide people stop on). */
+export async function carouselStats(id: string) {
+  const g = await carouselDetail(id);
+  if (!g.post_id) return { id: g.id, live: false as const };
+  const { getPlan } = await import("./publish/plans");
+  const plan = await getPlan(g.post_id, "ig_post");
+  if (!plan?.result?.id) return { id: g.id, live: false as const, state: plan?.state ?? null };
+  const { getPostDetail } = await import("./analytics");
+  const d = await getPostDetail("instagram", plan.result.id).catch((e: Error) => ({ error: e.message }));
+  if ("error" in d) return { id: g.id, live: true as const, url: plan.result.url, at: plan.result.at, error: d.error };
+  const pick = (k: string) => d.kpis.find((x) => x.key === k)?.value ?? null;
+  return {
+    id: g.id, live: true as const, url: d.url || plan.result.url, at: d.at ?? plan.result.at, kind: d.kind,
+    views: pick("views"), reach: pick("reach"), likes: pick("likes"), comments: pick("comments"), shares: pick("shares"), saves: pick("saves"), er: pick("er"),
+    notes: [...d.notes, "Instagram's API doesn't say which slide people stop on in a carousel, so per-slide drop-off isn't available."],
+  };
+}
+

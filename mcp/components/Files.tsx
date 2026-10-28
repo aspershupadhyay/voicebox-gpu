@@ -26,7 +26,9 @@ import {
   ContextMenu, DT, FileCard, FileRow, FilterPill, FolderCard, FolderRow, MoveDialog, NewFolderCard, Snack, UploadPanel,
   type Anchor, type Item, type JobSum, type MenuEntry, type UpRow,
 } from "./fileparts";
-import { CarouselCard, CarouselRow, CarouselStage, CarouselStrip, countOf, isStack, type Stack } from "./Carousel";
+import { CarouselCard, CarouselRow, CarouselStage, CarouselStrip, countOf, isStack, type Checks, type Stack, type Stats } from "./Carousel";
+import { Composer } from "./Publish";
+import { planFor, usePublish } from "./usePublish";
 import { ImageCard, JobCard, VideoCard, type LibJob } from "./Library";
 import { useStatus } from "./Shell";
 import { Notice, PageHeader } from "./ui";
@@ -158,6 +160,10 @@ export default function Files() {
   const [snack, setSnack] = useState<{ text: string; action?: string; run?: () => void } | null>(null);
   const [stage, setStage] = useState<{ id: string; at?: number } | null>(null); // an open carousel
   const [cv, setCv] = useState<{ id: string; i: number } | null>(null); // one of its photos, full size
+  const [checks, setChecks] = useState<Record<string, Checks>>({}); // slide checks per carousel, once it's opened
+  const [stats, setStats] = useState<Record<string, Stats>>({}); // Instagram numbers per posted carousel
+  const [compose, setCompose] = useState<string | null>(null); // a post id: the Instagram composer, once the post is here
+  const { accounts } = usePublish();
   const anchor = useRef<string | null>(null);
   const search = useRef<HTMLInputElement>(null);
   const sortBtn = useRef<HTMLButtonElement>(null);
@@ -647,7 +653,7 @@ export default function Files() {
   // ── keyboard and the clipboard
   useEffect(() => {
     const typing = (el: EventTarget | null) => !!(el as HTMLElement)?.closest?.("input:not([type=checkbox]), textarea, [contenteditable=true]");
-    const overlay = () => !!document.querySelector(".modal, .lightbox, .fm-drawer, .palette, .fv, .cs");
+    const overlay = () => !!document.querySelector(".modal, .lightbox, .fm-drawer, .palette, .fv, .cs, .pub");
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "f" && !overlay()) { e.preventDefault(); search.current?.focus(); search.current?.select(); return; }
@@ -703,6 +709,38 @@ export default function Files() {
     addEventListener("keydown", k);
     return () => removeEventListener("keydown", k);
   }, [cv, stackOrder]);
+
+  // an opened carousel: check its slides for Instagram and read its numbers if it's out
+  useEffect(() => {
+    const id = stage?.id;
+    if (!id) return;
+    const c = stacks.get(`c:${id}`);
+    api<Checks>(`files/carousels/${encodeURIComponent(id)}/checks`).then((r) => setChecks((x) => ({ ...x, [id]: r }))).catch(() => null);
+    if (c?.g.post) api<Stats>(`files/carousels/${encodeURIComponent(id)}/stats`).then((r) => setStats((x) => ({ ...x, [id]: r }))).catch(() => null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage?.id, stacks.get(`c:${stage?.id}`)?.g.items.join(",")]);
+  // posted carousels show their saves and shares on the card
+  const posted = [...stacks.values()].filter((x) => x.g.post && planFor(x.g.post, "ig_post")?.state === "published").map((x) => x.g.id);
+  useEffect(() => {
+    for (const id of posted) if (!stats[id]) {
+      setStats((x) => ({ ...x, [id]: { live: false } }));
+      api<Stats>(`files/carousels/${encodeURIComponent(id)}/stats`).then((r) => setStats((x) => ({ ...x, [id]: r }))).catch(() => null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posted.join(",")]);
+  /** Set the carousel up as an Instagram post (a post, its photos, the target and the plan), then open the composer. */
+  async function toInstagram(id: string) {
+    setSnack({ text: "Setting up the Instagram post…" });
+    try {
+      const r = await api<{ post_id: string; carousel: string; slides: number; skipped: string[]; over: number }>(`files/carousels/${encodeURIComponent(id)}/publish`, { body: {} });
+      setStage(null);
+      setCompose(r.post_id);
+      const left = [r.skipped.length && `${r.skipped.length} made on the GPU stay out`, r.over && `${r.over} over Instagram's 20 stay out`].filter(Boolean).join("; ");
+      setSnack({ text: `${r.slides} slides in order, ready to check and send${left ? ` (${left})` : ""}` });
+      if (r.carousel !== id) loadTree();
+    } catch (e) { toast((e as Error).message, "bad"); setSnack(null); }
+  }
+  const composePost = compose ? posts.find((p) => p.$id === compose) : undefined;
 
   // photos open instantly: the screen-size copies of the ones around the open one are fetched ahead
   useEffect(() => {
@@ -862,7 +900,7 @@ export default function Files() {
   const selAll = ord.length > 0 && ord.every((k) => sel.has(k));
   const mod = isMac() ? "⌘" : "Ctrl";
   const grid = (list: Entry[], prefix = "") => view === "grid" ? (
-    <div className="fm-grid">{list.map((it) => isStack(it) ? <CarouselCard key={prefix + it.key} s={it} {...events(it.key)} />
+    <div className="fm-grid">{list.map((it) => isStack(it) ? <CarouselCard key={prefix + it.key} s={it} stats={stats[it.g.id]} {...events(it.key)} />
       : <FileCard key={prefix + it.key} it={it} playing={playing === it.key} onPlay={() => play(it)} {...events(it.key)} />)}</div>
   ) : (
     <div className="fm-list">
@@ -1072,7 +1110,9 @@ export default function Files() {
                 onRename={(n) => renameStack(st.g.id, n)}
                 onUngroup={st.g.made ? () => ungroup(st.g.id) : undefined} onMove={(a, b) => reorder(st.g.id, a, b)}
                 onDownload={() => download(st.g.items)} onStar={() => star(st.g.items, !st.starred)}
-                onPost={st.g.post ? () => router.push(`/posts?post=${st.g.post}`) : undefined} />
+                onPost={st.g.post ? () => router.push(`/posts?post=${st.g.post}`) : undefined}
+                onInstagram={wsOn ? () => toInstagram(st.g.id) : undefined} checks={checks[st.g.id] ?? null} stats={stats[st.g.id] ?? null}
+                handle={accounts.find((a) => a.network === "instagram")?.handle ?? null} />
             )}
             {vs && m && (
               <FileViewer file={m.m ? viewFile(m) : { key: m.key, name: m.name, kind: m.kind, url: m.kind === "video" && m.j ? libFileUrl(m.j.id, "video.mp4") : m.cover ?? "", download: downloadHref(m), poster: m.cover, at: m.at }}
@@ -1086,6 +1126,7 @@ export default function Files() {
           </>
         );
       })()}
+      {composePost && <Composer post={composePost} space="ig_post" onClose={() => setCompose(null)} />}
       {detailItem?.j && (
         <>
           <div className="scrim" onClick={closeDetail} />
