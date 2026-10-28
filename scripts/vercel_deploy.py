@@ -59,14 +59,18 @@ def main():
     d = call("POST", "/v13/deployments", {"name": a.project, "project": project["id"], "target": "production",
                                           "files": [{"file": f["file"], "sha": f["sha"], "size": f["size"]} for f in files]})
     print("deployment", d["id"], "https://" + d["url"])
-    t0 = time.time()
+    t0, last = time.time(), None
     while True:
         s = call("GET", f"/v13/deployments/{d['id']}")
         state = s.get("readyState") or s.get("status")
+        if state != last:  # QUEUED (waiting behind another build) vs BUILDING, so a slow run says why
+            print(f"{time.time() - t0:.0f}s: {state}", flush=True)
+            last = state
         if state in ("READY", "ERROR", "CANCELED"):
             break
-        if time.time() - t0 > 900:
-            sys.exit("timed out waiting for the build")
+        # a build can queue behind the one before it on Vercel's plan, so give it time before calling it failed
+        if time.time() - t0 > 1800:
+            sys.exit(f"timed out waiting for the build (still {state} after 30 min)")
         time.sleep(5)
     print(f"{state} in {time.time() - t0:.0f}s; aliases: {', '.join(s.get('alias') or []) or '-'}")
     if state != "READY":

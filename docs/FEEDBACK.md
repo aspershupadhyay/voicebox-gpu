@@ -10,6 +10,8 @@ for. Read this before touching the dashboard. Newest first. When something here 
   approved a mock (an artifact), the shipped page must look like that mock. They noticed when Grow first shipped in
   the old card style instead of the Flux mock they'd approved, and asked again.
 - Say what's live and what isn't. A screenshot from before a deploy finished isn't a bug report on the new version.
+- Anything left running in the background (a watcher waiting for a deploy, say) gets one plain sentence on what it is,
+  and is stopped once its job is done. Finish a round by confirming the live site shows the change, not just the merge.
 - Plan first when they ask for a plan; build when they say go. Ship every round (CLAUDE.md → Shipping).
 - Never repeat the same control in several places. One home per thing (the GPU lives in Settings only).
 - Their phrasing is casual. Act on the design and product asks, and keep replies professional.
