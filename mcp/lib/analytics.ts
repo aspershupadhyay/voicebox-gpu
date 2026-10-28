@@ -8,8 +8,9 @@
 // and one post in depth is getPostDetail(). A follower count per account is kept each day (workspace/analytics/
 // history.json), so growth shows past the 30 days Instagram remembers.
 //
-// One report per range is kept in R2 (workspace/analytics/<days>.json) for 30 minutes, so opening the page is quick
-// and the platforms' quotas last; `fresh` asks the platforms again.
+// One report per range is kept in R2 (workspace/analytics/<days>.json). Under 30 minutes old it's simply served; older,
+// it's still served at once (marked `stale`) while a new one is built in the background, so the page never waits on the
+// platforms. `fresh` asks the platforms again and waits for the answer.
 import { getJson, putJson } from "./store";
 import { getAccount, listAccounts, type Account } from "./publish/accounts";
 import * as IG from "./publish/instagram";
@@ -18,7 +19,7 @@ import * as YT from "./publish/youtube";
 import { getSpaces } from "./spacestore";
 import { spaceName, type SpaceId } from "./spaces";
 import { listPosts } from "./appwrite";
-import { DAY, hashtagsOf, iso, median, msg, report, settle, sum, windows, type Bar, type Kpi, type Range, type Win } from "./analytics-util";
+import { DAY, hashtagsOf, iso, median, msg, report, settle, sum, windows, type Bar, type Daily, type Kpi, type Range, type Win } from "./analytics-util";
 import { AGE, DEVICES, TRAFFIC, ytDeep, ytPost, type PostDetail, type YtDeep } from "./analytics-yt";
 import { igDeep, igPost, type IgDeep } from "./analytics-ig";
 
@@ -70,6 +71,8 @@ export type Analytics = {
   heat_by: Partial<Record<"youtube" | "instagram", { v: number; n: number }[][]>>;
   /** every platform together: views, engagement, followers, output, with the period before */
   overview: Kpi[];
+  /** the same, day by day (the overview chart): views and reach, engagements, net followers, watch hours, posts */
+  trend: Daily[];
   /** each platform in depth (one per connected account) */
   youtube: YtDeep[]; instagram: IgDeep[];
   /** followers per account, one point a day, kept by Voicebox (newest last) */
@@ -97,6 +100,9 @@ async function youtube(a: Account & { tokens: Parameters<typeof YT.accessToken>[
   const needs: Need[] = [];
   const token = await YT.accessToken(a);
   type Ch = { items?: { statistics?: { subscriberCount?: string; viewCount?: string; videoCount?: string }; contentDetails?: { relatedPlaylists?: { uploads?: string } } }[] };
+  // per video, all time (watch time, retention, shares, subscribers it brought), asked alongside the channel and its uploads
+  const perVideo = report(token, { startDate: "2006-01-01", endDate: iso(w.end), dimensions: "video", metrics: "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,shares,subscribersGained", sort: "-views", maxResults: "200" })
+    .then((rows) => ({ rows, err: null as unknown }), (err: unknown) => ({ rows: [] as Record<string, string | number>[], err }));
   const ch = (await YT.ytGet<Ch>(`https://www.googleapis.com/youtube/v3/channels?part=statistics,contentDetails&id=${a.id}`, token)).items?.[0];
   const uploads = ch?.contentDetails?.relatedPlaylists?.uploads;
 
@@ -111,21 +117,17 @@ async function youtube(a: Account & { tokens: Parameters<typeof YT.accessToken>[
     page = r.nextPageToken;
   }
   type V = { id: string; snippet: { title: string; publishedAt: string; tags?: string[]; description?: string; thumbnails?: Record<string, { url: string }> }; statistics?: { viewCount?: string; likeCount?: string; commentCount?: string }; contentDetails?: { duration?: string }; status?: { privacyStatus?: string } };
-  const vids: V[] = [];
-  for (let i = 0; i < ids.length; i += 50) {
-    const r = await YT.ytGet<{ items: V[] }>(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails,status&id=${ids.slice(i, i + 50).join(",")}`, token);
-    vids.push(...r.items);
-  }
+  const batches: string[][] = [];
+  for (let i = 0; i < ids.length; i += 50) batches.push(ids.slice(i, i + 50));
+  const vids: V[] = (await Promise.all(batches.map((b) => YT.ytGet<{ items: V[] }>(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails,status&id=${b.join(",")}`, token)))).flatMap((r) => r.items);
 
-  // per video, all time (watch time, retention, shares, subscribers it brought)
   const per = new Map<string, Record<string, string | number>>();
   let analytics = true;
-  try {
-    for (const r of await report(token, { startDate: "2006-01-01", endDate: iso(w.end), dimensions: "video", metrics: "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,shares,subscribersGained", sort: "-views", maxResults: "200" }))
-      per.set(String(r.video), r);
-  } catch (e) {
+  const pv = await perVideo;
+  for (const r of pv.rows) per.set(String(r.video), r);
+  if (pv.err) {
     analytics = false;
-    const m = msg(e);
+    const m = msg(pv.err);
     needs.push(/has not been used|disabled|accessNotConfigured/i.test(m)
       ? { network: "youtube", action: "enable", text: "Turn on the YouTube Analytics API in your Google Cloud project to see watch time, retention, traffic and audience." }
       : /insufficient|scope|permission|forbidden/i.test(m)
@@ -273,8 +275,8 @@ async function instagram(a: Account & { tokens: Parameters<typeof IG.accessToken
   let insights = true;
   const ins = new Map<string, Record<string, number>>();
   const recent = media.filter((m) => Date.now() - Date.parse(m.timestamp) < 180 * DAY && m.media_product_type !== "STORY").slice(0, 60);
-  for (let i = 0; i < recent.length && insights; i += 10) {
-    await Promise.all(recent.slice(i, i + 10).map(async (m) => {
+  for (let i = 0; i < recent.length && insights; i += 20) {
+    await Promise.all(recent.slice(i, i + 20).map(async (m) => {
       const reel = m.media_product_type === "REELS";
       const metric = ["reach", "views", "saved", "shares", "total_interactions", ...(reel ? ["ig_reels_avg_watch_time"] : [])].join(",");
       try {
@@ -319,27 +321,20 @@ async function instagram(a: Account & { tokens: Parameters<typeof IG.accessToken
   const ig: IgOut["ig"] = { countries: [], cities: [], ages: [], genders: [], online: null, reach: null, interactions: null };
   let gained: number | null = null, prevGained: number | null = null;
   if (insights) {
+    // the API takes up to 30 days per call; the pieces are asked together
+    const pieces = (s: number, e: number) => { const out: [number, number][] = []; for (let t = s; t <= e; t += 30 * DAY) out.push([t, Math.min(e, t + 29 * DAY)]); return out; };
     const daily = async (metric: string, s: number, e: number) => {
       const out = new Array(range).fill(0);
-      // the API takes up to 30 days per call
-      for (let t = s; t <= e; t += 30 * DAY) {
-        const until = Math.min(e, t + 29 * DAY);
-        const r = await IG.igGet<{ data: Insight[] }>(`/${a.id}/insights`, token, { metric, period: "day", since: String(Math.floor(t / 1000)), until: String(Math.floor((until + DAY) / 1000)) }).catch(() => null);
-        for (const v of r?.data?.[0]?.values ?? []) {
-          const i = Math.round((Date.parse(v.end_time ?? "") - DAY - s) / DAY);
-          if (i >= 0 && i < range && typeof v.value === "number") out[i] += v.value;
-        }
+      const got = await Promise.all(pieces(s, e).map(([t, until]) => IG.igGet<{ data: Insight[] }>(`/${a.id}/insights`, token, { metric, period: "day", since: String(Math.floor(t / 1000)), until: String(Math.floor((until + DAY) / 1000)) }).catch(() => null)));
+      for (const r of got) for (const v of r?.data?.[0]?.values ?? []) {
+        const i = Math.round((Date.parse(v.end_time ?? "") - DAY - s) / DAY);
+        if (i >= 0 && i < range && typeof v.value === "number") out[i] += v.value;
       }
       return out;
     };
     const total = async (metric: string, s: number, e: number) => {
-      let n = 0;
-      for (let t = s; t <= e; t += 30 * DAY) {
-        const until = Math.min(e, t + 29 * DAY);
-        const r = await IG.igGet<{ data: Insight[] }>(`/${a.id}/insights`, token, { metric, period: "day", metric_type: "total_value", since: String(Math.floor(t / 1000)), until: String(Math.floor((until + DAY) / 1000)) }).catch(() => null);
-        n += val(r?.data?.[0]) ?? 0;
-      }
-      return n;
+      const got = await Promise.all(pieces(s, e).map(([t, until]) => IG.igGet<{ data: Insight[] }>(`/${a.id}/insights`, token, { metric, period: "day", metric_type: "total_value", since: String(Math.floor(t / 1000)), until: String(Math.floor((until + DAY) / 1000)) }).catch(() => null)));
+      return sum(got.map((r) => val(r?.data?.[0])));
     };
     const [reachCur, reachPrev, interactions, fc, fcPrev] = await Promise.all([
       daily("reach", w.start, w.end), daily("reach", w.prevStart, w.prevEnd), total("total_interactions", w.start, w.end),
@@ -397,11 +392,12 @@ export async function buildAnalytics(range: Range): Promise<Analytics> {
 
   const out: Analytics = {
     at: Date.now(), range, from: iso(w.start), to: iso(w.end), tz, accounts: [], formats: {}, days: w.days, series: {}, items: [],
-    heat: [], heat_metric: "", heat_by: {}, overview: [], youtube: [], instagram: [], history: [],
+    heat: [], heat_metric: "", heat_by: {}, overview: [], trend: [], youtube: [], instagram: [], history: [],
     yt: null, ig: null, lengths: [], tags: [], rhythm: [], gaps: [], tips: [], needs: [],
   };
-  // each platform in depth runs once the posts are scored
-  const deep: (() => Promise<void>)[] = [];
+  // each platform in depth starts as soon as its account is read (it doesn't need the scores), next to everything else
+  const deep: Promise<unknown>[] = [];
+  const posts = listPosts({ limit: 100 }).catch(() => []);
   const parts: Partial<Record<SeriesKey, { cur: number[]; prev: number[]; exact: boolean }>>[] = [];
   const fmts: Partial<Record<Fmt, FmtSum>>[] = [];
   await Promise.all(accounts.map(async (acc) => {
@@ -412,12 +408,12 @@ export async function buildAnalytics(range: Range): Promise<Analytics> {
         const r = await youtube(a, range, shortsOf);
         out.accounts.push(r.acc); out.items.push(...r.items); parts.push(r.series); fmts.push(r.fmt); out.needs.push(...r.needs);
         out.yt = out.yt ?? r.yt;
-        if (r.analytics) deep.push(async () => { out.youtube.push(await ytDeep(r.token, r.acc, r.items, w, range)); });
+        if (r.analytics) deep.push(ytDeep(r.token, r.acc, r.items, w, range).then((d) => out.youtube.push(d), () => null));
       } else {
         const r = await instagram(a, range);
         out.accounts.push(r.acc); out.items.push(...r.items); parts.push(r.series); fmts.push(r.fmt); out.needs.push(...r.needs);
         out.ig = out.ig ?? r.ig;
-        if (r.insights) deep.push(async () => { out.instagram.push(await igDeep(r.token, r.acc, r.items, w, range)); });
+        if (r.insights) deep.push(igDeep(r.token, r.acc, r.items, w, range).then((d) => out.instagram.push(d), () => null));
       }
     } catch (e) {
       out.accounts.push({ id: a.id, network: a.network, name: a.name, handle: a.handle, avatar: a.avatar, followers: a.subscribers ?? null, gained: null, lost: null, prev_gained: null, posts: null });
@@ -464,10 +460,11 @@ export async function buildAnalytics(range: Range): Promise<Analytics> {
   out.heat = heatOf(out.items);
   for (const n of ["youtube", "instagram"] as const) if (out.items.some((i) => i.network === n)) out.heat_by[n] = heatOf(out.items.filter((i) => i.network === n));
 
-  await Promise.all(deep.map((f) => f().catch(() => null)));
+  await Promise.all(deep);
   out.youtube.sort((a, b) => a.account.name.localeCompare(b.account.name));
   out.instagram.sort((a, b) => a.account.name.localeCompare(b.account.name));
   out.overview = overviewOf(out, w);
+  out.trend = trendOf(out, w, range);
   out.history = await keepHistory(out.accounts);
 
   // what length works (video, any network that tells the length)
@@ -504,7 +501,7 @@ export async function buildAnalytics(range: Range): Promise<Analytics> {
     if (!booked.has(new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(t)))) out.gaps.push(new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", day: "numeric", month: "short" }).format(new Date(t)));
   }
 
-  out.tips = tipsFor(out, rules.crosspost.length > 0, await listPosts({ limit: 100 }).catch(() => []));
+  out.tips = tipsFor(out, rules.crosspost.length > 0, await posts);
   return out;
 }
 
@@ -548,6 +545,25 @@ function overviewOf(a: Analytics, w: Win): Kpi[] {
     { key: "hits", label: "Posts that took off (2× or more)", group: "Output", value: hits(w.start, w.end), prev: hits(w.prevStart, w.prevEnd), about: "Posts with at least twice your usual views." },
   ];
   return out.filter((k) => k.value != null);
+}
+
+/** Every platform together, day by day, for the overview chart. Instagram's interactions come by the day each post went
+ *  out (it has no daily total); everything else is the day it happened. */
+function trendOf(a: Analytics, w: Win, range: Range): Daily[] {
+  const zero = () => new Array(range).fill(0) as number[];
+  const add = (xs: number[][]) => xs.reduce((t, x) => t.map((v, i) => v + (x[i] ?? 0)), zero());
+  const pick = (deep: { daily: Daily[] }[], key: string, which: "cur" | "prev") => deep.map((d) => d.daily.find((x) => x.key === key)?.[which]).filter(Boolean) as number[][];
+  const both = (y: string[], i: string[], which: "cur" | "prev") => add([...y.flatMap((k) => pick(a.youtube, k, which)), ...i.flatMap((k) => pick(a.instagram, k, which))]);
+  const has = (y: string[], i: string[]) => y.some((k) => pick(a.youtube, k, "cur").length) || i.some((k) => pick(a.instagram, k, "cur").length);
+  const out: Daily[] = [];
+  const views = (which: "cur" | "prev") => (has(["views"], ["reach"]) ? both(["views"], ["reach"], which) : add([a.series.youtube?.[which] ?? zero(), a.series.instagram?.[which] ?? zero()]));
+  if (has(["views"], ["reach"]) || a.series.youtube || a.series.instagram) out.push({ key: "views", label: "Views and reach", cur: views("cur"), prev: views("prev") });
+  if (has(["likes", "comments", "shares"], ["post_eng"])) out.push({ key: "engagements", label: "Engagements", cur: both(["likes", "comments", "shares"], ["post_eng"], "cur"), prev: both(["likes", "comments", "shares"], ["post_eng"], "prev") });
+  if (has(["subs_net"], ["followers"])) out.push({ key: "followers", label: "Net new followers", cur: both(["subs_net"], ["followers"], "cur"), prev: both(["subs_net"], ["followers"], "prev") });
+  if (has(["watch_h"], [])) out.push({ key: "watch_h", label: "Watch hours", unit: "h", cur: both(["watch_h"], [], "cur").map((v) => Math.round(v * 10) / 10), prev: both(["watch_h"], [], "prev").map((v) => Math.round(v * 10) / 10) });
+  const posted = (s: number) => { const x = zero(); for (const i of a.items) { const d = Math.floor((i.at - s) / DAY); if (d >= 0 && d < range) x[d]++; } return x; };
+  out.push({ key: "posts", label: "Posts published", cur: posted(w.start), prev: posted(w.prevStart) });
+  return out;
 }
 
 const HISTORY = "workspace/analytics/history.json";
@@ -628,15 +644,43 @@ function tipsFor(a: Analytics, crossposting: boolean, posts: { status: string }[
 const KEY = (r: Range) => `workspace/analytics/${r}.json`;
 const FRESH_MS = 30 * 60_000;
 
-/** The report for a range: the kept one while it's under 30 minutes old, else a new one (kept for next time). */
-export async function getAnalytics(range: Range, fresh = false): Promise<Analytics & { cached: boolean }> {
+const LOCK = (r: Range) => `workspace/analytics/${r}.building.json`;
+const LOCK_MS = 4 * 60_000;
+/** One build per range at a time on this server (and, through the lock in R2, across servers). */
+const building = new Map<Range, Promise<Analytics>>();
+function rebuild(range: Range) {
+  let p = building.get(range);
+  if (!p) {
+    p = (async () => {
+      const a = await buildAnalytics(range);
+      await putJson(KEY(range), a).catch(() => null);
+      return a;
+    })().finally(() => { building.delete(range); putJson(LOCK(range), { at: 0 }).catch(() => null); });
+    building.set(range, p);
+  }
+  return p;
+}
+
+/** The report for a range. Under 30 minutes old it's served as is. Older, and given `background` (Next's after()), it's
+ *  still served at once with `stale: true` while a new one is built behind it; the page asks again to pick it up.
+ *  With nothing kept, or `fresh`, it waits for a new one. */
+export async function getAnalytics(range: Range, fresh = false, background?: (p: Promise<unknown>) => void): Promise<Analytics & { cached: boolean; stale: boolean }> {
   if (!fresh) {
     const kept = await getJson<Analytics>(KEY(range)).catch(() => null);
-    if (kept && Date.now() - kept.at < FRESH_MS) return { ...kept, cached: true };
+    if (kept && Date.now() - kept.at < FRESH_MS) return { ...kept, trend: kept.trend ?? [], cached: true, stale: false };
+    if (kept && background) {
+      if (!building.has(range)) {
+        const lock = await getJson<{ at: number }>(LOCK(range)).catch(() => null);
+        if (!lock || Date.now() - lock.at > LOCK_MS) {
+          await putJson(LOCK(range), { at: Date.now() }).catch(() => null);
+          background(rebuild(range).catch(() => null));
+        }
+      }
+      return { ...kept, trend: kept.trend ?? [], cached: true, stale: true };
+    }
   }
-  const a = await buildAnalytics(range);
-  await putJson(KEY(range), a).catch(() => null);
-  return { ...a, cached: false };
+  const a = await rebuild(range);
+  return { ...a, cached: false, stale: false };
 }
 
 /** One post in depth (YouTube: retention curve, views by day since upload, traffic; Instagram: every metric for its

@@ -1,12 +1,14 @@
 "use client";
-// Analytics → YouTube and Analytics → Instagram: one platform in depth, in the overview's style. The account, every
-// KPI the platform offers against the period before, daily charts with a metric picker, the days (and, for Instagram,
-// hours) the audience shows up, where views come from, who's watching, best times to post, and every post, each opening
-// a deep dive (retention curve, views day by day since it went out, every metric for it). Data: lib/analytics-yt.ts,
-// analytics-ig.ts, and /api/dash/analytics/post/<network>/<id> for a post.
+// Analytics → YouTube and Analytics → Instagram: one platform in depth, in four views so no screen carries everything
+// (?view=, as YouTube Studio splits its own): Overview (the account, every KPI against the period before, daily charts,
+// the days and hours the audience shows up), Reach (where views come from), Audience (who's watching) and Posts (best
+// times, and every post, each opening a deep dive: retention curve, views day by day since it went out, every metric).
+// PostList and PostDrawer are shared with Analytics → Content. Data: lib/analytics-yt.ts, analytics-ig.ts, and
+// /api/dash/analytics/post/<network>/<id> for a post.
 import { ArrowSquareOut, ChartLineUp, Clock, Lightning, X } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import type { Analytics as Data, Fmt, IgDeep, Item, PostDetail, YtDeep } from "@/lib/analytics";
 import { spaceName } from "@/lib/spaces";
@@ -43,13 +45,31 @@ function Card({ id, title, sub, children, action }: { id: string; title: string;
 }
 const none = (t = "YouTube doesn't report this for the period yet (it hides small numbers).") => <p className="small dim">{t}</p>;
 
-/** Every post of the platform, sortable; a row opens the post's deep dive. */
-function PostList({ items, net, open }: { items: Item[]; net: "youtube" | "instagram"; open: (i: Item) => void }) {
+type View = "overview" | "reach" | "audience" | "posts";
+/** The platform's four views, kept in the address (?view=reach) so a link or a reload lands on it. */
+function useView(): [View, (v: View) => void] {
+  const q = useSearchParams(), router = useRouter(), path = usePathname();
+  const v = q.get("view");
+  const view: View = v === "reach" || v === "audience" || v === "posts" ? v : "overview";
+  return [view, (n) => router.replace(n === "overview" ? path : `${path}?view=${n}`, { scroll: false })];
+}
+function Views({ view, set, posts }: { view: View; set: (v: View) => void; posts: string }) {
+  return (
+    <div className="seg an-views" role="group" aria-label="View">
+      {(["overview", "reach", "audience", "posts"] as View[]).map((v) => (
+        <button key={v} className={view === v ? "on" : ""} aria-pressed={view === v} onClick={() => set(v)}>{v === "posts" ? posts : v[0].toUpperCase() + v.slice(1)}</button>
+      ))}
+    </div>
+  );
+}
+
+/** Every post of a platform (or of both, `net` "all"), sortable; a row opens the post's deep dive. */
+export function PostList({ items, net, open, fmt0 = "all" }: { items: Item[]; net: "youtube" | "instagram" | "all"; open: (i: Item) => void; fmt0?: Fmt | "all" }) {
   type S = "score" | "views" | "er" | "shares" | "saves" | "avg" | "subs" | "at";
   const [sort, setSort] = useState<S>("score");
-  const [fmt, setFmt] = useState<Fmt | "all">("all");
+  const [fmt, setFmt] = useState<Fmt | "all">(fmt0);
   const [more, setMore] = useState(false);
-  const fmts = (net === "youtube" ? ["yt_video", "yt_short"] : ["ig_reel", "ig_post"]) as Fmt[];
+  const fmts = ((net === "youtube" ? ["yt_video", "yt_short"] : net === "instagram" ? ["ig_reel", "ig_post"] : ["yt_video", "yt_short", "ig_reel", "ig_post"]) as Fmt[]).filter((f) => items.some((i) => i.fmt === f));
   const rows = useMemo(() => {
     const v = (i: Item) => (sort === "at" ? i.at : sort === "views" ? i.views ?? i.reach ?? i.likes : sort === "avg" ? i.avg_pct ?? i.avg_s ?? -1 : (i[sort] as number | null) ?? -1);
     return items.filter((i) => fmt === "all" || i.fmt === fmt).sort((a, b) => v(b) - v(a));
@@ -58,20 +78,20 @@ function PostList({ items, net, open }: { items: Item[]; net: "youtube" | "insta
   return (
     <section className="card an-card flush" aria-labelledby={`an-${net}-posts`}>
       <div className="card-head an-pad">
-        <div><h2 id={`an-${net}-posts`}>Every {net === "youtube" ? "video" : "post"}</h2><p className="sub">Open one for its deep dive: {net === "youtube" ? "the retention curve, views day by day since it went out, its traffic" : "reach, saves, shares, follows, profile visits, watch time"}</p></div>
+        <div><h2 id={`an-${net}-posts`}>Every {net === "youtube" ? "video" : "post"}</h2><p className="sub">Open one for its deep dive: {net === "youtube" ? "the retention curve, views day by day since it went out, its traffic" : net === "instagram" ? "reach, saves, shares, follows, profile visits, watch time" : "retention, views day by day, reach, saves, shares"}</p></div>
         <div className="row" style={{ gap: 8 }}>
           <div className="seg" role="group" aria-label="Format">
             <button className={fmt === "all" ? "on" : ""} aria-pressed={fmt === "all"} onClick={() => setFmt("all")}>All</button>
-            {fmts.map((f) => <button key={f} className={fmt === f ? "on" : ""} aria-pressed={fmt === f} onClick={() => setFmt(f)}>{spaceName(f).replace(/^(YouTube|Instagram) /, "")}</button>)}
+            {fmts.map((f) => <button key={f} className={fmt === f ? "on" : ""} aria-pressed={fmt === f} onClick={() => setFmt(f)}>{net === "all" ? spaceName(f).replace("YouTube ", "").replace("Instagram ", "IG ") : spaceName(f).replace(/^(YouTube|Instagram) /, "")}</button>)}
           </div>
-          <Select className="an-sel" size="sm" label="Sort by" value={sort} onChange={setSort} options={[["score", "Viral score"], ["views", "Views"], ["er", "Engagement rate"], ["shares", "Shares"], ...(net === "instagram" ? [["saves", "Saves"] as const] : [["subs", "Subscribers gained"] as const]), ["avg", net === "youtube" ? "Average % viewed" : "Watch time"], ["at", "Newest"]]} />
+          <Select className="an-sel" size="sm" label="Sort by" value={sort} onChange={setSort} options={[["score", "Viral score"], ["views", "Views"], ["er", "Engagement rate"], ["shares", "Shares"], ...(net !== "youtube" ? [["saves", "Saves"] as const] : []), ...(net !== "instagram" ? [["subs", "Subscribers gained"] as const] : []), ["avg", net === "youtube" ? "Average % viewed" : "Watch time"], ["at", "Newest"]]} />
         </div>
       </div>
       {!rows.length ? <div className="an-pad" style={{ paddingBottom: 20 }}><Empty icon={<ChartLineUp size={22} />} title="No posts yet" /></div> : (
         <div className="an-table" role="table" aria-label="Posts">
           <div role="row" className="an-tr head">
             <span role="columnheader">{net === "youtube" ? "Video" : "Post"}</span><span role="columnheader">Views</span><span role="columnheader" className="hide-sm">Engagement</span>
-            <span role="columnheader" className="hide-md">Shares</span><span role="columnheader" className="hide-md">{net === "youtube" ? "New subs" : "Saves"}</span><span role="columnheader" className="hide-md">{net === "youtube" ? "Watched" : "Watch time"}</span><span role="columnheader">Score</span>
+            <span role="columnheader" className="hide-md">Shares</span><span role="columnheader" className="hide-md">{net === "youtube" ? "New subs" : net === "instagram" ? "Saves" : "Saves / subs"}</span><span role="columnheader" className="hide-md">{net === "instagram" ? "Watch time" : "Watched"}</span><span role="columnheader">Score</span>
           </div>
           {shown.map((i) => (
             <button type="button" role="row" key={i.id} className="an-tr an-tr-btn" onClick={() => open(i)} aria-label={`Deep dive: ${i.title}`}>
@@ -82,7 +102,7 @@ function PostList({ items, net, open }: { items: Item[]; net: "youtube" | "insta
               <span role="cell" className="mono">{compact(i.views ?? i.reach ?? null)}</span>
               <span role="cell" className="mono hide-sm">{pct(i.er, 1)}</span>
               <span role="cell" className="mono hide-md">{compact(i.shares)}</span>
-              <span role="cell" className="mono hide-md">{compact(net === "youtube" ? i.subs : i.saves)}</span>
+              <span role="cell" className="mono hide-md">{compact(i.network === "youtube" ? i.subs : i.saves)}</span>
               <span role="cell" className="mono hide-md">{i.avg_pct != null ? `${Math.round(i.avg_pct)}%` : i.avg_s != null ? `${i.avg_s}s` : "—"}</span>
               <span role="cell"><Score v={i.score} /></span>
             </button>
@@ -96,7 +116,7 @@ function PostList({ items, net, open }: { items: Item[]; net: "youtube" | "insta
 }
 
 /** One post in depth, in a drawer. */
-function PostDrawer({ item, onClose }: { item: Item; onClose: () => void }) {
+export function PostDrawer({ item, onClose }: { item: Item; onClose: () => void }) {
   const [d, setD] = useState<PostDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
@@ -162,6 +182,7 @@ function PostDrawer({ item, onClose }: { item: Item; onClose: () => void }) {
 }
 
 export function YouTubeTab({ data }: { data: Data }) {
+  const [view, setView] = useView();
   const [i, setI] = useState(0);
   const [open, setOpen] = useState<Item | null>(null);
   const y = data.youtube[i] ?? data.youtube[0];
@@ -171,20 +192,21 @@ export function YouTubeTab({ data }: { data: Data }) {
   const allTraffic = y ? y.traffic.reduce((a, b) => a + b.views, 0) : 0;
   return (
     <div className="an-wrap">
-      {!y ? <Notice icon={<Clock size={18} />} tone="warn">The YouTube Analytics API isn&apos;t answering for this channel yet, so only video counts show. Turn it on in Google Cloud (see the strip above), then Refresh.</Notice> : (
+      {y && <AccountHead a={y.account} net="youtube" pick={data.youtube.length > 1 ? <Select className="an-sel" size="sm" label="Channel" value={i} onChange={setI} options={data.youtube.map((c, k) => [k, c.account.name] as const)} /> : null} />}
+      <Views view={view} set={setView} posts="Videos" />
+      {!y && view !== "posts" ? <Notice icon={<Clock size={18} />} tone="warn">The YouTube Analytics API isn&apos;t answering for this channel yet, so only video counts show. Turn it on in Google Cloud (see the strip above), then Refresh.</Notice> : view === "overview" && y && (
         <div className="an-board">
-          <AccountHead a={y.account} net="youtube" pick={data.youtube.length > 1 ? <Select className="an-sel" size="sm" label="Channel" value={i} onChange={setI} options={data.youtube.map((c, k) => [k, c.account.name] as const)} /> : null} />
           <Scorecard kpis={y.kpis} range={data.range} />
           <div className="an-row">
             {y.daily.length ? <DailyCard id="an-yt-daily" title="Day by day" daily={y.daily} days={data.days} range={data.range} /> : <Card id="an-yt-daily" title="Day by day">{none()}</Card>}
             <Card id="an-yt-week" title="Which days views land" sub="Average views per weekday in this period">
               {y.weekday.length ? <Columns labels={DAYS} values={y.weekday} name="Average views by weekday" /> : none()}
-              <p className="tiny dim" style={{ marginTop: 10 }}>YouTube reports views by day, not by hour. For posting times, see the heatmap below (how your uploads did by when they went out).</p>
+              <p className="tiny dim" style={{ marginTop: 10 }}>YouTube reports views by day, not by hour. For posting times, see Videos (how your uploads did by when they went out).</p>
             </Card>
           </div>
         </div>
       )}
-      {y && <>
+      {y && view === "reach" && <>
         <div className="an-duo">
           <Card id="an-yt-traffic" title="Traffic sources" sub="How viewers found your videos, against the period before">
             {y.traffic.length ? (
@@ -194,6 +216,16 @@ export function YouTubeTab({ data }: { data: Data }) {
               </div>
             ) : none()}
           </Card>
+          <Card id="an-yt-share" title="Where it's shared" sub="Shares by service">{y.sharing.length ? <Bars rows={y.sharing} tone="c-ok" /> : none("No shares in this period yet.")}</Card>
+        </div>
+        <div className="an-trio">
+          <Card id="an-yt-search" title="Search terms" sub="What people typed before watching">{y.search.length ? <Bars rows={y.search} /> : none("No search views in this period yet.")}</Card>
+          <Card id="an-yt-ext" title="External sites and apps" sub="Views from links outside YouTube">{y.external.length ? <Bars rows={y.external} /> : none("No views from outside YouTube yet.")}</Card>
+          <Card id="an-yt-rel" title="Suggested next to" sub="Videos YouTube showed yours beside">{y.related.length ? <Bars rows={y.related} /> : none("Not reported yet.")}{y.playlists.length > 0 && <><h3 className="an-h3">Playlists</h3><Bars rows={y.playlists} /></>}</Card>
+        </div>
+      </>}
+      {y && view === "audience" && <>
+        <div className="an-duo">
           <Card id="an-yt-content" title="By content type" sub="Shorts, videos and live, side by side">
             {y.content.length ? (
               <div className="an-mini-table">
@@ -207,16 +239,7 @@ export function YouTubeTab({ data }: { data: Data }) {
                 {y.subscribed.map((s) => <div key={s.label} className="an-mt-r"><span>{s.label}</span><span className="mono">{compact(s.views)}</span><span className="mono">{pct(s.views / Math.max(1, y.subscribed.reduce((a, b) => a + b.views, 0)))}</span><span className="mono">{compact(s.watch_min / 60)}</span><span className="mono">{s.avg_pct != null ? `${s.avg_pct}%` : "—"}</span></div>)}
               </div></>}
           </Card>
-        </div>
-        <div className="an-trio">
-          <Card id="an-yt-search" title="Search terms" sub="What people typed before watching">{y.search.length ? <Bars rows={y.search} /> : none("No search views in this period yet.")}</Card>
-          <Card id="an-yt-ext" title="External sites and apps" sub="Views from links outside YouTube">{y.external.length ? <Bars rows={y.external} /> : none("No views from outside YouTube yet.")}</Card>
-          <Card id="an-yt-rel" title="Suggested next to" sub="Videos YouTube showed yours beside">{y.related.length ? <Bars rows={y.related} /> : none("Not reported yet.")}{y.playlists.length > 0 && <><h3 className="an-h3">Playlists</h3><Bars rows={y.playlists} /></>}</Card>
-        </div>
-        <div className="an-trio">
-          <Card id="an-yt-play" title="Where it was watched" sub="Playback locations">{y.playback.length ? <Bars rows={y.playback} unit={share(y.playback)} /> : none()}</Card>
-          <Card id="an-yt-dev" title="Devices" sub="And operating systems">{y.devices.length ? <Bars rows={y.devices} unit={share(y.devices)} /> : none()}{y.os.length > 0 && <><h3 className="an-h3">Operating systems</h3><Bars rows={y.os} unit={share(y.os)} limit={6} /></>}</Card>
-          <Card id="an-yt-share" title="Where it's shared" sub="Shares by service">{y.sharing.length ? <Bars rows={y.sharing} tone="c-ok" /> : none("No shares in this period yet.")}</Card>
+          <Card id="an-yt-dev" title="Devices" sub="Where it was watched, on what">{y.devices.length ? <Bars rows={y.devices} unit={share(y.devices)} /> : none()}{y.playback.length > 0 && <><h3 className="an-h3">Playback locations</h3><Bars rows={y.playback} unit={share(y.playback)} limit={6} /></>}{y.os.length > 0 && <><h3 className="an-h3">Operating systems</h3><Bars rows={y.os} unit={share(y.os)} limit={5} /></>}</Card>
         </div>
         <div className="an-duo">
           <Card id="an-yt-geo" title="Geography" sub="Top countries by views">
@@ -233,14 +256,17 @@ export function YouTubeTab({ data }: { data: Data }) {
           </Card>
         </div>
       </>}
-      {data.heat_by.youtube && <Heatmap id="an-yt-heat" title="Best times to upload" heat={data.heat_by.youtube} metric={data.heat_metric} tz={data.tz} />}
-      <PostList items={items} net="youtube" open={setOpen} />
+      {view === "posts" && <>
+        {data.heat_by.youtube && <Heatmap id="an-yt-heat" title="Best times to upload" heat={data.heat_by.youtube} metric={data.heat_metric} tz={data.tz} />}
+        <PostList items={items} net="youtube" open={setOpen} />
+      </>}
       {open && <PostDrawer item={open} onClose={() => setOpen(null)} />}
     </div>
   );
 }
 
 export function InstagramTab({ data }: { data: Data }) {
+  const [view, setView] = useView();
   const [i, setI] = useState(0);
   const [open, setOpen] = useState<Item | null>(null);
   const [aud, setAud] = useState<"followers" | "engaged" | "reached">("followers");
@@ -253,9 +279,10 @@ export function InstagramTab({ data }: { data: Data }) {
   const peak = g?.online ? g.online.indexOf(Math.max(...g.online)) : -1;
   return (
     <div className="an-wrap">
-      {!g ? <Notice icon={<Clock size={18} />} tone="warn">Instagram insights aren&apos;t allowed for this account yet, so only likes and comments show. Reconnect it (the strip above) and allow insights, then Refresh.</Notice> : (
+      {g && <AccountHead a={g.account} net="instagram" pick={data.instagram.length > 1 ? <Select className="an-sel" size="sm" label="Account" value={i} onChange={setI} options={data.instagram.map((c, k) => [k, c.account.name] as const)} /> : null} />}
+      <Views view={view} set={setView} posts="Posts" />
+      {!g && view !== "posts" ? <Notice icon={<Clock size={18} />} tone="warn">Instagram insights aren&apos;t allowed for this account yet, so only likes and comments show. Reconnect it (the strip above) and allow insights, then Refresh.</Notice> : view === "overview" && g && (
         <div className="an-board">
-          <AccountHead a={g.account} net="instagram" pick={data.instagram.length > 1 ? <Select className="an-sel" size="sm" label="Account" value={i} onChange={setI} options={data.instagram.map((c, k) => [k, c.account.name] as const)} /> : null} />
           <Scorecard kpis={g.kpis} range={data.range} />
           <div className="an-row">
             <DailyCard id="an-ig-daily" title="Day by day" daily={g.daily} days={data.days} range={data.range} />
@@ -266,7 +293,7 @@ export function InstagramTab({ data }: { data: Data }) {
           </div>
         </div>
       )}
-      {g && <>
+      {g && view === "reach" && <>
         <div className="an-trio">
           <Card id="an-ig-split" title="Followers vs non-followers" sub="How far past your followers you travel">
             {g.audience_split.length ? g.audience_split.map((s) => {
@@ -290,6 +317,8 @@ export function InstagramTab({ data }: { data: Data }) {
           </Card>
           <Card id="an-ig-taps" title="Profile link taps" sub="Bio link and contact buttons">{g.taps.length ? <Bars rows={g.taps} tone="c-instagram" /> : none("No taps in this period.")}</Card>
         </div>
+      </>}
+      {g && view === "audience" && <>
         <Card id="an-ig-demo" title="Audience" sub="By age, gender, country and city"
           action={audiences.length > 1 ? <div className="seg" role="group" aria-label="Audience">{audiences.map((k) => <button key={k} className={aud === k ? "on" : ""} aria-pressed={aud === k} onClick={() => setAud(k)}>{k === "followers" ? "Followers" : k === "engaged" ? "Engaged" : "Reached"}</button>)}</div> : undefined}>
           {demo ? (
@@ -301,7 +330,9 @@ export function InstagramTab({ data }: { data: Data }) {
             </div>
           ) : none("Instagram shares audience details from 100 followers.")}
         </Card>
-        {g.stories.length > 0 && (
+      </>}
+      {view === "posts" && <>
+        {g && g.stories.length > 0 && (
           <Card id="an-ig-stories" title="Stories live now" sub="Instagram keeps Story insights for 24 hours">
             <div className="an-stories">
               {g.stories.map((s) => (
@@ -315,9 +346,9 @@ export function InstagramTab({ data }: { data: Data }) {
             </div>
           </Card>
         )}
+        {data.heat_by.instagram && <Heatmap id="an-ig-heat" title="Best times to post" heat={data.heat_by.instagram} metric={data.heat_metric} tz={data.tz} />}
+        <PostList items={items} net="instagram" open={setOpen} />
       </>}
-      {data.heat_by.instagram && <Heatmap id="an-ig-heat" title="Best times to post" heat={data.heat_by.instagram} metric={data.heat_metric} tz={data.tz} />}
-      <PostList items={items} net="instagram" open={setOpen} />
       {open && <PostDrawer item={open} onClose={() => setOpen(null)} />}
     </div>
   );
