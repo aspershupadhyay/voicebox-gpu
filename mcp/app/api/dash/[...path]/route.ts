@@ -159,6 +159,16 @@ export async function GET(req: Request, ctx: Ctx) {
         }))) });
       }
       if (b === "favourites") return Response.json({ items: await fm.favourites() });
+      if (b === "carousels") {
+        // a post's photos and clips as one stack: every carousel, one post's (?post=<id>) or one (/carousels/<id>)
+        const id = g.path[2];
+        try {
+          if (id) return Response.json(await fm.carouselDetail(decodeURIComponent(id)));
+          return Response.json({ carousels: await fm.carouselList({ post_id: new URL(req.url).searchParams.get("post") ?? undefined }) });
+        } catch (e) {
+          return Response.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 502 });
+        }
+      }
     }
     if (a === "logs" && b) return Response.json(await call(`/logs/${b}?n=200`));
     if (a === "jobs" && !b) return Response.json(await call("/jobs"));
@@ -258,7 +268,7 @@ export async function POST(req: Request, ctx: Ctx) {
         return Response.json(await coach.gateAction(b, body.action, String(body.job)));
       return Response.json({ error: "not found" }, { status: 404 });
     }
-    if (a === "files") return await filesAction(b, c, body);
+    if (a === "files") return await filesAction(b, c, body, g.path[3]);
     if (a === "spaces" && b === "goals") return Response.json({ goals: await setGoals(body.goals) });
     if (a === "captions" && b && ID.test(b)) {
       // a post's captions fitted per target (Writing room → Captions); "" for a space goes back to the post's caption
@@ -484,7 +494,7 @@ export async function POST(req: Request, ctx: Ctx) {
 }
 
 /** The Files page's file manager: folders, moving, stars, renaming, deleting and importing a link (lib/files.ts). */
-async function filesAction(b: string | undefined, c: string | undefined, body: Record<string, unknown>) {
+async function filesAction(b: string | undefined, c: string | undefined, body: Record<string, unknown>, d?: string) {
   const fs = await import("@/lib/files");
   const fm = await import("@/lib/filemanager");
   const who = await currentUser();
@@ -511,6 +521,14 @@ async function filesAction(b: string | undefined, c: string | undefined, body: R
     if (b === "delete") return Response.json(await fm.deleteItems(keys(body.items, true), actor, body.forever === true));
     if (b === "restore") return Response.json(await fm.restore(keys(body.items, true)));
     if (b === "empty-trash") return Response.json(await fm.emptyTrash(actor));
+    if (b === "carousels") {
+      // make one {id?, name, items, post?}; change one /<id> {name, items (new order), add, remove}; /<id>/ungroup
+      const cs = await import("@/lib/carousels");
+      if (!c) return Response.json(await cs.createCarousel({ id: body.id, name: body.name, items: body.items, post: body.post }, actor.name));
+      if (!cs.CAROUSEL_RE.test(c) && !cs.POST_GROUP_RE.test(c)) throw new fs.FilesError("bad carousel id");
+      if (d === "ungroup") return Response.json(await cs.ungroupCarousel(c));
+      return Response.json(await fm.changeCarousel(c, { name: body.name, items: body.items, add: body.add, remove: body.remove }, actor.name));
+    }
     if (b === "poster") return Response.json(await fm.savePoster(keys([body.item])[0], String(body.data ?? "")));
     if (b === "import") {
       const r = await fm.importUrl(String(body.url ?? ""), { name: body.name ? String(body.name) : undefined, folder: folder(body.folder), backup: (await getSettings()).backup_media }, actor);
@@ -555,6 +573,16 @@ export async function DELETE(req: Request, ctx: Ctx) {
       return Response.json(await fs.trashItems([`f:${g.path[2]}`], (await currentUser())?.name ?? null)); // to the trash
     } catch (e) {
       return Response.json({ error: (e as Error).message }, { status: e instanceof fs.FilesError ? e.status : 502 });
+    }
+  }
+  if (a === "files" && b === "carousels" && g.path[2]) {
+    // ungroup: the carousel goes, its files stay
+    const cs = await import("@/lib/carousels");
+    if (!cs.CAROUSEL_RE.test(g.path[2])) return Response.json({ error: "bad carousel id" }, { status: 400 });
+    try {
+      return Response.json(await cs.ungroupCarousel(g.path[2]));
+    } catch (e) {
+      return Response.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 502 });
     }
   }
   if (a === "spaces" && b && ID.test(b)) {

@@ -51,6 +51,24 @@ export async function putObj(key: string, body: BodyInit, type = typeOf(key)) {
 
 export const putJson = (key: string, value: unknown) => putObj(key, JSON.stringify(value, null, 2), "application/json");
 
+/** A JSON object with its ETag, for a write that must not overwrite someone else's (putJsonIf). */
+export async function getJsonTagged<T>(key: string): Promise<{ value: T | null; etag: string | null }> {
+  const r = await getObj(key);
+  return r ? { value: (await r.json()) as T, etag: r.headers.get("etag") } : { value: null, etag: null };
+}
+
+/** Write only if the object is still the copy we read (its ETag), or still missing (etag null). False when someone
+ *  wrote in between (R2 answers 412): read again, change again, try again. */
+export async function putJsonIf(key: string, value: unknown, etag: string | null) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value, null, 2));
+  const cond: Record<string, string> = etag ? { "If-Match": etag } : { "If-None-Match": "*" };
+  const signed = await aws().sign(url(key), { method: "PUT", headers: { "Content-Type": "application/json", "X-Amz-Content-Sha256": "UNSIGNED-PAYLOAD", ...cond } });
+  const r = await fetch(signed.url, { method: "PUT", headers: signed.headers, body: bytes });
+  if (r.status === 412) return false;
+  if (!r.ok) throw new Error(`storage PUT ${key}: ${r.status} ${(await r.text()).slice(0, 200)}`);
+  return true;
+}
+
 export type StoredObj = { key: string; size: number; modified: number };
 
 const unxml = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");

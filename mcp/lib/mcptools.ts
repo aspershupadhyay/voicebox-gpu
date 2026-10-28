@@ -757,6 +757,8 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
   const FILE_ID = z.string().regex(/^[mg]:[A-Za-z0-9._-]{1,64}$/).describe("a file id from list_files: m:<upload id> or g:<generated id>");
   const ITEM_ID = z.string().regex(/^(?:[mg]:[A-Za-z0-9._-]{1,64}|f:[a-z0-9]{6,16})$/).describe("a file id (m:… / g:…) or a folder as f:<folder id>");
   const FOLDER_REF = z.string().max(300).describe("a folder id, or its path by name such as \"Thumbnails/October\"");
+  const CAROUSEL_REF = z.string().min(1).max(120).describe("a carousel to stack this file in: its id (the carousels tool lists them) or a name; a new name makes one");
+  const POSITION = z.number().int().min(1).max(100).describe("its place in the carousel, 1 = first (files keep this order whatever order they finish uploading in)");
   const COLOR = z.enum(["lavender", "sky", "peach", "mint", "rose", "sand"]);
   const folderId = async (ref?: string | null) => {
     if (!ref) return null;
@@ -1037,11 +1039,12 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     {
       title: "Add a file to the workspace",
       description: "Copy a file from a URL (a generated image or voiceover link from this server, or any public link) into the shared uploads on the Files page, optionally attached to a post and filed in a folder. Up to 150 MB; it is also backed up to R2 when the backup setting is on.",
-      inputSchema: z.object({ url: z.string().url(), name: z.string().max(200).optional(), post_id: POST_ID.optional(), folder: FOLDER_REF.optional() }),
+      inputSchema: z.object({ url: z.string().url(), name: z.string().max(200).optional(), post_id: POST_ID.optional(), folder: FOLDER_REF.optional(), carousel: CAROUSEL_REF.optional(), position: POSITION.optional() }),
     },
-    async ({ url, name, post_id, folder }) => ws(async () => {
+    async ({ url, name, post_id, folder, carousel, position }) => ws(async () => {
       const { media, backup, folder: placed } = await (await import("@/lib/filemanager")).importUrl(url, { name, postId: post_id, folder, backup: (await getSettings()).backup_media }, CLAUDE);
-      return { id: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, url: fileUrl(media), folder: placed, r2_backup: media.r2_key ? "saved" : backup ?? "off" };
+      const stack = carousel ? await (await import("@/lib/carousels")).joinCarousel(carousel, `m:${media.$id}`, { position, post: post_id ?? null, by: CLAUDE.name }) : null;
+      return { id: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, url: fileUrl(media), folder: placed, carousel: stack, r2_backup: media.r2_key ? "saved" : backup ?? "off" };
     }),
   );
 
@@ -1053,15 +1056,16 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       inputSchema: z.object({
         name: z.string().min(1).max(200).describe("file name with extension, e.g. thumb.png"),
         content_base64: z.string().min(4).max(4_400_000), mime: z.string().max(100).optional().describe("default: from the file extension"),
-        post_id: POST_ID.optional(), folder: FOLDER_REF.optional(),
+        post_id: POST_ID.optional(), folder: FOLDER_REF.optional(), carousel: CAROUSEL_REF.optional(), position: POSITION.optional(),
       }),
     },
-    async ({ name, content_base64, mime, post_id, folder }) => ws(async () => {
+    async ({ name, content_base64, mime, post_id, folder, carousel, position }) => ws(async () => {
       const into = await folderId(folder);
       const bytes = new Uint8Array(Buffer.from(content_base64.replace(/^data:[^,]*,/, ""), "base64"));
       const { media, backup } = await addMediaBytes(bytes, mime || mimeFor(name), name, { postId: post_id ?? null, backup: (await getSettings()).backup_media }, CLAUDE);
       if (into) await (await import("@/lib/files")).moveItems([`m:${media.$id}`], into);
-      return { id: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: +(bytes.length / 1e6).toFixed(2), url: fileUrl(media), folder: into, r2_backup: media.r2_key ? "saved" : backup ?? "off" };
+      const stack = carousel ? await (await import("@/lib/carousels")).joinCarousel(carousel, `m:${media.$id}`, { position, post: post_id ?? null, by: CLAUDE.name }) : null;
+      return { id: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: +(bytes.length / 1e6).toFixed(2), url: fileUrl(media), folder: into, carousel: stack, r2_backup: media.r2_key ? "saved" : backup ?? "off" };
     }),
   );
 
@@ -1071,19 +1075,20 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       title: "Save a file of any size to Files",
       description: "Save a file you made (a rendered video, audio, images, a PDF) into the Files page, up to 2 GB, without sending its bytes through MCP. " +
         "Two calls: first with `name` (and size, folder, post_id) — it answers an upload_url; PUT the file there with one shell command (curl -sS -T <file> \"<upload_url>\", within an hour); " +
-        "then call again with the `ticket` it gave, and the file appears in Files (filed in the folder, attached to the post). Use this instead of upload_media for anything over ~3 MB.",
+        "then call again with the `ticket` it gave, and the file appears in Files (filed in the folder, attached to the post). Use this instead of upload_media for anything over ~3 MB. " +
+        "For a carousel post (several photos or clips), give every file the same `carousel` (a name makes one; the carousels tool lists ids) and its `position` (1 = first): they show as one stack on the Files page, in that order.",
       inputSchema: z.object({
         name: z.string().min(1).max(200).optional().describe("step 1: file name with extension, e.g. final-cut.mp4"),
         size: z.number().int().min(0).max(2e9).optional().describe("step 1: bytes, if known"),
-        folder: FOLDER_REF.optional(), post_id: POST_ID.optional(),
+        folder: FOLDER_REF.optional(), post_id: POST_ID.optional(), carousel: CAROUSEL_REF.optional(), position: POSITION.optional(),
         ticket: z.string().min(20).max(2000).optional().describe("step 2: the ticket from step 1, once the file is uploaded"),
       }),
     },
-    async ({ name, size, folder, post_id, ticket }) => ws(async () => {
+    async ({ name, size, folder, post_id, carousel, position, ticket }) => ws(async () => {
       const inbox = await import("@/lib/inbox");
       if (ticket) return { saved: await inbox.completeUpload(ticket, CLAUDE) };
       if (!name) throw new Error("give `name` to start, or `ticket` to finish");
-      const r = await inbox.startUpload({ name, size, folder, post_id });
+      const r = await inbox.startUpload({ name, size, folder, post_id, carousel, position });
       return { upload_url: r.upload_url, ticket: r.ticket, expires_at: r.expires_at, run: `curl -sS -T '<path to ${name}>' '${r.upload_url}'`, then: "call save_file again with { ticket }" };
     }),
   );
@@ -1104,7 +1109,7 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     {
       title: "List files and folders",
       description:
-        "The dashboard's Files page, a Drive-like file manager over uploads (shared workspace) and generated items (voiceovers, subtitles, images, videos). The top level holds five category folders that file everything by kind on their own (Videos, Images, Audio, Docs & scripts, Other) beside your own folders. Without `folder` it shows the top level; `everywhere` searches every folder; `trash` lists the trash. Each file has an id (m:… upload, g:… generated) for move_files, rename_file, star_files, get_file and delete_files.",
+        "The dashboard's Files page, a Drive-like file manager over uploads (shared workspace) and generated items (voiceovers, subtitles, images, videos). The top level holds five category folders that file everything by kind on their own (Videos, Images, Audio, Docs & scripts, Other) beside your own folders. Without `folder` it shows the top level; `everywhere` searches every folder; `trash` lists the trash. Each file has an id (m:… upload, g:… generated) for move_files, rename_file, star_files, get_file and delete_files; a file in a carousel (a post's photos stacked as one) has its carousel id (see the carousels tool).",
       inputSchema: z.object({
         folder: FOLDER_REF.optional(), everywhere: z.boolean().optional().describe("list files from every folder (default: only this folder; on when search is set)"),
         search: z.string().max(200).optional(), kind: z.enum(["image", "video", "audio", "doc", "other"]).optional(),
@@ -1243,6 +1248,46 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       inputSchema: z.object({}),
     },
     async () => files(async () => (await import("@/lib/filemanager")).emptyTrash(CLAUDE)),
+  );
+
+  server.registerTool(
+    "carousels",
+    {
+      title: "Carousels (a post's photos as one stack)",
+      description:
+        "On the Files page a carousel post's photos and clips stack as one card instead of loose files; opening it fans them out, and each opens full size. " +
+        "Two or more photos or clips on the same post group themselves (id post-<post id>, named after the post); you can also make one from any files. " +
+        "action list (optionally one post_id) or get (carousel) shows each carousel's files in order with links; create groups `items` (file ids, in order) under a `name`; " +
+        "update renames, reorders (items: the full new order), adds or removes files; ungroup removes the carousel and leaves its files where they are. " +
+        "To upload straight into one, give save_file / upload_media / add_media a carousel and position.",
+      inputSchema: z.object({
+        action: z.enum(["list", "get", "create", "update", "ungroup"]).default("list"),
+        carousel: z.string().min(1).max(120).optional().describe("get / update / ungroup: its id (or name)"),
+        post_id: POST_ID.optional().describe("list: only this post's; create: the post it's for"),
+        name: z.string().min(1).max(120).optional(),
+        items: z.array(FILE_ID).max(100).optional().describe("create: the files in order; update: the full new order"),
+        add: z.array(FILE_ID).max(100).optional(), remove: z.array(FILE_ID).max(100).optional(),
+      }),
+    },
+    async ({ action, carousel, post_id, name, items, add, remove }) => files(async () => {
+      const fm = await import("@/lib/filemanager");
+      const cs = await import("@/lib/carousels");
+      if (action === "list") return { carousels: await fm.carouselList({ post_id }) };
+      if (action === "create") {
+        if (!items?.length) throw new Error("give items: the file ids, in order");
+        const c = await cs.createCarousel({ name, items, post: post_id }, CLAUDE.name);
+        return fm.carouselDetail(c.id).catch(() => c);
+      }
+      if (!carousel) throw new Error("give the carousel (its id or name)");
+      const id = (await fm.carouselDetail(carousel)).id;
+      if (action === "get") return fm.carouselDetail(id);
+      if (action === "ungroup") {
+        if (cs.POST_GROUP_RE.test(id)) throw new Error("a post's own carousel can't be ungrouped (its files stay together while they're on the post)");
+        return cs.ungroupCarousel(id);
+      }
+      const r = await fm.changeCarousel(id, { name, items, add, remove }, CLAUDE.name);
+      return r.ungrouped ? r : fm.carouselDetail(r.id).catch(() => r);
+    }),
   );
 
   server.registerTool(

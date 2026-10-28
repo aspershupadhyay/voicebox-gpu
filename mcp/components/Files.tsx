@@ -6,17 +6,19 @@
 // cards onto a folder or the path to move them; right-click or ⋮ for the rest. Deleting moves things to the trash for
 // 30 days (with Undo). Everything changes on screen at once and is saved behind it; the last listing is kept in this
 // browser so the page opens instantly. Keys: ⌘F search, ⌘A select all, ⌘C copy links, ⌘X then ⌘V move, F2 rename,
-// Delete, Esc. Parts in fileparts.tsx; rules in docs/DESIGN.md.
+// Delete, Esc. A post's photos stack as one carousel card (components/Carousel.tsx): it opens onto a curved row, each
+// photo opens full size, and [ ] jump between posts. Parts in fileparts.tsx; rules in docs/DESIGN.md.
 import {
   ArrowClockwise, ArrowCounterClockwise, ArrowSquareOut, ArrowsDownUp, CaretRight, Check, CheckSquare, ClosedCaptioning, Copy, DownloadSimple, FolderOpen,
-  FolderPlus, FolderSimple, LinkSimple, ListBullets, MagnifyingGlass, PencilSimple, Scissors, SquaresFour, Star, Trash, TrashSimple, UploadSimple,
-  UsersThree, X,
+  FolderPlus, FolderSimple, LinkSimple, ListBullets, MagnifyingGlass, PencilSimple, Scissors, SquaresFour, StackMinus, StackPlus, Star, Trash, TrashSimple,
+  UploadSimple, UsersThree, X, Cards,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { folderFor, folderTrashed, isTrashed, newFolderId, normalize, ROOT, subtree, SYSTEM, within as inside, type FileTree, type Folder } from "@/lib/filetree";
-import { fileUrl as mediaUrl, kindOf, screenPreview, libKind, libName, libType, type Media, type MediaKind } from "@/lib/workspace";
+import { groupsOf, visual, type Carousel, type Group } from "@/lib/carouselrules";
+import { fileUrl as mediaUrl, kindOf, screenPreview, libKind, libName, libType, type Media, type MediaKind, type Post } from "@/lib/workspace";
 import { api, fileUrl as libFileUrl } from "./api";
 import { Query, signOut, useLive, useMe } from "./aw";
 import { useDialog } from "./Dialog";
@@ -24,6 +26,7 @@ import {
   ContextMenu, DT, FileCard, FileRow, FilterPill, FolderCard, FolderRow, MoveDialog, NewFolderCard, Snack, UploadPanel,
   type Anchor, type Item, type JobSum, type MenuEntry, type UpRow,
 } from "./fileparts";
+import { CarouselCard, CarouselRow, CarouselStage, CarouselStrip, countOf, isStack, type Stack } from "./Carousel";
 import { ImageCard, JobCard, VideoCard, type LibJob } from "./Library";
 import { useStatus } from "./Shell";
 import { Notice, PageHeader } from "./ui";
@@ -31,7 +34,8 @@ import { useUploader } from "./wsparts";
 import { FileViewer, type ViewFile } from "./Viewer";
 
 type Sort = "new" | "old" | "name" | "size";
-type Tree = FileTree & { poster_urls?: Record<string, string> };
+type Tree = FileTree & { poster_urls?: Record<string, string>; carousels?: Carousel[] };
+type Entry = Item | Stack;
 const TYPES = [["all", "All"], ["image", "Images"], ["video", "Videos"], ["audio", "Audio"], ["doc", "Docs & scripts"], ["other", "Other"]] as const;
 const SOURCES = [["any", "Any"], ["upload", "Uploads"], ["generated", "Generated"]] as const;
 const DATES = [["any", "Any"], ["1", "Today"], ["7", "Last 7 days"], ["30", "Last 30 days"], ["365", "This year"]] as const;
@@ -122,6 +126,7 @@ export default function Files() {
   const wsOn = !!(me?.user && me.session && me.workspace);
   const { rows: liveMedia, setRows: setMedia, loading: mediaLoading } = useLive<Media>("media", [Query.orderDesc("$createdAt"), Query.limit(1000)]);
   const { uploads, upload, clear: clearUploads } = useUploader(null);
+  const { rows: posts } = useLive<Post>("posts", [Query.orderDesc("$updatedAt"), Query.limit(500)]); // names a post's carousel
 
   const [jobs, setJobs] = useState<JobSum[] | null>(null);
   const [jobsErr, setJobsErr] = useState("");
@@ -151,6 +156,8 @@ export default function Files() {
   const [sortAt, setSortAt] = useState<Anchor | null>(null);
   const [subNote, setSubNote] = useState("");
   const [snack, setSnack] = useState<{ text: string; action?: string; run?: () => void } | null>(null);
+  const [stage, setStage] = useState<{ id: string; at?: number } | null>(null); // an open carousel
+  const [cv, setCv] = useState<{ id: string; i: number } | null>(null); // one of its photos, full size
   const anchor = useRef<string | null>(null);
   const search = useRef<HTMLInputElement>(null);
   const sortBtn = useRef<HTMLButtonElement>(null);
@@ -164,10 +171,10 @@ export default function Files() {
 
   // ── data: the cached listing at once, then the fresh one
   const loadJobs = useCallback(() => api<{ jobs: JobSum[] }>("files/items").then((r) => { setJobs(r.jobs); setJobsErr(""); }).catch((e) => setJobsErr(e.message)), []);
-  const loadTree = useCallback(() => { if (busy.current) return Promise.resolve(); return api<Tree>("files").then((x) => { if (!busy.current) setTree({ ...normalize(x), poster_urls: x.poster_urls }); }).catch(() => setTree((t) => t ?? EMPTY)); }, []);
+  const loadTree = useCallback(() => { if (busy.current) return Promise.resolve(); return api<Tree>("files").then((x) => { if (!busy.current) setTree({ ...normalize(x), poster_urls: x.poster_urls, carousels: x.carousels ?? [] }); }).catch(() => setTree((t) => t ?? EMPTY)); }, []);
   useEffect(() => {
     const c = readCache();
-    if (c) { setJobs(c.jobs); setTree({ ...normalize(c.tree), poster_urls: c.tree.poster_urls }); setCachedMedia(c.media); }
+    if (c) { setJobs(c.jobs); setTree({ ...normalize(c.tree), poster_urls: c.tree.poster_urls, carousels: c.tree.carousels ?? [] }); setCachedMedia(c.media); }
     loadJobs(); loadTree();
     try { const v = localStorage.getItem("vb-files-view"); if (v === "list" || v === "grid") setView(v); } catch {}
     // folders aren't on the live socket: check now and then, and whenever the tab comes back
@@ -218,6 +225,31 @@ export default function Files() {
   }, [media, jobs, t, starred, local, wsOn, me, cachedMedia.length, uploads, pendingUp]);
   const items = useMemo(() => allItems.filter((i) => !isTrashed(t, i.key)), [allItems, t]);
   const byKey = useMemo(() => new Map(allItems.map((i) => [i.key, i])), [allItems]);
+
+  // ── carousels: a post's photos and clips (or files you grouped) as one stack (lib/carouselrules.ts)
+  const titles = useMemo(() => new Map(posts.map((p) => [p.$id, p.title])), [posts]);
+  const groups = useMemo(() => groupsOf(t.carousels ?? [], items.filter((i) => !i.key.startsWith("u:")).map((i) => ({ key: i.key, kind: i.kind, post: i.post, at: i.at })), (id) => titles.get(id)),
+    [t.carousels, items, titles]);
+  const stacks = useMemo(() => new Map(groups.map((g) => {
+    const members = g.items.map((k) => byKey.get(k)!).filter(Boolean);
+    return [`c:${g.id}`, { key: `c:${g.id}`, g, members, at: Math.max(...members.map((m) => m.at)), starred: members.every((m) => m.starred) } satisfies Stack];
+  })), [groups, byKey]);
+  const stackOf = useMemo(() => new Map([...stacks.values()].flatMap((s) => s.g.items.map((k) => [k, s] as const))), [stacks]);
+  /** Newest first, the order [ and ] walk through. */
+  const stackOrder = useMemo(() => [...stacks.values()].sort((a, b) => b.at - a.at), [stacks]);
+  /** A list with each carousel's files as its one card, where its first file would be. */
+  const collapse = useCallback((list: Item[]): Entry[] => {
+    const seen = new Set<string>();
+    const out: Entry[] = [];
+    for (const i of list) {
+      const s = stackOf.get(i.key);
+      if (!s) out.push(i);
+      else if (!seen.has(s.key)) { seen.add(s.key); out.push(s); }
+    }
+    return out;
+  }, [stackOf]);
+  /** A carousel's card stands for its files. */
+  const expand = useCallback((keys: string[]) => [...new Set(keys.flatMap((k) => (k.startsWith("c:") ? stacks.get(k)?.g.items ?? [] : [k])))], [stacks]);
   const liveFolders = useMemo(() => t.folders.filter((f) => !folderTrashed(t, f.id) && !folderGone(t, f)), [t]);
   const folderById = useMemo(() => new Map(t.folders.map((f) => [f.id, f])), [t.folders]);
   const here = cwd ? folderById.get(cwd) ?? null : null;
@@ -280,7 +312,8 @@ export default function Files() {
     if (atRoot) return items.filter((i) => i.folder === null).sort(cmp); // only what you put at the top yourself
     return items.filter((i) => (global || i.folder === cwdId) && match(i)).sort(cmp);
   }, [trashView, trashFiles, atRoot, items, global, cwdId, match, cmp]);
-  const recent = useMemo(() => (atRoot && !filtered ? [...items].sort((a, b) => b.at - a.at).slice(0, RECENT) : []), [atRoot, filtered, items]);
+  const recent = useMemo(() => (atRoot && !filtered ? collapse([...items].sort((a, b) => b.at - a.at)).slice(0, RECENT) : []), [atRoot, filtered, items, collapse]);
+  const shownEntries = useMemo(() => (trashView ? shownFiles : collapse(shownFiles)), [trashView, shownFiles, collapse]);
   const shownFolders = useMemo(() => {
     if (trashView) return t.folders.filter((f) => t.trash[`f:${f.id}`]);
     const list = global ? liveFolders.filter((f) => (starOnly ? starred.has(`f:${f.id}`) : !!ql) && (!ql || f.name.toLowerCase().includes(ql)))
@@ -288,7 +321,7 @@ export default function Files() {
     const sys = (f: Folder) => (f.system ? SYSTEM.findIndex((s) => s.id === f.id) : 99);
     return [...list].sort((a, b) => sys(a) - sys(b) || (sort === "new" ? b.created - a.created : sort === "old" ? a.created - b.created : a.name.localeCompare(b.name, undefined, { numeric: true })));
   }, [trashView, t, global, liveFolders, starOnly, starred, ql, filtered, cwdId, sort]);
-  const order = useMemo(() => [...shownFolders.map((f) => `f:${f.id}`), ...shownFiles.map((i) => i.key), ...recent.map((i) => `r:${i.key}`)], [shownFolders, shownFiles, recent]);
+  const order = useMemo(() => [...shownFolders.map((f) => `f:${f.id}`), ...shownEntries.map((i) => i.key), ...recent.map((i) => `r:${i.key}`)], [shownFolders, shownEntries, recent]);
   const firstLoad = jobs === null && !jobsErr;
 
   // drop selections that vanished (deleted, moved out of view)
@@ -301,14 +334,17 @@ export default function Files() {
     const open = () => {
       const h = location.hash.slice(1);
       const f = new URLSearchParams(location.search).get("file");
+      const c = new URLSearchParams(location.search).get("carousel");
       if (h && jobs?.some((j) => j.id === h)) setDetail(`g:${h}`);
+      else if (f && stackOf.has(f)) setStage({ id: stackOf.get(f)!.g.id, at: stackOf.get(f)!.g.items.indexOf(f) });
       else if (f && byKey.has(f)) setDetail(f);
+      else if (c && stacks.has(`c:${c}`)) setStage({ id: c });
     };
     open();
     addEventListener("hashchange", open);
     return () => removeEventListener("hashchange", open);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs, media.length, params]);
+  }, [jobs, media.length, params, stacks.size]);
 
   // video posters: uploads made before posters existed get one, a video at a time, in the background
   useEffect(() => {
@@ -336,7 +372,7 @@ export default function Files() {
   // ── actions
   const go = (id: string | null) => router.push(id ? `/files?folder=${id}` : "/files", { scroll: false });
   const toTrashView = () => { setQ(""); setStarOnly(false); router.push("/files?view=trash", { scroll: false }); };
-  const nameOf = (k: string) => (k.startsWith("f:") ? folderById.get(k.slice(2))?.name : byKey.get(k)?.name) ?? k;
+  const nameOf = (k: string) => (k.startsWith("f:") ? folderById.get(k.slice(2))?.name : k.startsWith("c:") ? stacks.get(k)?.g.name : byKey.get(k)?.name) ?? k;
   const within = (id: string, ancestor: string) => inside(t, id, ancestor);
   const isSys = (k: string) => k.startsWith("f:") && !!folderById.get(k.slice(2))?.system;
 
@@ -371,6 +407,7 @@ export default function Files() {
     setRenaming(null);
     const old = nameOf(key);
     if (!name || name === old) return;
+    if (key.startsWith("c:")) return renameStack(key.slice(2), name);
     if (key.startsWith("f:")) {
       write(() => edit((x) => ({ ...x, folders: x.folders.map((y) => (`f:${y.id}` === key ? { ...y, name } : y)) })), () => api(`files/folders/${key.slice(2)}`, { body: { name } })).then(changed);
       return;
@@ -388,6 +425,54 @@ export default function Files() {
 
   function star(keys: string[], on: boolean) {
     write(() => edit((x) => ({ ...x, starred: on ? [...new Set([...x.starred, ...keys])] : x.starred.filter((k) => !keys.includes(k)) })), () => api("files/star", { body: { items: keys, on } })).then(changed);
+  }
+
+  // ── carousels
+  const editCarousels = (fn: (list: Carousel[]) => Carousel[]) => edit((x) => ({ ...x, carousels: fn(x.carousels ?? []) }));
+  /** Group files as one carousel (each leaves any other it was in), then name it in place. */
+  function groupAs(keys: string[], announce = true) {
+    const files = expand(keys).filter((k) => !k.startsWith("f:") && !k.startsWith("u:") && visual(byKey.get(k)?.kind ?? "other"));
+    if (files.length < 2) return toast("A carousel needs two or more photos or clips.", "bad");
+    const id = newFolderId();
+    const d = new Date();
+    const name = `Carousel · ${d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
+    const posts = new Set(files.map((k) => byKey.get(k)?.post).filter(Boolean));
+    const c: Carousel = { id, name, items: files, post: posts.size === 1 ? [...posts][0]! : null, created: Date.now(), by: me?.user?.name ?? null };
+    setSel(new Set());
+    write(() => { editCarousels((l) => [...l.map((x) => ({ ...x, items: x.items.filter((k) => !files.includes(k)) })).filter((x) => x.items.length), c]); setRenaming(`c:${id}`); },
+      () => api<Carousel>("files/carousels", { body: { id, name, items: files, post: c.post } }))
+      .then((r) => { if (r && announce) setSnack({ text: `Grouped ${files.length} as a carousel`, action: "Open", run: () => setStage({ id }) }); });
+  }
+  function ungroup(id: string) {
+    const was = (t.carousels ?? []).find((c) => c.id === id);
+    if (!was) return;
+    if (stage?.id === id) setStage(null);
+    write(() => editCarousels((l) => l.filter((c) => c.id !== id)), () => api(`files/carousels/${id}/ungroup`, { body: {} }))
+      .then((r) => { if (r) setSnack({ text: `"${was.name}" ungrouped: its ${was.items.length} files are loose again`, action: "Undo", run: () => {
+        write(() => editCarousels((l) => [...l, was]), () => api("files/carousels", { body: { id: was.id, name: was.name, items: was.items, post: was.post } }));
+      } }); });
+  }
+  /** Rename, or reorder: a post's own carousel becomes one you made (the server keeps its files and order). */
+  function changeStack(id: string, patch: { name?: string; items?: string[] }) {
+    const made = (t.carousels ?? []).some((c) => c.id === id);
+    write(() => { if (made) editCarousels((l) => l.map((c) => (c.id === id ? { ...c, ...patch } : c))); },
+      () => api<Carousel>(`files/carousels/${id}`, { body: patch }))
+      .then((r) => {
+        if (!r || made) return;
+        busy.current = 0;
+        loadTree();
+        if (stage?.id === id) setStage((s) => (s ? { ...s, id: r.id } : s));
+        if (cv?.id === id) setCv((v) => (v ? { ...v, id: r.id } : v));
+      });
+  }
+  const renameStack = (id: string, name: string) => changeStack(id, { name });
+  function reorder(id: string, from: number, to: number) {
+    const s = stacks.get(`c:${id}`);
+    if (!s) return;
+    const items = [...s.g.items];
+    const [k] = items.splice(from, 1);
+    items.splice(to, 0, k);
+    changeStack(id, { items });
   }
 
   /** To the trash, at once, with Undo. */
@@ -475,8 +560,15 @@ export default function Files() {
         // a category folder files things by kind anyway: only remember a folder you made
     const into = folder && !folderById.get(folder)?.system ? folder : null;
     const previews = new Map<string, string | null>();
+    // several photos or clips at once are likely one post: offer to stack them as a carousel once they're all in
+    const want = files.filter((f) => visual(kindOf(f.type, f.name))).length;
+    const batch: string[] = [];
     upload(files, (m, file, key) => {
       const k = `m:${m.$id}`;
+      if (want >= 2 && visual(m.kind)) {
+        batch.push(k);
+        if (batch.length === want) { const keys = [...batch]; setSnack({ text: `${want} photos and clips uploaded together`, action: "Group as carousel", run: () => groupLater.current(keys) }); }
+      }
       const pv = previews.get(key);
       if (pv) setLocal((l) => ({ ...l, [k]: pv }));
       if (into) placeLater(k, into);
@@ -493,6 +585,8 @@ export default function Files() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwdId, wsOn, needWs, upload, placeLater, folderById]);
+  const groupLater = useRef<(keys: string[]) => void>(() => {});
+  groupLater.current = (keys) => groupAs(keys); // the snack outlives this render: group with the current state
   const upRows: UpRow[] = uploads.map((u) => ({ key: u.key, name: u.name, size: u.size, kind: u.kind, progress: u.progress, error: u.error && !u.done ? u.error : undefined, done: u.done,
     folder: pendingUp[u.key]?.folder ? folderById.get(pendingUp[u.key].folder!)?.name ?? "All files" : SYSTEM.find((s) => s.kind === u.kind)?.name ?? "All files" }));
 
@@ -523,6 +617,7 @@ export default function Files() {
 
   function open(key: string) {
     if (key.startsWith("u:")) return;
+    if (key.startsWith("c:")) { if (!trashView) setStage({ id: key.slice(2) }); return; }
     if (key.startsWith("f:")) { if (trashView) return; setQ(""); setStarOnly(false); go(key.slice(2)); return; }
     if (trashView) return;
     setDetail(key);
@@ -551,7 +646,7 @@ export default function Files() {
   // ── keyboard and the clipboard
   useEffect(() => {
     const typing = (el: EventTarget | null) => !!(el as HTMLElement)?.closest?.("input:not([type=checkbox]), textarea, [contenteditable=true]");
-    const overlay = () => !!document.querySelector(".modal, .lightbox, .fm-drawer, .palette");
+    const overlay = () => !!document.querySelector(".modal, .lightbox, .fm-drawer, .palette, .fv, .cs");
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "f" && !overlay()) { e.preventDefault(); search.current?.focus(); search.current?.select(); return; }
@@ -563,10 +658,11 @@ export default function Files() {
         if ((e.key === "Delete" || e.key === "Backspace") && sel.size) { e.preventDefault(); deleteForever([...sel]); }
         return;
       }
-      if (mod && e.key.toLowerCase() === "x" && sel.size) { e.preventDefault(); setCut([...sel]); setSnack({ text: `${sel.size} item${sel.size === 1 ? "" : "s"} cut: open a folder and paste (${isMac() ? "⌘" : "Ctrl+"}V)` }); }
-      if (mod && e.key.toLowerCase() === "c" && sel.size && !window.getSelection()?.toString()) { e.preventDefault(); copyLinks([...sel].filter((k) => !k.startsWith("f:"))); }
+      if (mod && e.key.toLowerCase() === "x" && sel.size) { e.preventDefault(); setCut(expand([...sel])); setSnack({ text: `${sel.size} item${sel.size === 1 ? "" : "s"} cut: open a folder and paste (${isMac() ? "⌘" : "Ctrl+"}V)` }); }
+      if (mod && e.key.toLowerCase() === "c" && sel.size && !window.getSelection()?.toString()) { e.preventDefault(); copyLinks(expand([...sel]).filter((k) => !k.startsWith("f:"))); }
+      if (mod && e.key.toLowerCase() === "g" && sel.size > 1) { e.preventDefault(); groupAs([...sel]); }
       if (mod && e.key.toLowerCase() === "v" && cut.length) { e.preventDefault(); const c = cut; setCut([]); moveTo(c, cwdId); }
-      if ((e.key === "Delete" || e.key === "Backspace") && sel.size) { e.preventDefault(); remove([...sel]); }
+      if ((e.key === "Delete" || e.key === "Backspace") && sel.size) { e.preventDefault(); remove(expand([...sel])); }
       if (e.key === "F2" && sel.size === 1) { e.preventDefault(); setRenaming([...sel][0]); }
       if (e.key === "Enter" && sel.size === 1 && document.activeElement === document.body) { e.preventDefault(); open([...sel][0]); }
     };
@@ -589,10 +685,28 @@ export default function Files() {
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("paste", onPaste); };
   });
 
+  // a carousel's photo is open full size: [ ] (or Shift+← →) go to the previous or next post's carousel
+  useEffect(() => {
+    if (!cv) return;
+    const k = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || document.querySelector(".modal") || (e.target as HTMLElement).closest?.("input, textarea")) return;
+      const d = e.key === "[" || (e.shiftKey && e.key === "ArrowLeft") ? -1 : e.key === "]" || (e.shiftKey && e.key === "ArrowRight") ? 1 : 0;
+      if (!d) return;
+      const at = stackOrder.findIndex((x) => x.g.id === cv.id);
+      const o = at < 0 ? undefined : stackOrder[at + d];
+      if (!o) return;
+      e.preventDefault();
+      setStage({ id: o.g.id });
+      setCv({ id: o.g.id, i: 0 });
+    };
+    addEventListener("keydown", k);
+    return () => removeEventListener("keydown", k);
+  }, [cv, stackOrder]);
+
   // ── drag and drop
   function dragStart(key: string, e: React.DragEvent) {
     if (trashView || key.startsWith("u:")) { e.preventDefault(); return; }
-    const keys = sel.has(key) ? [...sel] : [key];
+    const keys = expand(sel.has(key) ? [...sel] : [key]);
     e.dataTransfer.setData(DT, JSON.stringify(keys));
     e.dataTransfer.effectAllowed = "move";
     if (keys.length > 1) {
@@ -626,7 +740,9 @@ export default function Files() {
   });
 
   // ── the menu for one item or the selection
-  function menuFor(keys: string[]): { title: string; entries: MenuEntry[] } {
+  function menuFor(picked: string[]): { title: string; entries: MenuEntry[] } {
+    if (!trashView && picked.length === 1 && picked[0].startsWith("c:")) return stackMenu(picked[0]);
+    const keys = expand(picked);
     const many = keys.length > 1;
     const k = keys[0];
     if (trashView) return {
@@ -644,9 +760,11 @@ export default function Files() {
         { label: "Cut", icon: <Scissors size={16} />, kbd: isMac() ? "⌘X" : "Ctrl+X", run: () => { setCut(keys); setSnack({ text: "Cut: open a folder and paste to move" }); } }]),
       { label: allStarred ? "Remove star" : "Star", icon: <Star size={16} />, run: () => star(keys, !allStarred) },
     ];
+    const canGroup = fileKeys.length > 1 && fileKeys.every((x) => visual(byKey.get(x)?.kind ?? "other"));
     if (many) return {
       title: `${keys.length} items`,
-      entries: [...common, ...(fileKeys.length ? [{ label: `Download ${fileKeys.length}`, icon: <DownloadSimple size={16} />, run: () => download(fileKeys) }, { label: "Copy links", icon: <LinkSimple size={16} />, run: () => copyLinks(fileKeys) }] : []),
+      entries: [...common, ...(canGroup ? [{ label: "Group as carousel", icon: <StackPlus size={16} />, kbd: isMac() ? "⌘G" : "Ctrl+G", run: () => groupAs(fileKeys) }] : []),
+        ...(fileKeys.length ? [{ label: `Download ${fileKeys.length}`, icon: <DownloadSimple size={16} />, run: () => download(fileKeys) }, { label: "Copy links", icon: <LinkSimple size={16} />, run: () => copyLinks(fileKeys) }] : []),
         ...(sys ? [] : ["-" as const, { label: `Move ${keys.length} to the trash`, icon: <TrashSimple size={16} />, danger: true, run: () => remove(keys) }])],
     };
     if (k.startsWith("f:")) {
@@ -678,6 +796,28 @@ export default function Files() {
       ],
     };
   }
+  /** The menu for a carousel's card: it acts on every file in it. */
+  function stackMenu(key: string): { title: string; entries: MenuEntry[] } {
+    const s = stacks.get(key);
+    if (!s) return { title: key, entries: [] };
+    const files = s.g.items;
+    return {
+      title: s.g.name,
+      entries: [
+        { label: "Open", icon: <Cards size={16} />, run: () => setStage({ id: s.g.id }) },
+        { label: "Rename", icon: <PencilSimple size={16} />, kbd: "F2", run: () => setRenaming(key) },
+        { label: sel.has(key) ? "Deselect" : "Select", icon: <CheckSquare size={16} />, run: () => toggle(key, false) },
+        { label: `Move all ${files.length} to…`, icon: <FolderSimple size={16} />, run: () => setMoving(files) },
+        { label: s.starred ? "Remove star" : "Star all", icon: <Star size={16} />, run: () => star(files, !s.starred) },
+        { label: `Download all ${files.length}`, icon: <DownloadSimple size={16} />, run: () => download(files) },
+        { label: "Copy links", icon: <LinkSimple size={16} />, run: () => copyLinks(files) },
+        ...(s.g.post ? [{ label: "Open its post", icon: <ArrowSquareOut size={16} />, run: () => router.push(`/posts?post=${s.g.post}`) }] : []),
+        ...(s.g.made ? [{ label: "Ungroup (files stay)", icon: <StackMinus size={16} />, run: () => ungroup(s.g.id) }] : []),
+        "-",
+        { label: `Move all ${files.length} to the trash`, icon: <TrashSimple size={16} />, danger: true, kbd: "Del", run: () => remove(files) },
+      ],
+    };
+  }
   const openMenu = (key: string, at: Anchor) => {
     const keys = sel.has(key) && sel.size > 1 ? [...sel] : [key];
     if (!sel.has(key) && sel.size) setSel(new Set());
@@ -705,16 +845,19 @@ export default function Files() {
 
   const totalBytes = items.reduce((s, i) => s + (i.size ?? 0), 0);
   const trashCount = Object.keys(t.trash).length;
-  const selFiles = [...sel].filter((k) => !k.startsWith("f:"));
+  const selFiles = expand([...sel]).filter((k) => !k.startsWith("f:"));
+  const selVisual = selFiles.filter((k) => !k.startsWith("u:") && visual(byKey.get(k)?.kind ?? "other"));
   const ord = order.map((k) => k.replace(/^r:/, ""));
   const selAll = ord.length > 0 && ord.every((k) => sel.has(k));
   const mod = isMac() ? "⌘" : "Ctrl";
-  const grid = (list: Item[], prefix = "") => view === "grid" ? (
-    <div className="fm-grid">{list.map((it) => <FileCard key={prefix + it.key} it={it} playing={playing === it.key} onPlay={() => play(it)} {...events(it.key)} />)}</div>
+  const grid = (list: Entry[], prefix = "") => view === "grid" ? (
+    <div className="fm-grid">{list.map((it) => isStack(it) ? <CarouselCard key={prefix + it.key} s={it} {...events(it.key)} />
+      : <FileCard key={prefix + it.key} it={it} playing={playing === it.key} onPlay={() => play(it)} {...events(it.key)} />)}</div>
   ) : (
     <div className="fm-list">
       <div className="frow fr-head" aria-hidden><span /><span /><span>Name</span><span className="fr-col fr-type">Type</span><span className="fr-col fr-size">Size</span><span className="fr-col fr-by">Added by</span><span className="fr-col fr-at">{trashView ? "Deleted" : "Added"}</span><span /></div>
-      {list.map((it) => <FileRow key={prefix + it.key} it={it} folderName={(global || prefix) && it.folder !== cwdId ? pathName(it.folder) : undefined} {...events(it.key)} />)}
+      {list.map((it) => isStack(it) ? <CarouselRow key={prefix + it.key} s={it} folderName={(global || prefix) && it.members[0].folder !== cwdId ? pathName(it.members[0].folder) : undefined} {...events(it.key)} />
+        : <FileRow key={prefix + it.key} it={it} folderName={(global || prefix) && it.folder !== cwdId ? pathName(it.folder) : undefined} {...events(it.key)} />)}
     </div>
   );
 
@@ -804,10 +947,11 @@ export default function Files() {
               <button className="quiet xs" onClick={() => restore([...sel])}><ArrowCounterClockwise size={13} />Restore</button>
               <button className="danger sm" onClick={() => deleteForever([...sel])}><TrashSimple size={14} weight="bold" />Delete forever</button>
             </> : <>
-              <button className="quiet xs" onClick={() => setMoving([...sel])}><FolderSimple size={13} />Move</button>
-              <button className="quiet xs" onClick={() => star([...sel], ![...sel].every((k) => starred.has(k)))}><Star size={13} />Star</button>
+              {selVisual.length > 1 && selVisual.length === selFiles.length && <button className="quiet xs" onClick={() => groupAs([...sel])} title={`Group as one carousel (${mod}+G)`}><StackPlus size={13} />Group as carousel</button>}
+              <button className="quiet xs" onClick={() => setMoving(expand([...sel]))}><FolderSimple size={13} />Move</button>
+              <button className="quiet xs" onClick={() => { const k = expand([...sel]); star(k, !k.every((x) => starred.has(x))); }}><Star size={13} />Star</button>
               {selFiles.length > 0 && <button className="quiet xs" onClick={() => download(selFiles)}><DownloadSimple size={13} />Download</button>}
-              <button className="danger sm" onClick={() => remove([...sel])}><TrashSimple size={14} weight="bold" />Delete</button>
+              <button className="danger sm" onClick={() => remove(expand([...sel]))}><TrashSimple size={14} weight="bold" />Delete</button>
             </>}
           </span>
         </div>
@@ -851,8 +995,8 @@ export default function Files() {
 
           {(shownFiles.length > 0 || !atRoot) && (
             <section className="fm-sec" aria-labelledby="fm-files">
-              <div className="fm-sec-h"><h2 id="fm-files">{trashView ? "Files" : atRoot ? "In All files" : "Files"} <span className="fm-count">{shownFiles.length}</span></h2></div>
-              {shownFiles.length > 0 ? grid(shownFiles) : trashView ? (
+              <div className="fm-sec-h"><h2 id="fm-files">{trashView ? "Files" : atRoot ? "In All files" : "Files"} <span className="fm-count">{shownEntries.length}</span></h2></div>
+              {shownEntries.length > 0 ? grid(shownEntries) : trashView ? (
                 <div className="empty"><Trash size={26} weight="duotone" /><b>{shownFolders.length ? "No loose files in the trash" : "The trash is empty"}</b><span>Anything you delete waits here for 30 days.</span></div>
               ) : global || filtered ? (
                 <div className="empty"><MagnifyingGlass size={22} /><b>Nothing matches</b><span>Try another word or filter.</span>
@@ -890,6 +1034,38 @@ export default function Files() {
             onPrev={seq.length > 1 && at >= 0 ? () => step(-1) : undefined} onNext={seq.length > 1 && at >= 0 ? () => step(1) : undefined}
             onDelete={() => { const k = detailItem.key; const nxt = seq.length > 1 ? seq[(at + 1) % seq.length] : null; remove([k]); if (nxt && nxt !== k) setDetail(nxt); else closeDetail(); }}
             extra={<StarBtn on={detailItem.starred} onClick={() => star([detailItem.key], !detailItem.starred)} />} />
+        );
+      })()}
+      {(() => {
+        // an open carousel: the curved row, and over it one photo full size with the carousel along the bottom
+        const st = stage ? stacks.get(`c:${stage.id}`) : undefined;
+        const vs = cv ? stacks.get(`c:${cv.id}`) : undefined;
+        const near = (s: Stack | undefined, d: number, viewing: boolean) => {
+          const at = s ? stackOrder.findIndex((x) => x.key === s.key) : -1;
+          const o = at < 0 ? undefined : stackOrder[at + d];
+          return o ? { name: o.g.name, go: () => { setStage({ id: o.g.id }); if (viewing) setCv({ id: o.g.id, i: 0 }); } } : null;
+        };
+        const m = vs?.members[cv!.i];
+        return (
+          <>
+            {st && (
+              <CarouselStage key={st.key} s={st} at={stage!.at} onClose={() => { setStage(null); if (params.get("carousel")) history.replaceState(null, "", `/files${cwdId ? `?folder=${cwdId}` : ""}`); }}
+                onOpen={(i) => setCv({ id: st.g.id, i })} onPrev={near(st, -1, false)} onNext={near(st, 1, false)}
+                onRename={(n) => renameStack(st.g.id, n)}
+                onUngroup={st.g.made ? () => ungroup(st.g.id) : undefined} onMove={(a, b) => reorder(st.g.id, a, b)}
+                onDownload={() => download(st.g.items)} onStar={() => star(st.g.items, !st.starred)}
+                onPost={st.g.post ? () => router.push(`/posts?post=${st.g.post}`) : undefined} />
+            )}
+            {vs && m && (
+              <FileViewer file={m.m ? viewFile(m) : { key: m.key, name: m.name, kind: m.kind, url: m.kind === "video" && m.j ? libFileUrl(m.j.id, "video.mp4") : m.cover ?? "", download: downloadHref(m), poster: m.cover, at: m.at }}
+                index={cv!.i} total={vs.members.length} onClose={() => { setStage({ id: vs.g.id, at: cv!.i }); setCv(null); }}
+                onPrev={vs.members.length > 1 ? () => setCv({ id: vs.g.id, i: (cv!.i - 1 + vs.members.length) % vs.members.length }) : undefined}
+                onNext={vs.members.length > 1 ? () => setCv({ id: vs.g.id, i: (cv!.i + 1) % vs.members.length }) : undefined}
+                onDelete={() => { const k = m.key; remove([k]); if (vs.members.length <= 2) setCv(null); else setCv({ id: vs.g.id, i: Math.min(cv!.i, vs.members.length - 2) }); }}
+                extra={<StarBtn on={m.starred} onClick={() => star([m.key], !m.starred)} />}
+                strip={<CarouselStrip s={vs} index={cv!.i} onPick={(i) => setCv({ id: vs.g.id, i })} onPrev={near(vs, -1, true)} onNext={near(vs, 1, true)} />} />
+            )}
+          </>
         );
       })()}
       {detailItem?.j && (

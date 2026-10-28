@@ -4,7 +4,19 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (Writing room, 2026-10-28)
+## Latest round (carousels in Files, 2026-10-28)
+
+- **A post's photos must not scatter across Files.** A ten-photo post showed as ten loose files. Now they're one
+  carousel card (the owner's reference: a curved fan of tall photo cards, each numbered #01… with a label under it).
+- **Opening a carousel: the photos rise from the bottom to the middle of the screen**, one after another, "like the
+  falling stick game but from bottom to up", then sit on the curve. Clicking a photo opens that photo.
+- **Shortcuts to go back and forward inside a carousel, and to jump to the next post's**, in the stage and in the
+  full-size viewer (← → inside, `[` `]` between posts). Make Files' image watching feel unique and creative, with
+  motion.
+- **Carousels need an MCP endpoint and must work through the upload API**: the `carousels` tool, `carousel` +
+  `position` on `save_file` / `upload_media` / `add_media` and on `/api/files/upload`.
+
+## Earlier round (Writing room, 2026-10-28)
 
 - **The Writing room looks like the poster the owner sent** ("It's okay to be okay": marbled orbs in concentric rings,
   curved labels, black number chips, threads gathered into one hand, a small ring key). Built in matte black, flat and
