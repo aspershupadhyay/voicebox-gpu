@@ -135,6 +135,11 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "qmodels" && !b) return Response.json({ models: await (await import("@/lib/qwenmodels")).listQwenModelsWithSamples() });
     if (a === "kvoices" && !b) return Response.json({ voices: await listKVoices() });
     if (a === "spaces" && !b) return Response.json(await getSpaces());
+    if (a === "writing" && !b) {
+      // the Writing room: your posts and scores, rivals' uploads, what lengths and tags work, captions per target
+      const { writingData } = await import("@/lib/writing-data");
+      return Response.json(await writingData((p) => after(p)));
+    }
     if (a === "files") {
       // the Files page: the folder tree (with video posters), the generated items as files, the sidebar's favourites
       const fm = await import("@/lib/filemanager");
@@ -255,6 +260,11 @@ export async function POST(req: Request, ctx: Ctx) {
     }
     if (a === "files") return await filesAction(b, c, body);
     if (a === "spaces" && b === "goals") return Response.json({ goals: await setGoals(body.goals) });
+    if (a === "captions" && b && ID.test(b)) {
+      // a post's captions fitted per target (Writing room → Captions); "" for a space goes back to the post's caption
+      const { setCaptions } = await import("@/lib/captions");
+      return Response.json({ captions: await setCaptions(b, body.captions) });
+    }
     if (a === "spaces" && b && ID.test(b)) {
       // a post's targets (where it goes, cross-posting); the post's platforms / stage / publish time follow
       const who = await currentUser();
@@ -548,6 +558,7 @@ export async function DELETE(req: Request, ctx: Ctx) {
     }
   }
   if (a === "spaces" && b && ID.test(b)) {
+    await (await import("@/lib/captions")).dropCaptions(b);
     await dropTargets(b);
     return Response.json({ ok: true });
   }

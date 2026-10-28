@@ -298,10 +298,22 @@ const SCENES: Record<string, { label: string; rects: R[] }> = {
       ground,
     ],
   },
+  writing: {
+    label: "A typewriter on a desk, a page rising out of it and an ink pot",
+    rects: [
+      ...sky([[3, 2], [44, 1], [40, 6]]),
+      [17, 1, 12, 1, "k-ink k-bob"], [17, 2, 12, 5, "k-ink2 k-bob"], [18, 3, 7, 1, "k-mute k-bob"], [18, 5, 9, 1, "k-mute k-bob"],
+      [13, 7, 20, 2, "k-wood2"], [12, 9, 22, 4, "k-wood"], [14, 10, 2, 1, "k-ink2"], [17, 10, 2, 1, "k-ink2"], [20, 10, 2, 1, "k-ink2"], [23, 10, 2, 1, "k-ink2"], [26, 10, 2, 1, "k-ink2"], [29, 10, 2, 1, "k-ink2"],
+      [15, 11, 2, 1, "k-ink2"], [18, 11, 2, 1, "k-y"], [21, 11, 2, 1, "k-ink2"], [24, 11, 2, 1, "k-ink2"], [27, 11, 2, 1, "k-ink2"], [11, 8, 2, 1, "k-d"],
+      [38, 11, 4, 3, "k-b"], [39, 10, 2, 1, "k-bd"], [41, 6, 1, 4, "k-ink2"], [42, 5, 1, 2, "k-mute"],
+      [5, 12, 4, 2, "k-v"], [5, 11, 4, 1, "k-y"], [6, 10, 3, 1, "k-r"],
+      ground,
+    ],
+  },
 };
 
 const SCENE_OF: [RegExp, string][] = [
-  [/^\/voices/, "voices"], [/^\/posts/, "posts"], [/^\/files/, "files"], [/^\/voiceover/, "voiceover"], [/^\/clean-up/, "cleanup"],
+  [/^\/writing/, "writing"], [/^\/voices/, "voices"], [/^\/posts/, "posts"], [/^\/files/, "files"], [/^\/voiceover/, "voiceover"], [/^\/clean-up/, "cleanup"],
   [/^\/subtitles/, "subtitles"], [/^\/images/, "images"], [/^\/analytics\/live/, "live"], [/^\/analytics\/content/, "content"],
   [/^\/analytics\/audience/, "audience"], [/^\/analytics\/when-to-post/, "when"], [/^\/analytics\/competitors/, "competitors"],
   [/^\/analytics\/youtube/, "youtube"], [/^\/analytics\/instagram/, "instagram"], [/^\/analytics/, "grow"],

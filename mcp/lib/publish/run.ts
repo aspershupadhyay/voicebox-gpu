@@ -2,6 +2,7 @@
 // up 32 MB at a time and the next run picks up at YouTube's offset); sweep() is the autopilot, run every 10 min by
 // .github/workflows/sweep.yml: it starts plans whose time has come, carries on unfinished ones, retries failures with
 // backoff, refreshes Instagram tokens, gives Scheduled posts without a time the next posting slot, and marks posts live.
+import { captionFor } from "../captions";
 import { logActivity } from "../appwrite";
 import { notify } from "../colab";
 import { spaceName, targetsOf, type SpaceId, type Target } from "../spaces";
@@ -122,7 +123,7 @@ async function crosspost(p: Plan, rules: Rules) {
       const { editPlan } = await import("./plans");
       const caption = p.network === "youtube" ? p.yt!.description : p.ig!.caption;
       const next = editPlan(null, p.post, r.to, { account: acc?.id ?? null, media: p.media, cover: p.cover, when: "scheduled" }, AUTOPILOT.name, rules,
-        { title: p.yt?.title ?? post.title, caption: post.caption ?? caption });
+        { title: p.yt?.title ?? post.title, caption: (await captionFor(p.post, r.to)) ?? post.caption ?? caption });
       next.state = acc ? "armed" : "draft";
       line(next, `Made by the cross-post rule after ${spaceName(p.space)} went live`);
       await putPlan(next);

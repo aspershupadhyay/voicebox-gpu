@@ -108,11 +108,14 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [ ] All of it over MCP: set preferences, list trends and keywords, check a keyword, turn a trend into a post
 - [ ] Security: per-route rate limits, a nonce Content-Security-Policy, an audit log of sign-ins and MCP calls in
       Settings → Security, rotating upload keys
-- [ ] Title and thumbnail ideas from your best performers, a hook score on scripts, a weekly digest
+- [x] Title and thumbnail ideas from your best performers, a hook score on scripts, a weekly digest: the Writing room
+      (`/writing`, Create; rules on your own numbers in `lib/writing.ts`, no AI on the server; Claude writes through the
+      `hook_score`, `title_lab`, `captions` and `weekly_digest` MCP tools, which score with the same rules)
 
 ## Later (not started)
 - [ ] Listen to a few of the cut training clips per session on Your model (the worker would push samples next to the zip)
-- [ ] Per-target caption overrides (X 280 vs Instagram 2200)
+- [x] Per-target caption overrides (X 280 vs Instagram 2200): Writing room → Captions, kept in `workspace/captions.json`;
+      the publish composer and cross-post rules start a target from its own caption
 - [ ] Teach trained voices non-verbal tags (laughs, breaths) from the recordings
 - [x] Streaming playback while a voiceover renders: Voiceover shows the latest run as one take (the whole voiceover joined, like ElevenLabs); while it is made it plays by itself, every line in order as the worker makes it (each line's first take, joined and mastered on the CPU beside the generation), for every engine including your trained voice and studio polish. The per-line view is gone from the page. Not yet timed on a GPU
 - [ ] Speech super-resolution model (beyond Resemble Enhance) as the polish step; A/B with benchmark_voices

@@ -74,6 +74,10 @@ export default function Images() {
     const s = JSON.parse(localStorage.getItem("vb-image") || "{}");
     if (s.model) setModel(s.model); if (s.prompt) setPrompt(s.prompt); if (s.aspect) setAspect(s.aspect);
     if (s.count) setCount(s.count); if (s.quality) setQuality(s.quality);
+    // a brief from the Writing room (Thumbnails → Make it in Images) arrives as ?prompt=…&aspect=16:9
+    const q = new URLSearchParams(location.search);
+    if (q.get("prompt")) { setPrompt(q.get("prompt")!.slice(0, 2000)); window.history.replaceState(null, "", location.pathname); }
+    if (q.get("aspect") && SPECS.zimage.sizes[q.get("aspect")!]) setAspect(q.get("aspect")!);
     loaded.current = true;
     refresh();
     const t = timers.current;

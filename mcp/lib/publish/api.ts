@@ -6,6 +6,7 @@
 //   POST   publish/<post>/<space>/go       { mode: "now" | "arm" | "disarm" }   …/cancel   …/retry
 //   POST   publish/rules                   automation rules                     DELETE publish/accounts/<id>  disconnect
 //   DELETE publish/<post>/<space>          forget the plan
+import { captionFor } from "../captions";
 import { after } from "next/server";
 import { getPost } from "../appwrite";
 import { currentUser } from "../session";
@@ -63,7 +64,7 @@ export async function publishPost(path: string[], body: Record<string, unknown>)
   if (!d) {
     if (cur && BUSY.includes(cur.state)) return bad("It's going out right now. Stop it first to change it.", 409);
     const post = await getPost(b);
-    const next = editPlan(cur, b, c as SpaceId, body, await who(), await getRules(), { title: post.title, caption: post.caption ?? "" });
+    const next = editPlan(cur, b, c as SpaceId, body, await who(), await getRules(), { title: post.title, caption: (await captionFor(b, c as SpaceId)) ?? post.caption ?? "" });
     // a finished or failed plan you edit goes back to waiting for you
     if (next.state === "published" || next.state === "canceled" || next.state === "failed") { if (body.reset) { next.state = "draft"; next.run = null; next.result = null; next.attempts = 0; next.error = null; next.progress = 0; next.step = null; } }
     await putPlan(next);

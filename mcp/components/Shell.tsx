@@ -5,7 +5,7 @@
 // /analytics), with its own pages, its own tabs on phones and the rivals you pinned. The switch remembers where you were.
 import {
   ArrowsClockwise, Broadcast, CalendarDots, SidebarSimple, CaretDown, ChartLineUp, Rows, SquaresFour, Trophy, UsersThree, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
-  FileAudio, FileText, FilmStrip, Folder, Folders, MagicWand, MagnifyingGlass, Microphone, Paperclip, Plus, Power, SignOut, Star, UserSound, X,
+  FileAudio, FileText, FilmStrip, Folder, Folders, MagicWand, MagnifyingGlass, Microphone, Paperclip, PenNib, Plus, Power, SignOut, Star, UserSound, X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -31,6 +31,7 @@ export const NAV: Nav[] = [
   { href: "/posts", name: "Posts", Icon: Kanban, mv: "posts", sec: "main" },
   { href: "/analytics", name: "Analytics", Icon: ChartLineUp, mv: "chart", sec: "main" },
   { href: "/files", name: "Files", Icon: Folders, mv: "files", sec: "main" },
+  { href: "/writing", name: "Writing room", Icon: PenNib, mv: "pen", sec: "create" },
   { href: "/voiceover", name: "Voiceover", Icon: Microphone, mv: "mic", sec: "create" },
   { href: "/clean-up", name: "Clean-up", Icon: MagicWand, mv: "wand", sec: "create" },
   { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning, mv: "cc", sec: "create" },
@@ -330,6 +331,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
                 <>
                   <Link className="pm-item" role="menuitem" href="/voiceover" onClick={close}><Microphone size={16} className="ic" />Voiceover</Link>
                   <Link className="pm-item" role="menuitem" href="/posts?new=1" onClick={close}><Kanban size={16} className="ic" />Post</Link>
+                  <Link className="pm-item" role="menuitem" href="/writing" onClick={close}><PenNib size={16} className="ic" />Hook, titles, captions</Link>
                   <Link className="pm-item" role="menuitem" href="/images" onClick={close}><ImageSquare size={16} className="ic" />Image</Link>
                   <Link className="pm-item" role="menuitem" href="/subtitles" onClick={close}><ClosedCaptioning size={16} className="ic" />Subtitles</Link>
                   <Link className="pm-item" role="menuitem" href="/clean-up" onClick={close}><MagicWand size={16} className="ic" />Clean-up</Link>

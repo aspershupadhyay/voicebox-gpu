@@ -4,7 +4,17 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (deck, cursor and charts, 2026-10-28)
+## Latest round (Writing room, 2026-10-28)
+
+- **The Writing room looks like the poster the owner sent** ("It's okay to be okay": marbled orbs in concentric rings,
+  curved labels, black number chips, threads gathered into one hand, a small ring key). Built in matte black, flat and
+  Geist (the owner picked "poster on black"): pixel marbles instead of paint, white chips, a pixel hand. Each orb opens
+  its tool; keep it curated and premium, not a form page.
+- **No AI model in the dashboard for writing** (the owner's call): the page scores from their own numbers with rules;
+  the writing itself happens through Claude over MCP (`hook_score`, `title_lab`, `captions`, `weekly_digest`), which
+  uses the same rules. "Ask Claude" buttons hand over the prompt.
+
+## Earlier round (deck, cursor and charts, 2026-10-28)
 
 - **A take you made must still be there after a refresh**, and play: it's kept in this browser (IndexedDB) and rebuilt
   from the library when it isn't, never "Couldn't play this take". Its player is our own: a turning disc with a ginger
