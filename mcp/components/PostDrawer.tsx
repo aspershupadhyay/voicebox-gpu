@@ -16,6 +16,7 @@ import { forgetTargets, saveTargets, useTargets } from "./useTargets";
 import { PlatformBadge } from "./platform";
 import { Select } from "./pop";
 import { Composer, PublishPill } from "./Publish";
+import { Pipeline } from "./Pipeline";
 
 const T = { databaseId: AW.db, tableId: "posts" };
 const LABEL = Object.fromEntries(PLATFORMS.map((p) => [p.id, p.label])) as Record<Platform, string>;
@@ -214,6 +215,7 @@ export function PostDrawer({ post, onClose }: { post: Post; onClose: () => void 
   }, [onClose, view, composer]);
 
   const script = val("script") ?? "";
+  const scriptBox = useRef<HTMLTextAreaElement>(null);
   const words = script.trim() ? script.trim().split(/\s+/).length : 0;
   const caption = val("caption") ?? "";
   const { map: tmap } = useTargets();
@@ -266,6 +268,8 @@ export function PostDrawer({ post, onClose }: { post: Post; onClose: () => void 
           {!hasTargets && (val("status") === "posted" || val("link")) && <><dt>Live link</dt><dd><input value={val("link") ?? ""} placeholder="https://…" onChange={(e) => edit({ link: e.target.value.slice(0, 500) || null })} /></dd></>}
         </dl>
 
+        <Pipeline postId={post.$id} script={script} onWrite={() => { scriptBox.current?.focus(); scriptBox.current?.scrollIntoView({ block: "center", behavior: "smooth" }); }} />
+
         <section className="dsec">
           <div className="row between"><h2 style={{ margin: 0 }}>Script</h2>
             <span className="row" style={{ gap: 8 }}>
@@ -273,7 +277,7 @@ export function PostDrawer({ post, onClose }: { post: Post; onClose: () => void 
               <Link className="btn sm" href={`/voiceover?post=${post.$id}`}><Microphone size={14} /> Voiceover</Link>
             </span>
           </div>
-          <textarea className="doc" aria-label="Script" value={script} onChange={(e) => edit({ script: e.target.value })} placeholder={"What you'll say. One line per beat.\n[pause] before a reveal, [beat] after a question."} />
+          <textarea ref={scriptBox} className="doc" aria-label="Script" value={script} onChange={(e) => edit({ script: e.target.value })} placeholder={"What you'll say. One line per beat.\n[pause] before a reveal, [beat] after a question."} />
         </section>
 
         <section className="dsec">

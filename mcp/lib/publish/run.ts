@@ -22,6 +22,16 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 class Budget extends Error {}
 class Stopped extends Error {}
+/** Something that must not be retried by itself (the same photos are already live). */
+class Hold extends Error {}
+
+const sameSet = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
+/** Another plan on the same account that already put these exact files live: posting them again would be a repeat. */
+export async function liveTwin(p: Pick<Plan, "post" | "space" | "network" | "account" | "media">, plans?: Plan[]) {
+  if (!p.media.length) return null;
+  return (plans ?? (await listPlans())).find((x) => x.state === "published" && x.result && x.network === p.network && x.account === p.account &&
+    !(x.post === p.post && x.space === p.space) && sameSet(x.media, p.media)) ?? null;
+}
 /** Someone pressed Stop: the stored plan says canceled. Checked between pieces. */
 async function checkStop(p: Plan) {
   const fresh = await getPlan(p.post, p.space);
@@ -63,6 +73,7 @@ export async function drive(post: string, space: string, budgetMs = 270_000): Pr
     await finish(p, rules);
   } catch (e) {
     if (e instanceof Stopped) { const fresh = await getPlan(post, space); return fresh; }
+    if (e instanceof Hold) { p.state = "failed"; p.error = e.message; p.step = null; p.next_try = null; line(p, e.message, false); p.run = p.run ? { ...p.run, lock: null } : null; return putPlan(p); }
     if (e instanceof Budget) { p.step = p.network === "youtube" ? `Uploading ${Math.round(p.progress * 100)}%` : "Instagram is processing"; line(p, "Paused to stay inside the time limit; carrying on next run"); }
     else await failed(p, e as Error, rules);
   }
@@ -237,6 +248,15 @@ async function runInstagram(p: Plan, acc: Account & { tokens: Tokens }, deadline
   const run = p.run!;
   const user = acc.id;
   if (!run.ig_media) {
+    if (!run.ig_container && !run.ig_children?.length) {
+      // never the same photos twice, and never past Instagram's daily publishing limit (it treats that as spam)
+      if (!p.log.some((l) => l.text.startsWith("Posting again on purpose"))) {
+        const twin = await liveTwin(p);
+        if (twin) throw new Hold(`These files are already live on Instagram (${twin.result!.url}). Nothing was posted again.`);
+      }
+      const lim = await IG.publishingLimit(token, user).catch(() => null);
+      if (lim && lim.used >= lim.total) throw new IG.IgError(`Instagram's limit of ${lim.total} posts a day is used up; Voicebox tries again later`, 0, 0, true);
+    }
     if (!run.ig_container) {
       const srcs = await Promise.all(p.media.map(resolve));
       p.state = "uploading"; p.progress = 0.1; p.step = "Sending to Instagram";

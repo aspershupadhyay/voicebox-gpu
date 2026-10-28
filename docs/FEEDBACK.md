@@ -4,7 +4,24 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (carousels to Instagram, 2026-10-28)
+## Latest round (Instagram fixes, smart search, share links, pipeline, 2026-10-28)
+
+- **"Post to Instagram" made two posts for the same carousel** (the agent's "Case 023 … (carousel)" post already held the
+  photos; the button made another, which went live). It now reuses the post the photos already belong to and never
+  posts the same files twice: photos already live are refused, and the publishing runner itself stops a repeat.
+- **Posting to Instagram was slow**: one listing instead of two, only the files not yet on the post are moved, and the
+  composer opens straight away from the reply (no waiting for the live post list). The button shows it's working and
+  can't be pressed twice.
+- **The carousel should open on the first photo**, and **the active photo bigger**: the card in focus is ~40% larger,
+  fewer cards each side so all of them are bigger.
+- **Sideways swipes went Back in the browser**: swipes on the carousel and the viewer now browse the photos instead.
+- **The phone preview needs our logo**: the connected Instagram account's picture (the studio's logo if it can't load).
+- **A carousel already live must not be posted again**; Claude can set up, arm or send a carousel through MCP.
+- **Smart search, share links and the one-click post pipeline**: build them. **Not the duplicate finder** ("it will
+  impact the performance"): left out. Keep background work light: smart search waits for the page to settle, looks at
+  new photos one at a time, only on computers, never on data saver.
+
+## Earlier round (carousels to Instagram, 2026-10-28)
 
 - **The carousel stage was laggy and the spacing was off.** The curve is now placed straight on the page while you drag
   (no re-render per frame, ~60 fps), the cards have even gaps, the labels sit flat under them, and the whole curve fits

@@ -1261,7 +1261,9 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
         "update renames, reorders (items: the full new order), adds or removes files; ungroup removes the carousel and leaves its files where they are. " +
         "To upload straight into one, give save_file / upload_media / add_media a carousel and position. " +
         "checks: each slide's size and shape for Instagram (4:5 or 1:1 best, 1080 px wide or more, all one shape) and look-alike duplicates. " +
-        "instagram: set it up as an Instagram carousel post (makes a post if it has none, attaches the photos, adds the Instagram Post target, a publish plan with the slides in order and a fitted caption); it doesn't send: publish_post with the returned post_id and space ig_post does. " +
+        "instagram: set it up as an Instagram carousel post: it reuses the post the photos already belong to (its own, the one whose plan or files hold them, or one with the same title) and only makes a post when there is none, attaches the photos, adds the Instagram Post target and a publish plan with the slides in order (up to 20) and a caption fitted to Instagram (or your `caption`). " +
+        "go: draft (default, nothing is sent; the user checks it in the composer), arm (goes out by itself at `at`, an ISO time, or the post's publish time) or now (sends it now: only when the user asked). " +
+        "Photos already live on Instagram are refused (409 with the live link) so nothing is posted twice; again: true only when the user explicitly wants a repeat. Instagram's daily publishing limit is checked before anything is sent. " +
         "stats: once it's out, its Instagram numbers (views, reach, likes, comments, shares, saves).",
       inputSchema: z.object({
         action: z.enum(["list", "get", "create", "update", "ungroup", "checks", "instagram", "stats"]).default("list"),
@@ -1270,9 +1272,14 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
         name: z.string().min(1).max(120).optional(),
         items: z.array(FILE_ID).max(100).optional().describe("create: the files in order; update: the full new order"),
         add: z.array(FILE_ID).max(100).optional(), remove: z.array(FILE_ID).max(100).optional(),
+        caption: z.string().max(2200).optional().describe("instagram: the caption to use (default: the post's, fitted to Instagram)"),
+        account: z.string().max(64).optional().describe("instagram: which Instagram account (id or handle; default the only one connected)"),
+        go: z.enum(["draft", "arm", "now"]).optional().describe("instagram: draft (default), arm (goes out at `at`), now (send now, only when asked)"),
+        at: z.string().max(40).optional().describe("instagram with go arm: when, ISO 8601"),
+        again: z.boolean().optional().describe("instagram: post photos that are already live a second time (only when the user asked)"),
       }),
     },
-    async ({ action, carousel, post_id, name, items, add, remove }) => files(async () => {
+    async ({ action, carousel, post_id, name, items, add, remove, caption, account, go, at, again }) => files(async () => {
       const fm = await import("@/lib/filemanager");
       const cs = await import("@/lib/carousels");
       if (action === "list") return { carousels: await fm.carouselList({ post_id }) };
@@ -1286,7 +1293,16 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       if (action === "get") return fm.carouselDetail(id);
       if (action === "checks") return fm.carouselChecks(id);
       if (action === "stats") return fm.carouselStats(id);
-      if (action === "instagram") return fm.publishCarousel(id, CLAUDE);
+      if (action === "instagram") {
+        try {
+          const r = await fm.publishCarousel(id, CLAUDE, { caption, account, go, at, again });
+          const { post: _post, ...rest } = r;
+          return rest;
+        } catch (e) {
+          if (e instanceof fm.LiveAlready) return { already_live: true, url: e.url, post_id: e.post_id, note: "Not posted again. Pass again: true only if the user wants a repeat." };
+          throw e;
+        }
+      }
       if (action === "ungroup") {
         if (cs.POST_GROUP_RE.test(id)) throw new Error("a post's own carousel can't be ungrouped (its files stay together while they're on the post)");
         return cs.ungroupCarousel(id);
@@ -1294,6 +1310,77 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       const r = await fm.changeCarousel(id, { name, items, add, remove }, CLAUDE.name);
       return r.ungrouped ? r : fm.carouselDetail(r.id).catch(() => r);
     }),
+  );
+
+  server.registerTool(
+    "find_photos",
+    {
+      title: "Find photos by what's in them",
+      description:
+        "Search the Files page's photos by what they show and their colours, not just their names: \"strawberry\", \"red bottle\", \"laptop on a desk\". Tags come from a small image model that runs in the dashboard while the Files page is open (photos uploaded since are tagged next time someone opens it); colours are worked out on the server. " +
+        "Returns the best matches with their ids (for get_file, move_files, carousels…), tags and colours. For meaning search beyond the tags, the Files page's search box does it in the browser.",
+      inputSchema: z.object({ query: z.string().min(1).max(200), limit: z.number().int().min(1).max(100).optional() }),
+    },
+    async ({ query, limit }) => files(async () => {
+      const ins = await import("@/lib/insight");
+      await ins.scan(8_000).catch(() => null); // colours for anything new
+      return { matches: await ins.searchPhotos(query, limit ?? 30) };
+    }),
+  );
+
+  server.registerTool(
+    "share_links",
+    {
+      title: "Share links",
+      description:
+        "Private, expiring links to one carousel or one folder for someone without an account (a client, an editor): they see only that, read-only, and can download unless downloads is false. " +
+        "create (kind carousel with its id from the carousels tool, or folder with its id; days 1, 3, 7 or 30, default 7) returns the link once: hand it to the user, it can't be shown again. list shows links and their views; revoke turns one off at once. Make one only when asked.",
+      inputSchema: z.object({
+        action: z.enum(["list", "create", "revoke"]).default("list"),
+        kind: z.enum(["carousel", "folder"]).optional(), ref: z.string().max(120).optional().describe("create / list: the carousel id or folder id"),
+        days: z.union([z.literal(1), z.literal(3), z.literal(7), z.literal(30)]).optional(), downloads: z.boolean().optional(),
+        id: z.string().regex(/^[a-f0-9]{12}$/).optional().describe("revoke: the link's id from list"),
+      }),
+    },
+    async ({ action, kind, ref, days, downloads, id }) => files(async () => {
+      const sh = await import("@/lib/shares");
+      if (action === "revoke") { if (!id) throw new Error("give the link's id (list shows them)"); return sh.revokeShare(id); }
+      if (action === "create") {
+        const origin = process.env.APP_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "https://voiceboxstudio.vercel.app");
+        let r = ref ?? "";
+        if (kind === "carousel" && r) r = (await (await import("@/lib/filemanager")).carouselDetail(r)).id;
+        return sh.createShare({ kind, ref: r, days: days ?? 7, downloads }, CLAUDE.name, origin.replace(/\/$/, ""));
+      }
+      return { links: await sh.listShares({ kind, ref }) };
+    }),
+  );
+
+  server.registerTool(
+    "post_pipeline",
+    {
+      title: "One-click post pipeline",
+      description:
+        "A post from script to scheduled in one go: script → hook score → voice it → subtitles → thumbnail → schedule. status shows every step (done, todo, running, warn, failed) from what the post already has, so nothing done is redone. " +
+        "run with step all starts every missing step in order and keeps going by itself (the GPU worker voices the script with word-timed subtitles and draws a thumbnail that becomes the post's cover; schedule gives each target without a time the next posting slot and moves it to Scheduled). " +
+        "A hook under 50 pauses the run: rewrite the opening (hook_score, update_post) or pass force. run with one step does just that one; stop pauses it. It never publishes: publish_post or the composer sends it. " +
+        "Needs the GPU worker for voice, subtitles and thumbnail (worker_status); poll status every so often while it runs.",
+      inputSchema: z.object({
+        post_id: POST_ID,
+        action: z.enum(["status", "run", "stop"]).default("status"),
+        step: z.enum(["all", "voice", "subtitles", "thumbnail", "schedule"]).optional().describe("run: which (default all)"),
+        force: z.boolean().optional().describe("run all even when the hook scores under 50"),
+      }),
+    },
+    async ({ post_id, action, step, force }) => {
+      try {
+        const pl = await import("@/lib/pipeline");
+        if (action === "stop") return text(await pl.stopPipeline(post_id));
+        if (action === "run") return text(await pl.runPipeline(post_id, step ?? "all", CLAUDE.name, { force }));
+        return text(await pl.advance(post_id));
+      } catch (e) {
+        return fail(e);
+      }
+    },
   );
 
   server.registerTool(

@@ -62,7 +62,10 @@ scripts `sysdocs` and Other `sysother`, file everything by kind unless you move 
 | `rename_file` / `star_files` | Rename an upload or a generated item; star or unstar files and folders. |
 | `delete_files` / `delete_folder` | Only when asked. To the trash for 30 days (a folder with everything in it); `delete_files` with `forever: true` deletes for good (an upload's R2 backup stays). |
 | `restore_files` / `empty_trash` | Bring things back from the trash; empty it (only when asked). |
-| `carousels` | `{action: list\|get\|create\|update\|ungroup\|checks\|instagram\|stats, carousel?, post_id?, name?, items?, add?, remove?}` → a post's photos and clips as one stack on the Files page. Two or more on the same post group themselves (id `post-<post id>`, named after the post); `create` groups any files. Each carousel lists its files in order with view links. |
+| `carousels` | `{action: list\|get\|create\|update\|ungroup\|checks\|instagram\|stats, carousel?, post_id?, name?, items?, add?, remove?, caption?, account?, go?: draft\|arm\|now, at?, again?}` → a post's photos and clips as one stack on the Files page. Two or more on the same post group themselves (id `post-<post id>`, named after the post); `create` groups any files. Each carousel lists its files in order with view links. `instagram` sets it up as an Instagram carousel post on the post it already belongs to, and with `go` arms or sends it; photos already live are refused. |
+| `post_pipeline` | `{post_id, action: status\|run\|stop, step?: all\|voice\|subtitles\|thumbnail\|schedule, force?}` → script → hook score → voice it → subtitles → thumbnail → schedule from one post; `run` all does every missing step in order and keeps going by itself; it never publishes. |
+| `find_photos` | `{query, limit?}` → photos by what's in them and their colours ("red bottle"), from the tags the Files page's image model gives them. |
+| `share_links` | `{action: list\|create\|revoke, kind?: carousel\|folder, ref?, days?: 1\|3\|7\|30, downloads?, id?}` → private, expiring links for someone without an account; `create` returns the link once. |
 
 **Carousels.** On the Files page a carousel shows as one card instead of loose files; opening it stands the photos up
 on a curved row, and each opens full size with the carousel along the bottom (`[` `]` jump between posts). Made ones
@@ -95,9 +98,21 @@ The dashboard uses the same operations under `/api/dash/files`: `GET` (the tree,
 `GET carousels/<id>`, `POST carousels {id?, name, items, post?}`, `POST carousels/<id> {name?, items?, add?, remove?}`
 (a post's own `post-<id>` becomes a made one first), `POST carousels/<id>/ungroup` (or `DELETE carousels/<id>`),
 `GET carousels/<id>/checks` (each slide's size, shape and look-alikes for Instagram, `lib/carouselcheck.ts`),
-`GET carousels/<id>/stats` (its Instagram numbers once posted) and `POST carousels/<id>/publish` (makes or reuses its post,
-attaches the photos, adds the Instagram Post target and a publish plan with the slides in order and a fitted caption; it
-doesn't send).
+`GET carousels/<id>/stats` (its Instagram numbers once posted) and `POST carousels/<id>/publish {go?: draft|arm|now, at?,
+caption?, again?}` (reuses the post its photos already belong to: the carousel's own, the post whose plan or files hold
+them, or one with the same title; makes one only when there's none, with an id taken from the carousel so two clicks make
+one; attaches the photos, adds the Instagram Post target and a publish plan with the slides in order and a fitted
+caption; `go` draft doesn't send. Photos already live on Instagram get 409 `{live: {url}}` unless `again: true`).
+Publishing never sends the same files twice by itself: the runner (`lib/publish/run.ts`) stops a plan whose exact files are
+already live on the same account, and checks Instagram's daily publishing limit before it creates anything.
+
+Smart search: `GET insight` (colours and tags per photo), `POST insight/scan` (the server works out new photos' colours,
+15 s at a time), `POST insight/vision {items: [{id, emb, tags}]}` (what the browser's MobileCLIP saw), `GET insight/emb`
+(the 512-number fingerprints, for the search box). Share links: `GET shares?kind&ref`, `POST shares {kind: carousel|folder,
+ref, days: 1|3|7|30, downloads}` (returns the `/s/<token>` link once), `POST shares/<id>/revoke`.
+
+Post pipeline (`lib/pipeline.ts`): `GET /api/dash/pipeline/<post>` (every step's state; moves a running pipeline along),
+`POST /api/dash/pipeline/<post> {step: all|voice|subtitles|thumbnail|schedule, force?}`, `POST …/<post>/stop`.
 
 `voice` resolves as: `female` / `male` preset → engine voice name (`tara`, `af_heart`, …) → a recorded voice (`my_voices`).
 Recorded voices live in R2 (`voices/<name>/reference.wav` + transcript); the dashboard passes the worker a signed link

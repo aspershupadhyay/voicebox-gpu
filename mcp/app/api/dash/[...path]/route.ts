@@ -47,6 +47,7 @@ export async function GET(req: Request, ctx: Ctx) {
   const [a, b, c] = g.path;
   try {
     if (a === "publish") return await (await import("@/lib/publish/api")).publishGet(g.path.slice(1));
+    if (a === "pipeline" && b && ID.test(b)) return Response.json(await (await import("@/lib/pipeline")).advance(b)); // the post pipeline, moved along as it's looked at
     if (a === "analytics" && b === "post" && (c === "youtube" || c === "instagram") && g.path[3] && ID.test(g.path[3])) {
       // one post in depth: analytics/post/<youtube|instagram>/<platform id>
       const { getPostDetail } = await import("@/lib/analytics");
@@ -159,6 +160,15 @@ export async function GET(req: Request, ctx: Ctx) {
         }))) });
       }
       if (b === "favourites") return Response.json({ items: await fm.favourites() });
+      if (b === "insight") {
+        const ins = await import("@/lib/insight");
+        if (c === "emb") return Response.json(await ins.getEmbeddings());
+        return Response.json(await ins.insightForBrowser());
+      }
+      if (b === "shares") {
+        const q = new URL(req.url).searchParams;
+        return Response.json({ shares: await (await import("@/lib/shares")).listShares({ kind: q.get("kind") ?? undefined, ref: q.get("ref") ?? undefined }) });
+      }
       if (b === "carousels") {
         // a post's photos and clips as one stack: every carousel, one post's (?post=<id>) or one (/carousels/<id>)
         const id = g.path[2];
@@ -225,6 +235,14 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     let body = await req.json().catch(() => ({}));
     if (a === "publish") return await (await import("@/lib/publish/api")).publishPost(g.path.slice(1), body);
+    if (a === "pipeline" && b && ID.test(b)) {
+      // the post pipeline: { step: "all" | "voice" | "subtitles" | "thumbnail" | "schedule", force? }, or /<post>/stop
+      const pl = await import("@/lib/pipeline");
+      if (c === "stop") return Response.json(await pl.stopPipeline(b));
+      const step = String(body.step ?? "all");
+      if (step !== "all" && !(pl.STEPS as readonly string[]).includes(step)) return Response.json({ error: "bad step" }, { status: 400 });
+      return Response.json(await pl.runPipeline(b, step as never, (await currentUser())?.name ?? "someone", { force: body.force === true }));
+    }
     if (a === "settings") {
       const who = (await currentUser())?.id;
       return Response.json(settingsFor(await updateSettings(body, who), who));
@@ -270,7 +288,7 @@ export async function POST(req: Request, ctx: Ctx) {
         return Response.json(await coach.gateAction(b, body.action, String(body.job)));
       return Response.json({ error: "not found" }, { status: 404 });
     }
-    if (a === "files") return await filesAction(b, c, body, g.path[3]);
+    if (a === "files") return await filesAction(b, c, body, g.path[3], new URL(req.url).origin);
     if (a === "spaces" && b === "goals") return Response.json({ goals: await setGoals(body.goals) });
     if (a === "captions" && b && ID.test(b)) {
       // a post's captions fitted per target (Writing room → Captions); "" for a space goes back to the post's caption
@@ -496,7 +514,7 @@ export async function POST(req: Request, ctx: Ctx) {
 }
 
 /** The Files page's file manager: folders, moving, stars, renaming, deleting and importing a link (lib/files.ts). */
-async function filesAction(b: string | undefined, c: string | undefined, body: Record<string, unknown>, d?: string) {
+async function filesAction(b: string | undefined, c: string | undefined, body: Record<string, unknown>, d?: string, origin = "") {
   const fs = await import("@/lib/files");
   const fm = await import("@/lib/filemanager");
   const who = await currentUser();
@@ -529,8 +547,28 @@ async function filesAction(b: string | undefined, c: string | undefined, body: R
       if (!c) return Response.json(await cs.createCarousel({ id: body.id, name: body.name, items: body.items, post: body.post }, actor.name));
       if (!cs.CAROUSEL_RE.test(c) && !cs.POST_GROUP_RE.test(c)) throw new fs.FilesError("bad carousel id");
       if (d === "ungroup") return Response.json(await cs.ungroupCarousel(c));
-      if (d === "publish") return Response.json(await fm.publishCarousel(c, actor));
+      if (d === "publish") {
+        const go = ["draft", "arm", "now"].includes(String(body.go)) ? (String(body.go) as "draft" | "arm" | "now") : undefined;
+        try {
+          return Response.json(await fm.publishCarousel(c, actor, { go, again: body.again === true, at: body.at ? String(body.at) : undefined, caption: typeof body.caption === "string" ? body.caption.slice(0, 2200) : undefined }));
+        } catch (e) {
+          if (e instanceof fm.LiveAlready) return Response.json({ error: e.message, live: { url: e.url, post_id: e.post_id } }, { status: 409 });
+          throw e;
+        }
+      }
       return Response.json(await fm.changeCarousel(c, { name: body.name, items: body.items, add: body.add, remove: body.remove }, actor.name));
+    }
+    if (b === "insight") {
+      // smart search: the server looks at photos it hasn't seen (colours, look-alike hash); the browser sends its model's tags
+      const ins = await import("@/lib/insight");
+      if (c === "scan") return Response.json(await ins.scan(15_000));
+      if (c === "vision") return Response.json(await ins.saveVision(body.items));
+    }
+    if (b === "shares") {
+      // share links: make one { kind: carousel | folder, ref, days, downloads }; /<id>/revoke
+      const sh = await import("@/lib/shares");
+      if (!c) return Response.json(await sh.createShare(body, actor.name, origin));
+      if (/^[a-f0-9]{12}$/.test(c) && d === "revoke") return Response.json(await sh.revokeShare(c));
     }
     if (b === "poster") return Response.json(await fm.savePoster(keys([body.item])[0], String(body.data ?? "")));
     if (b === "import") {

@@ -14,7 +14,7 @@ export async function api<T = any>(path: string, init?: { method?: string; body?
   });
   if (r.status === 401) { (await import("./cache")).clearCache(); location.href = "/login"; throw new Error("unauthorized"); }
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { status: r.status, body: data });
   if (!init?.body && !init?.method && keepable(path)) keep(path, data);
   if ((path === "jobs" || path === "myvoices") && init?.body && data?.id) {
     // remember it so the tray and this page can follow it through a refresh (jobs.ts)

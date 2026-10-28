@@ -17,6 +17,8 @@ export type FileItem = {
   id: string; source: "upload" | "generated"; name: string; kind: "image" | "video" | "audio" | "doc" | "other"; type: string;
   mb: number | null; created: string; by: string | null; folder: string | null; folder_path: string; starred: boolean;
   trashed?: string; post_id?: string | null; url?: string | null; dashboard: string; carousel?: string;
+  /** exact size in bytes (duplicates), and what the image looks like once lib/insight.ts has seen it */
+  bytes?: number | null; tags?: string[]; colors?: string[];
 };
 
 const sumKind = (j: LibSummary) => libKind(j);
@@ -26,7 +28,7 @@ const fromMedia = (m: Media, t: FileTree): FileItem => {
   return { id: key, source: "upload", name: m.name, kind: m.kind, type: m.kind === "doc" ? "Doc" : m.kind[0].toUpperCase() + m.kind.slice(1),
     mb: m.size ? +(m.size / 1e6).toFixed(2) : null, created: m.$createdAt, by: m.uploaded_name, folder, folder_path: pathOf(t, folder) || "All files",
     starred: t.starred.includes(key), trashed: t.trash[key] ? new Date(t.trash[key].at).toISOString() : undefined, post_id: m.post_id,
-    url: m.token ? fileUrl(m) : null, dashboard: `/files?file=${encodeURIComponent(key)}` };
+    url: m.token ? fileUrl(m) : null, dashboard: `/files?file=${encodeURIComponent(key)}`, bytes: m.size ?? null };
 };
 const fromJob = (j: LibSummary, t: FileTree): FileItem => {
   const key = `g:${j.id}`;
@@ -34,7 +36,7 @@ const fromJob = (j: LibSummary, t: FileTree): FileItem => {
   return { id: key, source: "generated", name: libName({ ...j, results: [{ text: j.text }] }), kind: sumKind(j), type: libType(j),
     mb: j.video?.size ? +(j.video.size / 1e6).toFixed(2) : null, created: new Date(j.created).toISOString(), by: null, folder,
     folder_path: pathOf(t, folder) || "All files", starred: t.starred.includes(key), trashed: t.trash[key] ? new Date(t.trash[key].at).toISOString() : undefined,
-    dashboard: `/files#${j.id}` };
+    dashboard: `/files#${j.id}`, bytes: j.video?.size ?? null };
 };
 
 /** Every file with its folder and star; `trash` lists what's in the trash instead. Uploads are skipped (with a note)
@@ -56,7 +58,7 @@ export async function catalog(opts: { trash?: boolean } = {}) {
   const inGroup = new Map(groups.flatMap((g) => g.items.map((k) => [k, g.id] as const)));
   for (const i of live) { const g = inGroup.get(i.id); if (g) i.carousel = g; }
   const items = all.filter((i) => isTrashed(tree, i.id) === !!opts.trash).sort((a, b) => b.created.localeCompare(a.created));
-  return { tree, items, groups, allGroups, note: media instanceof Error ? `uploads not listed: ${media.message}` : undefined };
+  return { tree, items, groups, allGroups, posts, note: media instanceof Error ? `uploads not listed: ${media.message}` : undefined };
 }
 
 // ── carousels: a post's photos and clips as one stack (rules in lib/carouselrules.ts, storage in lib/carousels.ts)
@@ -214,46 +216,89 @@ export async function favourites() {
   return out.filter(Boolean);
 }
 
-// ── a carousel to Instagram: one post (made if it has none) with its photos attached, an Instagram Post target and a
-// publish plan holding the slides in order and a caption fitted to Instagram; the composer opens on it to check and send
+// ── a carousel to Instagram: one post with its photos attached, an Instagram Post target and a publish plan holding
+// the slides in order and a caption fitted to Instagram; the composer opens on it to check and send. It never makes a
+// second post for the same photos: it reuses the carousel's post, else the post whose plan or files already hold them,
+// else a post with the same title, and only then makes one (with an id taken from the carousel, so two clicks at once
+// still make one). Photos already live on Instagram aren't set up again.
 
-export async function publishCarousel(id: string, actor: Actor) {
-  const { createPost, getPost, setMediaPost } = await import("./appwrite");
-  const { getPlan, putPlan, editPlan, getRules } = await import("./publish/plans");
-  const { BUSY, LIMITS } = await import("./publish/shared");
-  const { getTargets, setTargets } = await import("./spacestore");
-  const { captionFor } = await import("./captions");
-  const { adaptCaption } = await import("./writing");
-  const { listAccounts } = await import("./publish/accounts");
+const norm = (t: string) => t.toLowerCase().replace(/\((carousel|post|ig|instagram)\)/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+export class LiveAlready extends FilesError {
+  constructor(public url: string, public post_id: string) { super(`This carousel is already live on Instagram: ${url}`, 409); }
+}
+
+export async function publishCarousel(id: string, actor: Actor, opts: { caption?: string; account?: string; go?: "draft" | "arm" | "now"; at?: string; again?: boolean } = {}) {
   if (!hasKey()) throw new FilesError("the shared workspace isn't connected (APPWRITE_API_KEY)");
-  let g = (await catalog()).allGroups.find((x) => x.id === id);
+  const [{ createPost, getPost, setMediaPost }, { targetsOf }, plansMod, { BUSY, LIMITS }, { getTargets, setTargets }, { captionFor }, { adaptCaption }, { listAccounts }, cat] = await Promise.all([
+    import("./appwrite"), import("./spaces"), import("./publish/plans"), import("./publish/shared"), import("./spacestore"), import("./captions"), import("./writing"), import("./publish/accounts"), catalog(),
+  ]);
+  const { getPlan, putPlan, editPlan, getRules, listPlans } = plansMod;
+  let g = cat.allGroups.find((x) => x.id === id) ?? cat.allGroups.find((x) => x.name.toLowerCase() === id.trim().toLowerCase());
   if (!g) throw new FilesError(`no carousel ${id}`, 404);
-  const { items } = await catalog();
-  const kind = new Map(items.map((i) => [i.id, i.kind]));
-  const send = g.items.filter((k) => k.startsWith("m:") && (kind.get(k) === "image" || kind.get(k) === "video"));
+  const byKey = new Map(cat.items.map((i) => [i.id, i]));
+  const send = g.items.filter((k) => k.startsWith("m:") && (byKey.get(k)?.kind === "image" || byKey.get(k)?.kind === "video"));
   const skipped = g.items.filter((k) => !send.includes(k));
   if (!send.length) throw new FilesError("nothing in this carousel can go to Instagram: it needs uploaded photos or videos");
-  // the post: the carousel's own, else a new one named after it
-  let post = g.post ? await getPost(g.post).catch(() => null) : null;
-  if (!post) {
-    post = await createPost({ title: g.name, status: "draft", platforms: ["instagram"] }, actor);
-    if (g.made) await updateCarousel(g.id, { post: post.$id });
-    else { const c = await createCarousel({ name: g.name, items: g.items, post: post.$id }, actor.name); g = { ...g, id: c.id }; }
+  const slides = send.slice(0, LIMITS.ig_carousel);
+  const [plans, accounts, rules, targetMap] = await Promise.all([listPlans(), listAccounts(), getRules(), getTargets()]);
+  const ig = accounts.filter((a) => a.network === "instagram");
+  const set = new Set(slides);
+  const overlap = (m: string[]) => m.filter((k) => set.has(k)).length;
+  // already out? (the same photos on any Instagram plan that went live)
+  const live = plans.find((p) => p.network === "instagram" && p.state === "published" && p.result && overlap(p.media) >= Math.max(1, Math.ceil(slides.length * 0.6)));
+  if (live && !opts.again) {
+    if (g.made && g.post !== live.post) await updateCarousel(g.id, { post: live.post }).catch(() => null);
+    throw new LiveAlready(live.result!.url, live.post);
   }
-  await Promise.all(send.map((k) => setMediaPost(k.slice(2), post!.$id)));
-  const targets = (await getTargets())[post.$id] ?? [];
-  if (!targets.some((t) => t.space === "ig_post")) await setTargets(post.$id, [...targets, { space: "ig_post", status: "draft" }], actor);
-  const cur = await getPlan(post.$id, "ig_post");
+  // which post: the carousel's, one whose plan holds these photos, the one most of its files are on, one with its title
+  const posts = cat.posts;
+  const exists = (pid: string | null | undefined) => (pid ? posts.find((p) => p.$id === pid) ?? null : null);
+  const fromPlan = plans.filter((p) => p.network === "instagram" && p.state !== "published" && overlap(p.media) > 0).sort((a, b) => overlap(b.media) - overlap(a.media) || b.updated - a.updated)[0];
+  const onFiles = (() => { const n = new Map<string, number>(); for (const k of send) { const pid = byKey.get(k)?.post_id; if (pid) n.set(pid, (n.get(pid) ?? 0) + 1); } return [...n].sort((a, b) => b[1] - a[1])[0]?.[0]; })();
+  const titled = posts.find((p) => norm(p.title) === norm(g!.name));
+  let post = exists(g.post) ?? (g.post ? await getPost(g.post).catch(() => null) : null) ?? exists(fromPlan?.post) ?? exists(onFiles) ?? titled ?? null;
+  const made = !post;
+  if (!post) {
+    const rowId = `cr-${g.made ? g.id : g.id.replace(/^post-/, "").slice(0, 30)}`;
+    post = await createPost({ title: g.name, status: "draft", platforms: ["instagram"] }, actor, rowId)
+      .catch(async (e: { status?: number }) => { if (e.status === 409) return getPost(rowId); throw e; });
+  }
+  const pid = post.$id;
+  if (g.made) { if (g.post !== pid) await updateCarousel(g.id, { post: pid }); }
+  else if (g.post !== pid) { const c = await createCarousel({ name: g.name, items: g.items, post: pid }, actor.name); g = { ...g, id: c.id }; }
+  const cur = await getPlan(pid, "ig_post");
   if (cur && BUSY.includes(cur.state)) throw new FilesError("it's going out to Instagram right now", 409);
-  const rules = await getRules();
-  const base = (await captionFor(post.$id, "ig_post")) ?? post.caption ?? "";
-  const ig = (await listAccounts()).filter((a) => a.network === "instagram");
-  const patch: Record<string, unknown> = { media: send.slice(0, LIMITS.ig_carousel), cover: null };
-  if (!cur?.account && ig.length === 1) patch.account = ig[0].id;
-  let plan = editPlan(cur, post.$id, "ig_post", patch, actor.name, rules, { title: post.title, caption: adaptCaption(base, "ig_post", { title: post.title }) });
-  if (cur && !cur.ig?.caption?.trim()) plan = editPlan(plan, post.$id, "ig_post", { ig: { caption: adaptCaption(base, "ig_post", { title: post.title }) } }, actor.name, rules, { title: post.title, caption: base });
+  const targets = targetsOf(post, targetMap);
+  const at = opts.at ? new Date(opts.at) : null;
+  if (at && (isNaN(+at) || +at < Date.now() - 60_000)) throw new FilesError("at: a time in the future (ISO 8601)");
+  const have = targets.find((t) => t.space === "ig_post");
+  const nextT = have ? targets.map((t) => (t.space === "ig_post" && at ? { ...t, status: "scheduled" as const, due_at: at.toISOString() } : t))
+    : [...targets, { space: "ig_post" as const, status: at ? ("scheduled" as const) : ("draft" as const), ...(at ? { due_at: at.toISOString() } : {}) }];
+  await Promise.all([
+    ...send.filter((k) => byKey.get(k)?.post_id !== pid).map((k) => setMediaPost(k.slice(2), pid)),
+    !have || at ? setTargets(pid, nextT, actor) : null,
+  ]);
+  const base = opts.caption ?? (await captionFor(pid, "ig_post")) ?? post.caption ?? "";
+  const caption = opts.caption ?? adaptCaption(base, "ig_post", { title: post.title });
+  const account = opts.account ? ig.find((a) => a.id === opts.account || a.handle === opts.account!.replace(/^@/, "")) : null;
+  if (opts.account && !account) throw new FilesError(`no Instagram account ${opts.account} (publish_accounts lists them)`);
+  const patch: Record<string, unknown> = { media: slides, cover: null };
+  if (account) patch.account = account.id;
+  else if (!cur?.account && ig.length === 1) patch.account = ig[0].id;
+  if (opts.caption != null || !cur?.ig?.caption?.trim()) patch.ig = { ...(cur?.ig ?? {}), caption };
+  if (cur?.state === "published" || cur?.state === "canceled" || cur?.state === "failed") Object.assign(cur, { state: "draft", run: null, result: null, attempts: 0, error: null, progress: 0, step: null });
+  const plan = editPlan(cur, pid, "ig_post", patch, actor.name, rules, { title: post.title, caption });
   await putPlan(plan);
-  return { post_id: post.$id, space: "ig_post", carousel: g.id, slides: plan.media.length, skipped, over: Math.max(0, send.length - LIMITS.ig_carousel) };
+  let sent: unknown = null;
+  if (opts.go && opts.go !== "draft") {
+    const { publishPost } = await import("./publish/api");
+    const r = await publishPost([pid, "ig_post", "go"], { mode: opts.go, again: !!opts.again });
+    sent = await r.json();
+    if (!r.ok) throw new FilesError((sent as { error?: string }).error ?? "couldn't send it", r.status);
+  }
+  return { post_id: pid, post, made_post: made, space: "ig_post", carousel: g.id, slides: plan.media.length, skipped, over: Math.max(0, send.length - LIMITS.ig_carousel),
+    account: plan.account, caption: plan.ig?.caption ?? "", state: (sent as { plan?: { state: string } } | null)?.plan?.state ?? plan.state,
+    next: opts.go === "now" ? "going out now: publish_status follows it" : opts.go === "arm" ? `goes out by itself at ${nextT.find((t) => t.space === "ig_post")?.due_at ?? "the post's publish time"}` : "ready to check and send (composer, or publish_post go)" };
 }
 
 /** Each slide's size, shape and look-alikes, before it goes to Instagram (lib/carouselcheck.ts). */
@@ -266,16 +311,21 @@ export async function carouselChecks(id: string) {
 /** How the carousel did once it's out: its Instagram post's numbers (Instagram doesn't say which slide people stop on). */
 export async function carouselStats(id: string) {
   const g = await carouselDetail(id);
-  if (!g.post_id) return { id: g.id, live: false as const };
-  const { getPlan } = await import("./publish/plans");
-  const plan = await getPlan(g.post_id, "ig_post");
+  const { getPlan, listPlans } = await import("./publish/plans");
+  // its post's plan, else whichever Instagram plan put the same photos live (then the carousel learns its post)
+  let plan = g.post_id ? await getPlan(g.post_id, "ig_post") : null;
+  if (!plan?.result?.id) {
+    const mine = new Set(g.items.map((i) => i.id));
+    const twin = (await listPlans()).find((p) => p.network === "instagram" && p.state === "published" && p.result?.id && p.media.filter((k) => mine.has(k)).length >= Math.max(1, Math.ceil(Math.min(20, mine.size) * 0.6)));
+    if (twin) { plan = twin; if (g.made && g.post_id !== twin.post) await updateCarousel(g.id, { post: twin.post }).catch(() => null); }
+  }
   if (!plan?.result?.id) return { id: g.id, live: false as const, state: plan?.state ?? null };
   const { getPostDetail } = await import("./analytics");
   const d = await getPostDetail("instagram", plan.result.id).catch((e: Error) => ({ error: e.message }));
-  if ("error" in d) return { id: g.id, live: true as const, url: plan.result.url, at: plan.result.at, error: d.error };
+  if ("error" in d) return { id: g.id, live: true as const, post_id: plan.post, url: plan.result.url, at: plan.result.at, error: d.error };
   const pick = (k: string) => d.kpis.find((x) => x.key === k)?.value ?? null;
   return {
-    id: g.id, live: true as const, url: d.url || plan.result.url, at: d.at ?? plan.result.at, kind: d.kind,
+    id: g.id, live: true as const, post_id: plan.post, url: d.url || plan.result.url, at: d.at ?? plan.result.at, kind: d.kind,
     views: pick("views"), reach: pick("reach"), likes: pick("likes"), comments: pick("comments"), shares: pick("shares"), saves: pick("saves"), er: pick("er"),
     notes: [...d.notes, "Instagram's API doesn't say which slide people stop on in a carousel, so per-slide drop-off isn't available."],
   };

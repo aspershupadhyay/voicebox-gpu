@@ -69,10 +69,16 @@ status and history under it, and the actions in a footer. It saves as you type.
   category folders come first and file things by kind on their own; deleting goes to the trash with an Undo snackbar;
   uploads show as cards at once (with a progress ring) and in a panel bottom right. Every change shows at once and is
   saved behind it. The sidebar lists starred things under Favourites.
+- Search on Files also understands photos: "red bottle" finds one nobody named (`components/smartsearch.ts`, a small
+  image model in the browser; colours from the server), and a Colour filter pill groups photos by colour. A carousel or
+  folder can be shared with a private, expiring link (Share link… in its menu, the share icon on the stage); the page
+  behind it (`/s/<token>`) is the studio's black, read-only.
+- A post's drawer opens with its **Pipeline**: six steps on a rail (Script, Hook score, Voice it, Subtitles,
+  Thumbnail, Schedule), each a dot that turns green when the post has it, with "Do it" per step and Run all.
 - A post's photos never scatter: two or more photos or clips on one post (or files grouped by hand, ⌘G) are one
   **carousel** card, its first photos fanned like a hand of cards that spread on hover (`components/Carousel.tsx`).
   Opening it stands each photo up from below the screen in turn onto a concave curved row on black (the owner's
-  reference), each with `#01` in ginger mono and its name under it. A click opens that photo in the file viewer with
+  reference), starting on the first photo, the one in focus ~40% bigger than the rest, each with `#01` in ginger mono and its name under it. A click opens that photo in the file viewer with
   the carousel as a strip along the bottom. Keys: ← → browse, Enter open, 1–9, Alt+← → reorder, `[` `]` (or Shift+← →)
   the previous or next post's carousel, Esc back. Drag a card up (or hold it) and drop it to reorder. The top bar
   switches Curve / Phone (the feed on a phone, swipeable, cropped to the first slide's shape), shows the slide checks
