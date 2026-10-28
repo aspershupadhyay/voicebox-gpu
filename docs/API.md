@@ -44,7 +44,7 @@ dashboards and are signed "Claude (MCP)" in the activity feed.
 | `delete_post` | Only when asked. |
 | `comment_on_post` | `{post_id, text}` → a note in the post's discussion. |
 | `content_calendar` | `{from?, to?}` → scheduled posts in order (default: the next 14 days) plus unscheduled work in progress. |
-| `workspace_media` / `add_media` / `upload_media` | List uploads (optionally one post's); copy a file from a URL (≤150 MB) or upload bytes (≤3 MB) into the shared uploads, attached to a post and/or filed in a `folder`. |
+| `workspace_media` / `add_media` / `upload_media` | List uploads (optionally one post's); copy a file from a URL (≤150 MB) or upload bytes (≤3 MB) into the shared uploads, attached to a post and/or filed in a `folder`, optionally into a `carousel` at a `position`. |
 | `attach_voiceover` | `{post_id, job_id}` → link a library voiceover to a post. |
 | `workspace_activity` / `workspace_members` | Who did what, newest first; who is on the team. |
 
@@ -62,12 +62,32 @@ scripts `sysdocs` and Other `sysother`, file everything by kind unless you move 
 | `rename_file` / `star_files` | Rename an upload or a generated item; star or unstar files and folders. |
 | `delete_files` / `delete_folder` | Only when asked. To the trash for 30 days (a folder with everything in it); `delete_files` with `forever: true` deletes for good (an upload's R2 backup stays). |
 | `restore_files` / `empty_trash` | Bring things back from the trash; empty it (only when asked). |
+| `carousels` | `{action: list\|get\|create\|update\|ungroup, carousel?, post_id?, name?, items?, add?, remove?}` → a post's photos and clips as one stack on the Files page. Two or more on the same post group themselves (id `post-<post id>`, named after the post); `create` groups any files. Each carousel lists its files in order with view links. |
+
+**Carousels.** On the Files page a carousel shows as one card instead of loose files; opening it stands the photos up
+on a curved row, and each opens full size with the carousel along the bottom (`[` `]` jump between posts). Made ones
+live in R2 at `workspace/carousels.json` (written conditionally, so ten uploads finishing at once all land); rules in
+`mcp/lib/carouselrules.ts`. To upload straight into one, give `save_file`, `upload_media` or `add_media` (or
+`POST /api/files/upload`) a `carousel` (an id, or a name: a new name makes one) and a `position` (1 = first): the files
+keep that order whatever order their uploads finish in. Example, three photos for one post:
+
+```bash
+for i in 1 2 3; do
+  r=$(curl -sS -X POST "$APP/api/files/upload" -H "Authorization: Bearer $UPLOAD_KEY" -H "Content-Type: application/json" \
+    -d "{\"name\":\"slide-$i.jpg\",\"post_id\":\"$POST\",\"carousel\":\"Strawberry drop\",\"position\":$i}")
+  curl -sS -T "slide-$i.jpg" "$(echo "$r" | jq -r .upload_url)"
+  curl -sS -X POST "$APP/api/files/complete" -H "Authorization: Bearer $UPLOAD_KEY" -H "Content-Type: application/json" \
+    -d "{\"ticket\":\"$(echo "$r" | jq -r .ticket)\"}"
+done
+```
 
 The dashboard uses the same operations under `/api/dash/files`: `GET` (the tree, with video poster links), `GET items`
 (generated items as file summaries from `library/index.json`), `GET favourites`, `POST folders {id?, name, parent?}`,
 `POST folders/<id>`, `POST move {items, folder}`, `POST auto {items}` (back to its category), `POST star {items, on}`,
 `POST rename {item, name}`, `POST delete {items, forever?}`, `POST restore {items}`, `POST empty-trash`,
-`POST poster {item, data}`, `POST import {url, folder?}`.
+`POST poster {item, data}`, `POST import {url, folder?}`, and carousels: `GET carousels` (`?post=<id>` for one post's),
+`GET carousels/<id>`, `POST carousels {id?, name, items, post?}`, `POST carousels/<id> {name?, items?, add?, remove?}`
+(a post's own `post-<id>` becomes a made one first), `POST carousels/<id>/ungroup` (or `DELETE carousels/<id>`).
 
 `voice` resolves as: `female` / `male` preset → engine voice name (`tara`, `af_heart`, …) → a recorded voice (`my_voices`).
 Recorded voices live in R2 (`voices/<name>/reference.wav` + transcript); the dashboard passes the worker a signed link

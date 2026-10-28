@@ -2,7 +2,9 @@
 // catalog of uploads (Appwrite) and generated items (R2 library) with their folders, stars and the trash; rename,
 // trash / restore / delete for good, import from a link, poster frames for uploaded videos and the sidebar's
 // favourites. The folder tree itself is lib/files.ts (rules in lib/filetree.ts).
-import { addMediaFromUrl, deleteMediaRow, getMedia, hasKey, listMedia, renameMedia } from "./appwrite";
+import { addMediaFromUrl, deleteMediaRow, getMedia, hasKey, listMedia, listPosts, renameMedia } from "./appwrite";
+import { groupsOf, POST_GROUP_RE, type Group } from "./carouselrules";
+import { createCarousel, forgetInCarousels, getCarousels, updateCarousel } from "./carousels";
 import { expired, FilesError, findFolder, forget, forgetPlan, getTree, markPoster, moveItems, pathOf, restoreItems, trashItems, type FileTree } from "./files";
 import { folderFor, isTrashed } from "./filetree";
 import { deleteLibJob, getLibJob, listSummaries, renameLibJob, signer, withUrls, type LibSummary } from "./library";
@@ -14,7 +16,7 @@ type Actor = { id?: string; name: string };
 export type FileItem = {
   id: string; source: "upload" | "generated"; name: string; kind: "image" | "video" | "audio" | "doc" | "other"; type: string;
   mb: number | null; created: string; by: string | null; folder: string | null; folder_path: string; starred: boolean;
-  trashed?: string; post_id?: string | null; url?: string | null; dashboard: string;
+  trashed?: string; post_id?: string | null; url?: string | null; dashboard: string; carousel?: string;
 };
 
 const sumKind = (j: LibSummary) => libKind(j);
@@ -38,14 +40,53 @@ const fromJob = (j: LibSummary, t: FileTree): FileItem => {
 /** Every file with its folder and star; `trash` lists what's in the trash instead. Uploads are skipped (with a note)
  *  when the workspace isn't connected. */
 export async function catalog(opts: { trash?: boolean } = {}) {
-  const [tree, media, jobs] = await Promise.all([
+  const [tree, media, jobs, made, posts] = await Promise.all([
     getTree(),
     hasKey() ? listMedia(undefined, 1000).catch((e: Error) => e) : Promise.resolve(new Error("the shared workspace isn't connected (APPWRITE_API_KEY)")),
     listSummaries(),
+    getCarousels().catch(() => []),
+    hasKey() ? listPosts({ limit: 200 }).catch(() => []) : Promise.resolve([]),
   ]);
   const all = [...(media instanceof Error ? [] : media.map((m) => fromMedia(m, tree))), ...jobs.map((j) => fromJob(j, tree))];
+  const live = all.filter((i) => !isTrashed(tree, i.id));
+  const titles = new Map(posts.map((p) => [p.$id, p.title]));
+  const groups = groupsOf(made, live.map((i) => ({ key: i.id, kind: i.kind, post: i.post_id ?? null, at: Date.parse(i.created) })), (id) => titles.get(id));
+  const inGroup = new Map(groups.flatMap((g) => g.items.map((k) => [k, g.id] as const)));
+  for (const i of live) { const g = inGroup.get(i.id); if (g) i.carousel = g; }
   const items = all.filter((i) => isTrashed(tree, i.id) === !!opts.trash).sort((a, b) => b.created.localeCompare(a.created));
-  return { tree, items, note: media instanceof Error ? `uploads not listed: ${media.message}` : undefined };
+  return { tree, items, groups, note: media instanceof Error ? `uploads not listed: ${media.message}` : undefined };
+}
+
+// ── carousels: a post's photos and clips as one stack (rules in lib/carouselrules.ts, storage in lib/carousels.ts)
+
+const groupOut = (g: Group, items: FileItem[]) => {
+  const by = new Map(items.map((i) => [i.id, i]));
+  return { id: g.id, name: g.name, made: g.made, post_id: g.post, files: g.items.length, created: new Date(g.created).toISOString(),
+    dashboard: `/files?carousel=${encodeURIComponent(g.id)}`,
+    items: g.items.map((k, n) => { const i = by.get(k); return { position: n + 1, id: k, name: i?.name, kind: i?.kind, url: i?.url ?? null }; }) };
+};
+
+/** Every carousel (or one post's), each with its files in order. */
+export async function carouselList(opts: { post_id?: string } = {}) {
+  const { items, groups } = await catalog();
+  return groups.filter((g) => !opts.post_id || g.post === opts.post_id).map((g) => groupOut(g, items));
+}
+
+export async function carouselDetail(id: string) {
+  const { items, groups } = await catalog();
+  const g = groups.find((x) => x.id === id) ?? groups.find((x) => x.name.toLowerCase() === id.trim().toLowerCase());
+  if (!g) throw new FilesError(`no carousel ${id} (the carousels tool lists them)`, 404);
+  return groupOut(g, items);
+}
+
+/** Change a carousel. A post's own one (post-<id>) becomes a made one first, keeping its files, order and name. */
+export async function changeCarousel(id: string, patch: { name?: unknown; items?: unknown; add?: unknown; remove?: unknown }, by: string | null) {
+  if (!POST_GROUP_RE.test(id)) return updateCarousel(id, patch);
+  const { groups } = await catalog();
+  const g = groups.find((x) => x.id === id);
+  if (!g) throw new FilesError(`no carousel ${id}`, 404);
+  const c = await createCarousel({ name: g.name, items: g.items, post: g.post }, by);
+  return updateCarousel(c.id, patch);
 }
 
 /** One file with links that work for the next 6 hours (a generated item's every file; an upload's view/download link). */
@@ -94,6 +135,7 @@ export async function deleteForever(keys: string[], actor: Actor) {
   const failed = files.flatMap((k, i) => (out[i].status === "rejected" ? [{ id: k, error: ((out[i] as PromiseRejectedResult).reason as Error).message }] : []));
   const folders = failed.length ? [] : [...plan.folders]; // folders only go once everything in them did (they stay in the trash)
   await forget(deleted, folders);
+  if (deleted.length) await forgetInCarousels(deleted).catch(() => null);
   return { trashed: 0, deleted, folders: folders.length, failed };
 }
 
@@ -137,11 +179,11 @@ export async function savePoster(key: string, jpegBase64: string) {
   return { poster: await posterUrl(key) };
 }
 
-/** The tree for the browser, with a link to each video poster. */
+/** The tree for the browser, with a link to each video poster and the made carousels. */
 export async function treeForBrowser() {
-  const t = await getTree();
+  const [t, carousels] = await Promise.all([getTree(), getCarousels().catch(() => [])]);
   const posters = Object.fromEntries(await Promise.all(Object.keys(t.posters).map(async (k) => [k, await posterUrl(k)] as const)));
-  return { ...t, poster_urls: posters };
+  return { ...t, poster_urls: posters, carousels };
 }
 
 /** The sidebar's Favourites: starred things with a name, a thumbnail and a link. */

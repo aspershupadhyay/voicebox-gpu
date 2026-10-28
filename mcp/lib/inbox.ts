@@ -3,8 +3,11 @@
 // both: step 1 hands out a presigned R2 address (one hour) and a signed ticket; step 2 is one `curl -T file <address>`
 // (up to 2 GB); step 3 turns the ticket in, and the file is copied into the workspace 5 MB at a time, filed in its
 // folder and attached to its post. The R2 copy stays as its backup. A ticket works once and only for its own file.
+// With `carousel` (a carousel's id or a name; a new name makes one) and `position` (1 = first), a post's ten photos
+// land as one stack on the Files page, in that order whatever order the uploads finish in (lib/carousels.ts).
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { addMediaFromR2, mimeFor } from "./appwrite";
+import { joinCarousel } from "./carousels";
 import { findFolder, getTree, moveItems } from "./files";
 import { getJson, headObj, presign, putJson } from "./store";
 import { safeEqual } from "./worker";
@@ -18,9 +21,9 @@ const secret = () => {
 };
 const sign = (body: string) => createHmac("sha256", secret()).update(`voicebox-inbox-v1:${body}`).digest("base64url");
 
-type Ticket = { f: string; k: string; n: string; m: string; p: string | null; d: string | null; e: number };
+type Ticket = { f: string; k: string; n: string; m: string; p: string | null; d: string | null; e: number; c?: string; o?: number };
 
-export async function startUpload(input: { name?: unknown; type?: unknown; size?: unknown; folder?: unknown; post_id?: unknown }) {
+export async function startUpload(input: { name?: unknown; type?: unknown; size?: unknown; folder?: unknown; post_id?: unknown; carousel?: unknown; position?: unknown }) {
   const name = String(input.name ?? "").trim().replace(/[\\/\0]/g, "_").slice(-200);
   if (!name || !/\.[A-Za-z0-9]{1,8}$/.test(name)) throw new Error("name needs a file extension, e.g. clip.mp4");
   const size = input.size == null ? null : Number(input.size);
@@ -32,12 +35,17 @@ export async function startUpload(input: { name?: unknown; type?: unknown; size?
     if (!f) throw new Error(`no folder "${input.folder}"`);
     folder = f.system ? null : f.id;
   }
+  const carousel = input.carousel == null || input.carousel === "" ? undefined : String(input.carousel).replace(/[\u0000-\u001f]+/g, " ").trim().slice(0, 120);
+  const position = input.position == null || input.position === "" ? undefined : Number(input.position);
+  if (position != null && (!Number.isInteger(position) || position < 1 || position > 100)) throw new Error("position: 1 to 100 (1 = first in the carousel)");
+  if (position != null && !carousel) throw new Error("position needs a carousel");
   const fileId = randomBytes(10).toString("hex");
   const key = `workspace/media/${fileId}/${name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120)}`;
-  const t: Ticket = { f: fileId, k: key, n: name, m: mime, p: input.post_id ? String(input.post_id).slice(0, 64) : null, d: folder, e: Date.now() + TTL };
+  const t: Ticket = { f: fileId, k: key, n: name, m: mime, p: input.post_id ? String(input.post_id).slice(0, 64) : null, d: folder, e: Date.now() + TTL,
+    ...(carousel ? { c: carousel } : {}), ...(position ? { o: position } : {}) };
   const body = Buffer.from(JSON.stringify(t)).toString("base64url");
   const upload_url = await presign(key, "PUT", TTL / 1000);
-  return { upload_url, ticket: `${body}.${sign(body)}`, expires_at: new Date(t.e).toISOString(), max_bytes: MAX_BYTES, content_type: mime };
+  return { upload_url, ticket: `${body}.${sign(body)}`, expires_at: new Date(t.e).toISOString(), max_bytes: MAX_BYTES, content_type: mime, carousel: carousel ?? null, position: position ?? null };
 }
 
 function readTicket(ticket: string): Ticket {
@@ -52,15 +60,17 @@ const DONE = (f: string) => `workspace/inbox/${f}.json`;
 
 export async function completeUpload(ticket: string, actor: { id?: string; name: string }) {
   const t = readTicket(ticket);
-  const done = await getJson<{ media: string; name: string }>(DONE(t.f)).catch(() => null);
+  const done = await getJson<{ media: string; name: string; carousel?: unknown }>(DONE(t.f)).catch(() => null);
   if (done) return { ...done, file_id: `m:${done.media}`, already: true };
   const head = await headObj(t.k);
   if (!head) throw new Error("nothing was uploaded yet: PUT the file to upload_url first (curl -T <file> '<upload_url>')");
   if (head.size > MAX_BYTES) throw new Error("files go up to 2 GB");
   const { media } = await addMediaFromR2(t.k, head.size, t.m, t.n, t.f, { postId: t.p }, actor);
   if (t.d) await moveItems([`m:${media.$id}`], t.d);
-  await putJson(DONE(t.f), { media: media.$id, name: media.name });
-  return { media: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: Math.round(head.size / 1e5) / 10, folder: t.d, post_id: t.p, already: false };
+  // the file is saved either way; a carousel that can't take it says so in the answer
+  const carousel = t.c ? await joinCarousel(t.c, `m:${media.$id}`, { position: t.o, post: t.p, by: actor.name }).catch((e: Error) => ({ error: e.message })) : null;
+  await putJson(DONE(t.f), { media: media.$id, name: media.name, carousel });
+  return { media: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: Math.round(head.size / 1e5) / 10, folder: t.d, post_id: t.p, carousel, already: false };
 }
 
 // ── upload keys: a key that can only save files (for an AI or a script), revocable in Settings

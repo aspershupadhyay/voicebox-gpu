@@ -1,5 +1,6 @@
 // Save a file into Files from anywhere (an AI, a script), step 1 of 3 (lib/inbox.ts): POST {name, size?, type?,
-// folder?, post_id?} → {upload_url, ticket}. Then `curl -T <file> "<upload_url>"`, then POST the ticket to
+// folder?, post_id?, carousel?, position?} → {upload_url, ticket}. `carousel` (an id, or a name: a new name makes one)
+// with `position` (1 = first) stacks a post's photos as one carousel on the Files page. Then `curl -T <file> "<upload_url>"`, then POST the ticket to
 // /api/files/complete. Signed in, Bearer MCP_TOKEN, or Bearer an upload key (Settings → Upload keys), which can do
 // nothing but this.
 import { startUpload, uploadKeyOk } from "@/lib/inbox";

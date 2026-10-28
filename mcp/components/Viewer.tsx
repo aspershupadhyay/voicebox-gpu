@@ -62,8 +62,10 @@ function Stage({ f }: { f: ViewFile }) {
   );
 }
 
-export function FileViewer({ file, onClose, onPrev, onNext, onDelete, index, total, extra }: {
+export function FileViewer({ file, onClose, onPrev, onNext, onDelete, index, total, extra, strip }: {
   file: ViewFile; onClose: () => void; onPrev?: () => void; onNext?: () => void; onDelete?: () => void; index?: number; total?: number; extra?: React.ReactNode;
+  /** along the bottom, e.g. the carousel this photo is in (components/Carousel.tsx) */
+  strip?: React.ReactNode;
 }) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -77,7 +79,7 @@ export function FileViewer({ file, onClose, onPrev, onNext, onDelete, index, tot
     const k = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !document.querySelector(".modal, .vp-menu")) { if (document.fullscreenElement) return; e.preventDefault(); onClose(); return; }
       const t = e.target as HTMLElement;
-      if (["INPUT", "TEXTAREA"].includes(t.tagName)) return;
+      if (["INPUT", "TEXTAREA"].includes(t.tagName) || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return; // Shift+← → jump carousels
       // the players take ← → for seeking; PageUp/PageDown always step
       const media = file.kind === "video" || file.kind === "audio";
       if ((e.key === "ArrowLeft" && !media) || e.key === "PageUp") { if (onPrev) { e.preventDefault(); onPrev(); } }
@@ -106,6 +108,7 @@ export function FileViewer({ file, onClose, onPrev, onNext, onDelete, index, tot
       <div className={`fv-stage k-${file.kind}`} key={file.key}><Stage f={file} /></div>
       {onPrev && <button className="fv-nav l" onClick={onPrev} aria-label="Previous file"><CaretLeft size={22} weight="bold" /></button>}
       {onNext && <button className="fv-nav r" onClick={onNext} aria-label="Next file"><CaretRight size={22} weight="bold" /></button>}
+      {strip}
     </div>
   );
 }

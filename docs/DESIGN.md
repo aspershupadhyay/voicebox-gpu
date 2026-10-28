@@ -34,7 +34,7 @@ page only when a capability has its own object and its own primary action; other
 existing page.
 
 **The file viewer** (`Viewer.tsx`) is full screen on near-black: name and actions on top, the file in the middle, ← →
-between files. Video and audio use `players.tsx` (own controls that fade while playing, buffered ranges, speed,
+between files (a carousel's photo also gets its carousel as a strip along the bottom). Video and audio use `players.tsx` (own controls that fade while playing, buffered ranges, speed,
 picture-in-picture, fullscreen, double-tap to skip, resume); documents use `docview.tsx`. Keep it the only way a file
 opens full size.
 
@@ -69,6 +69,12 @@ status and history under it, and the actions in a footer. It saves as you type.
   category folders come first and file things by kind on their own; deleting goes to the trash with an Undo snackbar;
   uploads show as cards at once (with a progress ring) and in a panel bottom right. Every change shows at once and is
   saved behind it. The sidebar lists starred things under Favourites.
+- A post's photos never scatter: two or more photos or clips on one post (or files grouped by hand, ⌘G) are one
+  **carousel** card, its first photos fanned like a hand of cards that spread on hover (`components/Carousel.tsx`).
+  Opening it stands each photo up from below the screen in turn onto a concave curved row on black (the owner's
+  reference), each with `#01` in ginger mono and its name under it. A click opens that photo in the file viewer with
+  the carousel as a strip along the bottom. Keys: ← → browse, Enter open, 1–9, Alt+← → reorder, `[` `]` (or Shift+← →)
+  the previous or next post's carousel, Esc back. The motion is transforms only and stops for reduced motion.
 - Grow's Overview follows the Flux layout (`components/Flux.tsx`): title and chips on one row (range, compare to,
   platform, live, a white Export, refresh), a strip of five numbers each with a hatched bar (this period's share of the
   last two, or progress to the posting goal), follower growth as a step chart per platform, likes / comments / shares

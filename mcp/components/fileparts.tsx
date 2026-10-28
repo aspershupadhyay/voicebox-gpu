@@ -39,7 +39,7 @@ export function fmtAgo(ms: number) {
 }
 
 /** "2 days ago", or what's happening to it: uploading, failed, deleted. */
-const when = (it: Item) => it.error ? "Upload failed" : it.progress != null ? (it.progress >= 1 ? "Finishing…" : `Uploading ${Math.round(it.progress * 100)}%`)
+export const when = (it: Item) => it.error ? "Upload failed" : it.progress != null ? (it.progress >= 1 ? "Finishing…" : `Uploading ${Math.round(it.progress * 100)}%`)
   : it.trashedAt ? `Deleted ${fmtAgo(it.trashedAt).toLowerCase()}` : fmtAgo(it.at);
 
 const hash = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; };
@@ -115,16 +115,16 @@ function Badges({ it }: { it: Item }) {
 }
 
 /** The card's own control: a button the size of the card, under its checkbox and ⋮ (so nothing interactive nests). */
-const Hit = ({ label }: { label: string }) => <button type="button" className="fm-hit" aria-label={label} />;
+export const Hit = ({ label }: { label: string }) => <button type="button" className="fm-hit" aria-label={label} />;
 
-type CardEvents = {
+export type CardEvents = {
   selected: boolean; selecting: boolean; renaming: boolean; dim?: boolean;
   onOpen: (e: React.MouseEvent) => void; onToggle: (shift: boolean) => void; onMenu: (at: Anchor) => void;
   onRename: (name: string | null) => void; onDragStart: (e: React.DragEvent) => void; onDragEnd: () => void;
 };
 
 /** The name in place, or an input while renaming (Enter saves, Escape cancels, leaving the field saves). */
-function Name({ value, renaming, onRename, className }: { value: string; renaming: boolean; onRename: (v: string | null) => void; className: string }) {
+export function Name({ value, renaming, onRename, className }: { value: string; renaming: boolean; onRename: (v: string | null) => void; className: string }) {
   const ref = useRef<HTMLInputElement>(null);
   const done = useRef(false);
   useEffect(() => {
@@ -147,7 +147,7 @@ function Name({ value, renaming, onRename, className }: { value: string; renamin
   );
 }
 
-const anchorOf = (el: HTMLElement): Anchor => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, align: "end" }; };
+export const anchorOf = (el: HTMLElement): Anchor => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, align: "end" }; };
 
 export function FileCard({ it, playing, onPlay, ...ev }: { it: Item; playing: boolean; onPlay: () => void } & CardEvents) {
   return (
