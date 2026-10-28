@@ -4,12 +4,17 @@
 // docs/DESIGN.md.
 import { CaretRight } from "@phosphor-icons/react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { cloneElement, isValidElement, useEffect, useId, useRef, useState } from "react";
 import { Info } from "./Info";
+import { PageScene, sceneFor } from "./pixel";
 import { Floating, useDismiss } from "./pop";
 
-/** Every page opens with this: the page's name as the H1, one short line under it, and at most two actions. */
-export function PageHeader({ title, eyebrow, sub, actions, className }: { title: React.ReactNode; eyebrow?: React.ReactNode; sub?: React.ReactNode; actions?: React.ReactNode; className?: string }) {
+/** Every page opens with this: the page's name as the H1, one short line under it, at most two actions, and the page's
+ *  own small pixel scene (picked from the address; `scene={false}` leaves it out). */
+export function PageHeader({ title, eyebrow, sub, actions, className, scene }: { title: React.ReactNode; eyebrow?: React.ReactNode; sub?: React.ReactNode; actions?: React.ReactNode; className?: string; scene?: string | false }) {
+  const path = usePathname();
+  const name = scene === false ? undefined : scene ?? sceneFor(path ?? "");
   return (
     <header className={`ph ${className ?? ""}`}>
       <div className="ph-text">
@@ -17,6 +22,7 @@ export function PageHeader({ title, eyebrow, sub, actions, className }: { title:
         <h1>{title}</h1>
         {sub && <p className="sub">{sub}</p>}
       </div>
+      {name && <PageScene name={name} className="ph-scene" />}
       {actions && <div className="ph-actions">{actions}</div>}
     </header>
   );

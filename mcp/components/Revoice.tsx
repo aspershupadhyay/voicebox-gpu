@@ -1,7 +1,7 @@
 "use client";
 // Re-voice: speech to speech. Upload any take of yourself (voice memo, screen recording, video) and get it back in a
 // recorded voice with studio clarity; timing and emotion stay yours, so it drops straight back onto the edit.
-import { ArrowLeft, ArrowsClockwise, Power, UploadSimple, WarningCircle } from "@phosphor-icons/react";
+import { ArrowLeft, ArrowsClockwise, Power, UploadSimple } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, uploadFile, type Job, type MyVoice } from "./api";
@@ -11,7 +11,7 @@ import LineRow from "./LineRow";
 import { Select } from "./pop";
 import Recorder, { FilePreview } from "./Recorder";
 import { useStatus } from "./Shell";
-import { DropZone, Empty, Notice, SideRow, ToolPage } from "./ui";
+import { DropZone, Empty, SideRow, ToolPage } from "./ui";
 
 export const PLATFORMS = [["youtube", "YouTube"], ["shorts", "YouTube Shorts"], ["reels", "Instagram Reels"], ["tiktok", "TikTok"], ["podcast", "Podcast"], ["raw", "Raw (no mastering)"]] as const;
 
@@ -77,7 +77,6 @@ export default function Revoice() {
   return (
     <ToolPage title="Re-voice" sub="A rough take of yourself in, your clean voice out. Timing and emotion stay yours."
       actions={<Link href="/voices" className="btn ghost"><ArrowLeft size={15} />Voices</Link>}
-      notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/settings?tab=gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}><b>The GPU is off.</b> Add your take now; re-voicing needs the GPU.</Notice>}
       side={
         <>
           <SideRow label="Speak it as" htmlFor="rv-voice" aside={<Link href="/voices/new" className="linkish u">New voice</Link>}>

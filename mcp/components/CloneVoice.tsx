@@ -3,7 +3,7 @@
 // file becomes a sample on the right, where the arc fills toward the best length. No limit on how many samples: they
 // are joined into one clip in the browser, the worker cleans it, transcribes it and keeps up to the first minute
 // (20 s to a minute clones best). The saved voice works on Qwen3-TTS and Chatterbox.
-import { ArrowLeft, CheckCircle, DotsThree, Lightbulb, Microphone, Pause, Power, Stop, TrashSimple, UploadSimple, WarningCircle } from "@phosphor-icons/react";
+import { ArrowLeft, CheckCircle, DotsThree, Lightbulb, Microphone, Pause, Power, Stop, TrashSimple, UploadSimple } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, clock, fmtS, uploadFile, type Job, type MyVoice } from "./api";
@@ -16,7 +16,7 @@ import { Select } from "./pop";
 import { SampleButton } from "./Sample";
 import { SavedTakes, startRecording, type Recording } from "./Recorder";
 import { useStatus } from "./Shell";
-import { Notice, PageHeader, PopMenu } from "./ui";
+import { PageHeader, PopMenu } from "./ui";
 
 const SCRIPTS = [
   { label: "GPS, explained", text: "Okay, so here's something wild. Your phone figures out exactly where you are by listening to clocks in space. Twenty thousand kilometres up, about thirty satellites are shouting the time, over and over. Your phone hears four of them, notices that each message arrived a tiny bit late, and works backwards. A few billionths of a second, turned into a few metres on a map. And here's the part nobody tells you: those clocks run fast, because gravity is weaker up there. Einstein predicted it, and engineers correct for it every single day. Without that fix, your map would drift by about ten kilometres a day. So the next time the little blue dot finds you in a strange city, remember, you're being located by relativity. Pretty cool, right?" },
@@ -178,11 +178,6 @@ export default function CloneVoice() {
     <>
       <PageHeader title="Instant voice clone" sub="Read the script or upload recordings of your voice. 20 seconds to a minute works best."
         actions={<Link href="/voices" className="btn ghost"><ArrowLeft size={15} />Voices</Link>} />
-      {offline && (
-        <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/settings?tab=gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}>
-          <b>The GPU is off.</b> Record your samples now; creating the voice needs the GPU.
-        </Notice>
-      )}
 
       <div className="clone">
         <section className="clone-script" aria-label="Script to read">

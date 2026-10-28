@@ -1,7 +1,7 @@
 "use client";
 // Subtitles: word-timed subtitles for any audio or video, in 99 languages. The files (or a recording, or one of your
 // voiceovers) on the canvas; the language and the button in the panel on the right.
-import { ArrowSquareOut, ClosedCaptioning, FileAudio, Plus, Power, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowSquareOut, ClosedCaptioning, FileAudio, Plus, Power, UploadSimple, X } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, fileUrl, fmtS, pct, uploadFile, type Job, type Word } from "./api";
@@ -122,7 +122,6 @@ export default function Subtitles() {
   return (
     <ToolPage title="Subtitles" sub="Word-timed subtitles for any audio or video, in 99 languages."
       actions={<GuideButton engine="whisper" label="Subtitle guide" />}
-      notice={offline && <Notice icon={<WarningCircle size={18} weight="bold" />} tone="warn" action={<Link href="/settings?tab=gpu" className="btn sm"><Power size={14} weight="bold" />Start the GPU</Link>}><b>The GPU is off.</b> Add your files now; subtitling needs the GPU.</Notice>}
       side={
         <>
           <SideRow label="Language" htmlFor="sub-lang" info="Auto-detect works for most recordings. Pick the language when a file mixes languages or starts with music.">
