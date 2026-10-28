@@ -2,36 +2,54 @@
 // Pixel accents (the owner's call: calm, cozy, a little playful). All drawn as SVG squares with crisp edges, coloured
 // from the theme tokens, and animated gently in CSS (slow twinkles, rising steam, a breathing lamp), which stops for
 // anyone who prefers reduced motion.
-//   PixelAvatar  an 8×8 mirrored avatar from a name (the same name always draws the same face), a few pixels twinkling.
+//   PixelAvatar  your profile picture: one of five pixel characters (Nova, Byte, Miso, Boo, Fen), picked in Settings.
 //   PixelScene   a night desk: stars and a moon, a lamp, a laptop with a blinking cursor, a steaming mug, a plant.
-//   PixelIcon    small 9×9 pixel icons (the sidebar, tab bar, top bar, Settings), each with its own hover move.
 //   PageScene    a small calm scene for each page (a mic and its ripples on Voices, a sleeping cat on Files…).
-//   PixelLoader  three pixels hopping, for "loading" in place of a spinner or shimmer.
+//   PixelLoader  three dots rising in turn, for a small wait.
 import { useMemo } from "react";
-import type { CSSProperties } from "react";
 
-const TONES = ["violet", "blue", "ok", "warn", "brand", "ig"] as const;
 const hash = (s: string) => { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; };
 
-/** The same name always draws the same face: 8×8, mirrored left to right, one tone, a few pixels twinkling. */
-export function PixelAvatar({ name, size = 64, className }: { name: string; size?: number; className?: string }) {
-  const { cells, tone } = useMemo(() => {
-    let h = hash(name || "?");
-    const rnd = () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return (h >>> 0) / 4294967296; };
-    const cells: { x: number; y: number; k: "a" | "b" | "tw" }[] = [];
-    for (let y = 1; y < 7; y++) for (let x = 1; x < 4; x++) {
-      const r = rnd();
-      if (r < 0.52) {
-        const k = r < 0.08 ? "tw" : r < 0.2 ? "b" : "a";
-        cells.push({ x, y, k }, { x: 7 - x, y, k });
+// The five characters you can be (Settings → Profile): 12×12 sprites, one letter per pixel, each letter a colour class.
+// Eyes ("K"/"e") blink now and then.
+export const CHARACTERS = {
+  nova: { name: "Nova", about: "an astronaut", tone: "violet", rows: ["....wwww....", "..wwwwwwww..", ".wwvvvvvvww.", ".wvVVvvvvvw.", "wwvVvvvvvvww", "wwvvvvvvvvww", "wwvvvvvvvvww", ".wwvvvvvvww.", ".wwwwwwwwww.", "..wdwwwwdw..", ".wwwwrrwwww.", ".ww......ww."] },
+  byte: { name: "Byte", about: "a little robot", tone: "ok", rows: [".....yy.....", ".....dd.....", "..gggggggg..", ".gggggggggg.", ".ggeeggeegg.", ".ggeeggeegg.", ".gggggggggg.", ".ggmmmmmmgg.", ".gggggggggg.", "..gggggggg..", ".dd.dddd.dd.", ".dd......dd."] },
+  miso: { name: "Miso", about: "a ginger cat", tone: "warn", rows: [".o........o.", ".oo......oo.", ".opo....opo.", ".oooooooooo.", "oooooooooooo", "ooKKooooKKoo", "ooKKooooKKoo", "oooooppooooo", "occoooooocco", ".oooommoooo.", "..oooooooo..", "...oooooo..."] },
+  boo: { name: "Boo", about: "a friendly ghost", tone: "blue", rows: ["....bbbb....", "..bbbbbbbb..", ".bbbbbbbbbb.", ".bbKbbbbKbb.", ".bbKbbbbKbb.", ".bbbbbbbbbb.", ".bpbbbbbbpb.", ".bbbbmmbbbb.", ".bbbbbbbbbb.", ".bbbbbbbbbb.", ".bb.bb.bb.b.", ".b...b...b.."] },
+  fox: { name: "Fen", about: "a fox", tone: "ig", rows: ["o..........o", "oo........oo", "owo......owo", "oowoooooowoo", "oooooooooooo", "ooKKooooKKoo", "ooKKooooKKoo", "wwoooooooooww".slice(0, 12), ".wwwoooowww.", "..wwwnnwww..", "...wwwwww...", "....wwww...."] },
+} as const;
+export type Character = keyof typeof CHARACTERS;
+export const CHARACTER_IDS = Object.keys(CHARACTERS) as Character[];
+/** Without a pick, the same name always gets the same character. */
+export const characterFor = (name: string, pick?: string | null): Character =>
+  pick && pick in CHARACTERS ? (pick as Character) : CHARACTER_IDS[hash(name || "?") % CHARACTER_IDS.length];
+
+const spriteCache = new Map<Character, { x: number; y: number; w: number; k: string }[]>();
+const spriteOf = (c: Character) => {
+  let out = spriteCache.get(c);
+  if (!out) {
+    out = [];
+    CHARACTERS[c].rows.forEach((r, y) => { // runs of one letter become one rect
+      for (let x = 0; x < r.length;) {
+        const k = r[x]; let w = 1;
+        while (k !== "." && r[x + w] === k) w++;
+        if (k !== "." && k !== " ") out!.push({ x, y, w, k });
+        x += w;
       }
-    }
-    return { cells, tone: TONES[hash(name) % TONES.length] };
-  }, [name]);
+    });
+    spriteCache.set(c, out);
+  }
+  return out;
+};
+
+/** Your character as a profile picture: the one you picked in Settings, or one chosen from your name. */
+export function PixelAvatar({ name, char, size = 64, className }: { name: string; char?: string | null; size?: number; className?: string }) {
+  const c = characterFor(name, char);
   return (
-    <span className={`px-av t-${tone} ${className ?? ""}`} style={{ width: size, height: size }} aria-hidden>
-      <svg viewBox="0 0 8 8" width={size} height={size} shapeRendering="crispEdges">
-        {cells.map((c, i) => <rect key={i} x={c.x} y={c.y} width="1" height="1" className={`px-${c.k}`} style={c.k === "tw" ? { animationDelay: `${(i % 5) * 0.7}s` } : undefined} />)}
+    <span className={`px-av ch-${c} t-${CHARACTERS[c].tone} ${className ?? ""}`} style={{ width: size, height: size }} aria-hidden>
+      <svg viewBox="-1 -1 14 14" width={size} height={size} shapeRendering="crispEdges">
+        {spriteOf(c).map((p, i) => <rect key={i} x={p.x} y={p.y} width={p.w + 0.04} height="1.04" className={`cp-${p.k}`} />)}
       </svg>
     </span>
   );
@@ -70,70 +88,7 @@ export function PixelScene({ className, label = "A pixel-art desk at night: star
   );
 }
 
-// 9×9 bitmaps: "#" the colour, "+" its lighter shade, "s" and "t" the pixels an icon's hover move works on (an icon's
-// waves, sparkles, paper or sun), "L" a live pixel that beats all the time.
-const ICONS: Record<string, string[]> = {
-  user: ["...###...", "..#####..", "..#####..", "...###...", ".........", ".#######.", "#########", "#########", "........."],
-  wave: [".........", "....#....", "..#.#....", "..#.#.#..", "#.#.#.#.#", "..#.#.#..", "..#.#....", "....#....", "........."],
-  rocket: ["....#....", "...###...", "...#+#...", "...###...", "..#####..", "..#####..", ".##.#.##.", ".#..+..#.", "....+...."],
-  chip: [".#.#.#.#.", "#########", ".#+++++#.", "##+###+##", ".#+#+#+#.", "##+###+##", ".#+++++#.", "#########", ".#.#.#.#."],
-  shield: [".#######.", "#########", "###+#####", "##+++####", "###+#####", ".#######.", "..#####..", "...###...", "....#...."],
-  code: [".........", "..#...#..", ".#....#..", "#....#...", "#....#..#", ".#..#..#.", "..#.#.#..", "...#.....", "........."],
-  heart: [".........", ".##...##.", "####.####", "##+######", "#########", ".#######.", "..#####..", "...###...", "....#...."],
-  star: ["....#....", "....#....", "...###...", "#########", ".#######.", "..#####..", "..##.##..", ".##...##.", "........."],
-  chart: [".........", ".......#.", ".......#.", "....#..#.", "....#..#.", ".#..#..#.", ".#..#..#.", ".#..#..#.", "#########"],
-  bolt: ["....###..", "...###...", "..###....", ".#######.", "....###..", "...###...", "..###....", ".##......", "........."],
-  // the studio's pages
-  home: ["......s..", "....#.s..", "...###s..", "..##.##..", ".##...##.", "##.....##", ".#.##..#.", ".#.##..#.", ".#######."],
-  voices: ["..##.....", ".####..s.", ".####.s.s", "..##..s.s", "......s.s", ".####..s.", "######...", "######...", "........."],
-  posts: ["..sssssss", "..s.....s", "#######.s", "#.....#.s", "#.+++.#.s", "#.....#ss", "#.++..#..", "#######..", "........."],
-  files: [".........", "###......", "#..#####.", "#.sssss.#", "#########", "#.......#", "#.......#", "#########", "........."],
-  mic: ["...###...", "..#+#+#..", "..#####..", "..#+#+#..", "s.#####.s", "s..###..s", ".s..#..s.", "...###...", "........."],
-  wand: ["......s..", ".s...sss.", "......s..", ".....#...", "....#....", "...#.....", "..#....s.", ".#.......", "#........"],
-  cc: [".........", "#########", "#.......#", "#.ss.ss.#", "#.s..s..#", "#.ss.ss.#", "#.......#", "#########", "........."],
-  image: [".........", "#########", "#.....s.#", "#....sss#", "#..#..s.#", "#.###.#.#", "#####+#+#", "#########", "........."],
-  grid: ["####.####", "#++#.#++#", "#++#.#++#", "####.####", ".........", "####.####", "#++#.#++#", "#++#.#++#", "####.####"],
-  live: [".........", ".s.....s.", "s..t.t..s", "s.t...t.s", "s.t.L.t.s", "s.t...t.s", "s..t.t..s", ".s.....s.", "........."],
-  rows: [".........", "##.######", ".........", "##.######", ".........", "##.######", ".........", "##.####..", "........."],
-  users: [".........", ".##...ss.", ".##...ss.", ".........", "####.ssss", "####.ssss", "####.ssss", ".........", "........."],
-  calendar: ["..#...#..", "#########", "#########", "#.......#", "#.+.+.s.#", "#.......#", "#.+.+.+.#", "#########", "........."],
-  trophy: [".#######.", "s#+#####s", "s.#+###.s", ".s#####s.", "...###...", "....#....", "...###...", "..#####..", "........."],
-  gear: ["...#.#...", ".#.###.#.", "..#####..", "###...###", ".##...##.", "###...###", "..#####..", ".#.###.#.", "...#.#..."],
-  search: [".####....", "#....#...", "#.s..#...", "#....#...", ".####....", ".....#...", "......#..", ".......#.", "........#"],
-  plus: [".........", "....#....", "....#....", "....#....", ".#######.", "....#....", "....#....", "....#....", "........."],
-  sparkle: ["....#....", "....#....", "...#+#...", "##++#++##", "...#+#...", "....#....", "....#..s.", ".s......s", "......s.."],
-  menu: [".........", ".........", "#########", ".........", "#########", ".........", "#########", ".........", "........."],
-  more: [".........", ".........", ".........", "##.##.##.", "##.##.##.", ".........", ".........", ".........", "........."],
-  side: [".........", "#########", "#ss#....#", "#ss#....#", "#ss#....#", "#ss#....#", "#ss#....#", "#########", "........."],
-  tv: ["..#...#..", "...#.#...", "#########", "#+++++++#", "#++s++++#", "#++ss+++#", "#++s++++#", "#########", ".#.....#."],
-  camera: [".........", "..###....", "#########", "#...+...#", "#..+s+..#", "#..+s+..#", "#...+...#", "#########", "........."],
-};
-
-type Px = { x: number; y: number; k: string };
-const cells = new Map<string, Px[]>();
-const cellsOf = (name: string) => {
-  let c = cells.get(name);
-  if (!c) {
-    c = (ICONS[name] ?? ICONS.star).flatMap((r, y) => [...r].flatMap((k, x) => (k === "." ? [] : [{ x, y, k }])));
-    cells.set(name, c);
-  }
-  return c;
-};
-
-/** A small pixel icon in the current text colour (its lighter pixels a step dimmer). Hovering the link or button it sits
- *  in plays its own move (a house hops, a gear turns, a folder's paper pops up), set by `move` (defaults to the name). */
-export function PixelIcon({ name, size = 18, className, move }: { name: keyof typeof ICONS | string; size?: number; className?: string; move?: string }) {
-  return (
-    <svg className={`px-ic ${className ?? ""}`} data-move={move ?? name} width={size} height={size} viewBox="0 0 9 9" shapeRendering="crispEdges" aria-hidden>
-      {cellsOf(name).map(({ x, y, k }) => (
-        <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" className={k === "#" ? undefined : `p-${k === "+" ? "h" : k}`}
-          style={{ "--x": x, "--y": y, "--q": (x > 4 ? 1 : 0) + (y > 4 ? 2 : 0) } as CSSProperties} />
-      ))}
-    </svg>
-  );
-}
-
-/** Three pixels hopping in turn: loading, the pixel way. */
+/** Three dots rising in turn, for a small wait (shows only if the wait lasts long enough to notice). */
 export function PixelLoader({ label = "Loading", className }: { label?: string; className?: string }) {
   return (
     <span className={`px-load ${className ?? ""}`} role="status" aria-label={label}>

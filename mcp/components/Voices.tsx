@@ -4,7 +4,7 @@
 import { ArrowRight, MagnifyingGlass, Microphone, TrashSimple, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ago, api, type MyVoice } from "./api";
+import { ago, api, useSeed, type MyVoice } from "./api";
 import { VoiceGlyph } from "./art";
 import { useDialog } from "./Dialog";
 import { describeVoice as describe, KOKORO_LANG, KOKORO_VOICES, LANGUAGES, ORPHEUS_VOICES } from "./guides";
@@ -52,6 +52,7 @@ export default function Voices() {
   const samples = useSamples();
   const { confirm, toast } = useDialog();
   const [mine, setMine] = useState<MyVoice[] | null>(null);
+  useSeed<{ voices: MyVoice[] }>("myvoices", (r) => setMine(r.voices));
   const [trainMin, setTrainMin] = useState(0);
   const [engine, setEngine] = useState<string>("orpheus");
   const [lang, setLang] = useState("en");

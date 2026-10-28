@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Analytics, Range } from "@/lib/analytics";
 import { api } from "./api";
+import { bigGet, bigSet } from "./cache";
 
 export type Report = Analytics & { cached: boolean; stale?: boolean };
 
@@ -18,7 +19,7 @@ function ask(range: Range, fresh = false) {
   let p = asking.get(key);
   if (!p) {
     p = api<Report>(`analytics?range=${range}${fresh ? "&fresh=1" : ""}`)
-      .then((r) => { kept.set(range, { r, got: Date.now() }); return r; })
+      .then((r) => { kept.set(range, { r, got: Date.now() }); bigSet(`report:${range}`, r); return r; })
       .finally(() => asking.delete(key));
     asking.set(key, p);
   }
@@ -49,6 +50,8 @@ export function useReport(range: Range) {
     setData(k?.r ?? null);
     tries.current = 0;
     if (k && !k.r.stale && Date.now() - k.got < REUSE_MS) return;
+    // a fresh visit: the copy this browser kept goes on screen at once, the new one replaces it when it lands
+    if (!k) bigGet<Report>(`report:${range}`).then((r) => { if (r && !kept.has(range)) setData((d) => d ?? r); });
     load();
   }, [range, load]);
 

@@ -233,7 +233,7 @@ function Collect({ name, open, onClose, onAdded, script }: { name: string; open:
           <HowItWorks>Long recordings of just you talking work great: raw voiceovers, podcast tracks, a video&apos;s audio. Pick as many as you like
             (up to 20 per batch, 3 hours in all). With <b>Train automatically</b> on, {name} trains by itself once it has
             15+ minutes, then retrains with every 15 new minutes (a retrain replaces the model only if it&apos;s better; you can close the tab, keep Colab running).</HowItWorks>
-          <label className="drop slim" style={{ cursor: "pointer" }}
+          <label className="drop slim" style={{ cursor: "var(--cur-pointer, pointer)" }}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files).filter((f) => /^(audio|video)\//.test(f.type)); setPending((p) => [...p, ...fs.map((file) => ({ file }))]); }}>
             <UploadSimple size={18} /><span className="small">Choose or drop audio / video files</span>
@@ -817,7 +817,7 @@ export default function MyModel() {
             : <Train key={make} name={name} minutes={minutes} follow={follow} head={pickEngine} engine={make} onTrained={loadModels} />}
           <Coach name={name} trained={models.some((m) => m.name === name)} onSwitched={loadModels}
             onRecord={(lines) => { setScript(lines); setAdding(true); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
-          <details className="card"><summary style={{ cursor: "pointer" }}><b>More tools</b> <span className="dim small">· compare engines · find the voice in Kokoro</span></summary>
+          <details className="card"><summary style={{ cursor: "var(--cur-pointer, pointer)" }}><b>More tools</b> <span className="dim small">· compare engines · find the voice in Kokoro</span></summary>
             <div className="stack" style={{ gap: 16, marginTop: 14 }}>
               <Benchmark mine={mine} name={name} />
               <KokoroVoice mine={mine} name={name} />

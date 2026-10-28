@@ -8,7 +8,7 @@ import { ArrowSquareOut, CaretDown, CaretUp, ClosedCaptioning, DownloadSimple, M
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useResumeJob } from "./jobs";
-import { ago, api, clock, fileUrl, fmtS, rangeFill, type Job, type MyVoice } from "./api";
+import { ago, api, clock, fileUrl, fmtS, rangeFill, useSeed, type Job, type MyVoice } from "./api";
 import { decode, joinWav } from "./audio";
 import { Info } from "./Info";
 import { VoiceGlyph } from "./art";
@@ -78,6 +78,7 @@ function parse(src: string): ParsedLine[] {
 /** Recent voiceovers, newest first: the History tab. */
 function History({ refreshKey }: { refreshKey: string | null }) {
   const [items, setItems] = useState<Hist[] | null>(null);
+  useSeed<{ jobs: Hist[] }>("library", (r) => setItems(r.jobs.filter((j) => !j.kind || j.kind === "tts")));
   useEffect(() => { api<{ jobs: Hist[] }>("library").then((r) => setItems(r.jobs.filter((j) => !j.kind || j.kind === "tts"))).catch(() => setItems([])); }, [refreshKey]);
   if (items === null) return <div className="skel" style={{ height: 200 }} />;
   if (!items.length) return <p className="small dim">Nothing yet. Your takes show up here, newest first.</p>;
@@ -371,6 +372,7 @@ export default function Voiceover() {
   const [liveOn, setLiveOn] = useState(false); // listen live is playing: keep it on screen after the job ends
   const [err, setErr] = useState("");
   const [mine, setMine] = useState<MyVoice[]>([]);
+  useSeed<{ voices: MyVoice[] }>("myvoices", (r) => setMine(r.voices));
   const [mineLoaded, setMineLoaded] = useState(false);
   const [models, setModels] = useState<{ name: string; sample_url?: string | null }[] | null>(null); // trained voices, everyone's
   const [kvoices, setKvoices] = useState<{ voice: string; name: string; sample_url?: string | null }[]>([]); // your voices found in Kokoro
@@ -660,7 +662,7 @@ export default function Voiceover() {
             </div>
 
             <details className="set-row" open={advanced} onToggle={(e) => setAdvanced((e.target as HTMLDetailsElement).open)}>
-              <summary className="sr-h" style={{ cursor: "pointer", marginBottom: 0 }}><span className="row" style={{ gap: 8 }}><SlidersHorizontal size={15} />Advanced{(Object.keys(params).length > 0 || tempo != null) ? <span className="pill">edited</span> : null}</span><CaretDown size={14} className="dim" /></summary>
+              <summary className="sr-h" style={{ cursor: "var(--cur-pointer, pointer)", marginBottom: 0 }}><span className="row" style={{ gap: 8 }}><SlidersHorizontal size={15} />Advanced{(Object.keys(params).length > 0 || tempo != null) ? <span className="pill">edited</span> : null}</span><CaretDown size={14} className="dim" /></summary>
               <div style={{ marginTop: 14 }}>
                 <div className="field">
                   <label className="f" htmlFor="vo-lang">Language {engine === "orpheus" ? <Info label="Language">Orpheus speaks English only. Use Chatterbox for Hindi and 21 more languages.</Info> : engine === "qwen" ? <Info label="Language">Your voice can speak any of these, even ones you didn&apos;t record in. Hindi: use Chatterbox.</Info> : null}</label>

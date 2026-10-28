@@ -1,4 +1,10 @@
 "use client";
+import { keep } from "./cache";
+export { peek, useSeed } from "./cache";
+
+/** Answers worth keeping a copy of: plain reads, not one job's progress or the GPU's heartbeat. */
+const keepable = (path: string) => !/^(jobs\/|status|analytics|live$|engines\/)/.test(path) && !path.includes("fresh=");
+
 export async function api<T = any>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const r = await fetch(`/api/dash/${path}`, {
     method: init?.method ?? (init?.body ? "POST" : "GET"),
@@ -6,9 +12,10 @@ export async function api<T = any>(path: string, init?: { method?: string; body?
     body: init?.body ? JSON.stringify(init.body) : undefined,
     cache: "no-store",
   });
-  if (r.status === 401) { location.href = "/login"; throw new Error("unauthorized"); }
+  if (r.status === 401) { (await import("./cache")).clearCache(); location.href = "/login"; throw new Error("unauthorized"); }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  if (!init?.body && !init?.method && keepable(path)) keep(path, data);
   if ((path === "jobs" || path === "myvoices") && init?.body && data?.id) {
     // remember it so the tray and this page can follow it through a refresh (jobs.ts)
     const b = init.body as { kind?: string; label?: string; name?: string };

@@ -6,7 +6,7 @@
 import { ArrowRight, ArrowsClockwise, Brain, CalendarBlank, ChartLineUp, ClosedCaptioning, ImageSquare, MagicWand, Microphone, Plus } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ago, api, fmtS, type Job } from "./api";
+import { ago, api, fmtS, useSeed, type Job } from "./api";
 import { CassetteArt, EngineArt, MicArt, VoiceGlyph } from "./art";
 import { Query, useLive, useMe } from "./aw";
 import { SampleButton } from "./Sample";
@@ -94,6 +94,7 @@ export default function Home() {
   const { status: st } = useStatus();
   const me = useMe();
   const [lib, setLib] = useState<Lib[] | null>(null);
+  useSeed<{ jobs: Lib[] }>("library", (l) => setLib(l.jobs));
   const [jobs, setJobs] = useState<Job[]>([]);
   const [hello, setHello] = useState("Welcome back");
   useEffect(() => { setHello(greeting(new Date().getHours())); api<{ jobs: Lib[] }>("library").then((l) => setLib(l.jobs)).catch(() => setLib([])); }, []);

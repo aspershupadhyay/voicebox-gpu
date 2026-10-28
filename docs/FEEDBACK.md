@@ -4,20 +4,33 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (pixel pass)
+## Latest round (premium pass, 2026-10-28)
+
+- **Pixel icons didn't look good: undone.** The frame uses premium line icons (Phosphor, duotone) again. Keep a move per
+  icon, but make it feel premium: smooth springy transitions that settle back, the soft duotone fill fading in on hover.
+  Pixel art stays for the characters, the cursor option and the page scenes only.
+- **Pixel loading wasn't intriguing.** Loading should be so fast you don't notice it: paint from the last copy at once,
+  refresh behind it. A skeleton only shows if a wait passes ~180 ms, and it's a flat tile that breathes, nothing shiny.
+- **Profile pictures are five pixel characters** you pick from (not a generated pattern).
+- **A custom cursor**, ASCII-style as one option, changeable by the user.
+- **Charts must look premium**: more contrast, a clear look, some life (lines drawing in, bars growing), still flat.
+- **YouTube and Instagram marks must look right**, as their own logos, not generic outline icons.
+- **YouTube and Instagram analytics in depth, down to each video**, every metric the APIs give.
+- **Make what exists robust first**, then the new features (trend radar, watcher feeds, MCP for them: see ROADMAP →
+  Next up).
+
+## Earlier round (pixel pass)
 
 - **The GPU once per page, at most.** The Voiceover page showed it three times (a "GPU is off" banner, a "GPU off"
   status and a "Start the GPU" button). A page that needs the GPU shows only its one action button ("Start the GPU", in
   place of Generate / Create); no banner, no status pill. The tool pages and the instant clone follow the same rule.
-- **Pixel icons everywhere in the frame**: the sidebar, the Create / Grow switch, the top bar (menu, sidebar, search,
-  Settings, Create) and the phone tab bar use the pixel icons from `components/pixel.tsx`, not the line icons.
+- ~~Pixel icons everywhere in the frame~~ (undone in the premium pass: line icons again).
 - **Each icon has its own hover move**, the way the Settings gear turns: the house hops, the waves ripple, the cards
   shuffle, the folder's paper pops out, the mic bobs, the wand flicks, CC types itself, the sun rises, tiles light up in
   turn, rings go out, rows slide in, people hop, the calendar flips, the trophy wobbles, the gear turns in pixel steps.
 - **Each page has its own calm pixel scene** next to its title (a mic and ripples on Voices, a corkboard on Posts, a cat
   asleep on a filing cabinet on Files, an on-air sign on Voiceover, a radio tower on Live…).
-- **Loading is pixel, never shiny**: skeletons are flat tiles with drifting pixel static and a stepped band of pixel
-  blocks; small waits show three hopping pixels. No shimmer gradients.
+- ~~Loading is pixel~~ (replaced in the premium pass: fast first, a flat breathing tile only after 180 ms). Never shiny.
 - **Files gets the most life**: cards build in from pixel blocks, folders tip open with a sheet of paper peeking out,
   covers zoom, audio waves dance on hover. Keep it light: transforms and opacity only, nothing for reduced motion.
 

@@ -89,6 +89,27 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [x] Analytics back from YouTube and Instagram on each post (the Analytics page and the `analytics` MCP tool)
 - [ ] TikTok (needs its own audit), X (paid API) and LinkedIn publishing; they're hand-offs for now
 
+## Polish round (2026-10-28)
+- [x] Premium line icons back (Phosphor duotone), each with its own springy hover move; the soft fill fades in on hover
+- [x] YouTube and Instagram drawn as their own marks (the red play tile, the camera glyph on a solid tile)
+- [x] Five pixel characters to pick as your profile picture (Nova, Byte, Miso, Boo, Fen), saved to your account
+- [x] Custom cursor: Studio (crisp arrow), ASCII (1-bit bitmaps) or System, in Settings → Profile → Look
+- [x] Fast loading: every page paints from the last copy (memory, localStorage, IndexedDB for the report and live
+      numbers) and swaps in the fresh one; skeletons only show after 180 ms; signing out clears the copies
+- [x] Charts: one bright accent, draw-in lines, an end marker, a hover band with the value on the axis, growing bars
+- [x] Each video in depth: daily views, watch hours, likes and subs; against your usual for its format; devices,
+      countries, subscribers vs not, search terms, playback, sharing, age and gender for that one video
+
+## Next up (agreed with the owner, after the polish round)
+- [ ] Trend radar: rising keywords, topics and hashtags (YouTube, Google Trends, Reddit, news), filtered to your niches;
+      rising vs fading, how hard each is to rank for, gaps your rivals haven't covered; one click to a new post idea
+- [ ] Watcher feeds (World Monitor style): your sources, keywords and cadence; a Cloudflare timer fetches only matches,
+      scores and keeps them, alerts on spikes. Fetches only hosts on an allow-list (no internal addresses)
+- [ ] All of it over MCP: set preferences, list trends and keywords, check a keyword, turn a trend into a post
+- [ ] Security: per-route rate limits, a nonce Content-Security-Policy, an audit log of sign-ins and MCP calls in
+      Settings → Security, rotating upload keys
+- [ ] Title and thumbnail ideas from your best performers, a hook score on scripts, a weekly digest
+
 ## Later (not started)
 - [ ] Listen to a few of the cut training clips per session on Your model (the worker would push samples next to the zip)
 - [ ] Per-target caption overrides (X 280 vs Instagram 2200)

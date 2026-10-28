@@ -11,7 +11,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, type Status } from "./api";
-import { PixelAvatar, PixelIcon } from "./pixel";
+import { PixelAvatar } from "./pixel";
+import { useCursor, useLook } from "./look";
 import { PlatformBadge } from "./platform";
 import { Logo } from "./art";
 import { signOut, useMe } from "./aw";
@@ -23,32 +24,32 @@ import { initials } from "@/lib/workspace";
 const StatusCtx = createContext<{ status: Status | null; refresh: () => Promise<void> }>({ status: null, refresh: async () => {} });
 export const useStatus = () => useContext(StatusCtx);
 
-type Nav = { href: string; name: string; Icon: typeof House; px: string; sec: "main" | "create" | "studio"; match?: string[] };
+type Nav = { href: string; name: string; Icon: typeof House; mv: string; sec: "main" | "create" | "studio"; match?: string[] };
 export const NAV: Nav[] = [
-  { href: "/home", name: "Home", Icon: House, px: "home", sec: "main" },
-  { href: "/voices", name: "Voices", Icon: UserSound, px: "voices", sec: "main" },
-  { href: "/posts", name: "Posts", Icon: Kanban, px: "posts", sec: "main" },
-  { href: "/analytics", name: "Analytics", Icon: ChartLineUp, px: "chart", sec: "main" },
-  { href: "/files", name: "Files", Icon: Folders, px: "files", sec: "main" },
-  { href: "/voiceover", name: "Voiceover", Icon: Microphone, px: "mic", sec: "create" },
-  { href: "/clean-up", name: "Clean-up", Icon: MagicWand, px: "wand", sec: "create" },
-  { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning, px: "cc", sec: "create" },
-  { href: "/images", name: "Images", Icon: ImageSquare, px: "image", sec: "create" },
-  { href: "/settings?tab=gpu", name: "GPU & engines", Icon: Cpu, px: "chip", sec: "studio" },
-  { href: "/settings", name: "Settings", Icon: GearSix, px: "gear", sec: "studio" },
+  { href: "/home", name: "Home", Icon: House, mv: "home", sec: "main" },
+  { href: "/voices", name: "Voices", Icon: UserSound, mv: "voices", sec: "main" },
+  { href: "/posts", name: "Posts", Icon: Kanban, mv: "posts", sec: "main" },
+  { href: "/analytics", name: "Analytics", Icon: ChartLineUp, mv: "chart", sec: "main" },
+  { href: "/files", name: "Files", Icon: Folders, mv: "files", sec: "main" },
+  { href: "/voiceover", name: "Voiceover", Icon: Microphone, mv: "mic", sec: "create" },
+  { href: "/clean-up", name: "Clean-up", Icon: MagicWand, mv: "wand", sec: "create" },
+  { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning, mv: "cc", sec: "create" },
+  { href: "/images", name: "Images", Icon: ImageSquare, mv: "image", sec: "create" },
+  { href: "/settings?tab=gpu", name: "GPU & engines", Icon: Cpu, mv: "chip", sec: "studio" },
+  { href: "/settings", name: "Settings", Icon: GearSix, mv: "gear", sec: "studio" },
 ];
 const TABS = ["/home", "/voiceover", "/posts", "/voices"];
 
 /** Grow mode's pages (all under /analytics; the Analytics shell renders them). */
-export const GROW: { href: string; name: string; Icon: typeof House; px: string; net?: "youtube" | "instagram" }[] = [
-  { href: "/analytics", name: "Overview", Icon: SquaresFour, px: "grid" },
-  { href: "/analytics/live", name: "Live", Icon: Broadcast, px: "live" },
-  { href: "/analytics/content", name: "Content", Icon: Rows, px: "rows" },
-  { href: "/analytics/audience", name: "Audience", Icon: UsersThree, px: "users" },
-  { href: "/analytics/when-to-post", name: "When to post", Icon: CalendarDots, px: "calendar" },
-  { href: "/analytics/competitors", name: "Competitors", Icon: Trophy, px: "trophy" },
-  { href: "/analytics/youtube", name: "YouTube", Icon: ChartLineUp, px: "tv", net: "youtube" },
-  { href: "/analytics/instagram", name: "Instagram", Icon: ChartLineUp, px: "camera", net: "instagram" },
+export const GROW: { href: string; name: string; Icon: typeof House; mv?: string; net?: "youtube" | "instagram" }[] = [
+  { href: "/analytics", name: "Overview", Icon: SquaresFour, mv: "grid" },
+  { href: "/analytics/live", name: "Live", Icon: Broadcast },
+  { href: "/analytics/content", name: "Content", Icon: Rows, mv: "rows" },
+  { href: "/analytics/audience", name: "Audience", Icon: UsersThree, mv: "users" },
+  { href: "/analytics/when-to-post", name: "When to post", Icon: CalendarDots, mv: "calendar" },
+  { href: "/analytics/competitors", name: "Competitors", Icon: Trophy, mv: "trophy" },
+  { href: "/analytics/youtube", name: "YouTube", Icon: ChartLineUp, net: "youtube" },
+  { href: "/analytics/instagram", name: "Instagram", Icon: ChartLineUp, net: "instagram" },
 ];
 const GROW_TABS = ["/analytics", "/analytics/live", "/analytics/content", "/analytics/competitors"];
 const isGrow = (path: string) => path === "/analytics" || path.startsWith("/analytics/");
@@ -63,8 +64,8 @@ function ModeSwitch({ grow, compact }: { grow: boolean; compact?: boolean }) {
   useEffect(() => setHrefs({ create: last("create", "/home"), grow: last("grow", "/analytics") }), [grow]);
   return (
     <nav className={`mode-sw ${compact ? "compact" : ""}`} aria-label="Mode">
-      <Link href={hrefs.create} className={grow ? "" : "on"} aria-current={grow ? undefined : "page"} title="Create: voices, audio, images, files"><PixelIcon name="sparkle" size={15} /><span className="nl">Create</span></Link>
-      <Link href={hrefs.grow} className={grow ? "on" : ""} aria-current={grow ? "page" : undefined} title="Grow: analytics, live numbers, rivals"><PixelIcon name="chart" size={15} /><span className="nl">Grow</span></Link>
+      <Link href={hrefs.create} className={grow ? "" : "on"} aria-current={grow ? undefined : "page"} title="Create: voices, audio, images, files"><MagicWand size={15} weight="duotone" className="mv" data-move="wand" aria-hidden /><span className="nl">Create</span></Link>
+      <Link href={hrefs.grow} className={grow ? "on" : ""} aria-current={grow ? "page" : undefined} title="Grow: analytics, live numbers, rivals"><ChartLineUp size={15} weight="duotone" className="mv" data-move="chart" aria-hidden /><span className="nl">Grow</span></Link>
     </nav>
   );
 }
@@ -208,6 +209,8 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
   const [palette, setPalette] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const me = useMe();
+  const look = useLook();
+  useCursor();
   const here = pageOf(path);
   const grow = isGrow(path);
   const growHere = grow ? [...GROW].reverse().find((g) => growOn(path, g.href)) ?? (path.startsWith("/analytics/competitors") ? GROW[5] : GROW[0]) : null;
@@ -252,9 +255,9 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
     return () => window.removeEventListener("keydown", onKey);
   }, [router, fold]);
 
-  const section = (sec: Nav["sec"]) => NAV.filter((n) => n.sec === sec && n.href !== "/analytics").map(({ href, name, px }) => (
+  const section = (sec: Nav["sec"]) => NAV.filter((n) => n.sec === sec && n.href !== "/analytics").map(({ href, name, Icon, mv }) => (
     <Link key={href} href={href} className={`navlink ${on(href) ? "on" : ""}`} aria-current={on(href) ? "page" : undefined} title={mini ? name : undefined}>
-      <PixelIcon name={px} size={18} className="ic" /><span className="nl">{name}</span>
+      <Icon size={18} weight="duotone" className="ic mv" data-move={mv} /><span className="nl">{name}</span>
     </Link>
   ));
 
@@ -270,9 +273,9 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
         <ModeSwitch grow={grow} />
         {grow ? (
           <nav className="side-nav" aria-label="Grow pages">
-            {GROW.map(({ href, name, px, net }) => { const on = growOn(path, href); return (
+            {GROW.map(({ href, name, Icon, mv, net }) => { const on = growOn(path, href); return (
               <Link key={href} href={href} className={`navlink ${on ? "on" : ""}`} aria-current={on ? "page" : undefined} title={mini ? name : undefined}>
-                {net ? <span className="ic nav-pb"><PlatformBadge net={net} size={16} /></span> : <PixelIcon name={px} size={18} className="ic" />}<span className="nl">{name}</span>
+                {net ? <span className="ic nav-pb"><PlatformBadge net={net} size={16} /></span> : href === "/analytics/live" ? <span className="ic nav-live" aria-hidden><i /></span> : <Icon size={18} weight="duotone" className="ic mv" data-move={mv} />}<span className="nl">{name}</span>
               </Link>
             ); })}
             <PinnedRivals path={path} />
@@ -287,7 +290,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
         )}
         <PopMenu align="left" up width={230} trigger={({ toggle, ref, open }) => (
           <button ref={ref} className="me-btn" onClick={toggle} aria-expanded={open} aria-haspopup="menu">
-            <PixelAvatar name={me?.user?.email ?? me?.user?.name ?? "access token"} size={30} />
+            <PixelAvatar name={me?.user?.email ?? me?.user?.name ?? "access token"} char={look.avatar} size={30} />
             <span className="me-name nl"><b className="ellipsis">{me?.user?.name ?? (me ? "Access token" : " ")}</b><span className="ellipsis">{me?.user?.email ?? (me ? "Studio only, no shared workspace" : " ")}</span></span>
             <CaretUpDown size={14} className="dim nl" />
           </button>
@@ -305,23 +308,23 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
 
       <div className="main">
         <header className="topbar">
-          <button className="icon-btn menu-btn" onClick={() => setDrawer(true)} aria-label="Open menu" aria-expanded={drawer}><PixelIcon name="menu" size={18} /></button>
+          <button className="icon-btn menu-btn" onClick={() => setDrawer(true)} aria-label="Open menu" aria-expanded={drawer}><List size={20} className="mv" data-move="menu" /></button>
           <button type="button" className="side-tg" onClick={fold} aria-pressed={mini} aria-label={mini ? "Expand the sidebar" : "Collapse the sidebar"}>
-            <PixelIcon name="side" size={18} />
+            <SidebarSimple size={18} weight="duotone" className="mv" data-move="side" aria-hidden />
             <span className="side-tg-tip" aria-hidden>{mini ? "Expand" : "Collapse"} sidebar <kbd>⌘B</kbd></span>
           </button>
           <div className="crumb">{growHere ? <><span className="hide-sm">Grow<span aria-hidden> /</span></span><b>{growHere.name}</b></> : <>{here && here.sec !== "main" && <span className="hide-sm">{here.sec === "create" ? "Create" : "Studio"}<span aria-hidden> /</span></span>}<b>{here?.name ?? "Voicebox"}</b></>}</div>
           <ModeSwitch grow={grow} compact />
           <div className="top-actions">
             <button type="button" className="top-search" onClick={() => setPalette(true)} aria-label="Search pages, rivals and commands (⌘K)">
-              <PixelIcon name="search" size={16} /><span className="ts-t">Search pages, rivals, engines…</span><kbd className="ts-k">⌘K</kbd>
+              <MagnifyingGlass size={16} className="mv" data-move="search" aria-hidden /><span className="ts-t">Search pages, rivals, engines…</span><kbd className="ts-k">⌘K</kbd>
             </button>
             <Link href="/settings" className={`top-set ${path.startsWith("/settings") ? "on" : ""}`} aria-label={`Settings. GPU ${status?.online ? (busy ? "busy" : "on") : "off"}`}
               title={`Settings · GPU ${!status ? "connecting" : status.online ? (busy ? `working, ${status.queue ?? 0} queued` : "on") : "off"}`}>
-              <span className="ts-ic"><PixelIcon name="gear" size={17} /><i className={`ts-dot ${status?.online ? (busy ? "warn" : "ok") : "off"}`} aria-hidden /></span><span className="ts-t">Settings</span>
+              <span className="ts-ic"><GearSix size={17} weight="duotone" className="mv" data-move="gear" aria-hidden /><i className={`ts-dot ${status?.online ? (busy ? "warn" : "ok") : "off"}`} aria-hidden /></span><span className="ts-t">Settings</span>
             </Link>
             {!grow && <PopMenu width={220} trigger={({ toggle, ref, open }) => (
-              <button ref={ref} className="sm" onClick={toggle} aria-expanded={open} aria-haspopup="menu" aria-label="Create"><PixelIcon name="plus" size={15} /><span className="hide-sm">Create</span><CaretDown size={12} className="hide-sm" /></button>
+              <button ref={ref} className="sm" onClick={toggle} aria-expanded={open} aria-haspopup="menu" aria-label="Create"><Plus size={15} weight="bold" className="mv" data-move="plus" /><span className="hide-sm">Create</span><CaretDown size={12} className="hide-sm" /></button>
             )}>
               {(close) => (
                 <>
@@ -340,11 +343,11 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
 
       <nav className="tabbar" aria-label="Main">
         {grow ? GROW_TABS.map((href) => { const n = GROW.find((x) => x.href === href)!, o = growOn(path, href); return (
-          <Link key={href} href={href} className={o ? "on" : ""} aria-current={o ? "page" : undefined}><PixelIcon name={n.px} size={22} /><span>{n.name}</span></Link>
+          <Link key={href} href={href} className={o ? "on" : ""} aria-current={o ? "page" : undefined}><n.Icon size={22} weight="duotone" className="mv" data-move={n.mv} /><span>{n.name}</span></Link>
         ); }) : TABS.map((href) => { const n = NAV.find((x) => x.href === href)!; return (
-          <Link key={href} href={href} className={on(href) ? "on" : ""} aria-current={on(href) ? "page" : undefined}><PixelIcon name={n.px} size={22} /><span>{n.name}</span></Link>
+          <Link key={href} href={href} className={on(href) ? "on" : ""} aria-current={on(href) ? "page" : undefined}><n.Icon size={22} weight="duotone" className="mv" data-move={n.mv} /><span>{n.name}</span></Link>
         ); })}
-        <button onClick={() => setDrawer(true)} aria-label="More pages"><PixelIcon name="more" size={22} /><span>More</span></button>
+        <button onClick={() => setDrawer(true)} aria-label="More pages"><DotsThreeOutline size={22} className="mv" data-move="more" /><span>More</span></button>
       </nav>
       <Palette open={palette} onClose={() => setPalette(false)} cmds={cmds} />
       <JobTray />
