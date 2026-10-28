@@ -53,11 +53,12 @@ export async function GET(req: Request, ctx: Ctx) {
       return Response.json(await getPostDetail(c, g.path[3], new URL(req.url).searchParams.get("fresh") === "1"));
     }
     if (a === "analytics" && !b) {
-      // the Analytics page: ?range=7|28|90, &fresh=1 asks YouTube and Instagram again instead of the 30-minute copy
+      // the Analytics page: ?range=7|28|90, &fresh=1 asks YouTube and Instagram again instead of the 30-minute copy. An
+      // older copy is answered at once (stale: true) and rebuilt after the response, so the page never waits on the platforms
       const q = new URL(req.url).searchParams;
       const { getAnalytics, RANGES } = await import("@/lib/analytics");
       const range = (RANGES as readonly number[]).includes(Number(q.get("range"))) ? (Number(q.get("range")) as (typeof RANGES)[number]) : 28;
-      return Response.json(await getAnalytics(range, q.get("fresh") === "1"));
+      return Response.json(await getAnalytics(range, q.get("fresh") === "1", (p) => after(p)));
     }
     if (a === "status") {
       const rec = await loadWorker();

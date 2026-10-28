@@ -25,6 +25,8 @@ const config: NextConfig = {
       to("/content", "/posts"), to("/workspace", "/posts?view=board"), to("/calendar", "/posts?view=calendar"),
       to("/library", "/files"), to("/media", "/files?tab=uploads"), to("/board", "/posts?view=board"),
       to("/model", "/voices/professional"),
+      // Analytics' platform tabs became views with their own addresses
+      ...(["youtube", "instagram"] as const).map((t) => ({ ...to("/analytics", `/analytics/${t}`), has: [{ type: "query" as const, key: "tab", value: t }] })),
     ];
   },
 };

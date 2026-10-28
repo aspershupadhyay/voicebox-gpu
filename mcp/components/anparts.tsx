@@ -1,10 +1,11 @@
 "use client";
 // The Analytics page's parts, shared by the overview and the YouTube and Instagram tabs: number formats, the trend
 // arrow, a line chart (this period solid over the one before dashed, hover and arrow-key read-out), a column chart, bar
-// rows, the day × time heatmap, the score pill and the KPI scorecard. Styles: the .an-* block in app/globals.css.
-import { ArrowDownRight, ArrowUpRight, ChartLineUp, Fire, TrendUp } from "@phosphor-icons/react";
+// rows, the day × time heatmap, the score pill, the KPI scorecard, a sparkline, the trend board (metric tiles that pick
+// the big chart, as YouTube Studio does) and the performance quadrant. Styles: the .an-* block in app/globals.css.
+import { ArrowDownRight, ArrowUpRight, ChartLineUp, Fire } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
-import type { Bar, Kpi } from "@/lib/analytics";
+import type { Bar, Daily, Item, Kpi } from "@/lib/analytics";
 import { Select } from "./pop";
 import { Empty } from "./ui";
 
@@ -105,7 +106,7 @@ export function LineChart({ labels, cur, prev, unit = "", name, prevName = "the 
         onKeyDown={(e) => { if (e.key === "ArrowRight") setH((v) => Math.min(n - 1, (v ?? -1) + 1)); if (e.key === "ArrowLeft") setH((v) => Math.max(0, (v ?? n) - 1)); if (e.key === "Escape") setH(null); }}>
         <svg width={W} height={H} aria-hidden>
           {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className="an-grid" /><text x={L - 8} y={y(t) + 4} className="an-axis" textAnchor="end">{fmtUnit(t, unit)}</text></g>)}
-          {labels.map((lb, i) => (i % every === 0 || i === n - 1) && (n - 1 - i >= every / 2 || i === n - 1) ? <text key={i} x={x(i)} y={H - 6} className="an-axis" textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"}>{lb}</text> : null)}
+          {labels.map((lb, i) => (i % every === 0 || i === n - 1) && (n - 1 - i > every / 2 || i === n - 1) ? <text key={i} x={x(i)} y={H - 6} className="an-axis" textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"}>{lb}</text> : null)}
           <path d={`${curve(pc)} L${x(n - 1)},${y(0)} L${x(0)},${y(0)} Z`} className="an-area" />
           {pp && <path d={curve(pp)} className="an-line prev" />}
           <path d={curve(pc)} className="an-line" />
@@ -168,7 +169,7 @@ export function Bars({ rows, unit, tone = "c-youtube", limit = 10 }: { rows: Bar
 }
 export const share = (rows: Bar[]) => { const t = rows.reduce((a, b) => a + b[1], 0); return (v: number) => pct(t ? v / t : 0); };
 
-export function Heatmap({ heat, metric, tz, title = "When to post", id }: { heat: { v: number; n: number }[][]; metric: string; tz: string; title?: string; id: string }) {
+export function Heatmap({ heat, metric, tz, title = "When to post", id, action }: { heat: { v: number; n: number }[][]; metric: string; tz: string; title?: string; id: string; action?: React.ReactNode }) {
   const vals = heat.flat().filter((c) => c.n).map((c) => c.v).sort((a, b) => a - b);
   const q = (p: number) => vals[Math.min(vals.length - 1, Math.floor(p * vals.length))] ?? 0;
   const cuts = [q(0.2), q(0.4), q(0.6), q(0.8)];
@@ -181,7 +182,10 @@ export function Heatmap({ heat, metric, tz, title = "When to post", id }: { heat
     <section className="card an-card" aria-labelledby={id}>
       <div className="card-head">
         <div><h2 id={id}>{title}</h2><p className="sub">How posts did by when they went out ({metric}), {tz.replace("_", " ")} time</p></div>
-        {!!vals.length && <div className="an-heat-key" aria-hidden><span><i className="h0" />No posts</span><span><i className="h1" />Low</span><span><i className="h5" />Best</span></div>}
+        <div className="row" style={{ gap: 12 }}>
+          {!!vals.length && <div className="an-heat-key" aria-hidden><span><i className="h0" />No posts</span><span><i className="h1" />Low</span><span><i className="h5" />Best</span></div>}
+          {action}
+        </div>
       </div>
       {!vals.length ? <Empty icon={<Fire size={22} />} title="Not enough posts yet">After a few posts this shows the days and times that work for you.</Empty> : (
         <div className="an-heat" role="table" aria-label="Average result by day and time">
@@ -198,7 +202,7 @@ export function Heatmap({ heat, metric, tz, title = "When to post", id }: { heat
             </div>
           ))}
           <div role="row" className="an-heat-r head"><span role="columnheader" />{SLOTS.map((s) => <span role="columnheader" key={s}>{s}</span>)}</div>
-          {best.d >= 0 && <p className="small dim" style={{ margin: "10px 0 0" }}>Best slot: <b className="an-ink">{DAYS[best.d]} {SLOTS[best.s]}–{SLOTS[(best.s + 1) % 8]}</b> ({fmt(best.v)}). Darker is better.</p>}
+          {best.d >= 0 && <p className="small dim" style={{ margin: "10px 0 0" }}>Best slot: <b className="an-ink">{DAYS[best.d]} {SLOTS[best.s]}–{SLOTS[(best.s + 1) % 8]}</b> ({fmt(best.v)}). Brighter is better.</p>}
         </div>
       )}
     </section>
@@ -250,5 +254,107 @@ export function DailyCard({ id, title, daily, days, range, extra }: { id: string
       <LineChart labels={days.map((d) => day(d))} cur={s.cur} prev={hasPrev ? s.prev : null} unit={s.unit} name={s.label} tipLabel={(i) => day(days[i], { weekday: "short", month: "short", day: "numeric" })} />
       <div className="an-legend"><span><i className="k" />Last {range} days</span>{hasPrev && <span><i className="k prev" />The {range} days before</span>}{extra}</div>
     </section>
+  );
+}
+
+/** A small line of the period, no axes: the shape at a glance. */
+export function Sparkline({ values, w = 96, h = 28, label }: { values: number[]; w?: number; h?: number; label?: string }) {
+  if (values.length < 2) return null;
+  const max = Math.max(1, ...values), min = Math.min(0, ...values);
+  const pts = values.map((v, i) => [(i / (values.length - 1)) * w, h - 2 - ((v - min) / (max - min || 1)) * (h - 4)] as [number, number]);
+  return (
+    <svg className="an-spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : true}>
+      <path d={`${curve(pts)} L${w},${h} L0,${h} Z`} className="an-area" />
+      <path d={curve(pts)} className="an-line thin" />
+    </svg>
+  );
+}
+
+const total = (d: Daily, xs: number[]) => (d.unit === "pct" || d.unit === "s" ? xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.filter((v) => v > 0).length) : xs.reduce((a, b) => a + b, 0));
+
+/** The headline metrics as tiles (total, trend, sparkline); the chosen one fills the chart under them, this period
+ *  against the one before. `extra` adds a line under a tile's number (engagement rate under engagements, say). */
+export function TrendBoard({ id, trend, days, range, extra, height = 260 }: { id: string; trend: Daily[]; days: string[]; range: number; extra?: Partial<Record<string, React.ReactNode>>; height?: number }) {
+  const [k, setK] = useState(trend[0]?.key ?? "");
+  const s = trend.find((d) => d.key === k) ?? trend[0];
+  if (!s) return <section className="card an-card"><Empty icon={<ChartLineUp size={22} />} title="No daily numbers yet">They appear once a connected account has posts.</Empty></section>;
+  const hasPrev = s.prev.some((v) => v !== 0);
+  return (
+    <section className="card an-card flush an-board-trend" aria-labelledby={id}>
+      <h2 id={id} className="sr-only">Headline metrics</h2>
+      <div className="an-kt" role="tablist" aria-label="Metric on the chart">
+        {trend.map((d) => {
+          const on = d.key === s.key;
+          const t = total(d, d.cur), p = total(d, d.prev);
+          return (
+            <button key={d.key} type="button" role="tab" aria-selected={on} className={`an-kt-b ${on ? "on" : ""}`} onClick={() => setK(d.key)}>
+              <span className="an-k">{d.label}</span>
+              <span className="an-kt-v"><span className="mono">{fmtUnit(t, d.unit)}</span>{d.prev.some((v) => v !== 0) && <Trend v={change(t, p)} size="sm" />}</span>
+              <span className="an-kt-f"><span className="tiny dim">{extra?.[d.key] ?? (d.prev.some((v) => v !== 0) ? `${fmtUnit(p, d.unit)} before` : "\u00a0")}</span><Sparkline values={d.cur} w={72} h={22} /></span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="an-kt-chart" role="tabpanel" aria-label={s.label}>
+        <LineChart labels={days.map((d) => day(d))} cur={s.cur} prev={hasPrev ? s.prev : null} unit={s.unit} name={s.label} height={height} tipLabel={(i) => day(days[i], { weekday: "short", month: "short", day: "numeric" })} />
+        <div className="an-legend"><span><i className="k" />Last {range} days</span>{hasPrev && <span><i className="k prev" />The {range} days before</span>}</div>
+      </div>
+    </section>
+  );
+}
+
+/** Every post as a dot: across, views against the usual for its format (log scale, 1× in the middle); up, its
+ *  engagement rate. The lines at 1× and the median rate split posts into four kinds. Hover, or arrow keys, read a
+ *  dot; a click or Enter opens it. */
+export function Quadrant({ items, open }: { items: Item[]; open: (i: Item) => void }) {
+  const [box, W] = useWidth<HTMLDivElement>();
+  const pts = items.filter((i) => i.score != null && i.score > 0 && i.er != null).sort((a, b) => a.score! - b.score!);
+  const [h, setH] = useState<number | null>(null);
+  const H = 320, L = 44, R = 12, T = 14, B = 30;
+  const ers = pts.map((i) => i.er!).sort((a, b) => a - b);
+  const medEr = ers.length ? ers[ers.length >> 1] : 0;
+  const yMax = Math.max(0.01, ers[Math.min(ers.length - 1, Math.floor(ers.length * 0.96))] ?? 0.01) * 1.1;
+  const lx = (v: number) => Math.log2(Math.min(16, Math.max(1 / 16, v)));
+  const x = (v: number) => L + ((lx(v) + 4) / 8) * (W - L - R);
+  const y = (v: number) => T + (1 - Math.min(v, yMax) / yMax) * (H - T - B);
+  if (pts.length < 3) return <Empty icon={<ChartLineUp size={22} />} title="Not enough scored posts yet">After three posts in a format, each one is placed here.</Empty>;
+  const p = h != null ? pts[h] : null;
+  const kind = (i: Item) => (i.score! >= 1 ? (i.er! >= medEr ? "Hit" : "Seen, not loved") : i.er! >= medEr ? "Loved, not seen" : "Missed");
+  const count = (k: string) => pts.filter((i) => kind(i) === k).length;
+  const xt = [1 / 8, 1 / 4, 1 / 2, 1, 2, 4, 8];
+  const yt = [0, 0.5, 1].map((t) => t * yMax);
+  return (
+    <div ref={box} className="an-chart an-quad-chart" tabIndex={0} role="img"
+      aria-label={`${pts.length} posts. ${["Hit", "Seen, not loved", "Loved, not seen", "Missed"].map((k) => `${k}: ${count(k)}`).join(", ")}. Arrow keys read each post, Enter opens it.`}
+      onPointerLeave={() => setH(null)}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowRight" || e.key === "ArrowUp") { e.preventDefault(); setH((v) => Math.min(pts.length - 1, (v ?? -1) + 1)); }
+        if (e.key === "ArrowLeft" || e.key === "ArrowDown") { e.preventDefault(); setH((v) => Math.max(0, (v ?? pts.length) - 1)); }
+        if (e.key === "Enter" && p) open(p);
+        if (e.key === "Escape") setH(null);
+      }}>
+      <svg width={W} height={H} aria-hidden>
+        <rect x={x(1)} y={T} width={W - R - x(1)} height={y(medEr) - T} className="an-qbg" />
+        {yt.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className="an-grid" /><text x={L - 8} y={y(t) + 4} className="an-axis" textAnchor="end">{pct(t, t && t < 0.1 ? 1 : 0)}</text></g>)}
+        {xt.map((t) => <text key={t} x={x(t)} y={H - 8} className="an-axis" textAnchor="middle">{t < 1 ? `1/${1 / t}` : t}×</text>)}
+        <line x1={x(1)} x2={x(1)} y1={T} y2={H - B} className="an-qline" />
+        <line x1={L} x2={W - R} y1={y(medEr)} y2={y(medEr)} className="an-qline" />
+        <text x={W - R - 6} y={T + 14} className="an-qlab" textAnchor="end">Hits · {count("Hit")}</text>
+        <text x={L + 6} y={T + 14} className="an-qlab">Loved, not seen · {count("Loved, not seen")}</text>
+        <text x={W - R - 6} y={H - B - 8} className="an-qlab" textAnchor="end">Seen, not loved · {count("Seen, not loved")}</text>
+        <text x={L + 6} y={H - B - 8} className="an-qlab">Missed · {count("Missed")}</text>
+        {pts.map((i, k) => (
+          <circle key={i.id} cx={x(i.score!)} cy={y(i.er!)} r={h === k ? 7 : 5} className={`an-qdot ${i.network} ${h === k ? "on" : ""}`}
+            onPointerEnter={() => setH(k)} onClick={() => open(i)} />
+        ))}
+      </svg>
+      {p && (
+        <div className="an-tip" style={{ left: Math.min(Math.max(x(p.score!), 120), W - 120), top: Math.max(0, y(p.er!) - 92) }} aria-live="polite">
+          <span className="an-tip-d ellipsis" style={{ maxWidth: 220 }}>{p.title}</span>
+          <span className="an-tip-row"><b className="mono">{p.score! >= 10 ? Math.round(p.score!) : p.score!.toFixed(1)}×</b> your usual views</span>
+          <span className="an-tip-row"><b className="mono">{pct(p.er, 1)}</b> engagement · {kind(p)}</span>
+        </div>
+      )}
+    </div>
   );
 }

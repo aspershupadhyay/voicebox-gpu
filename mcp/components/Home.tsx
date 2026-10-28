@@ -1,7 +1,9 @@
 "use client";
-// Home: what you'd reach for first. A greeting with the GPU's state, the tools as tiles, your latest takes, ways to
-// make a voice, and (with the shared workspace) what's due next on the desk.
-import { ArrowRight, ArrowsClockwise, Brain, CalendarBlank, ClosedCaptioning, ImageSquare, MagicWand, Microphone, Power, WarningCircle } from "@phosphor-icons/react";
+// Home: the studio at a glance. A greeting with the GPU's state, then how the channels are doing (the headline metrics
+// as tiles over one chart, the last 28 days against the 28 before, the top posts lately, this week's rhythm against the
+// goals and what's due next), then the tools as tiles, your latest takes and ways to make a voice. The channel numbers
+// are Analytics' own report (useReport), so opening Analytics after Home is instant.
+import { ArrowRight, ArrowsClockwise, Brain, CalendarBlank, ChartLineUp, ClosedCaptioning, ImageSquare, MagicWand, Microphone, Plus, Power, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ago, api, fmtS, type Job } from "./api";
@@ -12,6 +14,11 @@ import { useStatus } from "./Shell";
 import { Empty, Notice, PageHeader } from "./ui";
 import { dueLabel } from "./PostDrawer";
 import type { Post } from "@/lib/workspace";
+import type { Item } from "@/lib/analytics";
+import { RhythmRows, TopPosts, trendOf } from "./Analytics";
+import { PostDrawer } from "./AnalyticsPlatform";
+import { fmtUnit, TrendBoard } from "./anparts";
+import { useReport } from "./useReport";
 
 type Lib = {
   id: string; kind?: string; engine: string; voice: string; label?: string; created: number; match?: number | null;
@@ -47,6 +54,38 @@ function UpNext() {
         );
       })}
     </div>
+  );
+}
+
+/** How the channels are doing: Analytics' overview in brief. */
+function Channels({ workspace }: { workspace: boolean }) {
+  const { data, err } = useReport(28);
+  const [open, setOpen] = useState<Item | null>(null);
+  if (err) return null;
+  if (!data) return <div className="home-pulse" aria-busy="true" aria-label="Loading your channels"><div className="skel" style={{ height: 340 }} /><div className="home-duo"><div className="skel" style={{ height: 260 }} /><div className="skel" style={{ height: 260 }} /></div></div>;
+  if (!data.accounts.length) return (
+    <Notice icon={<ChartLineUp size={18} weight="bold" />} action={<Link href="/posts?view=autopilot" className="btn sm"><Plus size={14} weight="bold" />Connect</Link>}>
+      <b>See how your posts do.</b> Connect YouTube or Instagram and your views, followers and best posts show here.
+    </Notice>
+  );
+  const er = data.overview.find((k) => k.key === "er");
+  return (
+    <section className="home-pulse" aria-labelledby="home-ch-h">
+      <div className="section-h">
+        <h2 id="home-ch-h">Your channels <span className="dim home-range">· last 28 days</span></h2>
+        <Link href="/analytics" className="btn quiet sm">Open analytics <ArrowRight size={14} /></Link>
+      </div>
+      <TrendBoard id="home-trend" trend={trendOf(data)} days={data.days} range={data.range} height={200} extra={{ engagements: er?.value != null ? `${fmtUnit(er.value, "pct")} of views` : undefined }} />
+      <div className="home-duo">
+        <TopPosts data={data} open={setOpen} n={3} title="Top posts lately" id="home-top-h" />
+        <section className="card an-card" aria-labelledby="home-week-h">
+          <div className="card-head"><div><h2 id="home-week-h">This week</h2><p className="sub">Posted against your weekly goals, and what&apos;s booked</p></div><Link href="/posts?view=calendar" className="btn ghost xs">Calendar</Link></div>
+          <RhythmRows data={data} />
+          {workspace && <><h3 className="an-h3">Up next</h3><UpNext /></>}
+        </section>
+      </div>
+      {open && <PostDrawer item={open} onClose={() => setOpen(null)} />}
+    </section>
   );
 }
 
@@ -91,6 +130,9 @@ export default function Home() {
         </div>
       )}
 
+      <Channels workspace={workspace} />
+
+      <div className="section-h home-studio"><h2>Studio</h2></div>
       <nav className="tiles" aria-label="Tools">
         {TOOLS.map((t) => (
           <Link key={t.href} href={t.href} className="tile">
@@ -131,12 +173,6 @@ export default function Home() {
             <Link href="/voices/revoice" className="feature-row"><span className="fr-art"><ArrowsClockwise size={26} weight="duotone" /></span><span><b>Re-voice a take</b><span>Turn a rough phone recording into your clean voice.</span></span></Link>
             <Link href="/clean-up" className="feature-row"><span className="fr-art"><MagicWand size={26} weight="duotone" /></span><span><b>Clean up a recording</b><span>Noise and room echo out, mastered for the platform.</span></span></Link>
           </div>
-          {workspace && (
-            <div className="section">
-              <div className="section-h"><h2>Up next</h2><Link href="/posts?view=calendar" className="btn quiet sm">Calendar <ArrowRight size={14} /></Link></div>
-              <UpNext />
-            </div>
-          )}
         </section>
       </div>
     </>

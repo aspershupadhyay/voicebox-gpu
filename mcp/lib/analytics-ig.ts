@@ -52,20 +52,21 @@ async function totals(token: string, user: string, metrics: string[], s: number,
     for (const b of d.total_value?.breakdowns ?? []) for (const r of b.results ?? []) cur.parts.set(r.dimension_values.join(" · "), (cur.parts.get(r.dimension_values.join(" · ")) ?? 0) + r.value);
     out.set(d.name, cur);
   };
-  for (const [a, b] of chunks(s, e)) {
+  // the 30-day pieces are asked together, then added up in order
+  const got = await Promise.all(chunks(s, e).map(async ([a, b]) => {
     const q = (m: string) => IG.igGet<{ data: Insight[] }>(`/${user}/insights`, token, { metric: m, period: "day", metric_type: "total_value", since: unix(a), until: unix(b + DAY), ...(breakdown ? { breakdown } : {}) });
     const all = await settle(q(metrics.join(",")));
-    if (all) all.data.forEach(add);
-    else (await Promise.all(metrics.map((m) => settle(q(m))))).forEach((r) => r?.data.forEach(add));
-  }
+    return all ? [all] : await Promise.all(metrics.map((m) => settle(q(m))));
+  }));
+  for (const rs of got) for (const r of rs) r?.data.forEach(add);
   return out;
 }
 
 async function series(token: string, user: string, metric: string, s: number, e: number, range: number) {
   const out = new Array(range).fill(0);
   let got = false;
-  for (const [a, b] of chunks(s, e)) {
-    const r = await settle(IG.igGet<{ data: Insight[] }>(`/${user}/insights`, token, { metric, period: "day", since: unix(a), until: unix(b + DAY) }));
+  const answers = await Promise.all(chunks(s, e).map(([a, b]) => settle(IG.igGet<{ data: Insight[] }>(`/${user}/insights`, token, { metric, period: "day", since: unix(a), until: unix(b + DAY) }))));
+  for (const r of answers) {
     for (const v of r?.data?.[0]?.values ?? []) {
       const i = Math.round((Date.parse(v.end_time ?? "") - DAY - s) / DAY);
       if (i >= 0 && i < range && typeof v.value === "number") { out[i] += v.value; got = true; }
