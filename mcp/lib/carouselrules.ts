@@ -18,15 +18,16 @@ export const MAX_ITEMS = 100;
 export const visual = (k: MediaKind) => k === "image" || k === "video";
 
 /** Every carousel worth showing: the made ones (in their own order), then each post's loose photos and clips. Only
- *  `members` count (pass the files out of the trash); `title` names a post's group. */
-export function groupsOf(made: Carousel[], members: Member[], title: (postId: string) => string | undefined = () => undefined): Group[] {
+ *  `members` count (pass the files out of the trash); `title` names a post's group. `min`: how many files a made one
+ *  needs to show (the API also lists one that has a single file so far). */
+export function groupsOf(made: Carousel[], members: Member[], title: (postId: string) => string | undefined = () => undefined, min = 2): Group[] {
   const live = new Map(members.map((m) => [m.key, m]));
   const taken = new Set<string>();
   const out: Group[] = [];
   for (const c of made) {
     const items = c.items.filter((k) => live.has(k) && !taken.has(k));
     items.forEach((k) => taken.add(k));
-    if (items.length >= 2) out.push({ id: c.id, name: c.name, items, post: c.post, made: true, created: c.created });
+    if (items.length >= min) out.push({ id: c.id, name: c.name, items, post: c.post, made: true, created: c.created });
   }
   const byPost = new Map<string, Member[]>();
   for (const m of members) if (m.post && visual(m.kind) && !taken.has(m.key)) byPost.set(m.post, [...(byPost.get(m.post) ?? []), m]);

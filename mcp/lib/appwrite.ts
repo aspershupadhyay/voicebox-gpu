@@ -256,13 +256,22 @@ async function mediaRow(fileId: string, name: string, mime: string, size: number
  *  big video never sits whole in the function's memory. The R2 copy stays as the file's backup. */
 export async function addMediaFromR2(key: string, size: number, mime: string, name: string, fileId: string, opts: { postId?: string | null }, actor: { id?: string; name: string }) {
   const src = await presign(key, "GET", 3600);
-  for (let start = 0; start < Math.max(size, 1); start += CHUNK) {
+  const read = async (start: number) => {
     const end = Math.min(size, start + CHUNK);
     const part = await fetch(src, { headers: size ? { Range: `bytes=${start}-${end - 1}` } : {}, cache: "no-store" });
     if (!part.ok) throw new Error(`could not read the upload: ${part.status}`);
+    return part.arrayBuffer();
+  };
+  // the next 5 MB is read from R2 while this one goes up (Appwrite wants the chunks in order)
+  let next: Promise<ArrayBuffer> | null = read(0);
+  for (let start = 0; start < Math.max(size, 1); start += CHUNK) {
+    const end = Math.min(size, start + CHUNK);
+    const bytes = await next!;
+    next = end < size ? read(end) : null;
+    next?.catch(() => null); // a failed read surfaces when awaited, not as an unhandled rejection
     const form = new FormData();
     form.set("fileId", fileId);
-    form.set("file", new Blob([await part.arrayBuffer()], { type: mime }), name);
+    form.set("file", new Blob([bytes], { type: mime }), name);
     const headers: Record<string, string> = { "X-Appwrite-Project": AW.project, "X-Appwrite-Key": process.env.APPWRITE_API_KEY ?? "" };
     if (size > CHUNK) { headers["Content-Range"] = `bytes ${start}-${end - 1}/${size}`; if (start) headers["X-Appwrite-ID"] = fileId; }
     const up = await fetch(`${AW.endpoint}/storage/buckets/${AW.bucket}/files`, { method: "POST", headers, body: form });

@@ -69,7 +69,13 @@ on a curved row, and each opens full size with the carousel along the bottom (`[
 live in R2 at `workspace/carousels.json` (written conditionally, so ten uploads finishing at once all land); rules in
 `mcp/lib/carouselrules.ts`. To upload straight into one, give `save_file`, `upload_media` or `add_media` (or
 `POST /api/files/upload`) a `carousel` (an id, or a name: a new name makes one) and a `position` (1 = first): the files
-keep that order whatever order their uploads finish in. Example, three photos for one post:
+keep that order whatever order their uploads finish in. Turning a ticket in again retries a carousel join that failed
+(the file isn't copied twice). Several files in one go: `POST /api/files/upload {files: [{name, size?, position?}], carousel,
+folder?, post_id?}` answers one `upload_url` and `ticket` each; PUT them side by side, then
+`POST /api/files/complete {tickets: [...]}`. Files already in Files join without a re-upload:
+`POST /api/files/carousels {carousel, files: ["m:…", …]}` (or `[{file_id, position}]`); the same route takes
+`{carousel, order}`, `{carousel, name}`, `{carousel, remove}` and `{carousel, ungroup: true}`, and `GET` lists them
+(`?post=`, `?id=`). Upload keys work on all three routes. Example, three photos for one post:
 
 ```bash
 for i in 1 2 3; do

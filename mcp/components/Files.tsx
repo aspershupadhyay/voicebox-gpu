@@ -312,7 +312,8 @@ export default function Files() {
     if (atRoot) return items.filter((i) => i.folder === null).sort(cmp); // only what you put at the top yourself
     return items.filter((i) => (global || i.folder === cwdId) && match(i)).sort(cmp);
   }, [trashView, trashFiles, atRoot, items, global, cwdId, match, cmp]);
-  const recent = useMemo(() => (atRoot && !filtered ? collapse([...items].sort((a, b) => b.at - a.at)).slice(0, RECENT) : []), [atRoot, filtered, items, collapse]);
+  // carousels have their own row at the top, so Recent keeps to loose files
+  const recent = useMemo(() => (atRoot && !filtered ? [...items].filter((i) => !stackOf.has(i.key)).sort((a, b) => b.at - a.at).slice(0, RECENT) : []), [atRoot, filtered, items, stackOf]);
   const shownEntries = useMemo(() => (trashView ? shownFiles : collapse(shownFiles)), [trashView, shownFiles, collapse]);
   const shownFolders = useMemo(() => {
     if (trashView) return t.folders.filter((f) => t.trash[`f:${f.id}`]);
@@ -703,6 +704,16 @@ export default function Files() {
     return () => removeEventListener("keydown", k);
   }, [cv, stackOrder]);
 
+  // photos open instantly: the screen-size copies of the ones around the open one are fetched ahead
+  useEffect(() => {
+    const id = cv?.id ?? stage?.id;
+    const s = id ? stacks.get(`c:${id}`) : undefined;
+    if (!s) return;
+    const at = cv?.i ?? stage?.at ?? 0;
+    const near = [0, 1, -1, 2, 3, -2].map((d) => s.members[(at + d + s.members.length) % s.members.length]);
+    for (const m of near) if (m?.m && m.kind === "image") { const im = new Image(); im.decoding = "async"; im.src = screenPreview(m.m) ?? mediaUrl(m.m); }
+  }, [cv, stage, stacks]);
+
   // ── drag and drop
   function dragStart(key: string, e: React.DragEvent) {
     if (trashView || key.startsWith("u:")) { e.preventDefault(); return; }
@@ -983,6 +994,13 @@ export default function Files() {
                   {!global && !trashView && <button type="button" className="frow fr-new" onClick={() => newFolder()}><span className="fr-thumb"><FolderPlus size={16} weight="duotone" /></span>New folder</button>}
                 </div>
               )}
+            </section>
+          )}
+
+          {atRoot && !filtered && stackOrder.length > 0 && (
+            <section className="fm-sec" aria-labelledby="fm-carousels">
+              <div className="fm-sec-h"><h2 id="fm-carousels"><Cards size={16} weight="duotone" />Carousels <span className="fm-count">{stackOrder.length}</span></h2></div>
+              {grid(stackOrder.slice(0, 8), "s:")}
             </section>
           )}
 

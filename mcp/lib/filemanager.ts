@@ -50,11 +50,13 @@ export async function catalog(opts: { trash?: boolean } = {}) {
   const all = [...(media instanceof Error ? [] : media.map((m) => fromMedia(m, tree))), ...jobs.map((j) => fromJob(j, tree))];
   const live = all.filter((i) => !isTrashed(tree, i.id));
   const titles = new Map(posts.map((p) => [p.$id, p.title]));
-  const groups = groupsOf(made, live.map((i) => ({ key: i.id, kind: i.kind, post: i.post_id ?? null, at: Date.parse(i.created) })), (id) => titles.get(id));
+  const members = live.map((i) => ({ key: i.id, kind: i.kind, post: i.post_id ?? null, at: Date.parse(i.created) }));
+  const groups = groupsOf(made, members, (id) => titles.get(id));
+  const allGroups = groupsOf(made, members, (id) => titles.get(id), 1); // for the API: a made one with one file so far too
   const inGroup = new Map(groups.flatMap((g) => g.items.map((k) => [k, g.id] as const)));
   for (const i of live) { const g = inGroup.get(i.id); if (g) i.carousel = g; }
   const items = all.filter((i) => isTrashed(tree, i.id) === !!opts.trash).sort((a, b) => b.created.localeCompare(a.created));
-  return { tree, items, groups, note: media instanceof Error ? `uploads not listed: ${media.message}` : undefined };
+  return { tree, items, groups, allGroups, note: media instanceof Error ? `uploads not listed: ${media.message}` : undefined };
 }
 
 // ── carousels: a post's photos and clips as one stack (rules in lib/carouselrules.ts, storage in lib/carousels.ts)
@@ -68,13 +70,13 @@ const groupOut = (g: Group, items: FileItem[]) => {
 
 /** Every carousel (or one post's), each with its files in order. */
 export async function carouselList(opts: { post_id?: string } = {}) {
-  const { items, groups } = await catalog();
-  return groups.filter((g) => !opts.post_id || g.post === opts.post_id).map((g) => groupOut(g, items));
+  const { items, allGroups } = await catalog();
+  return allGroups.filter((g) => !opts.post_id || g.post === opts.post_id).map((g) => groupOut(g, items));
 }
 
 export async function carouselDetail(id: string) {
-  const { items, groups } = await catalog();
-  const g = groups.find((x) => x.id === id) ?? groups.find((x) => x.name.toLowerCase() === id.trim().toLowerCase());
+  const { items, allGroups } = await catalog();
+  const g = allGroups.find((x) => x.id === id) ?? allGroups.find((x) => x.name.toLowerCase() === id.trim().toLowerCase());
   if (!g) throw new FilesError(`no carousel ${id} (the carousels tool lists them)`, 404);
   return groupOut(g, items);
 }

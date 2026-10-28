@@ -7,7 +7,9 @@
 // land as one stack on the Files page, in that order whatever order the uploads finish in (lib/carousels.ts).
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { addMediaFromR2, mimeFor } from "./appwrite";
+import { after } from "next/server";
 import { joinCarousel } from "./carousels";
+import { fileUrl } from "./workspace";
 import { findFolder, getTree, moveItems } from "./files";
 import { getJson, headObj, presign, putJson } from "./store";
 import { safeEqual } from "./worker";
@@ -58,19 +60,60 @@ function readTicket(ticket: string): Ticket {
 
 const DONE = (f: string) => `workspace/inbox/${f}.json`;
 
+type Done = { media: string; name: string; carousel?: { error?: string } | null };
+
+/** Join the ticket's carousel; on failure the answer says so, and turning the same ticket in again tries again. */
+async function joinFor(t: Ticket, mediaId: string, actor: { name: string }) {
+  if (!t.c) return null;
+  return joinCarousel(t.c, `m:${mediaId}`, { position: t.o, post: t.p, by: actor.name }).catch((e: Error) => ({ error: e.message, retry: "turn the same ticket in again" }));
+}
+
+/** Start several uploads at once (one carousel's photos): each file gets its own address and ticket. */
+export async function startUploads(input: { files?: unknown; folder?: unknown; post_id?: unknown; carousel?: unknown }) {
+  const files = Array.isArray(input.files) ? input.files as Record<string, unknown>[] : [];
+  if (!files.length || files.length > 100) throw new Error("files: 1 to 100 of {name, size?, type?, position?}");
+  const auto = files.every((f) => f.position == null) && !!input.carousel; // no positions given: the order they're listed in
+  const out = await Promise.all(files.map((f, i) => startUpload({ ...f, folder: input.folder, post_id: input.post_id, carousel: input.carousel, position: f.position ?? (auto ? i + 1 : undefined) })));
+  return out.map((r, i) => ({ name: String(files[i].name), ...r }));
+}
+
+/** Turn in several tickets at once: the files are copied side by side, each joining its carousel (the writes are
+ *  conditional and retried, so none drops out). */
+export async function completeUploads(tickets: string[], actor: { id?: string; name: string }) {
+  if (!tickets.length || tickets.length > 100) throw new Error("tickets: 1 to 100");
+  return Promise.all(tickets.map((tk) => completeUpload(tk, actor).catch((e: Error) => ({ ticket: tk.slice(0, 16), error: e.message }))));
+}
+
 export async function completeUpload(ticket: string, actor: { id?: string; name: string }) {
   const t = readTicket(ticket);
-  const done = await getJson<{ media: string; name: string; carousel?: unknown }>(DONE(t.f)).catch(() => null);
-  if (done) return { ...done, file_id: `m:${done.media}`, already: true };
+  const done = await getJson<Done>(DONE(t.f)).catch(() => null);
+  if (done) {
+    if (t.c && (!done.carousel || done.carousel.error)) {
+      // the file is in; only the carousel failed last time: try that again
+      const carousel = await joinFor(t, done.media, actor);
+      await putJson(DONE(t.f), { ...done, carousel });
+      return { ...done, carousel, file_id: `m:${done.media}`, already: true };
+    }
+    return { ...done, file_id: `m:${done.media}`, already: true };
+  }
   const head = await headObj(t.k);
   if (!head) throw new Error("nothing was uploaded yet: PUT the file to upload_url first (curl -T <file> '<upload_url>')");
   if (head.size > MAX_BYTES) throw new Error("files go up to 2 GB");
   const { media } = await addMediaFromR2(t.k, head.size, t.m, t.n, t.f, { postId: t.p }, actor);
   if (t.d) await moveItems([`m:${media.$id}`], t.d);
   // the file is saved either way; a carousel that can't take it says so in the answer
-  const carousel = t.c ? await joinCarousel(t.c, `m:${media.$id}`, { position: t.o, post: t.p, by: actor.name }).catch((e: Error) => ({ error: e.message })) : null;
+  const carousel = await joinFor(t, media.$id, actor);
   await putJson(DONE(t.f), { media: media.$id, name: media.name, carousel });
+  warmPreviews(media);
   return { media: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: Math.round(head.size / 1e5) / 10, folder: t.d, post_id: t.p, carousel, already: false };
+}
+
+/** Have Appwrite make (and cache) an image's card and screen sizes now, so the first look in Files is instant. */
+function warmPreviews(m: { kind: string; file_id: string; token: string | null }) {
+  if (m.kind !== "image" || !m.token) return;
+  const urls = [480, 1280, 1920].map((w) => fileUrl(m, "preview", w));
+  const go = Promise.allSettled(urls.map((u) => fetch(u, { cache: "no-store" }).then((r) => r.arrayBuffer())));
+  try { after(() => go); } catch { /* outside a request: let it run */ }
 }
 
 // ── upload keys: a key that can only save files (for an AI or a script), revocable in Settings
