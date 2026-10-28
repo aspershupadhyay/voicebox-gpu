@@ -1066,6 +1066,29 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
   );
 
   server.registerTool(
+    "save_file",
+    {
+      title: "Save a file of any size to Files",
+      description: "Save a file you made (a rendered video, audio, images, a PDF) into the Files page, up to 2 GB, without sending its bytes through MCP. " +
+        "Two calls: first with `name` (and size, folder, post_id) — it answers an upload_url; PUT the file there with one shell command (curl -sS -T <file> \"<upload_url>\", within an hour); " +
+        "then call again with the `ticket` it gave, and the file appears in Files (filed in the folder, attached to the post). Use this instead of upload_media for anything over ~3 MB.",
+      inputSchema: z.object({
+        name: z.string().min(1).max(200).optional().describe("step 1: file name with extension, e.g. final-cut.mp4"),
+        size: z.number().int().min(0).max(2e9).optional().describe("step 1: bytes, if known"),
+        folder: FOLDER_REF.optional(), post_id: POST_ID.optional(),
+        ticket: z.string().min(20).max(2000).optional().describe("step 2: the ticket from step 1, once the file is uploaded"),
+      }),
+    },
+    async ({ name, size, folder, post_id, ticket }) => ws(async () => {
+      const inbox = await import("@/lib/inbox");
+      if (ticket) return { saved: await inbox.completeUpload(ticket, CLAUDE) };
+      if (!name) throw new Error("give `name` to start, or `ticket` to finish");
+      const r = await inbox.startUpload({ name, size, folder, post_id });
+      return { upload_url: r.upload_url, ticket: r.ticket, expires_at: r.expires_at, run: `curl -sS -T '<path to ${name}>' '${r.upload_url}'`, then: "call save_file again with { ticket }" };
+    }),
+  );
+
+  server.registerTool(
     "delete_media",
     {
       title: "Delete a workspace file",
@@ -1261,7 +1284,7 @@ export const INSTRUCTIONS = [
     "4) A recording from a bad mic: clean_audio. A rough take the user performed: revoice into their clean voice. Subtitles for any file: transcribe. Stills and thumbnails: imagine, then add_media to put one on the post.",
     "5) Long jobs return a job id: poll get_job (each call waits up to 45 s). Results are archived to the dashboard's Files page; links expire after 6 h.",
     "6) The user's own voice model: voice_dataset to see or grow the training data, then the training notebook; once trained it is engine myvoice with voice = that person's name (my_voices lists both people's). benchmark_voices compares it with their clones on held-out sentences. voice_coach shows how a trained voice is doing and writes the next recording script around its weak spots; recording it makes the voice more natural (retrains only go live when they beat the current model).",
-    "Content spaces: each post goes to one or more spaces (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast), each with its own stage and publish time; cross-post by adding targets (update_post targets, merge). Files: upload_media (bytes) or add_media (a link); delete_media / delete_post only when asked.",
+    "Content spaces: each post goes to one or more spaces (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast), each with its own stage and publish time; cross-post by adding targets (update_post targets, merge). Files: save_file (any size up to 2 GB: get an upload address, curl the file to it, hand back the ticket), upload_media (small bytes) or add_media (a link); delete_media / delete_post only when asked.",
     "Files page (a Drive-like file manager over uploads and generated items; category folders Videos, Images, Audio, Docs & scripts and Other file things by kind on their own): list_files browses folders and searches; get_file gives download links; create_folder / update_folder / move_files / rename_file / star_files keep it tidy (upload_media and add_media take a folder). delete_files and delete_folder move things to the trash (30 days, restore_files brings them back) and only when asked; forever / empty_trash only when asked for that.",
     "Publishing: publish_accounts shows the connected YouTube / Instagram accounts and the queue; publish_post sets up a target (files, cover, every YouTube or Instagram option) and saves, arms it for its publish time, or sends it now (only when asked); publish_status follows it; automation_rules reads or changes cross-posting, posting slots, retries and footers. analytics shows how the channels are doing (per format, every post's score against the usual, best times, lengths, hashtags, tips): read it before planning so the next posts build on what works. X, TikTok, LinkedIn and podcasts stay hand-offs: the user posts those and marks them posted.",
     "7) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",

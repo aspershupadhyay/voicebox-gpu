@@ -169,19 +169,20 @@ export function Bars({ rows, unit, tone = "c-youtube", limit = 10 }: { rows: Bar
 }
 export const share = (rows: Bar[]) => { const t = rows.reduce((a, b) => a + b[1], 0); return (v: number) => pct(t ? v / t : 0); };
 
-export function Heatmap({ heat, metric, tz, title = "When to post", id, action }: { heat: { v: number; n: number }[][]; metric: string; tz: string; title?: string; id: string; action?: React.ReactNode }) {
+export function Heatmap({ heat, metric, tz, title = "When to post", id, action, sub, format }: { heat: { v: number; n: number }[][]; metric: string; tz: string; title?: string; id: string; action?: React.ReactNode;
+  /** the line under the title (default: how posts did by when they went out) */ sub?: string; format?: (v: number) => string }) {
   const vals = heat.flat().filter((c) => c.n).map((c) => c.v).sort((a, b) => a - b);
   const q = (p: number) => vals[Math.min(vals.length - 1, Math.floor(p * vals.length))] ?? 0;
   const cuts = [q(0.2), q(0.4), q(0.6), q(0.8)];
   const level = (c: { v: number; n: number }) => (!c.n ? 0 : 1 + cuts.filter((t) => c.v > t).length);
-  const fmt = (v: number) => (metric === "engagements" ? compact(v) : `${v >= 10 ? Math.round(v) : v.toFixed(1)}×`);
+  const fmt = format ?? ((v: number) => (metric === "engagements" ? compact(v) : `${v >= 10 ? Math.round(v) : v.toFixed(1)}×`));
   const [tip, setTip] = useState<{ d: number; s: number } | null>(null);
   let best = { d: -1, s: -1, v: -1 };
   heat.forEach((r, d) => r.forEach((c, s) => { if (c.n && c.v > best.v) best = { d, s, v: c.v }; }));
   return (
     <section className="card an-card" aria-labelledby={id}>
       <div className="card-head">
-        <div><h2 id={id}>{title}</h2><p className="sub">How posts did by when they went out ({metric}), {tz.replace("_", " ")} time</p></div>
+        <div><h2 id={id}>{title}</h2><p className="sub">{sub ?? `How posts did by when they went out (${metric})`}, {tz.replace("_", " ")} time</p></div>
         <div className="row" style={{ gap: 12 }}>
           {!!vals.length && <div className="an-heat-key" aria-hidden><span><i className="h0" />No posts</span><span><i className="h1" />Low</span><span><i className="h5" />Best</span></div>}
           {action}
@@ -258,9 +259,9 @@ export function DailyCard({ id, title, daily, days, range, extra }: { id: string
 }
 
 /** A small line of the period, no axes: the shape at a glance. */
-export function Sparkline({ values, w = 96, h = 28, label }: { values: number[]; w?: number; h?: number; label?: string }) {
+export function Sparkline({ values, w = 96, h = 28, label, fit }: { values: number[]; w?: number; h?: number; label?: string; /** scale to the values' own range, not from 0 (a follower count) */ fit?: boolean }) {
   if (values.length < 2) return null;
-  const max = Math.max(1, ...values), min = Math.min(0, ...values);
+  const max = Math.max(fit ? -Infinity : 1, ...values), min = fit ? Math.min(...values) : Math.min(0, ...values);
   const pts = values.map((v, i) => [(i / (values.length - 1)) * w, h - 2 - ((v - min) / (max - min || 1)) * (h - 4)] as [number, number]);
   return (
     <svg className="an-spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : true}>

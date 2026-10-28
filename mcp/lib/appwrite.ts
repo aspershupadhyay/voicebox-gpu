@@ -240,10 +240,33 @@ export async function addMediaBytes(bytes: Uint8Array, mime: string, name: strin
     const up = await fetch(`${AW.endpoint}/storage/buckets/${AW.bucket}/files`, { method: "POST", headers, body: form });
     if (!up.ok) throw new AppwriteError(`upload failed: ${(await up.text()).slice(0, 200)}`, up.status);
   }
+  return mediaRow(fileId, name, mime, bytes.length, null, opts, actor);
+}
+
+async function mediaRow(fileId: string, name: string, mime: string, size: number, r2Key: string | null, opts: { postId?: string | null; backup: boolean }, actor: { id?: string; name: string }) {
   const { kindOf } = await import("./workspace");
   const row = await aw<Media>(rows("media"), { method: "POST", body: { rowId: "unique()", data: {
-    file_id: fileId, name, mime, size: bytes.length, kind: kindOf(mime, name), post_id: opts.postId ?? null, uploaded_by: actor.id ?? null, uploaded_name: actor.name,
+    file_id: fileId, name, mime, size, kind: kindOf(mime, name), post_id: opts.postId ?? null, uploaded_by: actor.id ?? null, uploaded_name: actor.name, ...(r2Key ? { r2_key: r2Key } : {}),
   } } });
   await logActivity({ post_id: opts.postId ?? null, verb: "uploaded", text: name }, actor);
   return finalizeMedia(row.$id, { backup: opts.backup });
+}
+
+/** A file already in R2 (the upload endpoint, lib/inbox.ts) into the workspace's media bucket, 5 MB at a time, so a
+ *  big video never sits whole in the function's memory. The R2 copy stays as the file's backup. */
+export async function addMediaFromR2(key: string, size: number, mime: string, name: string, fileId: string, opts: { postId?: string | null }, actor: { id?: string; name: string }) {
+  const src = await presign(key, "GET", 3600);
+  for (let start = 0; start < Math.max(size, 1); start += CHUNK) {
+    const end = Math.min(size, start + CHUNK);
+    const part = await fetch(src, { headers: size ? { Range: `bytes=${start}-${end - 1}` } : {}, cache: "no-store" });
+    if (!part.ok) throw new Error(`could not read the upload: ${part.status}`);
+    const form = new FormData();
+    form.set("fileId", fileId);
+    form.set("file", new Blob([await part.arrayBuffer()], { type: mime }), name);
+    const headers: Record<string, string> = { "X-Appwrite-Project": AW.project, "X-Appwrite-Key": process.env.APPWRITE_API_KEY ?? "" };
+    if (size > CHUNK) { headers["Content-Range"] = `bytes ${start}-${end - 1}/${size}`; if (start) headers["X-Appwrite-ID"] = fileId; }
+    const up = await fetch(`${AW.endpoint}/storage/buckets/${AW.bucket}/files`, { method: "POST", headers, body: form });
+    if (!up.ok) throw new AppwriteError(`upload failed: ${(await up.text()).slice(0, 200)}`, up.status);
+  }
+  return mediaRow(fileId, name, mime, size, key, { ...opts, backup: false }, actor);
 }

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type MyVoice } from "./api";
 import { useDialog } from "./Dialog";
 import SecurityCard from "./SecurityCard";
+import UploadKeys from "./UploadKeys";
 import { Field, PageHeader, Toggle } from "./ui";
 import { Select } from "./pop";
 
@@ -122,6 +123,7 @@ export default function Settings() {
 
         <div className="stack" style={{ gap: 16 }}>
           <SecurityCard />
+          <UploadKeys />
           <div className="card">
             <div className="card-head"><h2>Publishing</h2></div>
             <Field label="Default platform" style={{ marginBottom: 0 }}>
