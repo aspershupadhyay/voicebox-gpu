@@ -3058,6 +3058,38 @@ class _Uploader:
         return items
 
 
+# Pacing, so the downloader never hammers a site: the same site at most once every few seconds (social sites, which
+# rate-limit bursts, a little longer), with a little randomness, like a person opening links one after another.
+SOCIAL = ("instagram.com", "youtube.com", "youtu.be", "tiktok.com", "facebook.com", "threads.net", "threads.com", "x.com", "twitter.com", "reddit.com")
+HOST_LAST = {}
+HOST_LOCK = threading.Lock()
+
+
+def _social(url):
+    h = (urlparse(url).hostname or "").lower()
+    return any(h == d or h.endswith("." + d) for d in SOCIAL)
+
+
+def _pace(url):
+    import random
+    h = (urlparse(url).hostname or "").lower().removeprefix("www.")
+    gap = (4.0 if _social(url) else 1.0) + random.uniform(0, 1.5)
+    with HOST_LOCK:
+        wait = HOST_LAST.get(h, 0) + gap - time.time()
+        HOST_LAST[h] = max(time.time(), HOST_LAST.get(h, 0) + gap)
+    if wait > 0:
+        time.sleep(wait)
+
+
+def _best_error(errors):
+    """Of everything that was tried, the error that says the most: a sign-in or bot check, then an HTTP code."""
+    for pat in (r"sign in|log ?in|login|private|bot|age|country", r"HTTP Error \d{3}|\b\d{3}\b"):
+        for e in errors:
+            if re.search(pat, e, re.I):
+                return e
+    return errors[0] if errors else "nothing to download at that link"
+
+
 VIDEO_IN_PAGE = re.compile(r"""https?:(?:\\?/){2}[^\s"'<>\\]+?\.(?:mp4|m3u8|webm|mov)(?:\?[^\s"'<>\\]*)?""", re.I)
 
 
@@ -3110,9 +3142,12 @@ def run_fetch(job):
              "playlistend": 20, "max_filesize": 1900 * 1024 * 1024, "quiet": True, "no_warnings": True, "progress_hooks": [hook],
              "post_hooks": [up.add],  # the final file (after the merge): it goes up while the next one downloads
              "restrictfilenames": True, "socket_timeout": 20, "retries": 5, "fragment_retries": 10, "extractor_retries": 2,
-             "concurrent_fragment_downloads": 8, "http_chunk_size": 10 * 1024 * 1024, "noprogress": True,
+             # YouTube: fewer parallel connections (bursts are what it rate-limits); CDN fragments elsewhere take 8
+             "concurrent_fragment_downloads": 4 if "youtu" in ft["url"] else 8, "http_chunk_size": 10 * 1024 * 1024, "noprogress": True,
              # YouTube: when the default client is refused (the bot check), the others often aren't
              "extractor_args": {"youtube": {"player_client": ["default", "mweb", "web_safari"]}}}
+        if _social(ft["url"]):  # a short pause between a site's requests, and between a carousel's items
+            o.update({"sleep_interval_requests": 0.75, "sleep_interval": 1, "max_sleep_interval": 3})
         if cpath:
             o["cookiefile"] = cpath
         if impersonate is not None:
@@ -3130,6 +3165,7 @@ def run_fetch(job):
         return bool(up.futs)
 
     info, errors = {}, []
+    _pace(ft["url"])
     target = _impersonate_target(yt_dlp)
     # 1) yt-dlp, 2) the same as Chrome (sites that refuse plain clients), 3) gallery-dl (photo posts),
     # 4) every video link in the page itself. The first that gets a file wins.
@@ -3165,7 +3201,7 @@ def run_fetch(job):
         except Exception as e:  # noqa: BLE001
             errors.append(f"the page: {e}"[:200])
     if not have():
-        raise RuntimeError((errors[0] if errors else "nothing to download at that link")[:300])
+        raise RuntimeError(_best_error(errors)[:300])
     job["stage"] = "uploading"
     job["dl"]["pct"] = 0.99
     items = sorted(up.results(), key=lambda x: x["slot"])

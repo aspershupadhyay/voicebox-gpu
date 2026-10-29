@@ -24,6 +24,7 @@ export type Dl = {
   folder: string | null; post: string | null; name: string | null; by: string; at: number; updated: number;
   items: DlItem[]; error: string | null; job: string | null; pct: number | null; stage: string | null; saving_at?: number;
   requeued?: number; // times the worker went away mid-download and it was handed to the next one
+  server_error?: string | null; // why the server couldn't get it itself (the worker tried next), kept for the final error
 };
 type Actor = { id?: string; name: string };
 
@@ -255,7 +256,7 @@ export async function startDownloads(urls: string[], o: { folder?: string | null
 }
 
 export async function retryDownload(id: string, actor: Actor, later: (f: () => Promise<unknown>) => void) {
-  const d = await patch(id, { status: "fetching", error: null, job: null, pct: 0, stage: "Reading the link", via: null, saving_at: undefined });
+  const d = await patch(id, { status: "fetching", error: null, job: null, pct: 0, stage: "Reading the link", via: null, saving_at: undefined, server_error: null, requeued: 0 });
   if (!d) throw new DlError("no such download", 404);
   later(() => run(d, actor));
   return d;
@@ -270,12 +271,15 @@ async function run(d: Dl, actor: Actor) {
     if (route === "server") found = await resolve(d.url, d.source).catch(() => null); // a site that refuses servers: the worker tries
     if (found?.files.length) {
       await patch(d.id, { via: "server", title: found.title, author: found.author, thumb: found.thumb, stage: "Downloading", pct: 0.2 });
-      const items = await saveFromServer(d, found, actor);
+      let why: string | null = null;
+      const items = await saveFromServer(d, found, actor).catch((e: Error) => { why = e.message; return null; });
       if (items) { await finish(d.id, items, actor); return; }
+      // the server couldn't get the file (refused, gone, too slow): the Colab downloader tries it its own way
+      if (why) await patch(d.id, { server_error: why, stage: `${why}: trying the Colab downloader` });
     }
     await toWorker(d, found);
   } catch (e) {
-    await patch(d.id, { status: "error", error: plain((e as Error).message), stage: null });
+    await patch(d.id, { status: "error", error: plain((e as Error).message, siteOf(d), d.server_error), stage: null });
   }
 }
 
@@ -286,7 +290,7 @@ async function saveFromServer(d: Dl, found: Found, actor: Actor): Promise<DlItem
   const items: DlItem[] = [];
   for (const [i, f] of found.files.entries()) {
     const r = await safeFetch(f.url, { ms: 120_000, headers: { Referer: d.url } });
-    if (!r.ok) throw new DlError(`the file answered ${r.status}`);
+    if (!r.ok) { r.body?.cancel().catch(() => null); throw new DlError(`${new URL(r.finalUrl).hostname.replace(/^www\./, "")} refused the file: HTTP ${r.status}`); }
     const size = Number(r.headers.get("content-length") ?? 0);
     if (size > SERVER_MAX) { r.body?.cancel().catch(() => null); return null; } // big: the worker streams it instead
     const bytes = new Uint8Array(await r.arrayBuffer());
@@ -363,7 +367,7 @@ export async function refresh(later: (f: () => Promise<unknown>) => void, actor:
   if (!live.length) return list;
   const { call, WorkerOffline } = await import("./worker");
   for (const d of live) {
-    if (d.status === "waiting") { if (Date.now() - d.updated < 20_000) continue; later(() => toWorker(d, null).catch((e) => patch(d.id, { status: "error", error: plain((e as Error).message) }))); continue; }
+    if (d.status === "waiting") { if (Date.now() - d.updated < 20_000) continue; later(() => toWorker(d, null).catch((e) => patch(d.id, { status: "error", error: plain((e as Error).message, siteOf(d), d.server_error) }))); continue; }
     if (d.status === "saving") { later(() => saveFromWorker(d, actor)); continue; }
     try {
       const j = await call<{ status: string; error?: string | null; stage?: string; dl?: { pct: number; files: number } }>(`/jobs/${d.job}`, { timeoutMs: 8000 });
@@ -371,7 +375,7 @@ export async function refresh(later: (f: () => Promise<unknown>) => void, actor:
         const claimed = await change((l) => { const x = l.find((y) => y.id === d.id); if (!x || x.status !== "worker") return false; x.status = "saving"; x.saving_at = Date.now(); x.stage = "Saving to Files"; x.pct = 0.97; return true; });
         if (claimed) later(() => saveFromWorker(d, actor));
       } else if (j.status === "error" || j.status === "cancelled") {
-        await patch(d.id, { status: "error", error: plain(j.error ?? j.status), stage: null });
+        await patch(d.id, { status: "error", error: plain(j.error ?? j.status, siteOf(d), d.server_error), stage: null });
       } else {
         const stage = j.status === "queued" ? "Queued on the worker" : j.stage === "preparing" ? "Getting the downloader ready" : j.stage === "uploading" ? "Sending it to Files" : j.stage === "downloading photos" ? "Downloading the photos" : "Downloading";
         const pct = Math.max(0.05, j.dl?.pct ?? 0);
@@ -391,7 +395,7 @@ export async function refresh(later: (f: () => Promise<unknown>) => void, actor:
 async function saveFromWorker(d: Dl, actor: Actor) {
   try {
     const info = await getJson<{ title?: string; uploader?: string; handle?: string; thumbnail?: string; items: { slot: number; name: string; mime: string; size: number }[] }>(`workspace/downloads/${d.id}/info.json`);
-    if (!info?.items?.length) throw new DlError("the worker sent nothing back");
+    if (!info?.items?.length) throw new DlError("the Colab downloader finished but sent no files back: Retry");
     const { addMediaFromR2 } = await import("./appwrite");
     const who = (info.handle || info.uploader || "").replace(/^@/, "");
     const base = `${who ? `@${words(who, 30).replace(/\s+/g, "")} on ` : ""}${SOURCES[d.source].name}${info.title ? ` - ${words(info.title, 60)}` : ""}`;
@@ -408,16 +412,33 @@ async function saveFromWorker(d: Dl, actor: Actor) {
     await patch(d.id, { title: info.title ?? d.title, author: who || d.author, thumb: info.thumbnail ?? d.thumb });
     await finish(d.id, items, actor);
   } catch (e) {
-    await patch(d.id, { status: "error", error: plain((e as Error).message), stage: null });
+    await patch(d.id, { status: "error", error: plain((e as Error).message, siteOf(d), d.server_error), stage: null });
   }
 }
 
-/** What went wrong, in words a person can act on. */
-function plain(m: string) {
-  if (/confirm you.?re not a bot|sign in to confirm/i.test(m)) return "YouTube asked the worker to sign in. Add your sign-in cookies (Download → Sign-ins), then Retry.";
-  if (/login required|rate-limit reached|requested content is not available|empty media response|log in/i.test(m)) return "Instagram wants a sign-in for this one. Add your sign-in cookies (Download → Sign-ins), then Retry.";
-  if (/private/i.test(m)) return "That post is private.";
-  if (/unsupported url/i.test(m)) return "Nothing to download at that link: it needs a photo or a video on the page.";
-  if (/HTTP Error 404|not found|404/i.test(m)) return "That link is gone (404).";
-  return m.replace(/^ERROR:\s*/, "").slice(0, 240);
+const siteOf = (d: Dl) => (d.source === "web" ? (() => { try { return new URL(d.url).hostname.replace(/^www\./, ""); } catch { return "The site"; } })() : SOURCES[d.source].name);
+const SIGN_IN = "add your sign-in cookies (Download → Sign-ins), then Retry";
+
+/** What went wrong, in words a person can act on: who refused (the site, Colab, storage), the HTTP code and what it
+ *  means, and what to do. serverWhy: what the server got before the worker tried, when that says more. */
+export function plain(raw: string, site = "The site", serverWhy?: string | null) {
+  const m = raw.replace(/\x1b\[[0-9;]*m/g, "").replace(/^ERROR:\s*/, "").replace(/^\[[^\]]+\]\s*[\w-]*:?\s*/, "").trim();
+  const was = serverWhy && serverWhy !== raw ? ` (the server's own try: ${serverWhy})` : "";
+  if (/confirm you.?re not a bot|sign in to confirm/i.test(m)) return `YouTube wants a signed-in account for this one ("sign in to confirm you're not a bot"): ${SIGN_IN}.`;
+  if (/login required|rate-limit reached|requested content is not available|empty media response|log ?in to|logged.?in/i.test(m)) return `${site} wants a signed-in account for this one: ${SIGN_IN}.`;
+  if (/private (video|account|post)|is private/i.test(m)) return `That ${site} post is private: only an account that can see it can download it. If yours can, ${SIGN_IN}.`;
+  if (/age.?(restricted|verification|gate)|confirm your age/i.test(m)) return `${site} age-restricts this one: ${SIGN_IN}.`;
+  if (/not available in your country|geo.?restrict|blocked it in your country/i.test(m)) return `${site} doesn't offer this one in the country the downloader runs in.`;
+  if (/^Colab \d{3}|couldn't start|Colab didn't/i.test(m)) return `The Colab downloader couldn't start: ${m.replace(/^Colab \d{3}:\s*/, "")}`;
+  if (/upload failed|storage (GET|PUT)|could not read the upload|Appwrite/i.test(m)) return `Saving to Files failed (${m.slice(0, 140)}). The download itself worked: Retry.`;
+  const code = Number(/HTTP(?: Error)?:? (\d{3})|answered (\d{3})|status(?: code)? (\d{3})/i.exec(m)?.slice(1).find(Boolean) ?? 0);
+  if (code === 404 || code === 410) return `That link is gone: ${site} says it doesn't exist (HTTP ${code}). Check the link.`;
+  if (code === 401 || code === 403) return `${site} refused the download (HTTP ${code}): it wants a signed-in account, or it doesn't allow downloads from servers. If it's yours to download, ${SIGN_IN}.${was}`;
+  if (code === 429) return `${site} says too many requests (HTTP 429): it's rate-limiting the downloader. Wait 10 to 15 minutes, then Retry.${was}`;
+  if (code === 451) return `${site} withholds this one for legal reasons (HTTP 451).`;
+  if (code >= 500) return `${site} is having trouble right now (HTTP ${code}). Retry in a few minutes.${was}`;
+  if (code >= 400) return `${site} refused the download with a non-standard code (HTTP ${code}): that's the site blocking automated downloads, not a fault here. Wait a few minutes and Retry; if it keeps happening, ${SIGN_IN}.${was}`;
+  if (/unsupported url|nothing to download/i.test(m)) return `Nothing to download at that link: no photo or video on the page (every way the downloader knows came up empty).${was}`;
+  if (/timed? ?out|didn't answer in time|timeout/i.test(m)) return `${site} didn't answer in time. Retry.${was}`;
+  return `${m.slice(0, 220)}${was}`;
 }
