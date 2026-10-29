@@ -2,6 +2,7 @@
 // short answers; every error says the next step. Registered beside lib/mcptools.ts on the guarded server (wrap.ts).
 import { z } from "zod";
 import type { ToolServer } from "../mcptools";
+import type { Change } from "./repo";
 import { ASK_FIRST, ASK_KEYS, getApproval, getControl, listApprovals, readLog, requestApproval, stopAll, unitsToday, type AskKey } from "./control";
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
@@ -150,6 +151,79 @@ export function registerAutoTools(server: ToolServer) {
         if (!query) throw new Error("search needs query");
         const hits = pb.search(query);
         return text(hits.length ? { hits, next: "read the best one: action read, doc, section" } : { hits, next: "nothing matched: try other words, or action index" });
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "repo",
+    {
+      title: "Repos: read, branch, commit, PR, CI, merge",
+      description: [
+        "Work on the GitHub repos the owner allowed (list shows them), through VoiceBox's key, which you never see. Work on a branch and open a PR: the default branch (main) is never written by a model; a protected branch, a merge and adding a repo wait for the owner's approval (a merge on the studio's own repo always does).",
+        "Actions: list; tree (files, path to narrow); read (path, from/to lines); branch (branch, from); commit (branch, files [{path, content} or {path, delete: true}], message: one commit, the branch made if new); pr (branch, title, body); status (pr: state, mergeable, every check, the end of a failed check's log); comment (pr, body); merge (pr, green only); allow (ask the owner to add a repo).",
+        "To run tests: checkout clones it into a run workspace (workspace, dir default the repo name); then run code there (cd <dir>; pytest...), edit files there, and push commits the workspace's changes to branch. Example: {\"action\":\"commit\",\"repo\":\"aspershupadhyay/voicebox-workbench\",\"branch\":\"reel-cutter\",\"files\":[{\"path\":\"cut.py\",\"content\":\"...\"}],\"message\":\"Add the reel cutter\"}.",
+      ].join(" "),
+      inputSchema: z.object({
+        action: z.enum(["list", "tree", "read", "branch", "commit", "pr", "status", "comment", "merge", "allow", "checkout", "push"]),
+        repo: z.string().max(140).optional().describe("owner/name"),
+        path: z.string().max(400).optional(), ref: z.string().max(100).optional(), from: z.union([z.number().int().min(1), z.string().max(100)]).optional(), to: z.number().int().min(1).optional(),
+        branch: z.string().max(100).optional(),
+        files: z.array(z.object({ path: z.string().min(1).max(400), content: z.string().max(2_000_000).optional(), delete: z.boolean().optional() })).max(300).optional(),
+        message: z.string().max(2000).optional(), title: z.string().max(250).optional(), body: z.string().max(20_000).optional(),
+        pr: z.number().int().min(1).optional(), method: z.enum(["merge", "squash", "rebase"]).optional(),
+        workspace: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/).optional(), dir: z.string().regex(/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/).optional(), fresh: z.boolean().optional(),
+      }),
+    },
+    async (a, ctx) => {
+      try {
+        const r = await import("./repo");
+        const model = await modelName(ctx as Ctx);
+        if (a.action === "list") {
+          const c = await getControl();
+          return text({ repos: c.repos, platform: r.PLATFORM, key: process.env.GITHUB_AGENT_TOKEN ? "set" : "not set yet (the owner adds GITHUB_AGENT_TOKEN on Vercel)", rules: "branches and PRs only; merges and new repos wait for the owner" });
+        }
+        if (!a.repo) throw new Error(`${a.action} needs repo (owner/name)`);
+        if (a.action === "allow") {
+          const name = a.repo.trim().toLowerCase();
+          if (!/^[a-z0-9_.-]{1,39}\/[a-z0-9_.-]{1,100}$/.test(name)) throw new Error("repo: owner/name");
+          const c = await getControl();
+          const { setControl } = await import("./control");
+          await setControl({ repos: [...c.repos, name] }, model);
+          return text({ allowed: name, repos: [...new Set([...c.repos, name])] });
+        }
+        const repo = await r.allowed(a.repo);
+        const need = (k: keyof typeof a) => { if (a[k] == null || a[k] === "") throw new Error(`${a.action} needs ${String(k)}`); return a[k]; };
+        switch (a.action) {
+          case "tree": return text(await r.tree(repo, a.ref, a.path));
+          case "read": return text(await r.read(repo, need("path") as string, a.ref, typeof a.from === "number" ? a.from : undefined, a.to));
+          case "branch": return text(await r.branch(repo, need("branch") as string, typeof a.from === "string" ? a.from : undefined));
+          case "commit": return text({ ...(await r.commit(repo, need("branch") as string, need("files") as Change[], (a.message ?? "Update from VoiceBox") as string, model)), next: "open a PR with action pr when it's ready" });
+          case "pr": return text({ ...(await r.openPr(repo, need("branch") as string, need("title") as string, a.body ?? "", model)), next: "follow its CI with action status" });
+          case "status": return text(await r.status(repo, need("pr") as number));
+          case "comment": return text(await r.comment(repo, need("pr") as number, need("body") as string, model));
+          case "merge": return text(await r.merge(repo, need("pr") as number, a.method));
+          case "checkout": {
+            const b = await import("./bench");
+            const spec = await r.cloneSpec(repo, a.ref);
+            const dir = a.dir ?? repo.split("/")[1];
+            const job = await b.submit({ op: "clone", workspace: a.workspace ?? "default", dir, url: spec.url, ref: spec.ref, header: spec.header, fresh: a.fresh }, { model, folder: null, label: `clone ${repo}` });
+            const done = await b.wait(job.id, 45);
+            if (done.status === "error") throw new Error(done.error ?? "clone failed");
+            return text({ job_id: done.id, status: done.status, workspace: a.workspace ?? "default", dir, head: done.bench.head, next: done.status === "done" ? `run code with workspace "${a.workspace ?? "default"}" (cd ${dir}); push commits the changes` : "get_job until it's done" });
+          }
+          case "push": {
+            const b = await import("./bench");
+            const dir = a.dir ?? repo.split("/")[1];
+            const job = await b.submit({ op: "diff", workspace: a.workspace ?? "default", dir }, { model, folder: null, label: `changes in ${dir}` });
+            const done = await b.wait(job.id, 45) as Awaited<ReturnType<typeof b.wait>> & { bench: { changes?: Change[] } };
+            if (done.status !== "done") throw new Error(done.error ?? `reading the changes is ${done.status}: try again`);
+            const changes = done.bench.changes ?? [];
+            if (!changes.length) return text({ pushed: false, note: "no changes in the workspace's clone" });
+            return text({ ...(await r.commit(repo, need("branch") as string, changes, (a.message ?? "Changes from the workbench") as string, model)), next: "open a PR with action pr" });
+          }
+        }
+        throw new Error("unknown action");
       } catch (e) { return fail(e); }
     },
   );

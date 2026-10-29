@@ -77,7 +77,8 @@ export async function GET(req: Request, ctx: Ctx) {
       const q = new URL(req.url).searchParams;
       const [control, units, approvals, log] = await Promise.all([ac.getControl(), ac.unitsToday(), ac.listApprovals(),
         ac.readLog({ limit: 150, model: q.get("model") || undefined, days: 2 })]);
-      return Response.json({ control, units, approvals: approvals.slice(0, 60), log, ask_first: ac.ASK_FIRST });
+      return Response.json({ control, units, approvals: approvals.slice(0, 60), log, ask_first: ac.ASK_FIRST,
+        github_key: !!process.env.GITHUB_AGENT_TOKEN, platform: (await import("@/lib/auto/repo")).PLATFORM });
     }
     if (a === "live" && b === "pins") {
       // Grow's sidebar: the rivals you pinned, with the name and picture YouTube gave
