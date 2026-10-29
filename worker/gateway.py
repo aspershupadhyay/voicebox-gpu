@@ -1273,6 +1273,8 @@ def write_subs(jdir, stem, cues, words):
 JOBS = OrderedDict()
 QUEUE = []       # the GPU lane: one job at a time
 CPU_QUEUE = []   # the CPU lane: jobs that need no GPU, run alongside
+FETCH_QUEUE = []  # the download lane: links download side by side (FETCH_WORKERS at once), never behind a voiceover
+FETCH_WORKERS = int(os.environ.get("VOICEBOX_FETCH_WORKERS", "4"))
 QCOND = threading.Condition()
 MAX_LINES, MAX_TEXT = 1000, 100_000
 
@@ -1293,7 +1295,7 @@ def _cpu_only(job):
 
 
 def _queue_of(job):
-    return CPU_QUEUE if job.get("lane") == "cpu" else QUEUE
+    return FETCH_QUEUE if job.get("lane") == "fetch" else CPU_QUEUE if job.get("lane") == "cpu" else QUEUE
 
 
 JOB_KEEP_H = float(os.environ.get("VOICEBOX_JOB_KEEP_H", "12"))
@@ -1329,7 +1331,7 @@ def prune_jobs():
 
 def _enqueue(job):
     os.makedirs(os.path.join(JOBS_DIR, job["id"]), exist_ok=True)
-    job["lane"] = "cpu" if _cpu_only(job) else "gpu"
+    job["lane"] = "fetch" if job["kind"] == "fetch" else "cpu" if _cpu_only(job) else "gpu"
     g = gpu_info_cached()
     if job["kind"] in ("train", "video") and 0 < g["total_gb"] < 30:
         job.setdefault("warnings", []).append(f"{'training' if job['kind'] == 'train' else 'video'} on a {g['total_gb']:.0f} GB {g['name'].replace('NVIDIA ', '')}: "
@@ -3121,6 +3123,16 @@ def _videos_in_page(url, cookies_path=None):
     return out[:6]
 
 
+def _image_size(path):
+    """(width, height) of a photo, or None."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            return im.size
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def run_fetch(job):
     ft, jdir = job["fetch"], os.path.join(JOBS_DIR, job["id"])
     os.makedirs(jdir, exist_ok=True)
@@ -3169,19 +3181,57 @@ def run_fetch(job):
             return y.extract_info(url, download=True) or {}
 
     def photo(entry, i):
-        """A carousel's photo (or a photo post): the biggest image the post lists, saved as item i."""
-        th = [t for t in (entry.get("thumbnails") or []) if t.get("url")] or ([{"url": entry["thumbnail"]}] if entry.get("thumbnail") else [])
+        """A carousel's photo (or a photo post) at full size, saved as item i. The sizes a post lists come smallest
+        first and don't always say how big they are: each is ranked by its width x height, else the size in its
+        address (Instagram's s150x150 / p1080x1080), else its place in the list (later = bigger). The saved photo's
+        real size is checked: a preview (under 600 px) tries the next sizes, and if nothing bigger exists it says so."""
+        th = [dict(t) for t in (entry.get("thumbnails") or []) if t.get("url")]
+        for k in ("display_url", "thumbnail", "url"):
+            u = entry.get(k)
+            if isinstance(u, str) and u.startswith("http") and not any(t["url"] == u for t in th) and (k != "url" or not entry.get("formats")):
+                th.append({"url": u})
         if not th:
             return False
-        best = max(th, key=lambda t: ((t.get("width") or 0) * (t.get("height") or 0), t.get("preference") or 0))
-        ext = os.path.splitext(urlparse(best["url"]).path)[1].lower()
-        ext = ext if ext in (".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif") else ".jpg"
-        path = os.path.join(jdir, f"{i:02d}-{re.sub(r'[^A-Za-z0-9_-]', '', str(entry.get('id') or 'photo'))[:40] or 'photo'}{ext}")
-        req = urllib.request.Request(best["url"], headers={"User-Agent": UA_CHROME, "Referer": ft["url"]})
-        with urllib.request.urlopen(req, timeout=60) as r, open(path + ".part", "wb") as f:
-            shutil.copyfileobj(r, f)
-        os.replace(path + ".part", path)
-        up.add(path)
+
+        def area(t, n):
+            w, h = t.get("width"), t.get("height")
+            try:
+                if w and h:
+                    return int(w) * int(h)
+            except (TypeError, ValueError):
+                pass
+            m = re.search(r"[_/.-][sp](\d{2,4})x(\d{2,4})(?:[_/.&?-]|$)", t["url"])
+            return int(m.group(1)) * int(m.group(2)) if m else None
+        ranked = sorted(enumerate(th), key=lambda it: (area(it[1], it[0]) or 0, area(it[1], it[0]) is None, it[0]), reverse=True)
+        ranked = [t for _, t in ranked]
+        base = os.path.join(jdir, f"{i:02d}-{re.sub(r'[^A-Za-z0-9_-]', '', str(entry.get('id') or 'photo'))[:40] or 'photo'}")
+        best = None  # (final path, temp path, (w, h) or None)
+        for n, t in enumerate(ranked[:6]):
+            ext = os.path.splitext(urlparse(t["url"]).path)[1].lower()
+            path = base + (ext if ext in (".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif") else ".jpg")
+            tmp = f"{path}.{n}.part"  # each size to its own file: the bigger one wins
+            try:
+                req = urllib.request.Request(t["url"], headers={"User-Agent": UA_CHROME, "Referer": ft["url"]})
+                with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
+                    shutil.copyfileobj(r, f)
+            except Exception as e:  # noqa: BLE001  the next size
+                errors.append(f"photo {i}: {e}"[:200])
+                continue
+            size = _image_size(tmp)
+            if best is None or (size and (not best[2] or size[0] * size[1] > best[2][0] * best[2][1])):
+                if best:
+                    os.remove(best[1])
+                best = (path, tmp, size)
+            else:
+                os.remove(tmp)
+            if size and min(size) >= 600:
+                break
+        if not best:
+            return False
+        os.replace(best[1], best[0])
+        if best[2] and min(best[2]) < 600:
+            job.setdefault("warnings", []).append(f"photo {i} only came at {best[2][0]}x{best[2][1]}: the site gave a signed-out downloader nothing bigger")
+        up.add(best[0])
         return True
 
     def whole(url, **kw):
@@ -3208,7 +3258,10 @@ def run_fetch(job):
                         raise
                     except Exception as err:  # noqa: BLE001  its cover photo, rather than nothing
                         errors.append(re.sub(r"\x1b\[[0-9;]*m", "", str(err)).replace("ERROR: ", "")[:300])
-                photo(e, i)
+                try:  # one photo that won't come never stops the rest of the carousel
+                    photo(e, i)
+                except Exception as err:  # noqa: BLE001
+                    errors.append(f"photo {i}: {err}"[:200])
             return raw
         if raw.get("formats") or raw.get("_type") in ("url", "url_transparent"):
             with yt_dlp.YoutubeDL(opts_for(**kw)) as y:  # what was read already: no second visit to the site
@@ -3265,7 +3318,8 @@ def run_fetch(job):
     meta = {"title": info.get("title") or first.get("title"), "uploader": info.get("uploader") or first.get("uploader") or info.get("channel"),
             "handle": info.get("uploader_id") or first.get("uploader_id") or info.get("channel_id"), "description": (info.get("description") or first.get("description") or "")[:2000],
             "webpage_url": info.get("webpage_url") or ft["url"], "thumbnail": info.get("thumbnail") or first.get("thumbnail"),
-            "duration": info.get("duration") or first.get("duration"), "extractor": info.get("extractor_key"), "items": items}
+            "duration": info.get("duration") or first.get("duration"), "extractor": info.get("extractor_key"), "items": items,
+            "warnings": job.get("warnings") or []}
     mpath = os.path.join(jdir, "info.json")
     with open(mpath, "w") as f:
         json.dump(meta, f)
@@ -4539,9 +4593,9 @@ def catalogue():
 
 
 def lanes():
-    """What each lane is doing: the GPU lane (one job at a time) and the CPU lane beside it."""
+    """What each lane is doing: the GPU lane (one job at a time), the CPU lane beside it, and the downloads."""
     out = {}
-    for name, q in (("gpu", QUEUE), ("cpu", CPU_QUEUE)):
+    for name, q in (("gpu", QUEUE), ("cpu", CPU_QUEUE), ("fetch", FETCH_QUEUE)):
         run = [j for j in list(JOBS.values()) if j["status"] == "running" and j.get("lane", "gpu") == name]
         out[name] = {"running": [{"id": j["id"], "label": j.get("label"), "stage": j.get("stage"), "engine": j.get("engine")} for j in run], "queued": len(q)}
     return out
@@ -4564,7 +4618,7 @@ def health():
     return {"ok": True, "version": C.VERSION, "uptime_s": int(time.time() - STARTED), "gpu": gpu_info(), "boot": boot_info(),
             "ram": mem_info(), "disk": disk_info(), "mode": ENG.mode, "idle_unload_s": ENG.idle_left(), "idle_min": C.IDLE_MIN, "fetch": ENG.fetch,
             "vram_budget_gb": round(ENG.budget, 1), "engines": ENG.state, "engine_errors": ENG.errors,
-            "loaded": list(ENG.procs), "queue": len(QUEUE) + len(CPU_QUEUE), "rates": RATES, "lanes": lanes(),
+            "loaded": list(ENG.procs), "queue": len(QUEUE) + len(CPU_QUEUE) + len(FETCH_QUEUE), "rates": RATES, "lanes": lanes(),
             "cpu": {"cores": MON.cores, "load": os.getloadavg()[0] if hasattr(os, "getloadavg") else None}, "now": MON.latest(),
             "warm": WARM.view(), "loads": ENG.loads, "parked": {n: round(time.time() - t) for n, t in ENG.parked.items()},
             "running": [j["id"] for j in JOBS.values() if j["status"] == "running"], "public_url": public_url(),
@@ -4853,6 +4907,8 @@ def main():
         sys.exit("WORKER_SECRET must be set (>= 24 chars)")
     threading.Thread(target=worker_loop, daemon=True).start()
     threading.Thread(target=worker_loop, args=(CPU_QUEUE,), daemon=True).start()
+    for _ in range(FETCH_WORKERS):  # downloads run side by side: they need a little CPU and bandwidth, not the GPU
+        threading.Thread(target=worker_loop, args=(FETCH_QUEUE,), daemon=True).start()
     os.environ["VOICEBOX_PORT"] = str(a.port)
     threading.Thread(target=warm_downloaders, daemon=True).start()  # the first link never waits on pip
     if not FETCH_ONLY:  # a downloads-only (CPU) worker has no engines to check or fetch

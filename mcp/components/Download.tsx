@@ -19,7 +19,7 @@ import { PageHeader } from "./ui";
 type Source = "instagram" | "youtube" | "tiktok" | "x" | "pinterest" | "cosmos" | "facebook" | "threads" | "reddit" | "vimeo" | "web";
 type Item = { media: string; name: string; kind: string; size: number; preview: string | null };
 type Dl = { id: string; url: string; source: Source; status: "fetching" | "waiting" | "worker" | "saving" | "done" | "error"; via: string | null; title: string | null; author: string | null;
-  thumb: string | null; folder: string | null; by: string; at: number; items: Item[]; error: string | null; pct: number | null; stage: string | null; carousel?: string | null };
+  thumb: string | null; folder: string | null; by: string; at: number; items: Item[]; error: string | null; pct: number | null; stage: string | null; carousel?: string | null; note?: string | null };
 type Res = { list: Dl[]; cookies: { set: boolean }; worker: boolean };
 type Folder = { id: string; name: string; parent: string | null; system?: boolean };
 
@@ -83,7 +83,8 @@ function Row({ d, folderName, onRetry, onForget }: { d: Dl; folderName: string; 
         ) : d.status === "error" ? (
           <span className="dl-err tiny"><Warning size={13} weight="bold" aria-hidden />{d.error}</span>
         ) : (
-          <span className="dl-ok tiny"><CheckCircle size={13} weight="fill" aria-hidden />{d.items.length > 1 ? (d.carousel ? `Carousel of ${d.items.length}` : `${d.items.length} files`) : first?.kind === "video" ? "Video" : first?.kind === "image" ? "Photo" : "File"} in Files{first?.size ? ` · ${(d.items.reduce((a, x) => a + x.size, 0) / 1e6).toFixed(1)} MB` : ""}</span>
+          <><span className="dl-ok tiny"><CheckCircle size={13} weight="fill" aria-hidden />{d.items.length > 1 ? (d.carousel ? `Carousel of ${d.items.length}` : `${d.items.length} files`) : first?.kind === "video" ? "Video" : first?.kind === "image" ? "Photo" : "File"} in Files{first?.size ? ` · ${(d.items.reduce((a, x) => a + x.size, 0) / 1e6).toFixed(1)} MB` : ""}</span>
+          {d.note && <span className="tiny warn-t"><Warning size={12} weight="fill" aria-hidden /> {d.note}</span>}</>
         )}
       </span>
       <span className="dl-acts">

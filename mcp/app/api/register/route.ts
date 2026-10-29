@@ -17,6 +17,12 @@ export async function POST(req: Request) {
   if (!b || typeof b.url !== "string" || !allowed.test(b.url))
     return Response.json({ error: "url must be an https trycloudflare.com origin" }, { status: 400 });
 
+  // a worker on a runtime the app already stopped keeps heartbeating while Colab tears the machine down: it must not
+  // look online (its tunnel is gone; a download sent to it waits on "Connecting" instead of a new runtime starting)
+  const session = await import("@/lib/colab").then((c) => c.getSession()).catch(() => null);
+  const boot = Number(b.started_at ?? 0) * 1000;
+  if (session?.by === "app" && session.stopped && boot && boot >= session.started - 60_000 && boot <= session.stopped)
+    return Response.json({ ok: true, ignored: "this runtime was stopped" });
   await saveWorker({
     url: b.url,
     version: String(b.version ?? ""),

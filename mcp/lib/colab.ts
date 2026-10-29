@@ -143,7 +143,13 @@ export async function stopRuntime(endpoint: string, reason = "stopped from the a
   const t = await tun<{ token: string }>(`/unassign/${encodeURIComponent(endpoint)}`);
   await tun(`/unassign/${encodeURIComponent(endpoint)}`, { method: "POST", headers: { "X-Goog-Colab-Token": t.token } });
   const s = await getSession();
-  if (s?.endpoint === endpoint) await putJson(SESSION, { ...s, stopped: Date.now(), stop_reason: reason });
+  if (s?.endpoint === endpoint) {
+    await putJson(SESSION, { ...s, stopped: Date.now(), stop_reason: reason });
+    // its worker is gone with it: offline now, not after its last heartbeat goes stale (a download would wait on it)
+    const { loadWorker: load, saveWorker, STALE_MS } = await import("./registry");
+    const rec = await load().catch(() => null);
+    if (rec && (rec.started_at ?? 0) * 1000 >= s.started - 60_000) await saveWorker({ ...rec, last_seen: Date.now() - STALE_MS - 1000 }).catch(() => null);
+  }
   return { stopped: endpoint };
 }
 

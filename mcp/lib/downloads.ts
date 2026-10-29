@@ -6,9 +6,8 @@
 //   worker: Instagram, YouTube, TikTok, Facebook, Threads, Reddit, Vimeo and anything the server can't read go to the
 //           Colab worker's yt-dlp (kind "fetch", worker/gateway.py), which uploads each file straight to R2 through a
 //           presigned PUT; the next look at the list (or the worker's next heartbeat) copies them into Files. With the
-//           worker off, the first such link starts a Colab CPU runtime by itself (yt-dlp needs no GPU; the cheap voice
-//           GPU if Colab won't give one), which is stopped again as soon as its downloads are in (lib/colab.ts
-//           onHeartbeat). The worker calls back when each one is done (/api/downloads/done), so it's saved at once.
+//           worker off, the first such link starts the voice GPU (an L4) by itself, which is stopped again as soon as
+//           its downloads are in (lib/colab.ts onHeartbeat). The worker runs several downloads side by side. The worker calls back when each one is done (/api/downloads/done), so it's saved at once.
 // Each site gets its own folder inside the one picked (default "Downloads"): Downloads/Instagram, Downloads/YouTube…
 // Every link the server fetches is checked first (http(s) only, no private or internal addresses, on every redirect).
 // The list lives in workspace/downloads.json (written with If-Match so two people never lose each other's).
@@ -29,6 +28,7 @@ export type Dl = {
   auto_retries?: number; // how many times it has done that by itself (RETRY_AFTER_MIN.length at most)
   carousel?: string | null; // a post with several files lands as one carousel in Files (its id), in the post's order
   unreachable?: number; // looks at it while the worker was on but couldn't be reached (a tunnel seconds old)
+  note?: string | null; // done, with something to know (a photo the site only gave at preview size)
 };
 type Actor = { id?: string; name: string };
 
@@ -347,6 +347,9 @@ async function toWorker(d: Dl, found: Found | null) {
       // on, but not answering yet (a tunnel a few seconds old resolves a moment later): wait, the next look sends it
       const n = (d.unreachable ?? 0) + 1;
       if (n > 15) throw new Error(`the Colab downloader is on but can't be reached (${e.message})`);
+      // still not answering after a few looks: its runtime is likely gone (stopped, reclaimed). With nothing assigned on
+      // Colab this starts a fresh one; with a runtime still there it does nothing
+      if (n >= 3) await startGpu();
       await patch(d.id, { status: "waiting", via: "worker", pct: 0, unreachable: n, stage: "Connecting to the Colab downloader" });
       return;
     }
@@ -357,7 +360,7 @@ async function toWorker(d: Dl, found: Found | null) {
   }
 }
 
-/** The worker is off: start a CPU runtime for the downloads (the cheap GPU if Colab won't give one), once (a claim kept 5 min, so a dozen links start one GPU;
+/** The worker is off: start the voice GPU (an L4) for the downloads, once (a claim kept 5 min, so a dozen links start one GPU;
  *  colab.start refuses too while a runtime is assigned). null when it started or one is on its way, else why not. */
 async function startGpu(): Promise<string | null> {
   const { value, etag } = await getJsonTagged<{ at: number; error?: string | null }>(GPU_CLAIM);
@@ -366,7 +369,8 @@ async function startGpu(): Promise<string | null> {
   const colab = await import("./colab");
   try {
     if ((await colab.runtimes()).length) return null; // assigned already: its worker is booting
-    await colab.start(colab.appOrigin(), undefined, { purpose: "voice", high_ram: false, for_downloads: true, cpu: true });
+    // the L4 (the owner's call: the CPU runtime came up but was slow to answer); stopped again once the downloads are in
+    await colab.start(colab.appOrigin(), undefined, { purpose: "voice", high_ram: false, for_downloads: true });
     return null;
   } catch (e) {
     const c = (e as Error & { cause?: { code?: string } }).cause?.code;
@@ -423,7 +427,7 @@ export async function refresh(later: (f: () => Promise<unknown>) => void, actor:
 
 async function saveFromWorker(d: Dl, actor: Actor) {
   try {
-    const info = await getJson<{ title?: string; uploader?: string; handle?: string; thumbnail?: string; items: { slot: number; name: string; mime: string; size: number }[] }>(`workspace/downloads/${d.id}/info.json`);
+    const info = await getJson<{ title?: string; uploader?: string; handle?: string; thumbnail?: string; warnings?: string[]; items: { slot: number; name: string; mime: string; size: number }[] }>(`workspace/downloads/${d.id}/info.json`);
     if (!info?.items?.length) throw new DlError("the Colab downloader finished but sent no files back: Retry");
     const { addMediaFromR2 } = await import("./appwrite");
     const who = (info.handle || info.uploader || "").replace(/^@/, "");
@@ -438,7 +442,9 @@ async function saveFromWorker(d: Dl, actor: Actor) {
       const media = await addMediaFromR2(key, size, it.mime, name, `dl${d.id}x${it.slot}`.slice(0, 36), { postId: d.post }, actor).then((x) => x.media).catch((e: { status?: number }) => { if (e.status === 409) return null; throw e; });
       if (media) items.push(await itemOf(media));
     }
-    await patch(d.id, { title: info.title ?? d.title, author: who || d.author, thumb: info.thumbnail ?? d.thumb });
+    const small = (info.warnings ?? []).filter((w) => /only came at/.test(w));
+    await patch(d.id, { title: info.title ?? d.title, author: who || d.author, thumb: info.thumbnail ?? d.thumb,
+      note: small.length ? `${small.length === 1 ? small[0].replace(/^photo/, "Photo").replace(/:.*$/, "") : `${small.length} photos only came at preview size (${/at (\d+x\d+)/.exec(small[0])?.[1] ?? "small"})`}: ${SOURCES[d.source].name} gave a signed-out downloader nothing bigger.` : null });
     await finish(d.id, items, actor);
   } catch (e) {
     await fail(d, (e as Error).message);
