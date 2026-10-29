@@ -4,7 +4,16 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (post a video like a carousel, Radar's plan, 2026-10-29)
+## Latest round (a saved caption is never replaced, 2026-10-29)
+
+- **"Publish now" through the MCP threw away the saved Instagram caption** (post `6ae310935b4d2f43c22f`, a Reel): the
+  package treated a plan caption that matched the post's caption as "seeded, not written by a person" and replaced it
+  with its own title, first paragraph, "Save this for later." and keyword hashtags, dropping the credits, the question
+  and the hashtags. Now a caption saved on the plan, per target (`captions`) or on the post goes out unchanged; the
+  package only fills what's empty or what it wrote itself. The same goes for a YouTube title and description. The
+  credit is only added when the caption credits no one (no "credit", "via", ©, 📸 or @handle).
+
+## Earlier round (post a video like a carousel, Radar's plan, 2026-10-29)
 
 - **"An option like the carousel's, to just post on Instagram or YouTube, for videos as well"**: a video open in Files
   has **Instagram** (a Reel) and **YouTube** (a Short at 3 minutes or less, else a Video) in its top bar, and its menu
