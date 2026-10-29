@@ -1,8 +1,10 @@
 // Heartbeat from the Colab worker: POST {url, version, gpu, engines, loaded, queue, started_at, running, last_active}.
+import { after } from "next/server";
 import { saveWorker } from "@/lib/registry";
 import { safeEqual } from "@/lib/worker";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // copying a finished download into Files runs after the reply
 const TUNNEL = /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/;
 
 export async function POST(req: Request) {
@@ -30,5 +32,7 @@ export async function POST(req: Request) {
     running: Number(b.running ?? 0), last_active: Number(b.last_active ?? 0), gpu: b.gpu?.name })).catch((e) => console.error("colab heartbeat", e));
   // a training run the last runtime didn't finish (the GPU went away) starts again here, from its checkpoint
   await import("@/lib/datasets").then((d) => d.resumeTraining(Math.round(Number(b.started_at ?? 0)))).catch((e) => console.error("resume training", e));
+  // downloads waiting for the worker go now, and finished ones land in Files, with nobody on the Download page
+  await import("@/lib/downloads").then((d) => d.refresh((f) => after(f), { name: "Download" })).catch((e) => console.error("downloads", e));
   return Response.json({ ok: true });
 }

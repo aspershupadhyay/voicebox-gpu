@@ -29,7 +29,7 @@ export type ColabConfig = { gpu: Gpu; idle_stop_min: number; ntfy_topic: string 
 /** Rates are keyed by what Colab actually assigned (its machineShape), so no GPU's shapes are assumed here. */
 export const rateKey = (gpu: string, highRam: boolean) => `${gpu}${highRam ? " high RAM" : ""}`;
 export type ColabSession = { endpoint: string; gpu: string; started: number; by: "app" | "notebook"; worker_started?: number; notified_hours?: number;
-  high_ram?: boolean; purpose?: Purpose | null;
+  high_ram?: boolean; purpose?: Purpose | null; for_downloads?: boolean;
   last_active?: number; stopped?: number; stop_reason?: string; low_warned?: boolean; usage?: Usage | null };
 export type Usage = { balance: number; rate: number; assignments: number; at: number };
 
@@ -308,7 +308,7 @@ export const appOrigin = (fallback?: string) =>
 /** Start: a GPU runtime + the worker on it. Refuses while a worker is online or a runtime is already assigned.
  *  purpose picks the GPU from settings (voice: voiceovers, an L4 by default; heavy: training and video, an A100); an
  *  explicit gpu wins over both. */
-export async function start(origin: string, gpu?: Gpu, opts: { purpose?: Purpose; high_ram?: boolean } = {}) {
+export async function start(origin: string, gpu?: Gpu, opts: { purpose?: Purpose; high_ram?: boolean; for_downloads?: boolean } = {}) {
   const t0 = Date.now(); // the whole start has to fit in the request's 300 s (maxDuration of the dash and MCP routes)
   const cfg = await getConfig();
   const want = gpu && GPUS.includes(gpu) ? gpu : opts.purpose === "voice" ? cfg.voice_gpu : opts.purpose === "heavy" ? cfg.heavy_gpu : cfg.gpu;
@@ -318,7 +318,7 @@ export async function start(origin: string, gpu?: Gpu, opts: { purpose?: Purpose
   // only the GPU that was picked: starting a different one (and billing for it) is never our call
   const a = await assign([want], highRam, t0 + 60_000);
   const s: ColabSession = { endpoint: a.endpoint, gpu: a.gpu, started: Date.now(), by: "app", notified_hours: 0, last_active: Date.now(),
-    high_ram: a.high_ram, purpose: opts.purpose ?? null };
+    high_ram: a.high_ram, purpose: opts.purpose ?? null, ...(opts.for_downloads ? { for_downloads: true } : {}) };
   await putJson(SESSION, s);
   try {
     const r = await launch(a.runtimeProxyInfo, bootstrap(appOrigin(origin), process.env.COLAB_PREWARM ?? ""), t0 + 270_000);
@@ -427,6 +427,13 @@ export async function onHeartbeat(hb: { started_at?: number; queue?: number; run
       s.low_warned = true;
       await notify("Compute units low", `${u.balance} units left on Colab (${u.rate}/h). Top up or stop the GPU.`, "warning");
     }
+  }
+  // a GPU the Download page started for itself goes as soon as nothing is running and no download is still under way
+  if (s.by === "app" && s.endpoint && s.for_downloads && !(hb.queue ?? 0) && !(hb.running ?? 0) && now - s.started > 3 * 60_000
+    && !(await import("./downloads").then((d) => d.anyLive()))) {
+    await stopRuntime(s.endpoint, "the downloads it was started for are done").catch(() => null);
+    await notify("GPU stopped", `${s.gpu} stopped: the downloads it was started for are in Files.`, "zzz");
+    return;
   }
   if (s.by === "app" && s.endpoint && cfg.idle_stop_min > 0 && s.last_active && now - s.last_active > cfg.idle_stop_min * 60_000) {
     const mins = Math.round((now - s.last_active) / 60_000);
