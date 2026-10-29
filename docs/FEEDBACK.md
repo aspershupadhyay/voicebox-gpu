@@ -4,7 +4,16 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (a saved caption is never replaced, 2026-10-29)
+## Latest round (the publish preview, 2026-10-29)
+
+- **"The preview while posting shows off the screen"**: the Reel / Short / Story phone was taller than 9:16 and the
+  video filled it by cropping the sides ("CASE 025" showed as "ASE 025"). The screen is 9:16 now, so a 9:16 video
+  shows whole.
+- **"While I was typing in the text field the frame was blinking"**: the preview's video was a component made inside
+  the preview, so every keystroke made a new one and the video reloaded. It's a stable component now: typing changes
+  the caption on the phone and nothing else.
+
+## Earlier round (a saved caption is never replaced, 2026-10-29)
 
 - **"Publish now" through the MCP threw away the saved Instagram caption** (post `6ae310935b4d2f43c22f`, a Reel): the
   package treated a plan caption that matched the post's caption as "seeded, not written by a person" and replaced it

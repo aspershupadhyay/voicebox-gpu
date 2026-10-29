@@ -6,7 +6,7 @@ import {
   ArrowSquareOut, ArrowsClockwise, BookmarkSimple, ChatCircle, CheckCircle, Clock, Copy, DownloadSimple, Hash, Heart, Image as ImageIcon, Lightning, PaperPlaneTilt,
   Play, Plus, RocketLaunch, ShareFat, Stop, Warning, X,
 } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Account } from "@/lib/publish/accounts";
 import { BUSY, hashtags, LANGUAGES, LIMITS, networkOf, PLAN_LABEL, YT_CATEGORIES, type IgOptions, type Plan, type YtOptions } from "@/lib/publish/shared";
 import { spaceName, spaceOf, targetsOf, type SpaceId } from "@/lib/spaces";
@@ -82,6 +82,18 @@ function Count({ n, max, label }: { n: number; max: number; label?: string }) {
   return <span className={`tiny mono ${n > max ? "over" : "faint"}`}>{label ? `${label} ` : ""}{n}/{max}</span>;
 }
 
+/** One file in the preview. Kept outside Preview (and memoised) so typing a caption never remounts the video: a
+ *  component made inside Preview is a new type on every render, and React would reload the video each keystroke. */
+const Shot = memo(function Shot({ f, fit = "cover", poster }: { f?: Pick; fit?: "cover" | "contain"; poster?: string | null }) {
+  if (!f) return <div className="pv-empty"><ImageIcon size={26} /><span>Pick a file</span></div>;
+  return f.kind === "video" && f.src ? <video src={f.src} poster={(poster ?? f.thumb) || undefined} muted loop autoPlay playsInline preload="metadata" style={{ objectFit: fit }} />
+    : <img src={f.thumb ?? f.src ?? ""} alt="" style={{ objectFit: fit }} />;
+});
+
+function Av({ account, handle }: { account: Account | null; handle: string }) {
+  return <span className="pv-av">{account?.avatar ? <img src={account.avatar} alt="" /> : handle.slice(0, 1).toUpperCase()}</span>;
+}
+
 /** The live preview: a YouTube watch card, a Shorts / Reels / Story phone, or an Instagram feed post. */
 export function Preview({ space, plan, picks, account }: { space: SpaceId; plan: Plan; picks: Pick[]; account: Account | null }) {
   const files = plan.media.map((r) => picks.find((p) => p.ref === r)).filter(Boolean) as Pick[];
@@ -91,17 +103,14 @@ export function Preview({ space, plan, picks, account }: { space: SpaceId; plan:
   useEffect(() => setI(0), [plan.media.join()]);
   const shown = files[Math.min(i, files.length - 1)];
   const handle = account?.handle ?? account?.name ?? (spaceOf(space)?.network === "youtube" ? "Your channel" : "you");
-  const Av = () => <span className="pv-av">{account?.avatar ? <img src={account.avatar} alt="" /> : handle.slice(0, 1).toUpperCase()}</span>;
-  const Shot = ({ f, fit = "cover" }: { f?: Pick; fit?: "cover" | "contain" }) => !f ? <div className="pv-empty"><ImageIcon size={26} /><span>Pick a file</span></div>
-    : f.kind === "video" && f.src ? <video key={f.src} src={f.src} poster={(cover?.thumb ?? f.thumb) || undefined} muted loop autoPlay playsInline preload="metadata" style={{ objectFit: fit }} />
-    : <img src={f.thumb ?? f.src ?? ""} alt="" style={{ objectFit: fit }} />;
+  const poster = cover?.thumb ?? null;
 
   if (space === "yt_video") {
     const o = plan.yt!;
     return (
       <div className="pv-yt">
-        <div className="pv-yt-frame">{cover ? <img src={cover.thumb ?? ""} alt="" /> : <Shot f={first} fit="contain" />}<span className="pv-dur">{o.privacy === "public" ? "" : o.privacy}</span></div>
-        <div className="pv-yt-meta"><Av /><div style={{ minWidth: 0 }}><b className="pv-yt-title">{o.title || "Your title"}</b><span className="tiny dim">{account?.name ?? "Your channel"} · {o.privacy === "public" ? "Public" : o.privacy === "unlisted" ? "Unlisted" : "Private"}{o.made_for_kids ? " · Made for kids" : ""}</span></div></div>
+        <div className="pv-yt-frame">{cover ? <img src={cover.thumb ?? ""} alt="" /> : <Shot key={first?.ref} f={first} fit="contain" poster={poster} />}<span className="pv-dur">{o.privacy === "public" ? "" : o.privacy}</span></div>
+        <div className="pv-yt-meta"><Av account={account} handle={handle} /><div style={{ minWidth: 0 }}><b className="pv-yt-title">{o.title || "Your title"}</b><span className="tiny dim">{account?.name ?? "Your channel"} · {o.privacy === "public" ? "Public" : o.privacy === "unlisted" ? "Unlisted" : "Private"}{o.made_for_kids ? " · Made for kids" : ""}</span></div></div>
         {o.description && <p className="pv-yt-desc small">{o.description}</p>}
         {!!o.tags.length && <div className="tiny dim">{o.tags.slice(0, 6).map((t) => `#${t.replace(/\s+/g, "")}`).join(" ")}</div>}
       </div>
@@ -111,8 +120,8 @@ export function Preview({ space, plan, picks, account }: { space: SpaceId; plan:
     const o = plan.ig!;
     return (
       <div className="pv-ig">
-        <div className="pv-ig-head"><Av /><b className="small">{handle}</b>{!!o.collaborators.length && <span className="tiny dim">and {o.collaborators.length} other{o.collaborators.length > 1 ? "s" : ""}</span>}</div>
-        <div className="pv-ig-media" onClick={() => files.length > 1 && setI((i + 1) % files.length)}><Shot f={shown} />{files.length > 1 && <span className="pv-count">{i + 1}/{files.length}</span>}</div>
+        <div className="pv-ig-head"><Av account={account} handle={handle} /><b className="small">{handle}</b>{!!o.collaborators.length && <span className="tiny dim">and {o.collaborators.length} other{o.collaborators.length > 1 ? "s" : ""}</span>}</div>
+        <div className="pv-ig-media" onClick={() => files.length > 1 && setI((i + 1) % files.length)}><Shot key={shown?.ref} f={shown} poster={poster} />{files.length > 1 && <span className="pv-count">{i + 1}/{files.length}</span>}</div>
         {files.length > 1 && <div className="pv-dots">{files.map((_, k) => <i key={k} className={k === i ? "on" : ""} />)}</div>}
         <div className="pv-ig-acts"><Heart size={22} /><ChatCircle size={22} /><PaperPlaneTilt size={22} /><span className="grow" /><BookmarkSimple size={22} /></div>
         <p className="pv-cap small"><b>{handle}</b> {o.caption || <span className="dim">Your caption</span>}</p>
@@ -128,19 +137,19 @@ export function Preview({ space, plan, picks, account }: { space: SpaceId; plan:
         {space === "ig_story" && first && (plan.ig?.story_style ?? "card") !== "fill" ? (
           // built like a share by hand: the whole post on a blur (card: with corners and your @handle)
           <div className={`pv-story-card ${plan.ig?.story_style ?? "card"}`}>
-            <div className="pv-story-bg" aria-hidden><Shot f={first} /></div>
+            <div className="pv-story-bg" aria-hidden><Shot key={first?.ref} f={first} poster={poster} /></div>
             <div className="pv-story-mid">
               <div className="pv-story-stack">
-                {(plan.ig?.story_style ?? "card") === "card" && <span className="pv-row pv-story-who"><Av /><b>@{handle}</b></span>}
-                <div className="pv-story-pic"><Shot f={first} fit="contain" /></div>
+                {(plan.ig?.story_style ?? "card") === "card" && <span className="pv-row pv-story-who"><Av account={account} handle={handle} /><b>@{handle}</b></span>}
+                <div className="pv-story-pic"><Shot key={first?.ref} f={first} fit="contain" poster={poster} /></div>
               </div>
             </div>
           </div>
-        ) : <Shot f={first} />}
-        {space === "ig_story" ? <div className="pv-story-top"><i /><span className="pv-row"><Av /><b>{handle}</b><span className="dim">now</span></span></div> : (
+        ) : <Shot key={first?.ref} f={first} poster={poster} />}
+        {space === "ig_story" ? <div className="pv-story-top"><i /><span className="pv-row"><Av account={account} handle={handle} /><b>{handle}</b><span className="dim">now</span></span></div> : (
           <>
             <div className="pv-rail"><span><Heart size={24} weight="fill" /><i>0</i></span><span><ChatCircle size={24} weight="fill" /><i>0</i></span><span><ShareFat size={24} weight="fill" /></span></div>
-            <div className="pv-over"><span className="pv-row"><Av /><b>{handle}</b>{space === "yt_short" ? <em>Subscribe</em> : <em>Follow</em>}</span>
+            <div className="pv-over"><span className="pv-row"><Av account={account} handle={handle} /><b>{handle}</b>{space === "yt_short" ? <em>Subscribe</em> : <em>Follow</em>}</span>
               {caption && <p>{caption}</p>}
               {space === "ig_reel" && plan.ig?.audio_name && <span className="tiny">♪ {plan.ig.audio_name}</span>}
               {space === "ig_reel" && plan.ig?.trial && <span className="tiny">Trial reel · shown to non-followers first</span>}
