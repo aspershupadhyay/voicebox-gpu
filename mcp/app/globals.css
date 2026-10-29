@@ -3476,3 +3476,65 @@ html.cur-custom :is(input:not([type="range"]):not([type="checkbox"]):not([type="
   .rd-feed li .rd-feed-t { display: none; }
   .rd-hparts { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── upload overlay (components/UploadOverlay.tsx): choose, drop or paste; the same scene while files are dragged in */
+.up-ov { position: fixed; inset: 0; z-index: 85; display: grid; place-items: center; padding: 16px; background: rgb(0 0 0 / .72); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: up-in .2s var(--ease); }
+.up-ov.is-drag { pointer-events: none; background: rgb(0 0 0 / .8); }
+.up-ov.out { animation: up-out .16s var(--ease) forwards; }
+.up-panel { position: relative; width: min(560px, 100%); max-height: calc(100dvh - 32px); overflow: auto; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px; padding: 30px 28px 24px; background: #050505; border: 1px solid var(--line2); border-radius: 18px; outline: none; animation: up-rise .32s var(--ease); transition: border-color .2s, transform .25s var(--ease); }
+.up-panel.hot { border-color: var(--ink2); transform: scale(1.015); }
+.up-ov.is-drag .up-panel { border-style: dashed; }
+.up-br { position: absolute; width: 14px; height: 14px; border: 0 solid var(--ink2); transition: inset .25s var(--ease), border-color .2s; }
+.up-br.tl { top: 10px; left: 10px; border-top-width: 1.5px; border-left-width: 1.5px; }
+.up-br.tr { top: 10px; right: 10px; border-top-width: 1.5px; border-right-width: 1.5px; }
+.up-br.bl { bottom: 10px; left: 10px; border-bottom-width: 1.5px; border-left-width: 1.5px; }
+.up-br.br { bottom: 10px; right: 10px; border-bottom-width: 1.5px; border-right-width: 1.5px; }
+.up-panel.hot .up-br { border-color: var(--live); }
+.up-panel.hot .up-br.tl { top: 6px; left: 6px; } .up-panel.hot .up-br.tr { top: 6px; right: 6px; }
+.up-panel.hot .up-br.bl { bottom: 6px; left: 6px; } .up-panel.hot .up-br.br { bottom: 6px; right: 6px; }
+.up-x { position: absolute; top: 14px; right: 14px; }
+.up-kick { font-size: 11px; letter-spacing: .16em; color: var(--mute); }
+.up-panel.hot .up-kick { color: var(--live); }
+.up-title { margin: 2px 0 0; font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
+.up-sub { margin: 0; color: var(--dim); font-size: 14px; max-width: 42ch; }
+.up-sub b { color: var(--ink); font-weight: 500; }
+.up-acts { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+.up-acts button { height: 40px; padding: 0 16px; }
+.up-link { display: flex; align-items: center; gap: 8px; width: 100%; height: 42px; padding: 0 6px 0 12px; border: 1px solid var(--line2); border-radius: 11px; background: var(--surface); color: var(--mute); transition: border-color .15s; }
+.up-link:focus-within { border-color: var(--line3); }
+.up-link input { flex: 1; min-width: 0; height: 100%; border: 0; background: none; padding: 0; color: var(--ink); font: 400 14px var(--sans); outline: none; box-shadow: none; }
+.up-ways { list-style: none; margin: 4px 0 0; padding: 0; display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; color: var(--mute); font-size: 12.5px; }
+.up-ways li { display: inline-flex; align-items: center; gap: 7px; }
+.up-ways kbd { font: 500 11px var(--mono); padding: 1px 6px; border: 1px solid var(--line2); border-radius: 5px; color: var(--ink2); }
+.up-dot { width: 6px; height: 6px; border-radius: 1px; background: var(--live); animation: up-blink 1.4s steps(2, jump-none) infinite; }
+/* the scene: three file cards floating over a tray; while dragging they drop into it in turn */
+.up-scene { position: relative; width: 200px; height: 132px; margin: 4px 0 2px; }
+.up-card { position: absolute; top: 6px; width: 46px; height: 58px; border: 1.5px solid var(--ink2); border-radius: 6px; background: #0b0b0b; display: flex; flex-direction: column; gap: 5px; padding: 12px 8px 0; animation: up-bob 2.6s var(--ease) infinite; }
+.up-card i { height: 3px; border-radius: 1px; background: var(--line3); }
+.up-card i:nth-child(2) { width: 70%; } .up-card i:nth-child(3) { width: 45%; }
+.up-card.c1 { left: 22px; transform: rotate(-9deg); --r: -9deg; }
+.up-card.c2 { left: 77px; top: 0; --r: 0deg; animation-delay: .25s; border-color: var(--live); }
+.up-card.c2 i { background: color-mix(in srgb, var(--live) 45%, transparent); }
+.up-card.c3 { left: 132px; --r: 8deg; animation-delay: .5s; }
+.up-tray { position: absolute; left: 30px; right: 30px; bottom: 10px; height: 34px; border: 1.5px solid var(--ink2); border-top: 0; border-radius: 0 0 9px 9px; display: grid; place-items: center; color: var(--ink2); background: #050505; z-index: 1; transition: border-color .2s, color .2s; }
+.up-px { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); display: flex; gap: 4px; }
+.up-px i { width: 4px; height: 4px; background: var(--line3); animation: up-px 1.5s steps(1, end) infinite; }
+.up-scene.drag .up-card { animation: up-fall 1.5s var(--ease) infinite; }
+.up-scene.drag .up-card.c2 { animation-delay: .2s; } .up-scene.drag .up-card.c3 { animation-delay: .4s; }
+.up-scene.drag .up-tray { border-color: var(--live); color: var(--live); }
+.up-scene.drag .up-px i { animation-duration: .7s; }
+@keyframes up-in { from { opacity: 0; } }
+@keyframes up-out { to { opacity: 0; } }
+@keyframes up-rise { from { opacity: 0; transform: translateY(14px) scale(.98); } }
+@keyframes up-bob { 0%, 100% { transform: translateY(0) rotate(var(--r)); } 50% { transform: translateY(-7px) rotate(var(--r)); } }
+@keyframes up-fall { 0% { transform: translateY(-16px) rotate(var(--r)); opacity: 0; } 25% { opacity: 1; } 70% { transform: translateY(46px) rotate(0deg); opacity: 1; } 100% { transform: translateY(56px) rotate(0deg); opacity: 0; } }
+@keyframes up-px { 0% { background: var(--live); } 20% { background: var(--line3); } }
+@keyframes up-blink { 50% { opacity: .25; } }
+@media (max-width: 520px) {
+  .up-panel { padding: 26px 18px 20px; gap: 10px; }
+  .up-scene { transform: scale(.85); margin: -6px 0 -8px; }
+  .up-title { font-size: 19px; }
+  .up-acts { width: 100%; } .up-acts button { flex: 1 1 100%; }
+  .up-ways { flex-direction: column; gap: 8px; align-items: center; }
+}
+@media (prefers-reduced-motion: reduce) { .up-ov, .up-panel, .up-card, .up-px i, .up-dot { animation: none !important; } .up-panel.hot { transform: none; } }

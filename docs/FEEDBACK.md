@@ -4,7 +4,19 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (the publish preview, 2026-10-29)
+## Latest round (the upload overlay, research ignores file names, 2026-10-29)
+
+- **"The best upload overlay: upload files, drag and drop or paste images; premium, animated"**: Files → Upload opens
+  one overlay with all three ways (Choose files or a folder, a link box, and the hints for dropping and ⌘V). Pasting
+  while it's open uploads the photo or adds the link. Dragging files onto the page shows the same scene: "Incoming",
+  how many files, and the cards dropping into the tray. Bracketed panel, pixel strip, green only while something is
+  arriving; flat, no gradients, still for people who ask for less motion. Escape and a click outside close it.
+- **"Fill from research" built the caption from the file name** ("Case-025-Veliz-Tech-Never-Neutral-9x16 … Save this
+  for later."): an editor's export name (hyphenated, a 9x16, "case 025", "final", "v2") now counts as a file name, is
+  cleaned to its words ("veliz tech never neutral") for the topic, and is never used as the caption's summary. A topic
+  guessed from a file name is guessed again next time instead of sticking; one someone chose still sticks.
+
+## Earlier round (the publish preview, 2026-10-29)
 
 - **"The preview while posting shows off the screen"**: the Reel / Short / Story phone was taller than 9:16 and the
   video filled it by cropping the sides ("CASE 025" showed as "ASE 025"). The screen is 9:16 now, so a 9:16 video
