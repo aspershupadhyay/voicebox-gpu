@@ -96,9 +96,11 @@ The owner's feedback still goes into `docs/FEEDBACK.md` in the same PR as the ch
 
 ## Phases (one PR each; tick when merged and live)
 
-- [ ] **1. Control**: `approvals` (dashboard inbox + MCP), daily units cap, call log with model name, `stop_all`.
+- [x] **1. Control**: `approvals` (dashboard inbox + MCP), daily units cap, call log with model name, `stop_all`.
   Settings → Automation tab (a tab, not a page). Done when: a gated action waits for the click, the cap blocks a
-  start, every MCP call shows in the log.
+  start, every MCP call shows in the log. **Shipped**: `lib/auto/control.ts` (switches, units, approvals, log, kill
+  switch), `lib/auto/wrap.ts` (every call guarded and logged), `lib/auto/tools.ts` (`approvals`, `control`),
+  `components/Automation.tsx`.
 - [ ] **2. Sandbox and know-how**: `run` (sandbox lane on the worker, isolated user, no secrets, limits), `playbook`
   (sections of the docs and lessons). Done when: a model can run a Python script on Colab and read a rule by section.
 - [ ] **3. Repos**: `repo` with the allow-list and the GitHub key (needs the owner's key). Done when: a model can open a
@@ -130,6 +132,29 @@ Any MCP client that speaks streamable HTTP works the same way. claude.ai uses th
 
 ## Decisions
 
+- **Tools are merged to stay near 15** (2026-10-29): `approvals`; `control` (status and budget, `activity` call log,
+  `stop_all`); `run`; `playbook`; `repo`; `edit_video`; `inspect_media` (probe, scenes, words, contact sheet,
+  loudness and the QA checks); `browse` (pages and `search`); `video_template`; `repurpose`; `workflow` (saved steps,
+  their schedule and their triggers); `agents`; `audit`; `memory` (notes and lessons); `find_tools` (lean mode).
+- **How a gate works**: a gated call asks by itself and answers `NEEDS APPROVAL (id …)`; the model waits with
+  `approvals action=wait`, then repeats the exact call with `approval_id` (bound to that call's arguments, used once;
+  an over-cap approval lasts the rest of that UTC day). Only a person signed in to the dashboard decides: the dashboard
+  API refuses approvals and switch changes that come with a bearer token (that's what models hold). New approvals push
+  to the owner's phone when ntfy is set up.
+- **The units cap** counts Colab units spent today (UTC) from the balance at the day's first look (units bought
+  during the day don't count as negative spending). It gates calls from models and automations that start GPU work,
+  not the owner's own clicks on the dashboard. With "ask first" off for it, the cap is a hard stop. 0 = no cap until the
+  owner picks one.
+- **The kill switch** pauses everything that spends or changes things (reading still works), cancels every queued
+  and running job and stops the runtime the app started. A model may pull it; only the owner resumes.
+- **Code mode, after Anthropic's "Code execution with MCP"** (owner, 2026-10-29: "this will reduce the token
+  consumption"): tool definitions and big intermediate results are what cost a model tokens. So (1) the sandbox
+  (`run`, phase 2) has a ready `voicebox` Python module that calls any VoiceBox tool from code, with a short-lived
+  key scoped to that run that still goes through the gates, the cap and the log, so a script filters 1,000 rows and
+  prints 5; (2) a lean MCP mode (`/api/mcp?lean=1`) lists only `find_tools` (search the catalogue by name, then
+  description, then full schema), `call_tool`, `run`, `get_job`, `playbook` and `approvals`, for cheaper models;
+  (3) scripts that work are saved as skills and served by `playbook` (phase 8).
+
 - Everything runs on Colab (the L4), not Modal or Cloud Run (owner, 2026-10-29).
 - Rendering is HyperFrames; Remotion is not used.
 - About 15 new tools in total, never one per small step.
@@ -140,5 +165,5 @@ Any MCP client that speaks streamable HTTP works the same way. claude.ai uses th
    (`GITHUB_AGENT_TOKEN`), never pasted into a chat. Needed for phase 3.
 2. The workbench repo created (`voicebox-workbench`), and `videos-post` added to the session. Needed for phases 3, 6.
 3. A search key (Brave or Tavily) as a Vercel secret (`SEARCH_API_KEY`), or search skipped. Phase 5.
-4. The daily units cap to start with. Phase 1.
-5. A check of the approval list above. Phase 1.
+4. The daily units cap to start with (Settings → Automation; until then there is no cap).
+5. A check of the approval list (Settings → Automation → Ask me first: all on to start).

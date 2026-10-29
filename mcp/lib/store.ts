@@ -3,7 +3,8 @@
 import { AwsClient } from "aws4fetch";
 
 const BUCKET = process.env.R2_BUCKET || "voicebox";
-const ENDPOINT = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${BUCKET}`;
+// R2_ENDPOINT (optional) points at another S3-compatible store, e.g. a local one for testing
+const ENDPOINT = `${process.env.R2_ENDPOINT || `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`}/${BUCKET}`;
 const TYPES: Record<string, string> = {
   wav: "audio/wav", mp3: "audio/mpeg", m4a: "audio/mp4", webm: "audio/webm", ogg: "audio/ogg", srt: "application/x-subrip",
   vtt: "text/vtt", json: "application/json", mp4: "video/mp4", jpg: "image/jpeg", png: "image/png", webp: "image/webp", zip: "application/zip",
