@@ -4,7 +4,16 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (the automation suite plan, 2026-10-29)
+## Latest round (code execution with MCP, 2026-10-29)
+
+- **"Check out code execution with MCP; this will reduce the token consumption"** (Anthropic's article): adopted.
+  The sandbox gets a `voicebox` module so a model calls tools from a script and only the filtered result enters its
+  context; a lean MCP mode lists six tools and finds the rest on demand; working scripts are saved as skills. Every
+  call from code still goes through the approvals, the units cap and the call log. See `docs/AUTOMATION.md`, Decisions.
+- **"Start the automation suite and build it all, verify your own work"**: phase 1 (Control) is shipped:
+  Settings → Automation (approvals inbox, kill switch, daily units cap, ask-first switches, call log by model).
+
+## Earlier round (the automation suite plan, 2026-10-29)
 
 - **"Any AI, everything you can do in a cloud environment, through our MCP; a full automation suite; save it so a new
   session picks it up"**: the plan is `docs/AUTOMATION.md` (linked from `CLAUDE.md`): ten building blocks (control,

@@ -3617,3 +3617,17 @@ html.cur-custom :is(input:not([type="range"]):not([type="checkbox"]):not([type="
 @media (prefers-reduced-motion: reduce) { .dl-bar, .dl-row, .dl-chip, .dl-sources li, .dl-scan, .dl-meter i, .dl-w.on, .dl-empty-px i, .dl-thumb img, .dl-br, .dl-sk { animation: none !important; } }
 .dl-acts a.icon-btn { display: inline-grid; place-items: center; background: none; color: var(--dim); }
 .dl-acts a.icon-btn:hover { background: var(--fill2); color: var(--ink); }
+
+/* ───────────── Settings → Automation (components/Automation.tsx) */
+.au-wrap { overflow-wrap: anywhere; }
+.au-ask { grid-template-columns: auto minmax(0, 1fr) auto; }
+.au-meter { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.au-meter b { font-size: 22px; font-weight: 600; }
+.au-bar { flex: 1 0 100%; height: 6px; border-radius: 99px; background: var(--fill); margin-top: 8px; overflow: hidden; }
+.au-bar i { display: block; height: 100%; background: var(--ink); border-radius: inherit; }
+.au-bar i.bad { background: var(--bad); }
+.au-dec { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.au-num { text-align: right; white-space: nowrap; }
+.au-log { max-height: 460px; overflow-y: auto; }
+.au-log td { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 700px) { .au-ask { grid-template-columns: auto minmax(0, 1fr); } .au-ask > .row { grid-column: 2; } }

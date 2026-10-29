@@ -1,6 +1,6 @@
 // JSON API behind the dashboard (cookie session or Bearer MCP_TOKEN).
 import { after } from "next/server";
-import { currentUser, isAuthed } from "@/lib/session";
+import { currentUser, isAuthed, sessionInfo } from "@/lib/session";
 import { call, WorkerOffline } from "@/lib/worker";
 import { loadWorker, STALE_MS } from "@/lib/registry";
 import { archiveWorkerJob, deleteLibJob, FILE_RE, getLibJob, listLibrary, presignPath, presignPuts, putFile, putLibJob, signer, withUrls, type LibJob } from "@/lib/library";
@@ -71,6 +71,14 @@ export async function GET(req: Request, ctx: Ctx) {
       return Response.json(await getAnalytics(range, q.get("fresh") === "1", (p) => after(p)));
     }
     if (a === "upload-keys" && !b) return Response.json({ keys: await (await import("@/lib/inbox")).listKeys() });
+    if (a === "automation" && !b) {
+      // Settings → Automation: the switches, today's units, the approvals inbox and the call log (lib/auto/control.ts)
+      const ac = await import("@/lib/auto/control");
+      const q = new URL(req.url).searchParams;
+      const [control, units, approvals, log] = await Promise.all([ac.getControl(), ac.unitsToday(), ac.listApprovals(),
+        ac.readLog({ limit: 150, model: q.get("model") || undefined, days: 2 })]);
+      return Response.json({ control, units, approvals: approvals.slice(0, 60), log, ask_first: ac.ASK_FIRST });
+    }
     if (a === "live" && b === "pins") {
       // Grow's sidebar: the rivals you pinned, with the name and picture YouTube gave
       const { loadLive, loadRivals, rivalSlug } = await import("@/lib/live");
@@ -118,7 +126,6 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "security" && !b) {
       // who can get in and from where, this browser's session, and the last sign-ins
       const acc = await import("@/lib/access");
-      const { sessionInfo } = await import("@/lib/session");
       const s = await getSettings();
       const env = (process.env.WORKSPACE_EMAILS ?? "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
       const members = await import("@/lib/appwrite").then((m) => (m.hasKey() ? m.listMembers() : [])).catch(() => []);
@@ -305,6 +312,18 @@ export async function POST(req: Request, ctx: Ctx) {
     if (a === "settings") {
       const who = (await currentUser())?.id;
       return Response.json(settingsFor(await updateSettings(body, who), who));
+    }
+    if (a === "automation") {
+      // only a person signed in on this site decides: never a bearer token (that's what models hold)
+      const ac = await import("@/lib/auto/control");
+      const person = req.headers.get("authorization") ? null : await sessionInfo();
+      if (!person) return Response.json({ error: "only a person signed in to the dashboard can do this" }, { status: 403 });
+      const by = (await currentUser())?.name ?? person.who;
+      if ((b === "approve" || b === "deny") && typeof body.id === "string")
+        return Response.json(await ac.decideApproval(body.id, b === "approve", by, typeof body.note === "string" ? body.note : undefined));
+      if (b === "settings") return Response.json(await ac.setControl({ cap_units: body.cap_units, ask_first: body.ask_first, repos: body.repos }, by));
+      if (b === "stop") return Response.json(await ac.stopAll(by, "stopped from the dashboard"));
+      if (b === "resume") return Response.json(await ac.setControl({ paused: false }, by));
     }
     if (a === "upload-keys") {
       const inbox = await import("@/lib/inbox");
