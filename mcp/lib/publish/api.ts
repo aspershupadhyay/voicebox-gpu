@@ -119,6 +119,13 @@ export async function publishPost(path: string[], body: Record<string, unknown>)
     }
     if (BUSY.includes(cur.state)) return Response.json({ plan: cur, problems: [] });
     if (cur.state === "published" && !body.again) return bad("It's already live. Pass again: true to post it a second time.", 409);
+    // nothing goes out bare: the post package (researched title, description, tags, hashtags, credits) fills what's
+    // empty and adds hashtags and the credit where they're missing, whoever set it up (lib/postpack.ts)
+    if (c !== "ig_story") {
+      await (await import("../postpack")).ensurePack(b, { name: await who() });
+      const fresh = await getPlan(b, c);
+      if (fresh) Object.assign(cur, fresh);
+    }
     const problems = await readiness(cur);
     if (problems.length) return Response.json({ error: problems[0], problems }, { status: 422 });
     const twin = await liveTwin(cur);

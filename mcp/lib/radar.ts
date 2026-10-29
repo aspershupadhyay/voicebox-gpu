@@ -22,10 +22,13 @@ export const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}\s+#.'-]
 
 /* ───────────── what the sources bring back (lib/radar-sources.ts fills these) */
 
-export type SrcId = "yt_suggest" | "google_suggest" | "bing_suggest" | "ddg_suggest" | "youtube" | "youtube_api" | "news" | "hn" | "wiki" | "trends" | "yours";
+export type SrcId = "yt_suggest" | "google_suggest" | "bing_suggest" | "ddg_suggest" | "youtube" | "youtube_api" | "news" | "hn" | "wiki" | "trends" | "yours"
+  | "mastodon" | "stack" | "lobsters" | "devto" | "hf" | "github" | "wiki_top" | "gnews_top";
 export const SRC_NAME: Record<SrcId, string> = {
   yt_suggest: "YouTube autocomplete", google_suggest: "Google autocomplete", bing_suggest: "Bing autocomplete", ddg_suggest: "DuckDuckGo autocomplete",
   youtube: "YouTube search", youtube_api: "YouTube Data API", news: "Google News", hn: "Hacker News", wiki: "Wikipedia pageviews", trends: "Google Trends", yours: "Your analytics",
+  mastodon: "Mastodon hashtags", stack: "Stack Overflow", lobsters: "Lobsters", devto: "DEV Community", hf: "Hugging Face trending", github: "GitHub new repos",
+  wiki_top: "Wikipedia most read", gnews_top: "Google News: Technology",
 };
 export type SrcState = { id: SrcId; ok: boolean; ms: number; note?: string };
 
@@ -46,6 +49,10 @@ export type Signals = {
   hn: { n7: number; n30: number; top: HnHit[] } | null;
   wiki: { article: string; daily: number[] } | null;
   trends: { title: string; traffic: string; geo: string }[];
+  /** the keyword as a Mastodon hashtag: uses a day over the last week, newest first (a public, free hashtag count) */
+  mastodon?: { tag: string; uses: number[]; accounts: number[] } | null;
+  /** Stack Overflow questions that mention it (builders asking how) */
+  stack?: { total: number } | null;
   sources: SrcState[];
 };
 
@@ -82,6 +89,8 @@ export function demand(s: Signals): Score {
     { label: "Views a day, top results", value: mv == null ? "—" : `${Math.round(mv).toLocaleString("en")} median`, weight: 35, score: Math.round(100 * logPart(mv, 1, 5.3)), has: mv != null },
     { label: "Views, this month's uploads", value: mm == null ? "—" : `${Math.round(mm).toLocaleString("en")} median`, weight: 10, score: Math.round(100 * logPart(mm, 2, 6)), has: mm != null && month.length >= 3 },
     { label: "Wikipedia readers a day", value: wd == null ? "—" : `${Math.round(wd).toLocaleString("en")} (${s.wiki!.article.replace(/_/g, " ")})`, weight: 15, score: Math.round(100 * logPart(wd, 1, 5)), has: wd != null },
+    { label: "Stack Overflow questions", value: s.stack ? `${s.stack.total.toLocaleString("en")} mention it` : "—", weight: 5, score: Math.round(100 * logPart(s.stack?.total, 0.5, 5)), has: !!s.stack && s.stack.total > 0 },
+    { label: "Mastodon uses this week", value: s.mastodon ? `${(s.mastodon.uses ?? []).reduce((a, b) => a + b, 0)} posts with #${s.mastodon.tag}` : "—", weight: 5, score: Math.round(100 * logPart((s.mastodon?.uses ?? []).reduce((a, b) => a + b, 0), 0, 3.5)), has: !!s.mastodon },
   ], 0);
   r.line = r.score >= 70 ? "Lots of people look for this" : r.score >= 45 ? "A healthy number of searches" : r.score >= 25 ? "A niche: few searches, but they're specific" : "Very few people search for this";
   return r;
@@ -97,12 +106,15 @@ export function momentum(s: Signals): Score {
   const old = (s.youtube?.top ?? []).filter((h) => (h.age_days ?? 0) > 60).map(vpd).filter((v): v is number => v != null);
   const yr = fresh.length >= 3 && old.length >= 3 ? median(fresh)! / Math.max(1, median(old)!) : null;
   const tr = s.trends.find((t) => covers(t.title, s.q) || covers(s.q, t.title));
+  const mu = s.mastodon?.uses ?? [];
+  const md = mu.length >= 7 ? { recent: mu[0] + mu[1], before: mu.slice(2, 7).reduce((a, b) => a + b, 0) } : null;
   const r = blend([
     { label: "News this week", value: s.news ? `${s.news.n7} stories (${s.news.n30} in 30 days)` : "—", weight: 25, score: s.news ? Math.round(ratioPart(rate(s.news.n7, s.news.n30, s.news.span))) : 50, has: !!s.news && s.news.n30 >= 3 },
     { label: "Hacker News this week", value: s.hn ? `${s.hn.n7} posts (${s.hn.n30} in 30 days)` : "—", weight: 15, score: s.hn ? Math.round(ratioPart(rate(s.hn.n7, s.hn.n30))) : 50, has: !!s.hn && s.hn.n30 >= 3 },
     { label: "Wikipedia readers this week", value: wk == null ? "—" : `${wk >= 1 ? "+" : ""}${Math.round((wk - 1) * 100)}% on the month`, weight: 25, score: wk == null ? 50 : Math.round(ratioPart(wk)), has: wk != null },
     { label: "New uploads' pull", value: yr == null ? "—" : `${yr >= 10 ? Math.round(yr) : yr.toFixed(1)}× the views a day of older ones`, weight: 25, score: yr == null ? 50 : Math.round(ratioPart(yr)), has: yr != null },
     { label: "Google trending searches", value: tr ? `trending in ${tr.geo} (${tr.traffic})` : "not trending today", weight: 10, score: tr ? 100 : 45, has: s.sources.some((x) => x.id === "trends" && x.ok) },
+    { label: `#${s.mastodon?.tag ?? "tag"} on Mastodon`, value: md == null ? "—" : `${md.recent} uses the last 2 days, ${md.before} the 5 before`, weight: 10, score: md == null ? 50 : Math.round(ratioPart(((md.recent + 0.5) / 2) / ((md.before + 0.5) / 5))), has: md != null && md.recent + md.before >= 3 },
   ]);
   r.line = r.score >= 70 ? "Rising fast: post soon" : r.score >= 56 ? "Picking up" : r.score >= 44 ? "Steady" : r.score >= 30 ? "Cooling off" : "Fading";
   return r;
@@ -174,9 +186,39 @@ export type Research = {
   /** what's ranking now, and the freshest uploads */
   top: YtHit[]; month: YtHit[]; news: NewsHit[]; hn: HnHit[];
   titles: TitleIdea[];
+  /** hashtags for it, from what the videos ranking for it use, the keyword itself and its long tail */
+  hashtags: Hashtag[];
   sources: SrcState[];
   why: string[];
 };
+export type Hashtag = { tag: string; n: number; why: string };
+
+const compactTag = (s: string) => norm(s).replace(/[^\p{L}\p{N}]+/gu, "");
+/** Hashtags people in this niche actually use: counted across the titles ranking for the keyword (YouTube's search),
+ *  plus the keyword and its shorter head as tags, and the best long-tail searches that still read as one tag. */
+export function hashtagsOf(s: Pick<Signals, "q" | "youtube" | "mastodon">, longtail: { q: string }[], related: string[] = []): Hashtag[] {
+  const n = new Map<string, { n: number; why: string }>();
+  const add = (t: string, k: number, why: string) => {
+    const tag = compactTag(t);
+    if (tag.length < 3 || tag.length > 24 || /^\d+$/.test(tag)) return;
+    const have = n.get(tag);
+    n.set(tag, { n: (have?.n ?? 0) + k, why: have?.why ?? why });
+  };
+  const titles = [...(s.youtube?.top ?? []), ...(s.youtube?.month ?? [])].map((h) => h.title);
+  for (const t of titles) for (const m of t.match(/#[\p{L}\p{N}_]+/gu) ?? []) add(m.slice(1), 1, "used by videos ranking for it");
+  const ws = words(s.q);
+  add(s.q, 3, "the keyword itself");
+  if (ws.length > 2) add(ws.slice(0, 2).join(" "), 2.5, "the keyword's head");
+  if (ws.length > 1) add(ws[ws.length - 1] === "ideas" || ws[ws.length - 1] === "tips" ? ws.slice(0, -1).join(" ") : ws[0], 1.5, "the topic in one tag");
+  for (const l of longtail.slice(0, 8)) if (words(l.q).length <= 3) add(l.q, 1, "a long-tail search");
+  // the topic with what searchers add most (tiny house + plans → #tinyhouseplans)
+  const head = ws.slice(0, Math.min(2, ws.length)).join(" ");
+  for (const w of related.filter((x) => !ws.includes(x) && x.length > 2).slice(0, 4)) add(`${head} ${w}`, 0.8, "the topic with a word searchers add");
+  if (s.mastodon?.uses?.some((u) => u > 0)) add(s.mastodon.tag, 1, "in use on Mastodon this week");
+  // generic tags that tell the feed nothing
+  for (const g of ["shorts", "short", "viral", "trending", "fyp", "foryou", "foryoupage", "youtube", "subscribe", "reels", "explore"]) n.delete(g);
+  return [...n].sort((a, b) => b[1].n - a[1].n).slice(0, 12).map(([tag, v]) => ({ tag, n: Math.round(v.n * 10) / 10, why: v.why }));
+}
 
 const erf = (x: number) => { const t = 1 / (1 + 0.3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; };
 const above = (mu: number, sigma: number, at: number) => 0.5 * (1 - erf((at - mu) / (sigma * Math.SQRT2)));
@@ -236,10 +278,10 @@ export function research(s: Signals, me: { items: WItem[]; rivals: WRival[]; mod
   })();
   const pr = predict({ fmt, items: me.items, opp, mom: mo.score, history: fi.history, calib: me.calib });
   // sources that answered with something, of the ones that matter for the scores
-  const key: SrcId[] = ["yt_suggest", "youtube", "news", "hn", "wiki", "google_suggest"];
+  const key: SrcId[] = ["yt_suggest", "youtube", "news", "hn", "wiki", "google_suggest", "mastodon", "stack"];
   const okN = key.filter((k) => s.sources.some((x) => x.id === k && x.ok)).length;
   const cover = (dm.cover + mo.cover + co.cover) / 3;
-  const confidence = cover >= 0.75 && okN >= 5 ? "high" : cover >= 0.5 && okN >= 3 ? "medium" : "low";
+  const confidence = cover >= 0.75 && okN >= 6 ? "high" : cover >= 0.5 && okN >= 4 ? "medium" : "low";
   // long tail: each expansion rated on what's cheap to know about it (its place in the list and its specificity)
   const seen = new Set<string>([norm(s.q)]);
   const tail = [...s.suggest.yt, ...s.expand].map(norm).filter((x) => x && !seen.has(x) && (seen.add(x), true));
@@ -263,9 +305,10 @@ export function research(s: Signals, me: { items: WItem[]; rivals: WRival[]; mod
     q: s.q, geo: s.geo, at: s.at, fmt, opportunity: opp, verdict: verdictOf(opp), confidence, confidence_n: okN,
     demand: dm, momentum: mo, competition: co, fit: fi, prediction: pr, longtail, questions, related,
     top: (s.youtube?.top ?? []).slice(0, 12), month: (s.youtube?.month ?? []).slice(0, 8), news: (s.news?.items ?? []).slice(0, 8), hn: (s.hn?.top ?? []).slice(0, 6),
-    titles: [], sources: s.sources, why,
+    titles: [], hashtags: [], sources: s.sources, why,
   };
   r.titles = titleIdeas(r, me.model);
+  r.hashtags = hashtagsOf(s, longtail, related.map((x) => x.word));
   return r;
 }
 
@@ -351,17 +394,35 @@ export function titleIdeas(r: Pick<Research, "q" | "questions" | "related" | "mo
 
 /* ───────────── the sweep: what's moving in your lane right now */
 
-export type SweepSignal = { src: "trends" | "news" | "hn" | "rival" | "suggest" | "wiki" | "yt_chart"; title: string; url: string; at: number; /** how strong this one signal is, 0 to 1 */ w: number; metric: string; geo?: string };
+export type SweepSrc = "trends" | "news" | "hn" | "rival" | "suggest" | "wiki" | "yt_chart" | "gnews" | "lobsters" | "devto" | "mastodon" | "hf" | "github";
+export type SweepSignal = { src: SweepSrc; title: string; url: string; at: number; /** how strong this one signal is, 0 to 1 */ w: number; metric: string; geo?: string };
+/** Where on the scope a topic sits (its angle): the kind of place most of its signals came from. */
+export type Sector = "search" | "news" | "builders" | "social" | "video";
+export const SECTOR_OF: Record<SweepSrc, Sector> = {
+  trends: "search", suggest: "search", news: "news", gnews: "news", hn: "builders", lobsters: "builders", devto: "builders", github: "builders", hf: "builders",
+  mastodon: "social", wiki: "social", yt_chart: "video", rival: "video",
+};
+export const SECTORS: { id: Sector; name: string }[] = [{ id: "search", name: "Search" }, { id: "news", name: "News" }, { id: "builders", name: "Builders" }, { id: "social", name: "Social" }, { id: "video", name: "Video" }];
 export type Blip = {
   topic: string; heat: number; fit: number; score: number; verdict: Verdict;
-  sources: SweepSignal["src"][]; signals: SweepSignal[]; why: string; angles: string[];
+  sources: SweepSrc[]; signals: SweepSignal[]; why: string; angles: string[];
+  /** how sure the score is: independent sources, how many signals, how fresh */
+  conf: "high" | "medium" | "low"; conf_why: string;
+  /** what the heat is made of */
+  heat_parts: { label: string; value: string; score: number }[];
+  sector: Sector;
+  /** hours since its newest signal */
+  fresh_h: number;
 };
-export type Sweep = { at: number; seeds: string[]; geos: string[]; blips: Blip[]; trending: SweepSignal[]; sources: SrcState[] };
+export type Sweep = { at: number; seeds: string[]; geos: string[]; blips: Blip[]; trending: SweepSignal[]; sources: SrcState[]; /** every signal read, newest first (the live feed) */ feed?: SweepSignal[] };
 
-export const SWEEP_NAME: Record<SweepSignal["src"], string> = { trends: "Google Trends", news: "Google News", hn: "Hacker News", rival: "A rival's outlier", suggest: "Autocomplete", wiki: "Wikipedia", yt_chart: "YouTube trending" };
+export const SWEEP_NAME: Record<SweepSrc, string> = {
+  trends: "Google Trends", news: "Google News", hn: "Hacker News", rival: "A rival's outlier", suggest: "Autocomplete", wiki: "Wikipedia most read", yt_chart: "YouTube trending",
+  gnews: "Google News: Tech", lobsters: "Lobsters", devto: "DEV Community", mastodon: "Mastodon trending", hf: "Hugging Face", github: "GitHub",
+};
 
 /** Headline words that say nothing about the topic. */
-const NOISE = new Set("each other more most now after over says said could would should get gets got new first top best using use uses used make makes made launch launches launched announces announced report reports study finds found here why how what know things thing way ways people today week year years day days time back still also amid via vs plus inside latest update updates news live video watch full official business pro plus free max mini team enterprise tool tools app apps model models company users user world".split(" "));
+const NOISE = new Set("each other more most now after over says said could would should get gets got new first top best using use uses used make makes made launch launches launched announces announced report reports study finds found here why how what know things thing way ways people today week year years day days time back still also amid via vs plus inside latest update updates news live video watch full official business pro plus free max mini team enterprise tool tools app apps model models company users user world one two three call calls review reviews dev devs deal deals star stars show shows open source data year's best-of guide january february march april may june july august september october november december monday tuesday wednesday thursday friday saturday sunday tonight tomorrow yesterday".split(" "));
 /** Words that are names: capitalised mid-sentence in a headline that isn't Title Case, or shaped like one (OpenAI,
  *  GPT-6, iPhone). One word alone is only a topic if it's a name; "tasks" or "month" isn't. */
 function namesOf(titles: string[]) {
@@ -420,7 +481,8 @@ export function sweep(signals: SweepSignal[], lane: string[], o: { now?: number;
     const f = Math.round(clamp(share * 75 + (g.p.split(" ").some((w) => laneW.has(w)) ? 15 : 0) + (g.ss.some((s) => s.src === "rival") ? 15 : 0) + 5));
     if (f < 30 && g.srcs.length < 3) continue;
     const rec = g.ss.reduce((a, s) => a + Math.exp(-(now - s.at) / (2 * D)), 0) / g.ss.length;
-    const heat = Math.round(clamp(g.srcs.length * 16 + Math.min(20, (g.ss.length - 1) * 5) + Math.min(25, g.ss.reduce((a, s) => a + s.w, 0) * 8) + rec * 25 - 10));
+    const hp = { src: g.srcs.length * 16, n: Math.min(20, (g.ss.length - 1) * 5), w: Math.min(25, g.ss.reduce((a, s) => a + s.w, 0) * 8), fresh: rec * 25 };
+    const heat = Math.round(clamp(hp.src + hp.n + hp.w + hp.fresh - 10));
     const score = Math.round(0.6 * heat + 0.4 * f);
     g.ss.forEach((s) => used.add(s));
     // one word alone ("legal") reads better with the lane word most of its signals share ("claude legal")
@@ -433,21 +495,44 @@ export function sweep(signals: SweepSignal[], lane: string[], o: { now?: number;
     }
     if (blips.some((b) => b.topic === topic)) continue;
     const K = titleCase(topic);
+    const newest = Math.max(...g.ss.map((s) => s.at));
+    const fresh_h = Math.max(0, Math.round((now - newest) / 3_600_000));
+    const conf = g.srcs.length >= 3 && g.ss.length >= 4 && fresh_h <= 48 ? "high" : g.srcs.length >= 2 && fresh_h <= 96 ? "medium" : "low";
+    const sec = new Map<Sector, number>();
+    for (const x of g.ss) sec.set(SECTOR_OF[x.src], (sec.get(SECTOR_OF[x.src]) ?? 0) + 1 + x.w);
     blips.push({
       topic, heat, fit: f, score, verdict: verdictOf(score), sources: g.srcs, signals: g.ss.sort((a, b) => b.w - a.w).slice(0, 8),
       why: `${g.ss.length} signal${g.ss.length === 1 ? "" : "s"} from ${g.srcs.map((s) => SWEEP_NAME[s]).join(", ")}${rec > 0.6 ? ", most in the last day" : ""}${f >= 60 ? "; right in your lane" : f >= 40 ? "; near your lane" : ""}.`,
       angles: [`What ${K} means for you`, `${K}: what nobody's saying yet`, `I tested ${K} so you don't have to`],
+      conf, conf_why: `${g.srcs.length} independent source${g.srcs.length === 1 ? "" : "s"}, ${g.ss.length} signal${g.ss.length === 1 ? "" : "s"}, newest ${fresh_h < 1 ? "under an hour" : `${fresh_h} h`} old`,
+      heat_parts: [
+        { label: "Independent sources", value: `${g.srcs.length}`, score: Math.round(hp.src) },
+        { label: "Signals", value: `${g.ss.length}`, score: Math.round(hp.n) },
+        { label: "Strength", value: `${Math.round(g.ss.reduce((a, s) => a + s.w, 0) * 100) / 100} summed`, score: Math.round(hp.w) },
+        { label: "Freshness", value: `${Math.round(rec * 100)}% from the last two days`, score: Math.round(hp.fresh) },
+      ],
+      sector: [...sec].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "news", fresh_h,
     });
-    if (blips.length >= 14) break;
+    if (blips.length >= 18) break;
   }
   blips.sort((a, b) => b.score - a.score);
   const trending = signals.filter((s) => s.src === "trends").sort((a, b) => b.w - a.w).slice(0, 12);
-  return { at: now, seeds: o.seeds, geos: o.geos, blips, trending, sources: o.sources };
+  // the feed: the freshest few from each source, interleaved so no one source floods it (hashtag trends lead nothing)
+  const bySrc = new Map<SweepSrc, SweepSignal[]>();
+  for (const x of signals) if (x.src !== "suggest" && x.at <= now + 60_000 && !(x.src === "mastodon" && x.title.includes(" #"))) bySrc.set(x.src, [...(bySrc.get(x.src) ?? []), x]);
+  const lanes = [...bySrc.values()].map((l) => l.sort((a, b) => (inLane(b.title) ? 1 : 0) - (inLane(a.title) ? 1 : 0) || b.at - a.at).slice(0, 6));
+  const feed: SweepSignal[] = [];
+  for (let i = 0; i < 6; i++) for (const l of lanes) if (l[i]) feed.push(l[i]);
+  return { at: now, seeds: o.seeds, geos: o.geos, blips, trending, sources: o.sources, feed };
 }
 
 /** Google Trends' "200+", "5K+", "1M+" as a number. */
 export const trafficOf = (t: string) => { const m = /([\d.]+)\s*([KM])?/i.exec(t); return m ? +m[1] * (m[2]?.toUpperCase() === "M" ? 1e6 : m[2]?.toUpperCase() === "K" ? 1e3 : 1) : 0; };
-export const strength = { trends: (t: string) => logPart(trafficOf(t), 2, 6), hn: (pts: number) => logPart(pts, 1.3, 3.2), rival: (x: number) => clamp((x - 1) / 4, 0, 1), news: () => 0.35, suggest: () => 0.3 };
+export const strength = {
+  trends: (t: string) => logPart(trafficOf(t), 2, 6), hn: (pts: number) => logPart(pts, 1.3, 3.2), rival: (x: number) => clamp((x - 1) / 4, 0, 1), news: () => 0.35, suggest: () => 0.3,
+  lobsters: (pts: number) => logPart(pts, 1, 2.5), devto: (r: number) => logPart(r, 1, 3), mastodon: (uses: number) => logPart(uses, 1.3, 3.5), hf: (likes: number) => logPart(likes, 1.5, 4),
+  github: (stars: number) => logPart(stars, 1.7, 4), wiki: (views: number) => logPart(views, 4.3, 6.3),
+};
 
 /* ───────────── the track record */
 

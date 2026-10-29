@@ -48,6 +48,7 @@ export async function GET(req: Request, ctx: Ctx) {
   try {
     if (a === "publish") return await (await import("@/lib/publish/api")).publishGet(g.path.slice(1));
     if (a === "pipeline" && b && ID.test(b)) return Response.json(await (await import("@/lib/pipeline")).advance(b)); // the post pipeline, moved along as it's looked at
+    if (a === "pack" && b && ID.test(b)) return Response.json({ pack: await (await import("@/lib/postpack")).getPack(b) }); // the post package (lib/postpack.ts)
     if (a === "analytics" && b === "post" && (c === "youtube" || c === "instagram") && g.path[3] && ID.test(g.path[3])) {
       // one post in depth: analytics/post/<youtube|instagram>/<platform id>
       const { getPostDetail } = await import("@/lib/analytics");
@@ -141,7 +142,7 @@ export async function GET(req: Request, ctx: Ctx) {
       const rd = await import("@/lib/radar-data");
       const q = new URL(req.url).searchParams;
       const fmt = (["yt_video", "yt_short", "ig_reel", "ig_post"] as const).find((f) => f === q.get("fmt")) ?? null;
-      if (!b) { after(() => rd.refreshWatch().catch(() => null)); return Response.json(await rd.overview(q.get("fresh") === "1")); }
+      if (!b) { after(() => rd.refreshWatch().catch(() => null)); return Response.json(await rd.overview(q.get("fresh") === "1", (p) => after(p))); }
       if (b === "kw") return Response.json(await rd.keyword(q.get("q") ?? "", { geo: q.get("geo") ?? undefined, fmt, deep: q.get("deep") === "1", fresh: q.get("fresh") === "1" }));
       if (b === "compare") return Response.json({ results: await rd.compare((q.get("q") ?? "").split("|").filter(Boolean), { geo: q.get("geo") ?? undefined, fmt }) });
     }
@@ -252,6 +253,22 @@ export async function POST(req: Request, ctx: Ctx) {
       if (b === "watch") return Response.json(await rd.watch(String(body.q ?? ""), by, fmt));
       if (b === "unwatch") return Response.json({ watch: await rd.unwatch(String(body.q ?? "")) });
       if (b === "config") return Response.json(await rd.setConfig({ seeds: Array.isArray(body.seeds) ? body.seeds.map(String) : undefined, geos: Array.isArray(body.geos) ? body.geos.map(String) : undefined }));
+    }
+    if (a === "pack" && b && ID.test(b)) {
+      // the post package: { keyword?, credit?, overwrite?, preview? } researched and put on the post, its captions and plans
+      const pp = await import("@/lib/postpack");
+      const actor = { name: (await currentUser())?.name ?? "someone" };
+      const o = { keyword: typeof body.keyword === "string" ? body.keyword.slice(0, 80) : null, credit: typeof body.credit === "string" ? body.credit.slice(0, 200) : null };
+      if (body.preview === true) return Response.json({ pack: await pp.buildPack(b, { ...o, by: actor.name }), changed: [] });
+      return Response.json(await pp.packPost(b, actor, { ...o, overwrite: body.overwrite === true }));
+    }
+    if (a === "autopost" && !b) {
+      // the one click (Files): { files: ["m:<id>"…], go: "arm" | "now" | "draft", spaces?, keyword?, credit? }
+      const pp = await import("@/lib/postpack");
+      const spaces = Array.isArray(body.spaces) ? body.spaces.map(String).filter((x: string) => ["yt_video", "yt_short", "ig_reel", "ig_post"].includes(x)) : undefined;
+      const go = (["draft", "arm", "now"] as const).find((x) => x === body.go) ?? "arm";
+      return Response.json(await pp.autoPost(Array.isArray(body.files) ? body.files.map(String) : [], { name: (await currentUser())?.name ?? "someone" },
+        { go, spaces, keyword: typeof body.keyword === "string" ? body.keyword.slice(0, 80) : null, credit: typeof body.credit === "string" ? body.credit.slice(0, 200) : null }));
     }
     if (a === "pipeline" && b && ID.test(b)) {
       // the post pipeline: { step: "all" | "voice" | "subtitles" | "thumbnail" | "schedule", force? }, or /<post>/stop

@@ -1,4 +1,6 @@
-// The one-click post pipeline: script → hook score → voice it → subtitles → thumbnail → schedule, from one post. Each
+// The one-click post pipeline: script → hook score → voice it → subtitles → thumbnail → package → schedule, from one
+// post. A post that already has its own video (an upload) skips the script and voice steps. The package is the title,
+// description, tags, hashtags and credits from Radar's research (lib/postpack.ts). Each
 // step reads what the post already has (a script, a voiceover, its subtitles, a cover, publish times), so nothing that's
 // done is done again; "run" starts what's missing in order, on the GPU worker where it needs one. The run is kept in R2
 // (workspace/pipelines/<post>.json) and moved along by whoever looks (the post's Pipeline panel every few seconds, the
@@ -10,7 +12,7 @@ import { getJson, listObjs, putJson } from "./store";
 import { call, WorkerOffline } from "./worker";
 import type { Post } from "./workspace";
 
-export const STEPS = ["script", "hook", "voice", "subtitles", "thumbnail", "schedule"] as const;
+export const STEPS = ["script", "hook", "voice", "subtitles", "thumbnail", "package", "schedule"] as const;
 export type StepId = (typeof STEPS)[number];
 export type StepState = "done" | "todo" | "running" | "blocked" | "warn" | "failed";
 export type Step = { id: StepId; label: string; state: StepState; detail: string; job?: string | null; at?: number | null };
@@ -61,18 +63,25 @@ export async function pipelineStatus(postId: string) {
   const busy = (k: "voice" | "subtitles" | "thumbnail") => run?.jobs[k] && !run.jobs[k]!.error ? run.jobs[k]! : null;
   const failed = (k: "voice" | "subtitles" | "thumbnail") => run?.jobs[k]?.error ?? null;
   const cover = post.cover ? media.find((m) => m.$id === post.cover) : media.find((m) => m.kind === "image");
+  // a post with its own video or photos needs no script or voiceover
+  const own = !lines.length && media.some((m) => m.kind === "video" || m.kind === "image");
+  const ownWhat = media.some((m) => m.kind === "video") ? "its own video" : "its own photos";
+  const pack = await (await import("./postpack")).getPack(post.$id);
   const open = targets.filter((t) => t.status !== "posted");
   const timed = open.filter((t) => t.due_at);
+  const skip = (id: StepId, label: string): Step => ({ id, label, state: "done", detail: `Not needed: the post has ${ownWhat}` });
   const steps: Step[] = [
-    { id: "script", label: "Script", state: words >= 5 ? "done" : "todo", detail: words >= 5 ? `${words} words, ${lines.length} lines` : "Write the script (one line per beat)" },
-    { id: "hook", label: "Hook score", state: !hook ? "blocked" : hook.score >= HOOK_OK ? "done" : hook.score >= HOOK_MIN ? "warn" : "todo",
+    own ? skip("script", "Script") : { id: "script", label: "Script", state: words >= 5 ? "done" : "todo", detail: words >= 5 ? `${words} words, ${lines.length} lines` : "Write the script (one line per beat)" },
+    own ? skip("hook", "Hook score") : { id: "hook", label: "Hook score", state: !hook ? "blocked" : hook.score >= HOOK_OK ? "done" : hook.score >= HOOK_MIN ? "warn" : "todo",
       detail: !hook ? "Needs a script" : `${hook.score}/100 · ${hook.grade}${hook.score < HOOK_OK ? ` · ${hook.checks.find((c) => !c.ok)?.label ?? "tighten the opening"}` : ""}` },
-    { id: "voice", label: "Voice it", state: voice ? "done" : busy("voice") ? "running" : failed("voice") ? "failed" : words < 5 ? "blocked" : "todo",
+    own ? skip("voice", "Voice it") : { id: "voice", label: "Voice it", state: voice ? "done" : busy("voice") ? "running" : failed("voice") ? "failed" : words < 5 ? "blocked" : "todo",
       detail: voice ? `${voice.voice} · ${Math.round(voice.results.reduce((s, r) => s + r.duration, 0))} s` : busy("voice") ? "Voicing on the GPU" : failed("voice") ?? (words < 5 ? "Needs a script" : "Voice the script on the GPU"), job: voice?.id ?? busy("voice")?.job ?? null },
-    { id: "subtitles", label: "Subtitles", state: voice?.subs ? "done" : busy("subtitles") ? "running" : failed("subtitles") ? "failed" : voice ? "todo" : "blocked",
+    own ? skip("subtitles", "Subtitles") : { id: "subtitles", label: "Subtitles", state: voice?.subs ? "done" : busy("subtitles") ? "running" : failed("subtitles") ? "failed" : voice ? "todo" : "blocked",
       detail: voice?.subs ? `${voice.subs.cues} captions` : busy("subtitles") ? "Whisper is listening" : failed("subtitles") ?? (voice ? "Word-timed captions from the voiceover" : "Needs the voiceover") },
-    { id: "thumbnail", label: "Thumbnail", state: cover ? "done" : busy("thumbnail") ? "running" : failed("thumbnail") ? "failed" : "todo",
-      detail: cover ? cover.name : busy("thumbnail") ? "Drawing on the GPU" : failed("thumbnail") ?? "A cover drawn from the title", job: busy("thumbnail")?.job ?? null },
+    { id: "thumbnail", label: "Thumbnail", state: cover || own ? "done" : busy("thumbnail") ? "running" : failed("thumbnail") ? "failed" : "todo",
+      detail: cover ? cover.name : own ? "The video's own frame (or its first photo)" : busy("thumbnail") ? "Drawing on the GPU" : failed("thumbnail") ?? "A cover drawn from the title", job: busy("thumbnail")?.job ?? null },
+    { id: "package", label: "Title, description, hashtags", state: pack ? "done" : "todo",
+      detail: pack ? `“${pack.keyword}” · SEO ${pack.seo.score} · ${pack.hashtags.length} hashtags${pack.credit ? " · credited" : ""}` : "Researched title, description, tags, hashtags and credits" },
     { id: "schedule", label: "Schedule", state: !open.length ? (targets.length ? "done" : "todo") : timed.length === open.length ? "done" : "todo",
       detail: !targets.length ? "Pick where it goes first" : !open.length ? "Posted" : timed.length === open.length ? `${open.length} target${open.length === 1 ? "" : "s"} timed · ${new Date(Math.min(...timed.map((t) => Date.parse(t.due_at!)))).toUTCString().slice(0, 22)} UTC` : `${open.length - timed.length} without a time: the next posting slot` },
   ];
@@ -93,6 +102,7 @@ export async function runPipeline(postId: string, step: StepId | "all", by: stri
   }
   if (step === "voice" || step === "subtitles" || step === "thumbnail") { delete run.jobs[step]; await start(run, await getPost(postId), step); }
   else if (step === "schedule") await schedule(run, await getPost(postId));
+  else if (step === "package") await pack(run, postId);
   else throw new Error("the script and its hook are yours (or Claude's) to write: update_post, then hook_score");
   await putRun(run);
   return pipelineStatus(postId);
@@ -146,6 +156,7 @@ export async function advance(postId: string) {
       if (st("thumbnail").state === "todo") await go("thumbnail"); // the GPU queues it behind the voice
       if (st("subtitles").state === "todo" && st("voice").state === "done") await go("subtitles");
       const gpuLeft = (["voice", "subtitles", "thumbnail"] as const).some((k) => ["todo", "running"].includes(st(k).state) || run.jobs[k] && !run.jobs[k]!.error);
+      if (!gpuLeft && st("package").state === "todo") { await pack(run, postId); changed = true; }
       if (!gpuLeft && st("schedule").state === "todo") { await schedule(run, post); changed = true; }
       const after = await pipelineStatus(postId);
       if (after.steps.every((x) => ["done", "warn", "failed"].includes(x.state)) && !Object.values(run.jobs).some((j) => j && !j.error)) {
@@ -191,6 +202,15 @@ async function start(run: Run, post: Post, k: "voice" | "subtitles" | "thumbnail
     run.jobs.thumbnail = { job: job.id, at: Date.now() };
     line(run, `Drawing a ${aspect} thumbnail`);
   }
+}
+
+/** The package: researched title, description, tags, hashtags and credits on the post, its captions and plans. */
+async function pack(run: Run, postId: string) {
+  try {
+    const { packPost } = await import("./postpack");
+    const r = await packPost(postId, actorOf(run.by));
+    line(run, `Package: “${r.pack.title}” · SEO ${r.pack.seo.score} · ${r.pack.hashtags.slice(0, 4).map((h) => `#${h}`).join(" ")}`, true);
+  } catch (e) { line(run, `Package: ${(e as Error).message}`, false); }
 }
 
 /** Every target without a time gets the next free posting slot (or tomorrow at the same hour as its last post); all
