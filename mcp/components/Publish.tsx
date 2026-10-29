@@ -3,7 +3,7 @@
 // the pill on each target that says where it stands, and the hand-off for places Voicebox can't post to itself.
 // The server does the work (lib/publish/*): Publish now starts at once; "At the publish time" lets the autopilot do it.
 import {
-  ArrowSquareOut, ArrowsClockwise, BookmarkSimple, ChatCircle, CheckCircle, Clock, Copy, DownloadSimple, Heart, Image as ImageIcon, Lightning, PaperPlaneTilt,
+  ArrowSquareOut, ArrowsClockwise, BookmarkSimple, ChatCircle, CheckCircle, Clock, Copy, DownloadSimple, Hash, Heart, Image as ImageIcon, Lightning, PaperPlaneTilt,
   Play, Plus, RocketLaunch, ShareFat, Stop, Warning, X,
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -203,6 +203,17 @@ export function Composer({ post, space, onClose }: { post: Post; space: SpaceId;
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [post.$id, space]);
+  // the post package (lib/postpack.ts): research the topic, then fill the title, description, tags and caption
+  const [packing, setPacking] = useState(false);
+  async function fillFromResearch() {
+    setPacking(true);
+    try {
+      const r = await api<{ changed: string[]; pack: { keyword: string; seo: { score: number } } }>(`pack/${post.$id}`, { body: {} });
+      const p = await api<{ plan: Plan | null; problems: string[] }>(`publish/${post.$id}/${space}`);
+      if (p.plan) { setPlan(p.plan); setProblems(p.problems); notePlan(p.plan); }
+      toast(r.changed.length ? `Filled from research on “${r.pack.keyword}” (SEO ${r.pack.seo.score})` : "Kept what you wrote: clear a field to fill it from research", r.changed.length ? "ok" : undefined);
+    } catch (e) { toast((e as Error).message, "bad"); } finally { setPacking(false); }
+  }
   // first-time picks once the files and accounts are known
   const seeded = useRef(false);
   useEffect(() => {
@@ -303,6 +314,7 @@ export function Composer({ post, space, onClose }: { post: Post; space: SpaceId;
         <header className="pub-head">
           <PlatformBadge space={space} size={30} solid />
           <div style={{ minWidth: 0, flex: 1 }}><h2 className="ellipsis">Publish to {spaceName(space)}</h2><span className="tiny dim ellipsis">{post.title}</span></div>
+          {plan && !locked && plan.state !== "published" && <button type="button" className="ghost sm hide-sm" disabled={packing} onClick={fillFromResearch} title="Researched title, description, tags, hashtags and credits (only empty fields, or ones the last fill wrote)">{packing ? <span className="vp-spin sm" /> : <Hash size={14} />}Fill from research</button>}
           {plan && <span className={`pill ${plan.state === "published" ? "ok" : plan.state === "failed" ? "bad" : running ? "blue" : plan.state === "armed" ? "violet" : ""}`}>{PLAN_LABEL[plan.state]}</span>}
           <button className="icon-btn" onClick={onClose} aria-label="Close (Esc)" title="Close (Esc)"><X size={18} /></button>
         </header>

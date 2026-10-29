@@ -32,6 +32,7 @@ export const NAV: Nav[] = [
   { href: "/analytics", name: "Analytics", Icon: ChartLineUp, mv: "chart", sec: "main" },
   { href: "/files", name: "Files", Icon: Folders, mv: "files", sec: "main" },
   { href: "/writing", name: "Writing room", Icon: PenNib, mv: "pen", sec: "create" },
+  { href: "/analytics/radar", name: "Radar", Icon: Crosshair, mv: "radar", sec: "create" },
   { href: "/voiceover", name: "Voiceover", Icon: Microphone, mv: "mic", sec: "create" },
   { href: "/clean-up", name: "Clean-up", Icon: MagicWand, mv: "wand", sec: "create" },
   { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning, mv: "cc", sec: "create" },
@@ -44,16 +45,16 @@ const TABS = ["/home", "/voiceover", "/posts", "/voices"];
 /** Grow mode's pages (all under /analytics; the Analytics shell renders them). */
 export const GROW: { href: string; name: string; Icon: typeof House; mv?: string; net?: "youtube" | "instagram" }[] = [
   { href: "/analytics", name: "Overview", Icon: SquaresFour, mv: "grid" },
+  { href: "/analytics/radar", name: "Radar", Icon: Crosshair, mv: "radar" },
   { href: "/analytics/live", name: "Live", Icon: Broadcast },
   { href: "/analytics/content", name: "Content", Icon: Rows, mv: "rows" },
   { href: "/analytics/audience", name: "Audience", Icon: UsersThree, mv: "users" },
   { href: "/analytics/when-to-post", name: "When to post", Icon: CalendarDots, mv: "calendar" },
   { href: "/analytics/competitors", name: "Competitors", Icon: Trophy, mv: "trophy" },
-  { href: "/analytics/radar", name: "Radar", Icon: Crosshair },
   { href: "/analytics/youtube", name: "YouTube", Icon: ChartLineUp, net: "youtube" },
   { href: "/analytics/instagram", name: "Instagram", Icon: ChartLineUp, net: "instagram" },
 ];
-const GROW_TABS = ["/analytics", "/analytics/live", "/analytics/content", "/analytics/competitors"];
+const GROW_TABS = ["/analytics", "/analytics/radar", "/analytics/live", "/analytics/competitors"];
 const isGrow = (path: string) => path === "/analytics" || path.startsWith("/analytics/");
 const growOn = (path: string, href: string) => (href === "/analytics" ? path === href : path === href || path.startsWith(`${href}/`));
 const LAST = { create: "vb-last-create", grow: "vb-last-grow" };
@@ -215,7 +216,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
   useCursor();
   const here = pageOf(path);
   const grow = isGrow(path);
-  const growHere = grow ? [...GROW].reverse().find((g) => growOn(path, g.href)) ?? (path.startsWith("/analytics/competitors") ? GROW[5] : GROW[0]) : null;
+  const growHere = grow ? [...GROW].reverse().find((g) => growOn(path, g.href)) ?? (path.startsWith("/analytics/competitors") ? GROW.find((g) => g.href === "/analytics/competitors")! : GROW[0]) : null;
   useEffect(() => { try { localStorage.setItem(grow ? LAST.grow : LAST.create, path); } catch {} }, [grow, path]);
   const on = (href: string) => path === href || path.startsWith(`${href}/`);
   const busy = !!(status?.running?.length || status?.queue);

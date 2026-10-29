@@ -1,21 +1,24 @@
 "use client";
 // Grow → Radar (/analytics/radar): what to post next, from free public signals and your own numbers (lib/radar.ts
 // scores, lib/radar-data.ts reads and keeps them). Three views at ?view=:
-//   Sweep      a radar scope of what's moving in your lane right now (Google Trends, news, Hacker News, autocomplete,
-//              YouTube trending, your rivals' outliers): the closer to the middle, the better the bet. Pick a blip for
-//              its evidence, then research it.
+//   Sweep      a radar scope (components/RadarScope.tsx) of what's moving in your lane right now, from fifteen free
+//              sources (Google Trends and News, Hacker News, Lobsters, DEV, Mastodon, Hugging Face, GitHub, Wikipedia's
+//              most read, autocomplete, YouTube trending, your rivals' outliers): the closer to the middle, the better
+//              the bet; the angle is where the signals came from. Pick a blip for its evidence, what its heat is made
+//              of and how sure it is, then research or watch it. Below: every topic, the live signal feed, trending
+//              searches, which sources answered, and the track record.
 //   Keyword    one keyword in depth (?q=): demand, momentum, competition and fit with what each is made of, the
 //              opportunity and verdict, a view prediction against your usual, the long tail, the questions people
 //              ask, what ranks now, and a title lab that scores search and click as you type.
 //   Watchlist  keywords followed over time, and the prediction track record (what was predicted, what happened).
 // Every number says where it came from; nothing is made up when a source doesn't answer. Claude reaches all of it
 // over MCP (radar, keyword_research, seo_score, radar_watch).
-import { ArrowSquareOut, ArrowsClockwise, Check, Crosshair, Eye, MagnifyingGlass, PencilSimple, Plus, Sparkle, Target, Trash, TrendUp, Warning, X } from "@phosphor-icons/react";
+import { ArrowSquareOut, ArrowsClockwise, Check, Copy, Crosshair, Eye, Hash, MagnifyingGlass, PencilSimple, Plus, Sparkle, Target, Trash, TrendUp, Warning, X } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { Fmt } from "@/lib/analytics";
-import { SRC_NAME, SWEEP_NAME, seoScore, titleScore, type Blip, type Research, type Score as ScoreT, type Sweep, type TrackRecord } from "@/lib/radar";
+import { SECTORS, SRC_NAME, SWEEP_NAME, seoScore, titleScore, type Blip, type Research, type Score as ScoreT, type Sweep, type TrackRecord } from "@/lib/radar";
 import type { RadarConfig, Watch } from "@/lib/radar-data";
 import { titleModel } from "@/lib/writing";
 import type { WritingData } from "@/lib/writing-data";
@@ -23,15 +26,15 @@ import { compact, full, Sparkline } from "./anparts";
 import { ago, api, useSeed } from "./api";
 import { useDialog } from "./Dialog";
 import { Select } from "./pop";
+import { RadarScope, toneOf } from "./RadarScope";
 import { Empty, Field, Notice } from "./ui";
 
-type Overview = { sweep: Sweep & { cached: boolean; auto_seeds: boolean }; watch: Watch[]; record: TrackRecord; config: RadarConfig & { auto: boolean }; needs: string[] };
+type Overview = { sweep: Sweep & { cached: boolean; stale?: boolean; auto_seeds: boolean }; watch: Watch[]; record: TrackRecord; config: RadarConfig & { auto: boolean }; needs: string[] };
 type Kw = Research & { cached: boolean; needs: string[]; record: TrackRecord };
 type View = "sweep" | "keyword" | "watch";
 
 const FMTS: [Fmt, string][] = [["yt_video", "YouTube video"], ["yt_short", "Short"], ["ig_reel", "Reel"], ["ig_post", "Instagram post"]];
 const GEO_NAMES: [string, string][] = [["US", "United States"], ["IN", "India"], ["GB", "United Kingdom"], ["CA", "Canada"], ["AU", "Australia"], ["DE", "Germany"], ["FR", "France"], ["BR", "Brazil"], ["ID", "Indonesia"], ["PH", "Philippines"], ["NG", "Nigeria"], ["PK", "Pakistan"], ["AE", "UAE"], ["SG", "Singapore"]];
-const toneOf = (v: string) => (v === "Go now" ? "ok" : v === "Strong" ? "blue" : v === "Maybe" ? "warn" : "grey");
 const xText = (v: number) => `${v >= 10 ? Math.round(v) : v.toFixed(v < 1 ? 2 : 1)}×`;
 const ageText = (d: number | null) => (d == null ? "—" : d < 1 ? "today" : d < 14 ? `${Math.round(d)} d` : d < 60 ? `${Math.round(d / 7)} wk` : d < 365 ? `${Math.round(d / 30)} mo` : `${Math.round(d / 365)} yr`);
 
@@ -61,6 +64,8 @@ export default function Radar() {
   useSeed<Overview>("radar", setData);
   const load = (fresh = false) => { setBusy(true); setErr(""); return api<Overview>(`radar${fresh ? "?fresh=1" : ""}`).then(setData, (e) => setErr((e as Error).message)).finally(() => setBusy(false)); };
   useEffect(() => { load(); }, []);
+  // a stale copy was served while a new sweep is read behind it: pick that up
+  useEffect(() => { if (!data?.sweep.stale) return; const t = setTimeout(() => api<Overview>("radar").then(setData).catch(() => null), 12_000); return () => clearTimeout(t); }, [data?.sweep.stale, data?.sweep.at]);
   return (
     <>
       <div className="rd-bar">
@@ -73,7 +78,7 @@ export default function Radar() {
       </div>
       {err && <Notice icon={<Warning size={18} />} tone="bad" action={<button className="ghost sm" onClick={() => load()}>Try again</button>}>Couldn&apos;t load Radar: {err}</Notice>}
       {data?.needs.map((n, i) => <Notice key={i} icon={<Warning size={18} />} tone="warn">{n}</Notice>)}
-      {view === "sweep" && <SweepView data={data} busy={busy} reload={() => load(true)} onConfig={(c) => setData((d) => (d ? { ...d, config: c } : d))} research={(k) => go("keyword", k)} />}
+      {view === "sweep" && <SweepView data={data} busy={busy} reload={() => load(true)} onConfig={(c) => setData((d) => (d ? { ...d, config: c } : d))} research={(k) => go("keyword", k)} onWatch={() => load()} />}
       {view === "keyword" && <KeywordView key={q} q={q} research={(k) => go("keyword", k)} onWatch={() => load()} />}
       {view === "watch" && <WatchView data={data} research={(k) => go("keyword", k)} onChange={() => load()} />}
     </>
@@ -96,29 +101,38 @@ function KwSearch({ initial, onGo }: { initial: string; onGo: (q: string) => voi
 
 /* ───────────── Sweep */
 
-function SweepView({ data, busy, reload, onConfig, research }: { data: Overview | null; busy: boolean; reload: () => void; onConfig: (c: Overview["config"]) => void; research: (q: string) => void }) {
+function SweepView({ data, busy, reload, onConfig, research, onWatch }: { data: Overview | null; busy: boolean; reload: () => void; onConfig: (c: Overview["config"]) => void; research: (q: string) => void; onWatch: () => void }) {
   const [pick, setPick] = useState<string | null>(null);
-  if (!data) return <div className="an-wrap" aria-busy="true" aria-label="Reading the sources"><div className="skel" style={{ height: 380 }} /><div className="skel" style={{ height: 160 }} /></div>;
+  if (!data) return <div className="an-wrap" aria-busy="true" aria-label="Reading the sources"><div className="skel" style={{ height: 460 }} /><div className="skel" style={{ height: 160 }} /></div>;
   const sw = data.sweep;
   const blip = sw.blips.find((b) => b.topic === pick) ?? sw.blips[0] ?? null;
   const ok = sw.sources.filter((s) => s.ok).length;
+  const signals = sw.feed?.length ?? 0;
+  const status = [
+    `SRC ${String(ok).padStart(2, "0")}/${String(sw.sources.length).padStart(2, "0")} ONLINE`,
+    `TOPICS ${String(sw.blips.length).padStart(2, "0")} · GO ${String(sw.blips.filter((b) => b.verdict === "Go now").length).padStart(2, "0")}`,
+    `LANE ${sw.seeds.slice(0, 2).join(" · ").toUpperCase()}`,
+    `GEO ${sw.geos.join(" · ")}`,
+    `READ ${ago(sw.at).toUpperCase()}`,
+    ...(signals ? [`FEED ${signals} SIGNALS`] : []),
+  ];
   return (
     <>
       <div className="gr-status" role="status">
         <span><b className="mono">{sw.blips.length}</b> topics moving in your lane</span>
-        <span className="hide-sm">{ok} of {sw.sources.length} sources answered · checked {ago(sw.at)}</span>
-        <button type="button" className="quiet sm" onClick={reload} disabled={busy}><ArrowsClockwise size={14} className={busy ? "spin" : ""} />Sweep again</button>
+        <span className="hide-sm">{ok} of {sw.sources.length} sources answered · checked {ago(sw.at)}{sw.stale ? " · reading again" : ""}</span>
+        <button type="button" className="quiet sm" onClick={reload} disabled={busy}><ArrowsClockwise size={14} className={busy || sw.stale ? "spin" : ""} />Sweep again</button>
       </div>
       <Lane config={data.config} onSaved={(c) => { onConfig(c); reload(); }} />
       <section className="card an-card rd-hero" aria-labelledby="rd-scope-h">
         <div className="card-head">
-          <div><h2 id="rd-scope-h">Right now</h2><p className="sub">The closer to the middle, the better the bet: heat (how many sources, how strong, how fresh) and fit with your lane</p></div>
+          <div><h2 id="rd-scope-h">Right now</h2><p className="sub">Nearer the middle is a better bet (heat and fit); the angle is where the signals came from</p></div>
           <AskClaude prompt="Use the Voicebox radar tool to see what's moving in my lane, run keyword_research on the three best blips (or a sharper long-tail of each), and give me three post ideas with titles scored by seo_score and the predicted views." />
         </div>
         {sw.blips.length ? (
           <div className="rd-hero-in">
-            <Scope blips={sw.blips} on={blip?.topic ?? null} pick={setPick} />
-            {blip && <BlipCard b={blip} research={research} />}
+            <RadarScope blips={sw.blips} on={blip?.topic ?? null} pick={setPick} status={status} />
+            {blip && <BlipCard key={blip.topic} b={blip} research={research} onWatch={onWatch} />}
           </div>
         ) : <Empty icon={<Crosshair size={22} />} title="Nothing moving in your lane yet">Add a few topics to your lane above, or sweep again in a while: Radar groups signals once two sources agree.</Empty>}
       </section>
@@ -139,65 +153,52 @@ function SweepView({ data, busy, reload, onConfig, research }: { data: Overview 
         </div>
       )}
       <div className="an-duo">
+        <Feed feed={sw.feed ?? []} research={research} />
         <section className="card an-card" aria-labelledby="rd-tr-h">
           <div className="card-head"><div><h2 id="rd-tr-h">Trending searches</h2><p className="sub">Google Trends today, {sw.geos.join(" and ")}: big, but often outside your lane</p></div></div>
           {sw.trending.length ? (
             <div className="chips">{sw.trending.map((t) => <button key={t.title} type="button" className="chip" onClick={() => research(t.title.split(" · ")[0].slice(0, 80))} title={`${t.metric}, ${t.geo}`}>{t.title.split(" · ")[0]} <span className="tiny dim">{t.metric.replace(" searches", "")}</span></button>)}</div>
           ) : <p className="small dim" style={{ margin: 0 }}>Google Trends didn&apos;t answer this time.</p>}
         </section>
+      </div>
+      <div className="an-duo">
+        <SourceGrid list={sw.sources.map((s) => ({ ...s, name: SRC_NAME[s.id] ?? s.id }))} />
         <RecordCard rec={data.record} />
       </div>
-      <Sources list={sw.sources.map((s) => ({ ...s, name: SRC_NAME[s.id] }))} />
     </>
   );
 }
 
-/** The scope: rings, a slow sweep, and a blip per topic (nearer the middle = better bet, bigger = hotter). */
-function Scope({ blips, on, pick }: { blips: Blip[]; on: string | null; pick: (t: string) => void }) {
-  const R = 150;
-  const pos = (b: Blip, i: number) => {
-    let h = 0; for (const c of b.topic) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-    const a = ((h % 360) + i * 137.5) * (Math.PI / 180), r = 18 + ((100 - b.score) / 100) * (R - 30);
-    return [Math.cos(a) * r, Math.sin(a) * r] as const;
-  };
-  return (
-    <div className="rd-scope">
-      <svg viewBox={`${-R - 10} ${-R - 10} ${2 * R + 20} ${2 * R + 20}`} role="group" aria-label="Topics on the radar">
-        {[1, 0.75, 0.5, 0.25].map((k) => <circle key={k} r={R * k} className="rd-ring" />)}
-        <line x1={-R} x2={R} y1={0} y2={0} className="rd-axis" /><line y1={-R} y2={R} x1={0} x2={0} className="rd-axis" />
-        <g className="rd-sweep" aria-hidden>
-          {[0, 6, 12, 18, 24].map((d, i) => <line key={d} x1={0} y1={0} x2={R * Math.cos((-d * Math.PI) / 180)} y2={R * Math.sin((-d * Math.PI) / 180)} style={{ opacity: 1 - i * 0.2 }} />)}
-        </g>
-        <text x={-R * 0.25 + 3} y={-4} className="rd-ring-l">Go now</text>
-        <text x={-R * 0.75 + 3} y={-4} className="rd-ring-l">Maybe</text>
-        {blips.map((b, i) => {
-          const [x, y] = pos(b, i), sel = on === b.topic;
-          return (
-            <g key={b.topic} transform={`translate(${x.toFixed(1)} ${y.toFixed(1)})`} className={`rd-blip t-${toneOf(b.verdict)} ${sel ? "on" : ""}`} tabIndex={0} role="button"
-              aria-label={`${b.topic}: ${b.verdict}, score ${b.score}`} aria-pressed={sel} onClick={() => pick(b.topic)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(b.topic); } }}>
-              <rect x={-3 - b.heat / 40} y={-3 - b.heat / 40} width={6 + b.heat / 20} height={6 + b.heat / 20} />
-              {(sel || i < 5) && <text x={8} y={4}>{b.topic.length > 22 ? `${b.topic.slice(0, 21)}…` : b.topic}</text>}
-            </g>
-          );
-        })}
-      </svg>
-    </div>
-  );
-}
+const fresh = (h: number) => (h < 1 ? "under an hour" : h < 48 ? `${h} h` : `${Math.round(h / 24)} days`);
 
-function BlipCard({ b, research }: { b: Blip; research: (q: string) => void }) {
+function BlipCard({ b, research, onWatch }: { b: Blip; research: (q: string) => void; onWatch: () => void }) {
+  const { toast } = useDialog();
+  const [watching, setWatching] = useState(false);
+  const watch = async () => { setWatching(true); try { await api("radar/watch", { body: { q: b.topic } }); toast(`Watching “${b.topic}”`); onWatch(); } catch (e) { toast((e as Error).message, "bad"); } finally { setWatching(false); } };
+  const conf = b.conf ?? "medium";
   return (
     <div className="rd-blipcard" aria-live="polite">
       <div className="rd-bc-top">
         <span className={`pill ${toneOf(b.verdict)}`}>{b.verdict}</span>
-        <span className="tiny dim">Heat <b className="mono">{b.heat}</b> · Fit <b className="mono">{b.fit}</b></span>
+        <span className={`pill ${conf === "high" ? "ok" : conf === "medium" ? "warn" : "bad"}`} title={b.conf_why}>{conf} confidence</span>
+        {b.sector && <span className="tiny dim mono">{SECTORS.find((s) => s.id === b.sector)?.name.toUpperCase()}{b.fresh_h != null ? ` · ${fresh(b.fresh_h)} old` : ""}</span>}
       </div>
       <h3>{b.topic}</h3>
       <p className="small dim">{b.why}</p>
+      <div className="rd-bc-meters">
+        <div><span className="tiny dim">Score</span><b className="mono">{b.score}</b></div>
+        <div><span className="tiny dim">Heat</span><b className="mono">{b.heat}</b><i className="rd-tick" style={{ ["--v" as string]: `${b.heat}%` }} aria-hidden /></div>
+        <div><span className="tiny dim">Fit</span><b className="mono">{b.fit}</b><i className="rd-tick" style={{ ["--v" as string]: `${b.fit}%` }} aria-hidden /></div>
+      </div>
+      {b.heat_parts && (
+        <ul className="rd-hparts" aria-label="What the heat is made of">
+          {b.heat_parts.map((p) => <li key={p.label}><span className="tiny">{p.label}</span><span className="tiny dim">{p.value}</span><span className="mono tiny">+{p.score}</span></li>)}
+        </ul>
+      )}
       <ul className="rd-ev">
         {b.signals.slice(0, 5).map((s, i) => (
           <li key={i}>
-            <span className="pill">{SWEEP_NAME[s.src]}</span>
+            <span className="pill rd-src-pill">{SWEEP_NAME[s.src] ?? s.src}</span>
             <a href={s.url} target="_blank" rel="noreferrer" className="ellipsis">{s.title.split(" · ")[0]}</a>
             <span className="tiny dim">{s.metric}</span>
           </li>
@@ -205,9 +206,53 @@ function BlipCard({ b, research }: { b: Blip; research: (q: string) => void }) {
       </ul>
       <div className="row">
         <button type="button" className="sm" onClick={() => research(b.topic)}><Target size={14} />Research it</button>
+        <button type="button" className="ghost sm" onClick={watch} disabled={watching}><Eye size={14} />Watch</button>
         <AskClaude label="Ideas from Claude" prompt={`Use Voicebox keyword_research on "${b.topic}" (and its best long-tail), then write five post ideas with titles scored by seo_score. Evidence: ${b.signals.slice(0, 3).map((s) => s.title.split(" · ")[0]).join(" | ")}`} />
       </div>
     </div>
+  );
+}
+
+/** Every signal the sweep read, newest first, across all the sources. */
+function Feed({ feed, research }: { feed: NonNullable<Sweep["feed"]>; research: (q: string) => void }) {
+  const [src, setSrc] = useState<string>("");
+  const srcs = [...new Set(feed.map((f) => f.src))];
+  const rows = (src ? feed.filter((f) => f.src === src) : feed).slice(0, 14);
+  return (
+    <section className="card an-card" aria-labelledby="rd-feed-h">
+      <div className="card-head"><div><h2 id="rd-feed-h"><span className="gr-dot" aria-hidden />Signal feed</h2><p className="sub">The newest of {feed.length} signals this sweep read</p></div>
+        {srcs.length > 1 && <Select size="sm" className="fx-chip-sel" label="Source" value={src} onChange={setSrc} options={[["", "Every source"], ...srcs.map((x) => [x, SWEEP_NAME[x] ?? x] as [string, string])]} />}</div>
+      {rows.length ? (
+        <ul className="rd-feed">
+          {rows.map((f, i) => (
+            <li key={`${f.url}${i}`} style={{ animationDelay: `${i * 35}ms` }}>
+              <span className="mono tiny dim rd-feed-t">{f.src === "mastodon" || f.src === "hf" ? "trending" : ago(f.at)}</span>
+              <span className="pill rd-src-pill">{SWEEP_NAME[f.src] ?? f.src}</span>
+              <a href={f.url} target="_blank" rel="noreferrer" className="ellipsis">{f.title.split(" · ")[0]}</a>
+              <button type="button" className="quiet xs hide-sm" onClick={() => research(f.title.split(" · ")[0].split(":")[0].slice(0, 60))} aria-label={`Research ${f.title.split(" · ")[0]}`}><Target size={13} /></button>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="small dim" style={{ margin: 0 }}>Sweep again to fill the feed.</p>}
+    </section>
+  );
+}
+
+/** Which sources answered this time and how fast, as a grid of lights. */
+function SourceGrid({ list }: { list: { id: string; name: string; ok: boolean; ms: number; note?: string }[] }) {
+  const ok = list.filter((s) => s.ok).length;
+  return (
+    <section className="card an-card" aria-labelledby="rd-sg-h">
+      <div className="card-head"><div><h2 id="rd-sg-h">Sources</h2><p className="sub">{ok} of {list.length} answered. All free and public; Reddit and Bluesky refuse servers without a key</p></div></div>
+      <ul className="rd-sgrid">
+        {list.map((s) => (
+          <li key={s.id} className={s.ok ? "" : "off"} title={s.ok ? undefined : s.note ?? "no answer"}>
+            <span className={`gr-dot ${s.ok ? "" : "off"}`} aria-hidden /><span className="small ellipsis">{s.name}</span>
+            <span className="mono tiny dim">{s.ok ? `${s.ms} ms` : s.note ?? "no answer"}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -250,7 +295,7 @@ function Sources({ list }: { list: { id: string; name: string; ok: boolean; ms: 
     <details className="rd-src">
       <summary className="small dim">Sources: {list.filter((s) => s.ok).length} of {list.length} answered</summary>
       <ul>{list.map((s) => <li key={s.id} className="small"><span className={`gr-dot ${s.ok ? "" : "off"}`} aria-hidden />{s.name}<span className="tiny dim">{s.ok ? `${s.ms} ms` : s.note ?? "no answer"}</span></li>)}</ul>
-      <p className="tiny dim">All free and public. Reddit refuses servers without a paid key, so it isn&apos;t read. Subscriber counts come from your connected YouTube channel (1 quota unit a keyword).</p>
+      <p className="tiny dim">All free and public. Reddit and Bluesky refuse servers without a key, so they aren&apos;t read. Subscriber counts come from your connected YouTube channel (1 quota unit a keyword).</p>
     </details>
   );
 }
@@ -308,7 +353,7 @@ function KeywordView({ q, research, onWatch }: { q: string; research: (q: string
           <section className="card an-card rd-verdict" aria-labelledby="rd-v-h">
             <OppRing v={r.opportunity} />
             <div className="rd-v-text">
-              <div className="row"><span className={`pill ${toneOf(r.verdict)}`}>{r.verdict}</span><span className={`pill ${r.confidence === "high" ? "ok" : r.confidence === "medium" ? "warn" : "bad"}`} title={`${r.confidence_n} of 6 key sources answered`}>{r.confidence} confidence</span><span className="tiny dim">{r.geo}</span></div>
+              <div className="row"><span className={`pill ${toneOf(r.verdict)}`}>{r.verdict}</span><span className={`pill ${r.confidence === "high" ? "ok" : r.confidence === "medium" ? "warn" : "bad"}`} title={`${r.confidence_n} of 8 key sources answered`}>{r.confidence} confidence</span><span className="tiny dim">{r.geo}</span></div>
               <h2 id="rd-v-h">{r.q}</h2>
               {r.why.map((w, i) => <p key={i} className="small dim">{w}</p>)}
               <div className="row">
@@ -341,6 +386,7 @@ function KeywordView({ q, research, onWatch }: { q: string; research: (q: string
                 <div className="card-head"><div><h2 id="rd-rel-h">Words searchers add</h2><p className="sub">Cover the top ones in your title, description and tags</p></div></div>
                 <div className="chips">{r.related.slice(0, 16).map((w) => <span key={w.word} className="chip tag">{w.word} <span className="dim">{w.n}</span></span>)}</div>
               </section>
+              {(r.hashtags?.length ?? 0) > 0 && <Hashtags tags={r.hashtags} />}
             </div>
           </div>
           <Ranking r={r} />
@@ -360,6 +406,18 @@ function KeywordView({ q, research, onWatch }: { q: string; research: (q: string
         </div>
       )}
     </>
+  );
+}
+
+function Hashtags({ tags }: { tags: Research["hashtags"] }) {
+  const { toast } = useDialog();
+  const all = tags.slice(0, 8).map((t) => `#${t.tag}`).join(" ");
+  return (
+    <section className="card an-card" aria-labelledby="rd-ht-h">
+      <div className="card-head"><div><h2 id="rd-ht-h"><Hash size={15} />Hashtags</h2><p className="sub">What the videos ranking for it use, the keyword and its long tail</p></div>
+        <button type="button" className="ghost sm" onClick={() => navigator.clipboard.writeText(all).then(() => toast("Hashtags copied"), () => toast("Couldn't copy", "bad"))}><Copy size={14} />Copy</button></div>
+      <div className="chips">{tags.map((t) => <span key={t.tag} className="chip tag" title={t.why}>#{t.tag} <span className="dim">{t.n}</span></span>)}</div>
+    </section>
   );
 }
 
@@ -504,9 +562,10 @@ function WatchView({ data, research, onChange }: { data: Overview | null; resear
           <tbody>{data.watch.map((w) => {
             const h = w.history.at(-1), prev = w.history.at(-2);
             const d = h && prev ? h.opp - prev.opp : 0;
+            const flag = h ? (d >= 6 ? ["Rising", "ok"] : h.m >= 70 ? ["Moving fast", "ok"] : d <= -6 ? ["Cooling", "warn"] : null) : null;
             return (
               <tr key={w.q}>
-                <th scope="row"><button type="button" className="quiet sm" onClick={() => research(w.q)}>{w.q}</button><div className="tiny dim">{w.by} · {ago(w.added)}</div></th>
+                <th scope="row"><button type="button" className="quiet sm" onClick={() => research(w.q)}>{w.q}</button>{flag && <span className={`pill ${flag[1]} rd-flag`}>{flag[0]}</span>}<div className="tiny dim">{w.by} · {ago(w.added)}</div></th>
                 <td><span className="rd-wopp"><b className="mono">{h?.opp ?? "—"}</b>{d !== 0 && <span className={`tiny mono ${d > 0 ? "rd-ok" : "rd-warn"}`}>{d > 0 ? "+" : ""}{d}</span>}{w.history.length > 1 && <Sparkline values={w.history.map((x) => x.opp)} w={72} h={22} label={`${w.q} opportunity over time`} fit />}</span></td>
                 <td className="rd-n mono hide-sm">{h?.d ?? "—"}</td>
                 <td className="rd-n mono hide-sm">{h?.m ?? "—"}</td>

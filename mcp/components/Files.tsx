@@ -11,7 +11,7 @@
 import {
   ArrowClockwise, ArrowCounterClockwise, ArrowSquareOut, ArrowsDownUp, CaretRight, Check, CheckSquare, ClosedCaptioning, Copy, DownloadSimple, FolderOpen,
   FolderPlus, FolderSimple, LinkSimple, ShareNetwork, ListBullets, MagnifyingGlass, PencilSimple, Scissors, SquaresFour, StackMinus, StackPlus, Star, Trash, TrashSimple,
-  UploadSimple, UsersThree, X, Cards,
+  UploadSimple, UsersThree, X, Cards, RocketLaunch, PaperPlaneTilt,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -776,6 +776,29 @@ export default function Files() {
       } else toast((e as Error).message, "bad");
     } finally { setIgBusy(null); }
   }
+  /** The one click (lib/postpack.ts): the files become a post with researched title, description, hashtags and credits,
+   *  on a Reel and a Short (a video) or an Instagram post (photos), armed for the next posting slots, or sent now. */
+  async function autoPost(keys: string[], now = false) {
+    const files = keys.filter((x) => x.startsWith("m:") && visual(byKey.get(x)?.kind ?? "other"));
+    if (!files.length) { toast("Only uploaded photos and videos can be posted", "bad"); return; }
+    const video = files.length === 1 && byKey.get(files[0])?.kind === "video";
+    const where = video ? "a Reel and a Short" : files.length > 1 ? "an Instagram carousel" : "an Instagram post";
+    if (!(await confirm({ title: now ? "Post it now?" : "Auto-post it?",
+      body: `It goes out as ${where} ${now ? "right away" : "at your next posting slots"}, with a researched title, description, keywords, hashtags and credits for the original creator. ${now ? "It's public as soon as it's up." : "You can change anything in its post before then."}`,
+      confirm: now ? "Post now" : "Auto-post" }))) return;
+    setSnack({ text: "Researching the title, description and hashtags…" });
+    try {
+      const r = await api<{ post_id: string; title: string; targets: { space: string; state: string; due_at: string | null; error?: string }[]; autopilot: boolean; pack: { hashtags: string[]; credit: string | null } }>("autopost", { body: { files, go: now ? "now" : "arm" } });
+      const bad = r.targets.filter((t) => t.error);
+      const when = r.targets.map((t) => t.due_at).filter(Boolean).sort()[0];
+      setSnack({
+        text: bad.length ? `“${r.title}” is set up, but ${bad.map((t) => `${t.space}: ${t.error}`).join("; ")}`
+          : now ? `“${r.title}” is going out now` : `“${r.title}” goes out ${when ? new Date(when).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : "at the next slot"}${r.autopilot ? "" : " (autopilot is paused: turn it on in Posts → Autopilot)"}`,
+        action: "Open post", run: () => router.push(`/posts?post=${r.post_id}`),
+      });
+      loadTree();
+    } catch (e) { setSnack(null); toast((e as Error).message, "bad"); }
+  }
   /** A live carousel to the story, as a post card of its first slide (lib/publish/storycard.ts). */
   async function shareStory(postId: string) {
     if (!(await confirm({ title: "Share it to your story?", body: "It goes up now as a post card: the cover slide with your @handle on a blur of itself, like sharing it by hand.", confirm: "Share to story" }))) return;
@@ -855,6 +878,7 @@ export default function Files() {
     if (many) return {
       title: `${keys.length} items`,
       entries: [...common, ...(canGroup ? [{ label: "Group as carousel", icon: <StackPlus size={16} />, kbd: isMac() ? "⌘G" : "Ctrl+G", run: () => groupAs(fileKeys) }] : []),
+        ...(canGroup && fileKeys.every((x) => x.startsWith("m:")) ? [{ label: "Auto-post as a carousel", icon: <RocketLaunch size={16} />, run: () => autoPost(fileKeys) }] : []),
         ...(fileKeys.length ? [{ label: `Download ${fileKeys.length}`, icon: <DownloadSimple size={16} />, run: () => download(fileKeys) }, { label: "Copy links", icon: <LinkSimple size={16} />, run: () => copyLinks(fileKeys) }] : []),
         ...(sys ? [] : ["-" as const, { label: `Move ${keys.length} to the trash`, icon: <TrashSimple size={16} />, danger: true, run: () => remove(keys) }])],
     };
@@ -875,6 +899,7 @@ export default function Files() {
       title: it.name,
       entries: [
         { label: "Open", icon: <ArrowSquareOut size={16} />, run: () => open(k) },
+        ...(k.startsWith("m:") && visual(it.kind) ? [{ label: "Auto-post", icon: <RocketLaunch size={16} />, run: () => autoPost([k]) }, { label: "Post now", icon: <PaperPlaneTilt size={16} />, run: () => autoPost([k], true) }] : []),
         { label: "Rename", icon: <PencilSimple size={16} />, kbd: "F2", run: () => setRenaming(k) },
         ...common,
         ...(it.placed && it.folder !== home.id ? [{ label: `Put back in ${folderById.get(home.id)?.name ?? home.name}`, icon: <FolderSimple size={16} />, run: () => autoFile([k]) }] : []),
@@ -897,6 +922,7 @@ export default function Files() {
       title: s.g.name,
       entries: [
         { label: "Open", icon: <Cards size={16} />, run: () => setStage({ id: s.g.id }) },
+        ...(files.some((x) => x.startsWith("m:")) ? [{ label: "Auto-post", icon: <RocketLaunch size={16} />, run: () => autoPost(files) }] : []),
         { label: "Rename", icon: <PencilSimple size={16} />, kbd: "F2", run: () => setRenaming(key) },
         { label: sel.has(key) ? "Deselect" : "Select", icon: <CheckSquare size={16} />, run: () => toggle(key, false) },
         { label: `Move all ${files.length} to…`, icon: <FolderSimple size={16} />, run: () => setMoving(files) },
@@ -1045,6 +1071,7 @@ export default function Files() {
               <button className="quiet xs" onClick={() => setMoving(expand([...sel]))}><FolderSimple size={13} />Move</button>
               <button className="quiet xs" onClick={() => { const k = expand([...sel]); star(k, !k.every((x) => starred.has(x))); }}><Star size={13} />Star</button>
               {selFiles.length > 0 && <button className="quiet xs" onClick={() => download(selFiles)}><DownloadSimple size={13} />Download</button>}
+              {selFiles.length > 0 && selFiles.every((x) => x.startsWith("m:") && visual(byKey.get(x)?.kind ?? "other")) && <button className="quiet xs" onClick={() => autoPost(selFiles)}><RocketLaunch size={13} />Auto-post</button>}
               <button className="danger sm" onClick={() => remove(expand([...sel]))}><TrashSimple size={14} weight="bold" />Delete</button>
             </>}
           </span>

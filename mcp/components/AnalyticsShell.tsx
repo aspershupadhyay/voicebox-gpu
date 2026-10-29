@@ -24,12 +24,12 @@ export const useAn = () => useContext(Ctx)!;
 
 export const VIEWS = [
   { href: "/analytics", name: "Overview", sub: "How your YouTube and Instagram are doing, and what to post next to grow." },
+  { href: "/analytics/radar", name: "Radar", plain: true, sub: "What to post next: what people search for, what's rising, how crowded it is and how well it suits you." },
   { href: "/analytics/live", name: "Live", sub: "Every post under 72 hours old, yours and your rivals', checked every minute.", live: true },
   { href: "/analytics/content", name: "Content", sub: "What works: every post against your usual, and what the hits have in common." },
   { href: "/analytics/audience", name: "Audience", sub: "Who's watching, where they come from and how fast you're growing." },
   { href: "/analytics/when-to-post", name: "When to post", sub: "The days and times your posts do best, and your rhythm." },
   { href: "/analytics/competitors", name: "Competitors", sub: "You against the channels you're chasing, and what's working for them right now.", live: true },
-  { href: "/analytics/radar", name: "Radar", plain: true, sub: "What to post next: what people search for, what's rising, how crowded it is and how well it suits you." },
   { href: "/analytics/youtube", name: "YouTube", net: "youtube" as const, sub: "Your YouTube in depth: reach, watch time, audience and every video." },
   { href: "/analytics/instagram", name: "Instagram", net: "instagram" as const, sub: "Your Instagram in depth: reach, engagement, audience and every post." },
 ];

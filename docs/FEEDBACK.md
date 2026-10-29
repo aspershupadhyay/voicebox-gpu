@@ -4,7 +4,37 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (Radar: keyword research and what to post, 2026-10-29)
+## Latest round (Radar as an instrument, one-click posting with a researched package, 2026-10-29)
+
+- **"I don't see the Radar tab"**: Radar is now second in Grow (right after Overview), in Create's sidebar next to the
+  Writing room, and one of the four phone tabs in Grow.
+- **The radar should look like the reference video** (a dot-matrix core turning in a bracketed frame with mono
+  telemetry): the scope has corner brackets, a turning dot-matrix core with folding arms, a beam that pings each topic as
+  it passes, a status line cycling through real numbers and a mono readout of the best topics. Only real numbers, never
+  filler digits.
+- **"Text must look properly kept, not cluttered"**: labels are placed so they never sit on each other, a blip, the
+  core or the ring names; the ones that don't fit stay off (the list has every topic). Topics sit in sectors by where
+  their signals came from (search, news, builders, social, video).
+- **"Collection of data must be insane, add more free APIs"**: the sweep now also reads Google News' Technology front,
+  Lobsters, DEV Community, Mastodon's trending tags and links, Hugging Face's trending models, GitHub's fastest new repos
+  and Wikipedia's most read; keyword research adds Mastodon hashtag counts and Stack Overflow's question count. Reddit
+  and Bluesky still refuse servers without a key.
+- **"Confident based on the scores"**: each topic has a confidence (independent sources, signals, freshness) and its
+  heat broken into parts; keyword confidence counts eight key sources.
+- **"Fast"**: an older sweep is served at once while a new one is read behind it, and the top three topics are
+  researched ahead so opening one is instant.
+- **Watchlist**: watch straight from a topic; rows flag Rising, Moving fast and Cooling.
+- **"Video post automated with one click, AI too"**: Files → Auto-post (or Post now) on a video, photos or a carousel
+  makes the post, its targets (a video: Reel + Short; photos: an Instagram carousel), the package and armed plans at the
+  next posting slots. Claude does the same with `auto_post`.
+- **"Every video or carousel must have everything: best title, description, credits, keywords, hashtags from
+  research"**: the post package (`lib/postpack.ts`, `post_package`): the best of a scored set of titles, a description
+  with the keyword early and the words searchers add, tags from the long tail, hashtags the ranking videos use, and
+  credits read from the file names (a Pinterest pin, a TikTok or Instagram handle). It's a pipeline step, a "Fill from
+  research" button in the composer, and it runs before every arm or send, whoever set it up, so nothing goes out
+  without hashtags and the credit. A person's own words are never overwritten.
+
+## Earlier round (Radar: keyword research and what to post, 2026-10-29)
 
 - **Build a radar and elite keyword research, "like Palantir and World Monitor but for content"**: Grow → Radar
   (`/analytics/radar`). A sweep of what's moving in the lane right now (Google Trends, Google News, Hacker News,

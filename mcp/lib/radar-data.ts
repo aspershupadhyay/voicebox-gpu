@@ -3,7 +3,7 @@
 // watchlist, its history and every prediction with what actually happened. Files under workspace/radar/:
 //   config.json        your seeds (the lane the sweep watches) and the countries it reads
 //   kw/<key>.json      one keyword's raw signals, 6 hours
-//   sweep.json         the last sweep, 20 minutes
+//   sweep.json         the last sweep, fresh for 20 minutes (older copies are served while a new one is read)
 //   watch.json         keywords you follow, each with its scores over time
 //   preds.json         every prediction made for a post or a watched keyword, settled against the post once it's out
 import { createHash } from "node:crypto";
@@ -92,20 +92,39 @@ export async function compare(qs: string[], o: { geo?: string; fmt?: Fmt | null 
 
 /* ───────────── the sweep */
 
-export async function getSweep(fresh = false): Promise<Sweep & { cached: boolean; auto_seeds: boolean }> {
-  const have = await getJson<Sweep | null>(`${DIR}/sweep.json`).catch(() => null);
-  const me = await mine().catch(() => null);
-  const cfg = await getConfig(me);
-  if (have && !fresh && Date.now() - have.at < SWEEP_TTL) return { ...have, cached: true, auto_seeds: cfg.auto };
+type Later = (p: Promise<unknown>) => void;
+
+async function readSweep(have: Sweep | null, me: Me | null, cfg: Awaited<ReturnType<typeof getConfig>>, later?: Later) {
   const D = 86_400_000;
   const rivals: SweepSignal[] = (me?.rivals ?? []).filter((r) => r.x != null && r.x >= 1.5 && Date.now() - r.at < 10 * D)
     .map((r) => ({ src: "rival", title: r.title, url: r.url, at: r.at, w: strength.rival(r.x!), metric: `${r.name}: ${r.x! >= 10 ? Math.round(r.x!) : r.x!.toFixed(1)}× their usual` }));
   const { signals: sig, sources } = await sweepSignals(cfg.seeds, cfg.geos, rivals);
   const lane = [...cfg.seeds, ...(me?.model?.words ?? []).map((w) => w.word), ...rivalWords(me)];
   const sw = sweep(sig, lane, { seeds: cfg.seeds, geos: cfg.geos, sources });
-  if (sources.filter((x) => x.ok).length >= 2) await putJson(`${DIR}/sweep.json`, sw).catch(() => null);
-  else if (have) return { ...have, cached: true, auto_seeds: cfg.auto, sources };
-  return { ...sw, cached: false, auto_seeds: cfg.auto };
+  if (sources.filter((x) => x.ok).length >= 2) {
+    await putJson(`${DIR}/sweep.json`, sw).catch(() => null);
+    // research the best three ahead, so opening one is instant (a keyword read is kept six hours)
+    later?.(Promise.all(sw.blips.slice(0, 3).map((b) => keyword(b.topic, { me: me ?? undefined }).catch(() => null))));
+    return { ...sw, cached: false, stale: false };
+  }
+  if (have) return { ...have, cached: true, stale: true, sources };
+  return { ...sw, cached: false, stale: false };
+}
+
+/** The sweep. A copy under 20 minutes old is served as is; an older one is served at once and read again behind it
+ *  (when there's a way to carry on after the answer), so the page never waits on fifteen sources. */
+export async function getSweep(fresh = false, later?: Later): Promise<Sweep & { cached: boolean; stale: boolean; auto_seeds: boolean }> {
+  const have = await getJson<Sweep | null>(`${DIR}/sweep.json`).catch(() => null);
+  const me = await mine().catch(() => null);
+  const cfg = await getConfig(me);
+  // a copy from before the sweep kept its feed is an older shape: read again
+  const usable = have && have.feed ? have : null;
+  if (usable && !fresh && Date.now() - usable.at < SWEEP_TTL) return { ...usable, cached: true, stale: false, auto_seeds: cfg.auto };
+  if (usable && !fresh && later && Date.now() - usable.at < 24 * 3600_000) {
+    later(readSweep(usable, me, cfg, later).catch(() => null));
+    return { ...usable, cached: true, stale: true, auto_seeds: cfg.auto };
+  }
+  return { ...(await readSweep(usable, me, cfg, later)), auto_seeds: cfg.auto };
 }
 
 /* ───────────── the watchlist */
@@ -179,8 +198,8 @@ export async function trackRecord(me?: Me) {
 }
 
 /** The Radar page in one answer: the sweep, the watchlist, the track record and the lane. */
-export async function overview(fresh = false) {
+export async function overview(fresh = false, later?: Later) {
   const me = await mine().catch(() => null);
-  const [sw, watchList, rec, cfg] = await Promise.all([getSweep(fresh), loadWatch(), trackRecord(me ?? undefined), getConfig(me)]);
+  const [sw, watchList, rec, cfg] = await Promise.all([getSweep(fresh, later), loadWatch(), trackRecord(me ?? undefined), getConfig(me)]);
   return { sweep: sw, watch: watchList, record: rec, config: cfg, needs: me?.needs ?? ["Your analytics couldn't be read: fit and predictions use general rules."] };
 }

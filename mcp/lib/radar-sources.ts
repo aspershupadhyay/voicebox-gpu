@@ -1,10 +1,12 @@
 // Radar's free sources, read on the server (lib/radar.ts scores what they bring back). No paid APIs and no keys: the
 // autocompletes of YouTube, Google, Bing and DuckDuckGo (what people type), YouTube's own search page (what ranks, its
 // views and age), Google News and Hacker News (what's being written about, this week against the month), Wikipedia's
-// pageviews (how many people read up on it a day), and Google Trends' daily searches. The connected YouTube channel
-// adds the subscriber counts of the channels on top (one quota unit for fifty). Each source has its own short time
-// limit and fails on its own: the scores use whatever answered and say what didn't. Reddit is left out: it refuses
-// servers without a paid key.
+// pageviews (how many people read up on it a day), Google Trends' daily searches, Mastodon's hashtag counts and Stack
+// Overflow's question count. The sweep adds what's moving everywhere at once: Google News' Technology front, Lobsters,
+// DEV Community, Mastodon's trending tags and links, Hugging Face's trending models, GitHub's fastest new repos and
+// Wikipedia's most read. The connected YouTube channel adds the subscriber counts of the channels on top (one quota unit
+// for fifty) and YouTube's trending chart. Each source has its own short time limit and fails on its own: the scores
+// use whatever answered and say what didn't. Reddit and Bluesky are left out: they refuse servers without a key.
 import type { HnHit, NewsHit, Signals, SrcId, SrcState, SweepSignal, YtHit } from "./radar";
 import { norm, strength } from "./radar";
 
@@ -168,6 +170,24 @@ export async function trends(geo: string): Promise<{ title: string; traffic: str
   }));
 }
 
+/** The keyword as a Mastodon hashtag: uses a day for the last week (newest first). Tries the whole keyword as one
+ *  tag, then its first two words. */
+async function mastodonTag(q: string) {
+  const ws = norm(q).split(" ").filter(Boolean);
+  type T = { name: string; history?: { uses: string; accounts: string }[] };
+  for (const cand of [...new Set([ws.join(""), ws.slice(0, 2).join(""), ws[0]])].filter((x) => x && x.length >= 3 && x.length <= 30)) {
+    const t = await json<T>(`https://mastodon.social/api/v1/tags/${enc(cand)}`, { ms: 4000, ua: BOT }).catch(() => null);
+    const uses = (t?.history ?? []).map((h) => +h.uses || 0), accounts = (t?.history ?? []).map((h) => +h.accounts || 0);
+    if (t && uses.some((u) => u > 0)) return { tag: t.name, uses, accounts };
+  }
+  return null;
+}
+
+async function stackCount(q: string) {
+  const r = await json<{ total?: number }>(`https://api.stackexchange.com/2.3/search/advanced?q=${enc(q)}&site=stackoverflow&filter=total`, { ms: 4000, ua: BOT });
+  return r.total == null ? null : { total: r.total };
+}
+
 /* ───────────── everything about one keyword */
 
 export async function gather(q: string, o: { geo: string; deep?: boolean; geos?: string[] }): Promise<Signals> {
@@ -176,7 +196,7 @@ export async function gather(q: string, o: { geo: string; deep?: boolean; geos?:
   const words = q.trim().split(/\s+/);
   // what's offered when the keyword is only half typed: its last word cut to its first letter (or 3 letters for one word)
   const prefix = words.length > 1 ? `${words.slice(0, -1).join(" ")} ${words[words.length - 1][0]}` : q.slice(0, Math.min(3, q.length - 1));
-  const [yt, google, bing, ddg, pre, exp, top, month, nw, h, wk, tr] = await Promise.all([
+  const [yt, google, bing, ddg, pre, exp, top, month, nw, h, wk, tr, md, so] = await Promise.all([
     t.run("yt_suggest", () => ytSuggest(q, geo), [] as string[]),
     t.run("google_suggest", () => googleSuggest(q, geo), [] as string[]),
     t.run("bing_suggest", () => bingSuggest(q), [] as string[]),
@@ -189,6 +209,8 @@ export async function gather(q: string, o: { geo: string; deep?: boolean; geos?:
     t.run("hn", () => hn(q), null),
     t.run("wiki", () => wiki(q), null, (v) => !!v?.daily.length),
     t.run("trends", async () => (await Promise.all((o.geos ?? [geo]).map((g) => trends(g).catch(() => [])))).flat(), [] as Awaited<ReturnType<typeof trends>>, (v) => v.length > 0),
+    t.run("mastodon", () => mastodonTag(q), null, (v) => !!v),
+    t.run("stack", () => stackCount(q), null, (v) => !!v),
   ]);
   const nq = norm(q);
   const rank = pre.map(norm).indexOf(nq);
@@ -200,23 +222,43 @@ export async function gather(q: string, o: { geo: string; deep?: boolean; geos?:
   }
   return {
     q: q.trim(), geo, at: Date.now(), suggest: { yt, google, bing, ddg }, prefix_rank: rank >= 0 ? rank : null, expand: exp,
-    youtube, news: nw, hn: h, wiki: wk, trends: tr.map(({ title, traffic, geo }) => ({ title, traffic, geo })), sources: t.states,
+    youtube, news: nw, hn: h, wiki: wk, trends: tr.map(({ title, traffic, geo }) => ({ title, traffic, geo })), mastodon: md, stack: so, sources: t.states,
   };
 }
 
 /* ───────────── the sweep's signals */
 
-/** What's moving right now around your seeds: Google's trending searches, the news about each seed this week, Hacker
- *  News' front page, what YouTube's autocomplete offers for each seed, YouTube's trending tech videos (connected
- *  channel), and your rivals' outliers (passed in from Grow's live numbers). */
+/** CamelCase hashtags read as words ("WhineAMovie" → "Whine A Movie"). */
+const unCamel = (t: string) => t.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2");
+
+/** What's moving right now around your seeds and everywhere at once: Google's trending searches, the news about each
+ *  seed, Google News' Technology front, Hacker News, Lobsters and DEV's front pages, Mastodon's trending tags and links,
+ *  Hugging Face's trending models, GitHub's fastest new repos, Wikipedia's most read, what YouTube's autocomplete
+ *  offers for each seed, YouTube's trending tech videos (connected channel) and your rivals' outliers (passed in from
+ *  Grow's live numbers). Everything runs at once, each with its own short limit. */
 export async function sweepSignals(seeds: string[], geos: string[], rivals: SweepSignal[]): Promise<{ signals: SweepSignal[]; sources: SrcState[] }> {
   const t = new Track();
   const now = Date.now();
-  const [tr, nw, front, sug, chart] = await Promise.all([
+  const g0 = geos[0] ?? "US";
+  const ymd = new Date(now - D).toISOString().slice(0, 10);
+  type Mt = { name: string; history?: { uses: string }[] };
+  type Ml = { title: string; url: string; provider_name?: string; history?: { uses: string }[] };
+  const [tr, nw, top, front, lob, dev, mtags, mlinks, hf, gh, wtop, sug, chart] = await Promise.all([
     t.run("trends", async () => (await Promise.all(geos.map((g) => trends(g).catch(() => [])))).flat(), [] as Awaited<ReturnType<typeof trends>>, (v) => v.length > 0),
-    t.run("news", async () => (await pool(seeds.slice(0, 6), 3, (s) => news(s, geos[0] ?? "US", 2).catch(() => null))).flatMap((r) => r?.items ?? []), [] as NewsHit[], (v) => v.length > 0),
+    t.run("news", async () => (await pool(seeds.slice(0, 8), 4, (s) => news(s, g0, 2).catch(() => null))).flatMap((r) => r?.items ?? []), [] as NewsHit[], (v) => v.length > 0),
+    t.run("gnews_top", async () => items(await text(`https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-${g0}&gl=${g0}&ceid=${g0}:en`, { ms: 5000 }))
+      .map((x) => ({ title: tag(x, "title").replace(/\s+-\s+[^-]+$/, ""), url: tag(x, "link"), source: tag(x, "source"), at: Date.parse(tag(x, "pubDate")) || 0 })).filter((x) => x.at).slice(0, 40), [] as NewsHit[], (v) => v.length > 0),
     t.run("hn", async () => (await json<{ hits: { title: string; url: string | null; objectID: string; points: number; created_at_i: number }[] }>("https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=30", { ms: 5000 })).hits, []),
-    t.run("yt_suggest", async () => (await pool(seeds.slice(0, 8), 4, (s) => ytSuggest(s, geos[0] ?? "US").catch(() => [] as string[]))).flat(), [] as string[]),
+    t.run("lobsters", () => json<{ title: string; url: string; short_id_url: string; score: number; created_at: string; comment_count: number }[]>("https://lobste.rs/hottest.json", { ms: 5000, ua: BOT }), [], (v) => v.length > 0),
+    t.run("devto", () => json<{ title: string; url: string; public_reactions_count: number; published_at: string }[]>("https://dev.to/api/articles?top=2&per_page=30", { ms: 5000, ua: BOT }), [], (v) => v.length > 0),
+    t.run("mastodon", () => json<Mt[]>("https://mastodon.social/api/v1/trends/tags?limit=20", { ms: 5000, ua: BOT }), [] as Mt[], (v) => v.length > 0),
+    t.run("mastodon", () => json<Ml[]>("https://mastodon.social/api/v1/trends/links?limit=20", { ms: 5000, ua: BOT }), [] as Ml[]),
+    t.run("hf", () => json<{ id: string; likes: number; trendingScore?: number; pipeline_tag?: string }[]>("https://huggingface.co/api/models?sort=trendingScore&limit=20", { ms: 5000, ua: BOT }), [], (v) => v.length > 0),
+    t.run("github", async () => (await json<{ items?: { full_name: string; description: string | null; stargazers_count: number; html_url: string; created_at: string }[] }>(
+      `https://api.github.com/search/repositories?q=${enc(`created:>${new Date(now - 7 * D).toISOString().slice(0, 10)}`)}&sort=stars&order=desc&per_page=20`, { ms: 5000, ua: BOT, headers: { Accept: "application/vnd.github+json" } })).items ?? [], [], (v) => v.length > 0),
+    t.run("wiki_top", async () => (await json<{ mostread?: { articles?: { normalizedtitle: string; views: number; description?: string; content_urls?: { desktop?: { page?: string } } }[] } }>(
+      `https://api.wikimedia.org/feed/v1/wikipedia/en/featured/${ymd.replace(/-/g, "/")}`, { ms: 5000, ua: BOT })).mostread?.articles ?? [], [], (v) => v.length > 0),
+    t.run("yt_suggest", async () => (await pool(seeds.slice(0, 8), 4, (s) => ytSuggest(s, g0).catch(() => [] as string[]))).flat(), [] as string[]),
     t.run("youtube_api", async () => {
       const { listAccounts, getAccount } = await import("./publish/accounts");
       const acc = (await listAccounts()).find((a) => a.network === "youtube");
@@ -224,14 +266,23 @@ export async function sweepSignals(seeds: string[], geos: string[], rivals: Swee
       const YT = await import("./publish/youtube");
       const a = await getAccount(acc.id);
       if (!a) throw new Error("no YouTube channel connected");
-      const r = await YT.ytGet<{ items?: { id: string; snippet: { title: string; publishedAt: string }; statistics?: { viewCount?: string } }[] }>(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&videoCategoryId=28&maxResults=25&regionCode=${geos[0] ?? "US"}`, await YT.accessToken(a));
+      const r = await YT.ytGet<{ items?: { id: string; snippet: { title: string; publishedAt: string }; statistics?: { viewCount?: string } }[] }>(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&videoCategoryId=28&maxResults=25&regionCode=${g0}`, await YT.accessToken(a));
       return r.items ?? [];
     }, []),
   ]);
+  const uses = (h?: { uses: string }[]) => (h ?? []).slice(0, 2).reduce((a, x) => a + (+x.uses || 0), 0);
   const signals: SweepSignal[] = [
     ...tr.map((x) => ({ src: "trends" as const, title: [x.title, ...x.news.map((n) => n.title)].join(" · "), url: x.news[0]?.url || `https://trends.google.com/trending?geo=${x.geo}`, at: x.at, w: strength.trends(x.traffic), metric: `${x.traffic} searches`, geo: x.geo })),
     ...nw.map((x) => ({ src: "news" as const, title: x.title, url: x.url, at: x.at, w: strength.news(), metric: x.source })),
+    ...top.map((x) => ({ src: "gnews" as const, title: x.title, url: x.url, at: x.at, w: 0.4, metric: x.source })),
     ...front.map((x) => ({ src: "hn" as const, title: x.title, url: x.url ?? `https://news.ycombinator.com/item?id=${x.objectID}`, at: x.created_at_i * 1000, w: strength.hn(x.points), metric: `${x.points} points` })),
+    ...lob.slice(0, 25).map((x) => ({ src: "lobsters" as const, title: x.title, url: x.url || x.short_id_url, at: Date.parse(x.created_at) || now, w: strength.lobsters(x.score), metric: `${x.score} points` })),
+    ...dev.map((x) => ({ src: "devto" as const, title: x.title, url: x.url, at: Date.parse(x.published_at) || now, w: strength.devto(x.public_reactions_count), metric: `${x.public_reactions_count} reactions` })),
+    ...mtags.map((x) => ({ src: "mastodon" as const, title: `${unCamel(x.name)} #${x.name}`, url: `https://mastodon.social/tags/${enc(x.name)}`, at: now, w: strength.mastodon(uses(x.history)), metric: `${uses(x.history)} uses in 2 days` })),
+    ...mlinks.map((x) => ({ src: "mastodon" as const, title: x.title, url: x.url, at: now, w: strength.mastodon(uses(x.history)), metric: `${uses(x.history)} shares${x.provider_name ? ` · ${x.provider_name}` : ""}` })),
+    ...hf.map((x) => { const [org, name] = x.id.split("/"); return { src: "hf" as const, title: `${(name ?? org).replace(/[-_]/g, " ")} ${org}${x.pipeline_tag ? ` ${x.pipeline_tag.replace(/-/g, " ")}` : ""}`, url: `https://huggingface.co/${x.id}`, at: now, w: strength.hf(x.likes), metric: `${x.likes.toLocaleString("en")} likes` }; }),
+    ...gh.map((x) => ({ src: "github" as const, title: `${x.full_name.split("/")[1].replace(/[-_]/g, " ")}: ${x.description ?? ""}`.slice(0, 200), url: x.html_url, at: Date.parse(x.created_at) || now, w: strength.github(x.stargazers_count), metric: `${x.stargazers_count.toLocaleString("en")} stars this week` })),
+    ...wtop.slice(0, 30).map((x) => ({ src: "wiki" as const, title: `${x.normalizedtitle}${x.description ? ` · ${x.description}` : ""}`, url: x.content_urls?.desktop?.page ?? `https://en.wikipedia.org/wiki/${enc(x.normalizedtitle)}`, at: now - D / 2, w: strength.wiki(x.views), metric: `${x.views.toLocaleString("en")} readers yesterday` })),
     ...[...new Set(sug.map(norm))].map((x) => ({ src: "suggest" as const, title: x, url: `https://www.youtube.com/results?search_query=${enc(x)}`, at: now, w: strength.suggest(), metric: "typed on YouTube" })),
     ...chart.map((v) => ({ src: "yt_chart" as const, title: v.snippet.title, url: `https://youtu.be/${v.id}`, at: Date.parse(v.snippet.publishedAt), w: 0.5, metric: `${Number(v.statistics?.viewCount ?? 0).toLocaleString("en")} views` })),
     ...rivals,
