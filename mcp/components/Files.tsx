@@ -776,6 +776,12 @@ export default function Files() {
       } else toast((e as Error).message, "bad");
     } finally { setIgBusy(null); }
   }
+  /** A live carousel to the story, as a post card of its first slide (lib/publish/storycard.ts). */
+  async function shareStory(postId: string) {
+    if (!(await confirm({ title: "Share it to your story?", body: "It goes up now as a post card: the cover slide with your @handle on a blur of itself, like sharing it by hand.", confirm: "Share to story" }))) return;
+    try { await api(`publish/${postId}/ig_story/share`, { body: { from: "ig_post", go: "now" } }); toast("Sharing to your story…", "ok"); }
+    catch (e) { toast((e as Error).message, "bad"); }
+  }
   const composePost = compose ? posts.find((p) => p.$id === compose.id) ?? compose.post : undefined;
 
   // photos open instantly: the screen-size copies of the ones around the open one are fetched ahead
@@ -1148,7 +1154,7 @@ export default function Files() {
                 onOpen={(i) => setCv({ id: st.g.id, i })} onPrev={near(st, -1, false)} onNext={near(st, 1, false)}
                 onRename={(n) => renameStack(st.g.id, n)}
                 onUngroup={st.g.made ? () => ungroup(st.g.id) : undefined} onMove={(a, b) => reorder(st.g.id, a, b)}
-                onDownload={() => download(st.g.items)} onShare={() => setSharing({ kind: "carousel", ref: st.g.id, name: st.g.name })} onStar={() => star(st.g.items, !st.starred)}
+                onDownload={() => download(st.g.items)} onStory={stats[st.g.id]?.post_id ? () => shareStory(stats[st.g.id]!.post_id!) : undefined} onShare={() => setSharing({ kind: "carousel", ref: st.g.id, name: st.g.name })} onStar={() => star(st.g.items, !st.starred)}
                 onPost={st.g.post ? () => router.push(`/posts?post=${st.g.post}`) : undefined}
                 onInstagram={wsOn ? () => toInstagram(st.g.id) : undefined} igBusy={igBusy === st.g.id} checks={checks[st.g.id] ?? null} stats={stats[st.g.id] ?? null}
                 handle={accounts.find((a) => a.network === "instagram")?.handle ?? null} avatar={accounts.find((a) => a.network === "instagram")?.avatar ?? null} />

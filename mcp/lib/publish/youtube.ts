@@ -171,6 +171,15 @@ export async function setThumbnail(token: string, videoId: string, bytes: Uint8A
   if (!r.ok) throw ytErr(r.status, await r.json().catch(() => ({})));
 }
 
+/** Change a video that's already up: title, description, tags, category, language, privacy, licence and the rest.
+ *  (A video YouTube is holding for a scheduled publish keeps its time.) */
+export async function updateVideo(token: string, id: string, o: YtOptions) {
+  const cur = await yt<{ items: { status: { privacyStatus: string; publishAt?: string } }[] }>(`${API}/videos?part=status&id=${id}`, token);
+  const held = cur.items[0]?.status.publishAt && cur.items[0].status.privacyStatus === "private" ? cur.items[0].status.publishAt : null;
+  const body = videoBody(o, held);
+  return yt<{ id: string }>(`${API}/videos?part=snippet,status${o.recording_date ? ",recordingDetails" : ""}`, token, { method: "PUT", body: { id, ...body } });
+}
+
 export const addToPlaylist = (token: string, playlistId: string, videoId: string) =>
   yt(`${API}/playlistItems?part=snippet`, token, { method: "POST", body: { snippet: { playlistId, resourceId: { kind: "youtube#video", videoId } } } });
 

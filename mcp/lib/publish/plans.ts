@@ -97,6 +97,7 @@ function cleanIg(v: Partial<IgOptions>): IgOptions {
     audio_name: str(v.audio_name, 100).trim() || null, trial: v.trial === "MANUAL" || v.trial === "SS_PERFORMANCE" ? v.trial : null,
     thumb_offset_ms: typeof v.thumb_offset_ms === "number" && v.thumb_offset_ms >= 0 ? Math.round(v.thumb_offset_ms) : null,
     alt_text: str(v.alt_text, 1000).trim() || null, ai_generated: bool(v.ai_generated, false), first_comment: str(v.first_comment, LIMITS.ig_comment).trim() || null,
+    story_style: v.story_style === "fit" || v.story_style === "fill" ? v.story_style : "card",
   };
 }
 

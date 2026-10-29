@@ -19,7 +19,7 @@ Two layers. You normally only touch the first.
 | `list_jobs` | Last 30 jobs. |
 | `cancel_job` | Cancel a queued job, or stop a running one after the current line. |
 | `publish_accounts` | Connected YouTube channels and Instagram accounts, every publish plan (draft, armed, uploading, published + link, failed + next retry) and the automation rules. See `docs/PUBLISHING.md`. |
-| `publish_post` | `{post_id, space: yt_video\|yt_short\|ig_reel\|ig_post\|ig_story, account?, files?: [m:…\|g:…], cover?, youtube?: {title, description, tags, category, privacy, made_for_kids, synthetic, playlist, language, notify, youtube_schedules, …}, instagram?: {caption, share_to_feed, collaborators, user_tags, trial, audio_name, alt_text, ai_generated, first_comment, location_id}, go?: save\|arm\|now\|disarm}` → the plan. `arm` goes out at the target's publish time; `now` right away. |
+| `publish_post` | `{post_id, space: yt_video\|yt_short\|ig_reel\|ig_post\|ig_story, account?, files?: [m:…\|g:…], cover?, youtube?: {title, description, tags, category, privacy, made_for_kids, synthetic, playlist, language, notify, youtube_schedules, …}, instagram?: {caption, share_to_feed, collaborators, user_tags, trial, audio_name, alt_text, ai_generated, first_comment, location_id, story_style: card\|fit\|fill}, go?: save\|arm\|now\|disarm\|update\|share_to_story}` → the plan. `arm` goes out at the target's publish time; `now` right away; `update` sends a live YouTube video's details and thumbnail again; `share_to_story` puts the post's live Instagram Post or Reel on the story as a post card. |
 | `publish_status` | `{post_id, space, action?: status\|stop\|retry}` → state, progress, live link, problems, history. |
 | `analytics` | `{view?: overview \| youtube \| instagram \| post, range?: 7 \| 28 \| 90, fresh?, posts?, network?, post_id?}`: overview is every platform together; per format views/engagement vs the period before, followers, recent posts with views, likes, comments, shares, saves, retention, engagement rate and score (views ÷ the format's median), YouTube traffic and audience, Instagram audience, best day × time, lengths, hashtags, rhythm vs goals, tips, and `needs` (what a connection can't read yet). youtube / instagram: every metric that platform's API offers (scorecard with the period before, daily series, traffic and search terms, playback, devices, sharing, geography and demographics; non-follower reach, interactions by kind, follows/unfollows, online hours, audience three ways, live Stories). post: one post in depth (retention curve, views day by day since upload, every metric). Cached 30 min. |
 | `hook_score` | `{post_id? \| script?, format?}`: a script's hook score (0-100) from eight checks on its opening and rhythm (fast, no warm-up, opens a loop, specific, "you", stakes, one beat per line, length against your best length for the format) and a note on every weak line. |
@@ -110,6 +110,10 @@ Smart search: `GET insight` (colours and tags per photo), `POST insight/scan` (t
 15 s at a time), `POST insight/vision {items: [{id, emb, tags}]}` (what the browser's MobileCLIP saw), `GET insight/emb`
 (the 512-number fingerprints, for the search box). Share links: `GET shares?kind&ref`, `POST shares {kind: carousel|folder,
 ref, days: 1|3|7|30, downloads}` (returns the `/s/<token>` link once), `POST shares/<id>/revoke`.
+
+Publishing extras (`/api/dash/publish/…`): `POST <post>/ig_story/share {from?, style?, go?: "now", again?}` (a live Post or
+Reel to the story, built as a post card), `POST <post>/<yt_video|yt_short>/update` (a live video: details and thumbnail again).
+The worker's `storycard` job (`{video_url, put_url, header_url?, style: card|fit}`) lays a video out as a 1080×1920 story.
 
 Post pipeline (`lib/pipeline.ts`): `GET /api/dash/pipeline/<post>` (every step's state; moves a running pipeline along),
 `POST /api/dash/pipeline/<post> {step: all|voice|subtitles|thumbnail|schedule, force?}`, `POST …/<post>/stop`.

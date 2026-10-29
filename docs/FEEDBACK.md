@@ -4,7 +4,18 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (Instagram fixes, smart search, share links, pipeline, 2026-10-28)
+## Latest round (covers, thumbnails, stories, a calmer top bar, 2026-10-29)
+
+- **Stories shouldn't be Instagram's stretched crop**: build them the way you share a post by hand, the whole post as a
+  card with the @handle on a blur of itself (videos too), for anything already posted ("Share to story"). Fill stays
+  as an option.
+- **Thumbnails and covers everywhere the APIs allow**: Reels and single feed videos take a cover image, a Post's cover
+  is its first slide, YouTube Videos and Shorts take a thumbnail, and a live YouTube video's thumbnail and details can
+  be changed. Say plainly what the APIs can't do (YouTube Community posts; Instagram covers after posting).
+- **The carousel top bar was cluttered**: one icon toggle for Curve / Phone, one status chip (Live, or slides to look
+  at), the Instagram button, and everything else under one ⋯ menu.
+
+## Earlier round (Instagram fixes, smart search, share links, pipeline, 2026-10-28)
 
 - **"Post to Instagram" made two posts for the same carousel** (the agent's "Case 023 … (carousel)" post already held the
   photos; the button made another, which went live). It now reuses the post the photos already belong to and never

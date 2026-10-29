@@ -83,7 +83,7 @@ function Count({ n, max, label }: { n: number; max: number; label?: string }) {
 }
 
 /** The live preview: a YouTube watch card, a Shorts / Reels / Story phone, or an Instagram feed post. */
-function Preview({ space, plan, picks, account }: { space: SpaceId; plan: Plan; picks: Pick[]; account: Account | null }) {
+export function Preview({ space, plan, picks, account }: { space: SpaceId; plan: Plan; picks: Pick[]; account: Account | null }) {
   const files = plan.media.map((r) => picks.find((p) => p.ref === r)).filter(Boolean) as Pick[];
   const cover = plan.cover ? picks.find((p) => p.ref === plan.cover) : null;
   const first = files[0];
@@ -125,7 +125,18 @@ function Preview({ space, plan, picks, account }: { space: SpaceId; plan: Plan; 
   return (
     <div className="pv-phone">
       <div className="pv-screen">
-        <Shot f={first} />
+        {space === "ig_story" && first && (plan.ig?.story_style ?? "card") !== "fill" ? (
+          // built like a share by hand: the whole post on a blur (card: with corners and your @handle)
+          <div className={`pv-story-card ${plan.ig?.story_style ?? "card"}`}>
+            <div className="pv-story-bg" aria-hidden><Shot f={first} /></div>
+            <div className="pv-story-mid">
+              <div className="pv-story-stack">
+                {(plan.ig?.story_style ?? "card") === "card" && <span className="pv-row pv-story-who"><Av /><b>@{handle}</b></span>}
+                <div className="pv-story-pic"><Shot f={first} fit="contain" /></div>
+              </div>
+            </div>
+          </div>
+        ) : <Shot f={first} />}
         {space === "ig_story" ? <div className="pv-story-top"><i /><span className="pv-row"><Av /><b>{handle}</b><span className="dim">now</span></span></div> : (
           <>
             <div className="pv-rail"><span><Heart size={24} weight="fill" /><i>0</i></span><span><ChatCircle size={24} weight="fill" /><i>0</i></span><span><ShareFat size={24} weight="fill" /></span></div>
@@ -252,14 +263,26 @@ export function Composer({ post, space, onClose }: { post: Post; space: SpaceId;
     clearTimeout(timer.current);
     await flush();
     setBusy(true);
+    let ok = false;
     try {
       const r = await api<{ plan: Plan; problems?: string[] }>(`publish/${post.$id}/${space}/${path}`, { body });
+      ok = true;
       setPlan(r.plan); notePlan(r.plan); if (r.problems) setProblems(r.problems);
       if (path === "go" && body.mode === "now") toast(`Publishing to ${spaceName(space)}…`, "ok");
       if (path === "go" && body.mode === "arm") toast(target?.due_at ? `Goes out ${whenLabel(target.due_at)}` : "Set to go: give it a publish time", "ok");
     } catch (e) { toast((e as Error).message, "bad"); }
     setBusy(false);
     refreshPublish();
+    return ok;
+  }
+
+  /** A live post or reel to the story, as a post card (the composer for the story opens on it). */
+  async function shareStory() {
+    if (!(await confirm({ title: "Share it to your story?", body: "It goes up now as a post card: the whole post with your @handle on a blur of itself, like sharing it by hand.", confirm: "Share to story" }))) return;
+    setBusy(true);
+    try { await api(`publish/${post.$id}/ig_story/share`, { body: { from: space, go: "now" } }); toast("Sharing to your story…", "ok"); refreshPublish(); }
+    catch (e) { toast((e as Error).message, "bad"); }
+    setBusy(false);
   }
 
   if (!net) return <Handoff post={post} space={space} picks={picks} onClose={onClose} />;
@@ -314,16 +337,44 @@ export function Composer({ post, space, onClose }: { post: Post; space: SpaceId;
                   ) : <p className="small dim">Add the {space === "ig_post" ? "photos" : "final cut"} under Media in the post (or make a video in the studio), then pick it here.</p>}
                 </section>
 
-                {(space === "yt_video" || space === "yt_short" || space === "ig_reel") && (
+                {space === "ig_story" && (
                   <section>
-                    <h3>{space === "ig_reel" ? "Cover" : "Thumbnail"}</h3>
+                    <h3>Looks like</h3>
+                    <div className="seg" role="radiogroup" aria-label="Story style">
+                      {([["card", "Post card"], ["fit", "Whole picture"], ["fill", "Fill the screen"]] as const).map(([v, l]) => (
+                        <button key={v} type="button" role="radio" aria-checked={(plan.ig?.story_style ?? "card") === v} className={(plan.ig?.story_style ?? "card") === v ? "on" : ""} onClick={() => ig({ story_style: v })}>{l}</button>
+                      ))}
+                    </div>
+                    <p className="tiny faint" style={{ margin: "6px 0 0" }}>{(plan.ig?.story_style ?? "card") === "card" ? "Like sharing a post by hand: the whole post as a card with your @handle, on a blur of itself. Videos are laid out on the GPU worker." : (plan.ig?.story_style ?? "card") === "fit" ? "Nothing cut off: the whole picture on a blur of itself." : "Instagram crops it to fill 9:16: the top and bottom (or sides) are cut."}</p>
+                  </section>
+                )}
+
+                {space === "ig_post" && files.length > 1 && (
+                  <section>
+                    <h3>Cover</h3>
+                    <p className="tiny faint" style={{ margin: "0 0 8px" }}>On Instagram the first slide is the cover. Tap one to put it first.</p>
                     <div className="pick-grid sm">
-                      <button type="button" className={`pick none ${!plan.cover ? "on" : ""}`} aria-pressed={!plan.cover} onClick={() => edit({ cover: null }, true)}>{space === "ig_reel" ? "Frame" : "Auto"}</button>
+                      {files.map((r, n) => { const p = picks.find((x) => x.ref === r); return p && (
+                        <button key={r} type="button" className={`pick ${n === 0 ? "on" : ""}`} aria-pressed={n === 0} onClick={() => edit({ media: [r, ...files.filter((x) => x !== r)] }, true)} title={p.name}>
+                          {p.thumb ? <img src={p.thumb} alt="" /> : p.kind === "video" && p.src ? <video src={`${p.src}#t=0.5`} muted preload="metadata" /> : <ImageIcon size={18} />}
+                          {n === 0 && <span className="pick-n"><CheckCircle size={14} weight="fill" /></span>}
+                        </button>
+                      ); })}
+                    </div>
+                  </section>
+                )}
+
+                {(space === "yt_video" || space === "yt_short" || space === "ig_reel" || (space === "ig_post" && files.length === 1 && picks.find((x) => x.ref === files[0])?.kind === "video")) && (
+                  <section>
+                    <h3>{net === "instagram" ? "Cover" : "Thumbnail"}</h3>
+                    <div className="pick-grid sm">
+                      <button type="button" className={`pick none ${!plan.cover ? "on" : ""}`} aria-pressed={!plan.cover} onClick={() => edit({ cover: null }, true)}>{net === "instagram" ? "Frame" : "Auto"}</button>
                       {images.map((p) => <button key={p.ref} type="button" className={`pick ${plan.cover === p.ref ? "on" : ""}`} aria-pressed={plan.cover === p.ref} onClick={() => edit({ cover: p.ref }, true)} title={p.name}><img src={p.thumb ?? ""} alt="" />{plan.cover === p.ref && <span className="pick-n"><CheckCircle size={14} weight="fill" /></span>}</button>)}
                     </div>
-                    {space === "ig_reel" && !plan.cover && <label className="row small dim" style={{ gap: 8, marginTop: 8 }}>Frame at
+                    {net === "instagram" && !plan.cover && <label className="row small dim" style={{ gap: 8, marginTop: 8 }}>Frame at
                       <input type="number" min={0} step={0.5} style={{ width: 90 }} aria-label="Cover frame, seconds" value={plan.ig!.thumb_offset_ms != null ? plan.ig!.thumb_offset_ms / 1000 : ""} placeholder="0" onChange={(e) => ig({ thumb_offset_ms: e.target.value === "" ? null : Math.round(Number(e.target.value) * 1000) })} />s</label>}
-                    {net === "youtube" && <p className="tiny faint" style={{ margin: "6px 0 0" }}>Custom thumbnails need a phone-verified channel. 1280×720 looks best.</p>}
+                    {net === "youtube" && <p className="tiny faint" style={{ margin: "6px 0 0" }}>{space === "yt_short" ? "Shorts take a custom thumbnail too (shown in search, the channel page and subscriptions). " : ""}Custom thumbnails need a phone-verified channel. 1280×720 looks best.{plan.state === "published" ? " Pick one, then Update on YouTube." : ""}</p>}
+                    {net === "instagram" && plan.state === "published" && <p className="tiny faint" style={{ margin: "6px 0 0" }}>Instagram doesn&apos;t let apps change a cover once it&apos;s posted; change it in the Instagram app.</p>}
                   </section>
                 )}
 
@@ -423,7 +474,9 @@ export function Composer({ post, space, onClose }: { post: Post; space: SpaceId;
               <span className="small dim grow">{plan.step ?? "Working"}</span>
               <button className="ghost" disabled={busy} onClick={async () => { if (await confirm({ title: "Stop publishing?", body: "What's already uploaded stays on the platform's side as a draft.", confirm: "Stop", danger: true })) act("cancel"); }}><Stop size={15} />Stop</button>
             </> : plan.state === "published" ? <>
-              <span className="small dim grow">Edits now don&apos;t change what&apos;s live.</span>
+              <span className="small dim grow">{net === "youtube" ? "Change the title, description, tags, privacy or thumbnail, then update it." : "Edits now don't change what's live."}</span>
+              {net === "youtube" && <button disabled={busy} onClick={() => act("update").then((ok) => ok && toast("Updated on YouTube", "ok"))}><ArrowsClockwise size={15} />Update on YouTube</button>}
+              {net === "instagram" && space !== "ig_story" && <button className="ghost" disabled={busy} onClick={() => shareStory()}><ShareFat size={15} />Share to story</button>}
               <button className="ghost" disabled={busy} onClick={async () => { if (await confirm({ title: "Post it again?", body: `This makes a second, separate post on ${spaceName(space)}.`, confirm: "Post again" })) act("go", { mode: plan.when === "now" ? "now" : "arm", again: true }); }}><ArrowsClockwise size={15} />Post again</button>
               {plan.result && <a className="btn" href={plan.result.url} target="_blank" rel="noreferrer">Open <ArrowSquareOut size={14} /></a>}
             </> : <>

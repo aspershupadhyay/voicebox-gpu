@@ -1285,6 +1285,8 @@ def resolve_voice(engine, voice):
 def _cpu_only(job):
     """A job that never touches the GPU (a Kokoro voiceover with no listening pass, subtitles or studio polish): it runs
     in the CPU lane, next to whatever the GPU is doing, instead of waiting behind it."""
+    if job["kind"] == "storycard":  # ffmpeg only
+        return True
     return (job["kind"] == "tts" and not job.get("mode") and C.ENGINES.get(job.get("engine"), {}).get("gpu_gb", 1) == 0
             and job.get("takes", 1) == 1 and not job.get("review") and not job.get("subtitles") and not (job.get("post") or {}).get("enhance"))
 
@@ -1375,6 +1377,8 @@ def make_job(body):
         return make_voicewalk_job(body)
     if body.get("kind") == "eagle":
         return make_eagle_job(body)
+    if body.get("kind") == "storycard":
+        return make_storycard_job(body)
     job = _base_job("tts", body)
     _voice_setup(job, body, body.get("lines") or [])
     return _enqueue(job)
@@ -2913,6 +2917,80 @@ def run_transcribe(job):
     job["subs"] = {"cues": len(cues_all), "timeline": "sequential"}
 
 
+def make_storycard_job(body):
+    """A post's video as an Instagram story the way the app shares one by hand: the whole video as a card with rounded
+    corners and the account's @handle above it, on a blurred, darkened copy of itself, 1080x1920, up to 60 s. The
+    dashboard (mcp/lib/publish/storycard.ts) sends the layout numbers' inputs, the header strip and where to put the
+    result (a presigned PUT); style "fit" leaves out the card corners and the header."""
+    url = _http_url(body.get("video_url"), "video_url")
+    put = str(body.get("put_url") or "")
+    if not url or not put.startswith("https://"):
+        raise ValueError("video_url and put_url (https) are required")
+    style = body.get("style") or "card"
+    if style not in ("card", "fit"):
+        raise ValueError("style must be card or fit")
+    job = _base_job("storycard", body)
+    job.update({"engine": "ffmpeg", "voice": "", "story": {"url": url, "put": put, "style": style,
+                "header": _http_url(body.get("header_url"), "header_url") or None}})
+    job["est_total"] = 40.0
+    return _enqueue(job)
+
+
+def run_storycard(job):
+    st, jdir = job["story"], os.path.join(JOBS_DIR, job["id"])
+    os.makedirs(jdir, exist_ok=True)
+    job["stage"] = "downloading"
+    src, out = os.path.join(jdir, "in.mp4"), os.path.join(jdir, "story.mp4")
+    _download(st["url"], src)
+    probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height:stream_side_data=rotation",
+                            "-of", "json", src], capture_output=True, text=True, check=True)
+    info = json.loads(probe.stdout)["streams"][0]
+    w, h = int(info["width"]), int(info["height"])
+    if any(abs(int(float(d.get("rotation", 0)))) == 90 for d in info.get("side_data_list", []) or []):
+        w, h = h, w
+    W, H, CW, CH, HEAD, GAP, R = 1080, 1920, 920, 1300, 76, 22, 34
+    card = st["style"] == "card"
+    sc = min((CW if card else W) / w, (CH if card else H) / h)
+    cw, ch = int(round(w * sc / 2) * 2), int(round(h * sc / 2) * 2)
+    top = (H - (HEAD + GAP + ch if card else ch)) // 2
+    x, y = (W - cw) // 2, top + (HEAD + GAP if card else 0)
+    inputs, fc = ["-i", src], [f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},gblur=sigma=40,eq=brightness=-0.22,setsar=1[bg]",
+                                f"[0:v]scale={cw}:{ch},setsar=1,format=rgba[fg0]"]
+    fg = "fg0"
+    if card:
+        try:  # rounded corners: a mask the size of the card
+            from PIL import Image, ImageDraw
+            mask = Image.new("L", (cw, ch), 0)
+            ImageDraw.Draw(mask).rounded_rectangle((0, 0, cw - 1, ch - 1), radius=R, fill=255)
+            mpath = os.path.join(jdir, "mask.png")
+            mask.save(mpath)
+            inputs += ["-loop", "1", "-i", mpath]
+            fc.append(f"[{inputs.count('-i') - 1}:v]format=gray[m];[fg0][m]alphamerge[fg1]")
+            fg = "fg1"
+        except Exception:  # noqa: BLE001 - square corners rather than no story
+            pass
+    fc.append(f"[bg][{fg}]overlay={x}:{y}:shortest=1[v1]")
+    last = "v1"
+    if card and st.get("header"):
+        hpath = os.path.join(jdir, "header.png")
+        _download(st["header"], hpath, limit=5 * 1024 * 1024)
+        inputs += ["-loop", "1", "-i", hpath]
+        fc.append(f"[v1][{inputs.count('-i') - 1}:v]overlay={x}:{top}:shortest=1[v2]")
+        last = "v2"
+    fc.append(f"[{last}]format=yuv420p[out]")
+    job["stage"] = "rendering"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(fc), "-map", "[out]", "-map", "0:a?",
+                    "-t", "60", "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
+                    "-movflags", "+faststart", out], check=True)
+    job["stage"] = "uploading"
+    with open(out, "rb") as f:
+        req = urllib.request.Request(st["put"], data=f, method="PUT", headers={"Content-Type": "video/mp4", "Content-Length": str(os.path.getsize(out))})
+        with urllib.request.urlopen(req, timeout=600) as r:
+            if r.status >= 300:
+                raise RuntimeError(f"storage refused the story ({r.status})")
+    job["results"] = [{"id": "story", "text": "", "duration": 0}]
+
+
 def _download(url, path, limit=600 * 1024 * 1024):
     if not _http_url(url, "url"):  # every caller passes a link from a request: never file:// or ftp:// (local files)
         raise ValueError("url is missing")
@@ -3827,7 +3905,7 @@ def run_train(job):
 
 def package(job):
     job["stage"] = "packaging"
-    if job["kind"] in ("video", "reference", "image", "dataset", "train", "voicewalk", "eagle"):
+    if job["kind"] in ("video", "reference", "image", "dataset", "train", "voicewalk", "eagle", "storycard"):
         return  # single files, served directly; no zip copy of a large video (a dataset packs its own zip)
     jdir = os.path.join(JOBS_DIR, job["id"])
     with zipfile.ZipFile(os.path.join(JOBS_DIR, f"{job['id']}.zip"), "w") as z:
@@ -3901,7 +3979,7 @@ def worker_loop(q=None):
         try:
             {"transcribe": run_transcribe, "video": run_video, "reference": run_reference,
              "image": run_image, "dataset": run_dataset, "train": run_train, "voicewalk": run_voicewalk,
-             "eagle": run_eagle}.get(job["kind"], run_tts)(job)
+             "eagle": run_eagle, "storycard": run_storycard}.get(job["kind"], run_tts)(job)
             package(job)
             job["status"], job["stage"] = "done", "done"
         except Cancelled:
