@@ -6,8 +6,9 @@
 //   worker: Instagram, YouTube, TikTok, Facebook, Threads, Reddit, Vimeo and anything the server can't read go to the
 //           Colab worker's yt-dlp (kind "fetch", worker/gateway.py), which uploads each file straight to R2 through a
 //           presigned PUT; the next look at the list (or the worker's next heartbeat) copies them into Files. With the
-//           worker off, the first such link starts the GPU by itself (the cheap voice GPU), and that GPU is stopped
-//           again as soon as its downloads are in (lib/colab.ts onHeartbeat).
+//           worker off, the first such link starts a Colab CPU runtime by itself (yt-dlp needs no GPU; the cheap voice
+//           GPU if Colab won't give one), which is stopped again as soon as its downloads are in (lib/colab.ts
+//           onHeartbeat). The worker calls back when each one is done (/api/downloads/done), so it's saved at once.
 // Each site gets its own folder inside the one picked (default "Downloads"): Downloads/Instagram, Downloads/YouTube…
 // Every link the server fetches is checked first (http(s) only, no private or internal addresses, on every redirect).
 // The list lives in workspace/downloads.json (written with If-Match so two people never lose each other's).
@@ -22,6 +23,7 @@ export type Dl = {
   via: "server" | "worker" | null; title: string | null; author: string | null; thumb: string | null;
   folder: string | null; post: string | null; name: string | null; by: string; at: number; updated: number;
   items: DlItem[]; error: string | null; job: string | null; pct: number | null; stage: string | null; saving_at?: number;
+  requeued?: number; // times the worker went away mid-download and it was handed to the next one
 };
 type Actor = { id?: string; name: string };
 
@@ -176,6 +178,13 @@ async function fromWeb(url: string, source: Source): Promise<Found | null> {
   const label = `${source === "web" ? host : SOURCES[source].name}${author && !/^https?:/.test(author) ? ` @${words(author, 30).replace(/^@/, "")}` : ""}${title ? ` - ${title}` : ""}`;
   const abs = (x: string) => new URL(x, r.finalUrl).toString();
   if (video && /\.(mp4|mov|webm)(\?|$)/i.test(video)) return { title, author, thumb: image ? abs(image) : null, files: [{ url: abs(video), name: `${label}.${extOf(abs(video), "mp4")}` }] };
+  // a video anywhere on the page (a <video>/<source>, a bare .mp4 in its scripts): that, not the preview image. A
+  // stream (.m3u8), an embedded player or an og:video that isn't a file goes to the worker, whose yt-dlp joins it up
+  const flat = html.replace(/\\u002F/gi, "/").replace(/\\\//g, "/").replace(/&amp;/g, "&");
+  const tag = /<(?:video|source)[^>]+src=["']([^"']+\.(?:mp4|webm|mov)(?:\?[^"']*)?)["']/i.exec(flat)?.[1]
+    ?? /https?:\/\/[^\s"'<>\\]+?\.mp4(?:\?[^\s"'<>\\]*)?/i.exec(flat)?.[0];
+  if (tag && !/preview|thumb|poster/i.test(tag)) return { title, author, thumb: image ? abs(image) : null, files: [{ url: abs(tag), name: `${label}.${extOf(abs(tag), "mp4")}` }] };
+  if (source === "web" && (video || /\.m3u8|<video[\s>]|player\.vimeo|youtube\.com\/embed|jwplayer|videojs/i.test(flat))) return null;
   if (image) return { title, author, thumb: abs(image), files: [{ url: abs(image), name: `${label}.${extOf(abs(image), "jpg")}` }] };
   return null;
 }
@@ -315,17 +324,17 @@ async function toWorker(d: Dl, found: Found | null) {
   const slots = await Promise.all(Array.from({ length: SLOTS }, (_, i) => presign(`workspace/downloads/${d.id}/${i}`, "PUT", 6 * 3600)));
   const info = await presign(`workspace/downloads/${d.id}/info.json`, "PUT", 6 * 3600);
   try {
-    const job = await call<{ id: string }>("/jobs", { body: { kind: "fetch", url: d.url, put_urls: slots, info_put: info, cookies: await cookies(), label: `Download from ${SOURCES[d.source].name}` } });
+    const job = await call<{ id: string }>("/jobs", { body: { kind: "fetch", url: d.url, put_urls: slots, info_put: info, cookies: await cookies(), label: `Download from ${SOURCES[d.source].name}`, notify: true } });
     await patch(d.id, { status: "worker", via: "worker", job: job.id, stage: "Queued on the worker", pct: 0.05, ...(found ? { title: found.title, author: found.author, thumb: found.thumb } : {}) });
   } catch (e) {
     if (!(e instanceof WorkerOffline)) throw e;
-    await patch(d.id, { status: "waiting", via: "worker", pct: 0, stage: `Starting the GPU worker for ${SOURCES[d.source].name} (about a minute)` });
+    await patch(d.id, { status: "waiting", via: "worker", pct: 0, stage: `Starting the downloader for ${SOURCES[d.source].name} (about a minute)` });
     const why = await startGpu();
-    if (why) await patch(d.id, { stage: `${SOURCES[d.source].name} needs the GPU worker, and it couldn't start: ${why}` });
+    if (why) await patch(d.id, { stage: `${SOURCES[d.source].name} needs the Colab worker, and it couldn't start: ${why}` });
   }
 }
 
-/** The worker is off: start the cheap GPU for the downloads, once (a claim kept 5 min, so a dozen links start one GPU;
+/** The worker is off: start a CPU runtime for the downloads (the cheap GPU if Colab won't give one), once (a claim kept 5 min, so a dozen links start one GPU;
  *  colab.start refuses too while a runtime is assigned). null when it started or one is on its way, else why not. */
 async function startGpu(): Promise<string | null> {
   const { value, etag } = await getJsonTagged<{ at: number; error?: string | null }>(GPU_CLAIM);
@@ -334,7 +343,7 @@ async function startGpu(): Promise<string | null> {
   const colab = await import("./colab");
   try {
     if ((await colab.runtimes()).length) return null; // assigned already: its worker is booting
-    await colab.start(colab.appOrigin(), undefined, { purpose: "voice", high_ram: false, for_downloads: true });
+    await colab.start(colab.appOrigin(), undefined, { purpose: "voice", high_ram: false, for_downloads: true, cpu: true });
     return null;
   } catch (e) {
     const m = (e as Error).message;
@@ -369,7 +378,11 @@ export async function refresh(later: (f: () => Promise<unknown>) => void, actor:
         if (stage !== d.stage || Math.abs(pct - (d.pct ?? 0)) >= 0.03) await patch(d.id, { stage, pct }); // no write for nothing new
       }
     } catch (e) {
-      if (e instanceof WorkerOffline || /not found|404/i.test((e as Error).message)) await patch(d.id, { status: "error", error: "The worker restarted before it finished: Retry", stage: null });
+      if (e instanceof WorkerOffline || /not found|404/i.test((e as Error).message)) {
+        // the worker went away (a restart, the CPU runtime making way for a GPU): the next worker takes it, twice at most
+        if ((d.requeued ?? 0) < 2) await patch(d.id, { status: "waiting", job: null, pct: 0, requeued: (d.requeued ?? 0) + 1, stage: "The worker restarted: starting it again" });
+        else await patch(d.id, { status: "error", error: "The worker kept restarting before it finished: Retry", stage: null });
+      }
     }
   }
   return listDownloads();

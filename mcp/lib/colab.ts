@@ -158,6 +158,27 @@ async function assignOnce(gpu: Gpu, highRam: boolean) {
   return got;
 }
 
+/** A CPU-only runtime (Colab's "None" accelerator), for downloads: yt-dlp needs no GPU and it costs a fraction of
+ *  the units. Colab's API has taken it as variant=DEFAULT with no accelerator; accelerator=NONE is tried too. */
+async function assignCpu() {
+  let last: Error | null = null;
+  for (const extra of ["", "&accelerator=NONE"]) {
+    try {
+      const nbh = randomUUID().replace(/-/g, "_").padEnd(44, ".");
+      const q = `?nbh=${encodeURIComponent(nbh)}&variant=DEFAULT${extra}`;
+      const first = await tun<{ token?: string; endpoint?: string; runtimeProxyInfo?: Proxy }>(`/assign${q}`);
+      if (first.endpoint && first.runtimeProxyInfo) return first as { endpoint: string; runtimeProxyInfo: Proxy };
+      if (!first.token) throw new Error("Colab didn't hand out an assignment token");
+      return await tun<{ endpoint: string; runtimeProxyInfo: Proxy }>(`/assign${q}`, { method: "POST", headers: { "X-Goog-Colab-Token": first.token } });
+    } catch (e) {
+      last = e as Error;
+      const status = (e as { status?: number }).status;
+      if (status === 412 || status === 401) throw e; // too many runtimes / signed out
+    }
+  }
+  throw last ?? new Error("Colab couldn't give a CPU runtime");
+}
+
 /** Get exactly the GPU that was picked: with high RAM, or in its standard shape when Colab doesn't offer high RAM
  *  for it (a 400). Never a different GPU: if Colab can't give this one, the error says why. Nothing about which GPU
  *  has which shapes is assumed; Colab's answer decides. */
@@ -183,8 +204,9 @@ async function assign(choices: Gpu[], highRam: boolean, deadline: number) {
 }
 
 /** Python the worker's kernel runs: the notebook's two start cells, with the secrets passed in (no Colab Secrets here). */
-function bootstrap(origin: string, prewarm: string) {
-  const env = { WORKER_SECRET: process.env.WORKER_SECRET ?? "", REGISTER_URL: `${origin}/api/register`, PREWARM: prewarm, VOICEBOX_STARTED_BY: "app" };
+function bootstrap(origin: string, prewarm: string, mode = "") {
+  // VOICEBOX_MODE=fetch: a downloads-only worker on a CPU runtime (no engines fetched or checked, fetch jobs only)
+  const env = { WORKER_SECRET: process.env.WORKER_SECRET ?? "", REGISTER_URL: `${origin}/api/register`, PREWARM: mode ? "" : prewarm, VOICEBOX_STARTED_BY: "app", VOICEBOX_MODE: mode };
   return [
     "import io, json, os, runpy, sys, tarfile, urllib.request",
     `os.environ.update(json.loads(${JSON.stringify(JSON.stringify(env))}))`,
@@ -308,21 +330,35 @@ export const appOrigin = (fallback?: string) =>
 /** Start: a GPU runtime + the worker on it. Refuses while a worker is online or a runtime is already assigned.
  *  purpose picks the GPU from settings (voice: voiceovers, an L4 by default; heavy: training and video, an A100); an
  *  explicit gpu wins over both. */
-export async function start(origin: string, gpu?: Gpu, opts: { purpose?: Purpose; high_ram?: boolean; for_downloads?: boolean } = {}) {
+export async function start(origin: string, gpu?: Gpu, opts: { purpose?: Purpose; high_ram?: boolean; for_downloads?: boolean; cpu?: boolean } = {}) {
   const t0 = Date.now(); // the whole start has to fit in the request's 300 s (maxDuration of the dash and MCP routes)
   const cfg = await getConfig();
   const want = gpu && GPUS.includes(gpu) ? gpu : opts.purpose === "voice" ? cfg.voice_gpu : opts.purpose === "heavy" ? cfg.heavy_gpu : cfg.gpu;
   const highRam = typeof opts.high_ram === "boolean" ? opts.high_ram : cfg.high_ram;
-  const have = await runtimes();
+  let have = await runtimes();
+  const cur = await getSession();
+  if (have.length && !opts.for_downloads && cur?.for_downloads && cur.gpu === "CPU" && !cur.stopped && have.every((r) => r.endpoint === cur.endpoint)) {
+    // the downloads-only CPU runtime makes way for a real GPU (a download still on it starts again on the new worker)
+    await stopRuntime(cur.endpoint, "replaced by a GPU");
+    have = [];
+  }
   if (have.length) throw new Error(`a runtime is already running (${have.map((r) => r.accelerator).join(", ")}): stop it first, or wait for the worker to come online`);
-  // only the GPU that was picked: starting a different one (and billing for it) is never our call
-  const a = await assign([want], highRam, t0 + 60_000);
+  // downloads: a CPU runtime, else the cheap GPU. Otherwise only the GPU that was picked: starting a different one
+  // (and billing for it) is never our call
+  let a: { endpoint: string; runtimeProxyInfo: Proxy; gpu: string; high_ram: boolean };
+  let cpuNote: string | undefined;
+  if (opts.cpu) {
+    try { a = { ...(await assignCpu()), gpu: "CPU", high_ram: false }; } catch (e) {
+      cpuNote = `Colab didn't give a CPU runtime (${(e as Error).message.slice(0, 120)}), so the ${want} was started`;
+      a = await assign([want], highRam, t0 + 60_000);
+    }
+  } else a = await assign([want], highRam, t0 + 60_000);
   const s: ColabSession = { endpoint: a.endpoint, gpu: a.gpu, started: Date.now(), by: "app", notified_hours: 0, last_active: Date.now(),
     high_ram: a.high_ram, purpose: opts.purpose ?? null, ...(opts.for_downloads ? { for_downloads: true } : {}) };
   await putJson(SESSION, s);
   try {
-    const r = await launch(a.runtimeProxyInfo, bootstrap(appOrigin(origin), process.env.COLAB_PREWARM ?? ""), t0 + 270_000);
-    const note = highRam && !a.high_ram ? `${want} has no high-RAM machine on this account, so the standard one was started` : undefined;
+    const r = await launch(a.runtimeProxyInfo, bootstrap(appOrigin(origin), process.env.COLAB_PREWARM ?? "", a.gpu === "CPU" ? "fetch" : ""), t0 + 270_000);
+    const note = cpuNote ?? (highRam && !a.high_ram ? `${want} has no high-RAM machine on this account, so the standard one was started` : undefined);
     return { ...s, kernel: r.kernel, output: r.output, ...(note ? { note } : {}) };
   } catch (e) {
     // a runtime without a worker only burns units: give it back

@@ -9,7 +9,7 @@ Auth: every endpoint needs `Authorization: Bearer $WORKER_SECRET`, except /files
 valid ?exp=&sig= signature (so download links can be handed to tools that can't set headers).
 """
 import argparse, base64, hashlib, hmac, json, os, re, shutil, subprocess, sys, threading, time, traceback, uuid
-import urllib.error, urllib.request, zipfile
+import urllib.error, urllib.parse, urllib.request, zipfile
 from collections import OrderedDict, defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -25,6 +25,7 @@ import voicewalk  # noqa: E402
 import r2cache  # noqa: E402
 
 SECRET = os.environ.get("WORKER_SECRET", "")
+FETCH_ONLY = os.environ.get("VOICEBOX_MODE") == "fetch"  # a CPU runtime started for downloads: only fetch jobs
 HOME = C.HOME
 JOBS_DIR, REFS_DIR, LOGS_DIR, CACHE_DIR = (os.path.join(HOME, d) for d in ("jobs", "refs", "logs", "hf"))
 for d in (JOBS_DIR, REFS_DIR, LOGS_DIR, CACHE_DIR):
@@ -1351,6 +1352,8 @@ def _base_job(kind, body):
 
 
 def make_job(body):
+    if FETCH_ONLY and body.get("kind") != "fetch":
+        raise ValueError("this is the downloads-only worker (a CPU runtime, no GPU): start the GPU for voice, clean-up and video (it replaces this one)")
     if body.get("kind") == "transcribe":
         return make_transcribe_job(body)
     if body.get("kind") == "animate" or (body.get("kind") == "video" and body.get("model") == "animate"):
@@ -2950,32 +2953,132 @@ def make_fetch_job(body):
         raise ValueError("url, put_urls and info_put (https) are required")
     job = _base_job("fetch", body)
     job.update({"engine": "yt-dlp", "voice": "", "fetch": {"url": url, "puts": puts, "info": info, "cookies": str(body.get("cookies") or "")[:200_000]},
-                "dl": {"pct": 0.0, "speed": None, "files": 0}})
+                "dl": {"pct": 0.0, "speed": None, "files": 0}, "notify": bool(body.get("notify"))})
     job["est_total"] = 45.0
     return _enqueue(job)
 
 
-YTDLP_FRESH = [False]  # sites change often: yt-dlp is brought up to date once per runtime, on first use
+YTDLP_LOCK = threading.Lock()
+YTDLP_FRESH = [False]  # sites change often: yt-dlp (+ curl_cffi for browser impersonation) and gallery-dl are brought
+                       # up to date once per runtime, at boot (warm_downloaders), so the first link doesn't wait on pip
+
+
+def warm_downloaders():
+    with YTDLP_LOCK:
+        if YTDLP_FRESH[0]:
+            return
+        t = time.time()
+        r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "yt-dlp[default,curl-cffi]", "gallery-dl"], capture_output=True, timeout=300)
+        if r.returncode:  # the extras can fail to build somewhere: the plain packages still work
+            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "yt-dlp", "gallery-dl"], capture_output=True, timeout=300)
+        YTDLP_FRESH[0] = True
+        log(f"downloaders ready in {time.time() - t:.0f} s")
 
 
 def _ytdlp():
     if not YTDLP_FRESH[0]:
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "yt-dlp"], capture_output=True, timeout=180)
-        YTDLP_FRESH[0] = True
+        try:
+            warm_downloaders()
+        except Exception as e:  # noqa: BLE001  whatever is installed still gets a go
+            log(f"couldn't update the downloaders: {e}")
     import yt_dlp
     return yt_dlp
 
 
+def _impersonate_target(yt_dlp):
+    """Chrome's TLS fingerprint (curl_cffi) for sites that refuse plain Python clients; None when it isn't available."""
+    try:
+        import curl_cffi  # noqa: F401
+        from yt_dlp.networking.impersonate import ImpersonateTarget
+        return ImpersonateTarget.from_str("chrome")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 FETCH_TYPES = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska", ".m4a": "audio/mp4",
                ".mp3": "audio/mpeg", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif", ".heic": "image/heic"}
+UA_CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 
 
 def _put_file(url, path, ctype):
-    with open(path, "rb") as f:  # streamed from disk
-        req = urllib.request.Request(url, data=f, method="PUT", headers={"Content-Type": ctype, "Content-Length": str(os.path.getsize(path))})
-        with urllib.request.urlopen(req, timeout=1800) as r:
-            if r.status >= 300:
-                raise RuntimeError(f"storage refused {os.path.basename(path)} ({r.status})")
+    """One file to storage through its presigned PUT, streamed from disk; retried (a dropped connection, a 5xx)."""
+    last = None
+    for wait in (0, 2, 5, 10):
+        time.sleep(wait)
+        try:
+            with open(path, "rb") as f:
+                req = urllib.request.Request(url, data=f, method="PUT", headers={"Content-Type": ctype, "Content-Length": str(os.path.getsize(path))})
+                with urllib.request.urlopen(req, timeout=1800) as r:
+                    if r.status < 300:
+                        return
+                    last = RuntimeError(f"storage refused {os.path.basename(path)} ({r.status})")
+        except urllib.error.HTTPError as e:
+            last = RuntimeError(f"storage refused {os.path.basename(path)} ({e.code})")
+            if e.code < 500 and e.code not in (408, 429):
+                break
+        except Exception as e:  # noqa: BLE001
+            last = e
+    raise last or RuntimeError("storage upload failed")
+
+
+class _Uploader:
+    """Each file goes up the moment it's finished (yt-dlp's post hook, after any merge), while the next one downloads:
+    a carousel's photos stream out one by one instead of all at the end."""
+    def __init__(self, job, puts):
+        from concurrent.futures import ThreadPoolExecutor
+        self.job, self.puts, self.pool, self.futs, self.seen = job, puts, ThreadPoolExecutor(max_workers=3), [], set()
+        self.lock = threading.Lock()
+
+    def add(self, path):
+        path = os.path.abspath(path)
+        ext = os.path.splitext(path)[1].lower()
+        with self.lock:
+            if path in self.seen or ext not in FETCH_TYPES or not os.path.exists(path) or len(self.futs) >= len(self.puts):
+                return
+            self.seen.add(path)
+            slot = len(self.futs)
+            self.futs.append(self.pool.submit(self._up, slot, path, FETCH_TYPES[ext]))
+
+    def _up(self, slot, path, ctype):
+        _put_file(self.puts[slot], path, ctype)
+        self.job["dl"]["files"] += 1
+        return {"slot": slot, "name": os.path.basename(path), "mime": ctype, "size": os.path.getsize(path)}
+
+    def sweep(self, jdir):
+        """What landed without the post hook (gallery-dl, a run that failed after writing). A video-only or audio-only
+        half (name.f137.mp4) left by a failed merge only goes when there's nothing whole."""
+        names = [f for f in sorted(os.listdir(jdir)) if not f.endswith((".part", ".ytdl", ".temp"))]
+        whole = [f for f in names if not re.search(r"\.f\d+\.\w+$", f)]
+        for f in whole if any(os.path.splitext(f)[1].lower() in FETCH_TYPES for f in whole) else names:
+            self.add(os.path.join(jdir, f))
+
+    def results(self):
+        items = [f.result() for f in self.futs]  # an upload that failed raises here
+        self.pool.shutdown(wait=True)
+        return items
+
+
+VIDEO_IN_PAGE = re.compile(r"""https?:(?:\\?/){2}[^\s"'<>\\]+?\.(?:mp4|m3u8|webm|mov)(?:\?[^\s"'<>\\]*)?""", re.I)
+
+
+def _videos_in_page(url, cookies_path=None):
+    """The last resort for a page neither yt-dlp nor gallery-dl knows: every video link in its HTML (og:video,
+    <video>/<source> src, JSON contentUrl, a bare .mp4 or .m3u8), best first."""
+    req = urllib.request.Request(url, headers={"User-Agent": UA_CHROME, "Accept": "text/html,*/*"})
+    with urllib.request.urlopen(req, timeout=25) as r:
+        html = r.read(6_000_000).decode("utf-8", "replace")
+    html = html.replace("\\u002F", "/").replace("\\/", "/").replace("&amp;", "&")
+    found = []
+    for m in re.finditer(r"""<(?:meta[^>]+(?:og:video(?::secure_url|:url)?|twitter:player:stream)[^>]+content|(?:video|source)[^>]+src)=["']([^"']+)""", html, re.I):
+        found.append(urllib.parse.urljoin(url, m.group(1)))
+    found += [m.group(0).replace("\\/", "/") for m in VIDEO_IN_PAGE.finditer(html)]
+    out, seen = [], set()
+    for u in found:
+        if u.startswith("http") and u not in seen:
+            seen.add(u)
+            out.append(u)
+    out.sort(key=lambda u: (".m3u8" in u.lower(), "preview" in u.lower() or "thumb" in u.lower()))  # mp4 first, previews last
+    return out[:6]
 
 
 def run_fetch(job):
@@ -2984,6 +3087,7 @@ def run_fetch(job):
     job["stage"] = "preparing"
     yt_dlp = _ytdlp()
     job["stage"] = "downloading"
+    up = _Uploader(job, ft["puts"])
 
     def hook(d):
         if job["cancel"]:
@@ -2993,48 +3097,78 @@ def run_fetch(job):
             if tot:
                 job["dl"]["pct"] = round(min(0.98, d.get("downloaded_bytes", 0) / tot), 3)
             job["dl"]["speed"] = d.get("speed")
-    opts = {"outtmpl": os.path.join(jdir, "%(autonumber)02d-%(id)s.%(ext)s"), "format": "bv*+ba/b",
-            # h264 in an mp4 first: it plays everywhere and Instagram and YouTube take it back as it is
-            "format_sort": ["res:1920", "vcodec:h264", "ext:mp4:m4a"], "merge_output_format": "mp4", "noplaylist": True,
-            "playlistend": 20, "max_filesize": 1900 * 1024 * 1024, "quiet": True, "no_warnings": True, "progress_hooks": [hook],
-            "restrictfilenames": True, "socket_timeout": 20, "retries": 2, "extractor_retries": 1, "noprogress": True}
+    cpath = None
     if ft.get("cookies"):
         cpath = os.path.join(jdir, "cookies.txt")
         with open(cpath, "w") as f:
             f.write(ft["cookies"])
-        opts["cookiefile"] = cpath
-    info, err = {}, None
-    try:
-        with yt_dlp.YoutubeDL(opts) as y:
-            info = y.extract_info(ft["url"], download=True) or {}
-    except Cancelled:
-        raise
-    except Exception as e:  # noqa: BLE001 - a photo post has no video: gallery-dl takes those
-        err = re.sub(r"\x1b\[[0-9;]*m", "", str(e)).replace("ERROR: ", "")[:300]
-    files = sorted(f for f in os.listdir(jdir) if os.path.splitext(f)[1].lower() in FETCH_TYPES)
-    if not files:
+
+    def opts_for(impersonate=None, referer=None):
+        o = {"outtmpl": os.path.join(jdir, "%(autonumber)02d-%(id)s.%(ext)s"), "format": "bv*+ba/b",
+             # h264 in an mp4 first: it plays everywhere and Instagram and YouTube take it back as it is
+             "format_sort": ["res:1920", "vcodec:h264", "ext:mp4:m4a"], "merge_output_format": "mp4", "noplaylist": True,
+             "playlistend": 20, "max_filesize": 1900 * 1024 * 1024, "quiet": True, "no_warnings": True, "progress_hooks": [hook],
+             "post_hooks": [up.add],  # the final file (after the merge): it goes up while the next one downloads
+             "restrictfilenames": True, "socket_timeout": 20, "retries": 5, "fragment_retries": 10, "extractor_retries": 2,
+             "concurrent_fragment_downloads": 8, "http_chunk_size": 10 * 1024 * 1024, "noprogress": True,
+             # YouTube: when the default client is refused (the bot check), the others often aren't
+             "extractor_args": {"youtube": {"player_client": ["default", "mweb", "web_safari"]}}}
+        if cpath:
+            o["cookiefile"] = cpath
+        if impersonate is not None:
+            o["impersonate"] = impersonate
+        if referer:
+            o["http_headers"] = {"Referer": referer, "User-Agent": UA_CHROME}
+        return o
+
+    def ytdlp(url, **kw):
+        with yt_dlp.YoutubeDL(opts_for(**kw)) as y:
+            return y.extract_info(url, download=True) or {}
+
+    def have():
+        up.sweep(jdir)
+        return bool(up.futs)
+
+    info, errors = {}, []
+    target = _impersonate_target(yt_dlp)
+    # 1) yt-dlp, 2) the same as Chrome (sites that refuse plain clients), 3) gallery-dl (photo posts),
+    # 4) every video link in the page itself. The first that gets a file wins.
+    attempts = [lambda: ytdlp(ft["url"])] + ([lambda: ytdlp(ft["url"], impersonate=target)] if target is not None else [])
+    for attempt in attempts:
+        try:
+            info = attempt() or info
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001
+            errors.append(re.sub(r"\x1b\[[0-9;]*m", "", str(e)).replace("ERROR: ", "")[:300])
+        if have():
+            break
+    if not have():
         job["stage"] = "downloading photos"
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "gallery-dl"], capture_output=True, timeout=180)
-        cmd = [sys.executable, "-m", "gallery_dl", "-D", jdir, "--range", "1-20"]
-        if ft.get("cookies"):
-            cmd += ["--cookies", os.path.join(jdir, "cookies.txt")]
+        cmd = [sys.executable, "-m", "gallery_dl", "-D", jdir, "--range", "1-20"] + (["--cookies", cpath] if cpath else [])
         try:
             r = subprocess.run(cmd + [ft["url"]], capture_output=True, text=True, timeout=240)
+            if r.returncode and r.stderr.strip():
+                errors.append(r.stderr.strip().splitlines()[-1][:300])
         except subprocess.TimeoutExpired:
-            raise RuntimeError(err or "the site didn't answer in time")
-        files = sorted(f for f in os.listdir(jdir) if os.path.splitext(f)[1].lower() in FETCH_TYPES)
-        if not files:
-            raise RuntimeError(err or (r.stderr.strip().splitlines() or ["nothing to download at that link"])[-1][:300])
-    files = files[:len(ft["puts"])]
+            errors.append("the site didn't answer in time")
+    if not have():
+        job["stage"] = "downloading"
+        try:
+            for v in _videos_in_page(ft["url"]):
+                try:
+                    ytdlp(v, referer=ft["url"])
+                except Exception as e:  # noqa: BLE001
+                    errors.append(str(e)[:200])
+                if have():
+                    break
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"the page: {e}"[:200])
+    if not have():
+        raise RuntimeError((errors[0] if errors else "nothing to download at that link")[:300])
     job["stage"] = "uploading"
     job["dl"]["pct"] = 0.99
-    items = []
-    for i, name in enumerate(files):
-        path = os.path.join(jdir, name)
-        ctype = FETCH_TYPES[os.path.splitext(name)[1].lower()]
-        _put_file(ft["puts"][i], path, ctype)
-        items.append({"slot": i, "name": name, "mime": ctype, "size": os.path.getsize(path)})
-        job["dl"]["files"] = i + 1
+    items = sorted(up.results(), key=lambda x: x["slot"])
     first = (info.get("entries") or [info])[0] or {} if isinstance(info.get("entries"), list) else info
     meta = {"title": info.get("title") or first.get("title"), "uploader": info.get("uploader") or first.get("uploader") or info.get("channel"),
             "handle": info.get("uploader_id") or first.get("uploader_id") or info.get("channel_id"), "description": (info.get("description") or first.get("description") or "")[:2000],
@@ -4101,6 +4235,26 @@ def worker_loop(q=None):
             job["status"], job["stage"], job["error"] = "error", "error", str(e)
         job["finished"] = time.time()
         LAST_ACTIVE[0] = time.time()
+        if job.get("notify"):
+            threading.Thread(target=_notify_done, args=(job,), daemon=True).start()
+
+
+def _notify_done(job):
+    """Tell the dashboard a download finished (or failed) so it saves it now, not at the next look or heartbeat. Only
+    ever to REGISTER_URL's own origin: the secret never goes anywhere a job body names."""
+    base = os.environ.get("REGISTER_URL", "").rsplit("/api/", 1)[0]
+    if not base.startswith("https://"):
+        return
+    body = json.dumps({"job": job["id"], "status": job["status"]}).encode()
+    for wait in (0, 2, 5):
+        time.sleep(wait)
+        try:
+            req = urllib.request.Request(base + "/api/downloads/done", data=body, method="POST",
+                                         headers={"Authorization": f"Bearer {SECRET}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=30):
+                return
+        except Exception as e:  # noqa: BLE001  the heartbeat picks it up within a minute anyway
+            log(f"download callback for {job['id']} failed: {e}")
 
 
 def _progress(job):
@@ -4322,7 +4476,7 @@ def health():
             "cpu": {"cores": MON.cores, "load": os.getloadavg()[0] if hasattr(os, "getloadavg") else None}, "now": MON.latest(),
             "warm": WARM.view(), "loads": ENG.loads, "parked": {n: round(time.time() - t) for n, t in ENG.parked.items()},
             "running": [j["id"] for j in JOBS.values() if j["status"] == "running"], "public_url": public_url(),
-            "selfcheck": _selfcheck_result(), "last_active": LAST_ACTIVE[0]}
+            "selfcheck": _selfcheck_result(), "last_active": LAST_ACTIVE[0], "fetch_only": FETCH_ONLY}
 
 
 LAST_ACTIVE = [time.time()]  # when a job last started or finished: the dashboard stops an idle runtime the app started
@@ -4608,8 +4762,10 @@ def main():
     threading.Thread(target=worker_loop, daemon=True).start()
     threading.Thread(target=worker_loop, args=(CPU_QUEUE,), daemon=True).start()
     os.environ["VOICEBOX_PORT"] = str(a.port)
-    run_selfcheck("start", delay=20)
-    threading.Thread(target=prefetch_all, daemon=True).start()
+    threading.Thread(target=warm_downloaders, daemon=True).start()  # the first link never waits on pip
+    if not FETCH_ONLY:  # a downloads-only (CPU) worker has no engines to check or fetch
+        run_selfcheck("start", delay=20)
+        threading.Thread(target=prefetch_all, daemon=True).start()
     log(f"voicebox gateway {C.VERSION} on {a.host}:{a.port} · GPU {gpu_info()['name']} · VRAM budget {ENG.budget:.1f} GB")
     ThreadingHTTPServer((a.host, a.port), Handler).serve_forever()
 

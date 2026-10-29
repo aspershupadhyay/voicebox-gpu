@@ -4,7 +4,28 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (downloads start and stop the GPU, a folder per site, 2026-10-29)
+## Latest round (a CPU runtime for downloads, faster, never stuck, 2026-10-29)
+
+- **"Build the Colab one"** (the no-GPU way suggested last round): downloads now start a Colab CPU runtime
+  (`variant=DEFAULT`, the worker in `VOICEBOX_MODE=fetch`: no engines fetched or checked, fetch jobs only, anything else
+  refused with "start the GPU"), and fall back to the cheap L4 if Colab won't give one. Starting the GPU from the app
+  replaces the downloads runtime; a download that was on it starts again on the new worker (twice at most).
+- **"Make it faster; write the file while it's downloading"**: each file goes to storage the moment it's whole (yt-dlp's
+  post hook, after the merge), while the next one downloads; fragments come 8 at a time; yt-dlp and gallery-dl are
+  installed at boot, not on the first link; the worker calls the dashboard back when a download is done
+  (`/api/downloads/done`, WORKER_SECRET), so it's saved to Files at once instead of on the next look. A byte-by-byte
+  stream into Files isn't possible: Appwrite needs a file's size before the first chunk, and a merged video only
+  exists once it's merged.
+- **"503 first byte timeout" while saving a download** (`upload failed: <?xml …503 first byte timeout`): Appwrite's
+  edge gave up waiting, mostly on a big video's last chunk while Appwrite assembled it. Every chunk is retried now;
+  after a failure it asks Appwrite how far the file got and carries on from there; a file that's already whole (or
+  already has its row) isn't sent again. Reads from R2 retry too.
+- **"Make it invincible: if it has any video links, extract and download"**: yt-dlp, then yt-dlp as Chrome (curl_cffi),
+  then gallery-dl, then every video link in the page itself (og:video, `<video>`/`<source>`, a bare .mp4 or .m3u8 in
+  its scripts); YouTube tries other player clients when the default is refused. On the server, a page with a video
+  gives the video, not its preview image, and a page with a stream or a player goes to the worker.
+
+## Earlier round (downloads start and stop the GPU, a folder per site, 2026-10-29)
 
 - **"Make sure it auto starts quickly"**: an Instagram link "didn't work" because the GPU worker was off and the
   download sat waiting. Now an Instagram, YouTube, TikTok (any worker-only) link with the worker off starts the cheap

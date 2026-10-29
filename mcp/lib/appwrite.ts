@@ -239,17 +239,62 @@ export async function addMediaBytes(bytes: Uint8Array, mime: string, name: strin
   if (bytes.length > FETCH_MAX) throw new Error(`file is ${(bytes.length / 1e6).toFixed(0)} MB; upload files over ${FETCH_MAX / 1e6} MB from the Media page`);
   if (mime === "application/octet-stream") mime = mimeFor(name);
   const fileId = crypto.randomUUID().replace(/-/g, "").slice(0, 20);
-  for (let start = 0; start < Math.max(bytes.length, 1); start += CHUNK) {
-    const end = Math.min(bytes.length, start + CHUNK);
-    const form = new FormData();
-    form.set("fileId", fileId);
-    form.set("file", new Blob([bytes.slice(start, end)], { type: mime }), name);
-    const headers: Record<string, string> = { "X-Appwrite-Project": AW.project, "X-Appwrite-Key": process.env.APPWRITE_API_KEY ?? "" };
-    if (bytes.length > CHUNK) { headers["Content-Range"] = `bytes ${start}-${end - 1}/${bytes.length}`; if (start) headers["X-Appwrite-ID"] = fileId; }
-    const up = await fetch(`${AW.endpoint}/storage/buckets/${AW.bucket}/files`, { method: "POST", headers, body: form });
-    if (!up.ok) throw new AppwriteError(`upload failed: ${(await up.text()).slice(0, 200)}`, up.status);
-  }
+  await sendChunks(fileId, name, mime, bytes.length, async (start, end) => bytes.slice(start, end).buffer as ArrayBuffer);
   return mediaRow(fileId, name, mime, bytes.length, null, opts, actor);
+}
+
+type AwFile = { $id: string; chunksTotal: number; chunksUploaded: number };
+const fileState = (fileId: string) =>
+  aw<AwFile>(`/storage/buckets/${AW.bucket}/files/${encodeURIComponent(fileId)}`).catch((e: AppwriteError) => (e.status === 404 ? null : Promise.reject(e)));
+const done = (f: AwFile | null) => !!f && f.chunksTotal > 0 && f.chunksUploaded >= f.chunksTotal;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Upload size bytes as Appwrite's 5 MB Content-Range chunks, in order, the next chunk read while this one goes up.
+ *  Survives Appwrite's edge giving up on a slow answer (a "503 first byte timeout", mostly on the last chunk while
+ *  Appwrite assembles a big video, which often finishes anyway): after any failure it asks Appwrite how far the file
+ *  got, carries on from there, and only resends what's missing. A file that's already whole is left as it is. */
+async function sendChunks(fileId: string, name: string, mime: string, size: number, read: (start: number, end: number) => Promise<ArrayBuffer>) {
+  if (done(await fileState(fileId))) return;
+  const total = Math.max(1, Math.ceil(size / CHUNK));
+  let next: Promise<ArrayBuffer> | null = read(0, Math.min(size, CHUNK));
+  for (let i = 0; i < total; i++) {
+    const start = i * CHUNK, end = Math.min(size, start + CHUNK);
+    const bytes = await next!;
+    next = end < size ? read(end, Math.min(size, end + CHUNK)) : null;
+    next?.catch(() => null); // a failed read surfaces when awaited, not as an unhandled rejection
+    for (let attempt = 0; ; attempt++) {
+      const form = new FormData();
+      form.set("fileId", fileId);
+      form.set("file", new Blob([bytes], { type: mime }), name);
+      const headers: Record<string, string> = { "X-Appwrite-Project": AW.project, "X-Appwrite-Key": process.env.APPWRITE_API_KEY ?? "" };
+      if (size > CHUNK) headers["Content-Range"] = `bytes ${start}-${end - 1}/${size}`;
+      if (start || attempt) headers["X-Appwrite-ID"] = fileId; // a retried first chunk continues the same file
+      let why = "";
+      let status = 0;
+      try {
+        const up = await fetch(`${AW.endpoint}/storage/buckets/${AW.bucket}/files`, { method: "POST", headers, body: form, signal: AbortSignal.timeout(150_000) });
+        if (up.ok) break;
+        status = up.status;
+        why = (await up.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
+      } catch (e) {
+        why = (e as Error).message;
+      }
+      // how far did it get? The last chunk can still be being assembled: give it a while before sending it again
+      for (let look = 0; look < (i === total - 1 ? 20 : 2); look++) {
+        const f = await fileState(fileId).catch(() => null);
+        if (done(f)) return;
+        if (f && f.chunksUploaded > i) break;
+        if (status && status < 500 && status !== 408 && status !== 409 && status !== 429) break; // a real refusal: looking won't help
+        await sleep(3000);
+      }
+      const f = await fileState(fileId).catch(() => null);
+      if (done(f)) return;
+      if (f && f.chunksUploaded > i) break; // this chunk did land
+      if ((status && status < 500 && status !== 408 && status !== 409 && status !== 429) || attempt >= 4)
+        throw new AppwriteError(`upload failed${status ? ` (${status})` : ""}: ${why || "no answer"}`, status || 502);
+      await sleep(2000 * 2 ** attempt);
+    }
+  }
 }
 
 async function mediaRow(fileId: string, name: string, mime: string, size: number, r2Key: string | null, opts: { postId?: string | null; backup: boolean }, actor: { id?: string; name: string }) {
@@ -264,27 +309,18 @@ async function mediaRow(fileId: string, name: string, mime: string, size: number
 /** A file already in R2 (the upload endpoint, lib/inbox.ts) into the workspace's media bucket, 5 MB at a time, so a
  *  big video never sits whole in the function's memory. The R2 copy stays as the file's backup. */
 export async function addMediaFromR2(key: string, size: number, mime: string, name: string, fileId: string, opts: { postId?: string | null }, actor: { id?: string; name: string }) {
+  // a second save of the same file (a retry after a timeout) finds it: the row it already has, or the file without one
+  const had = await aw<{ rows: Media[] }>(`${rows("media")}?${q({ method: "equal", attribute: "file_id", values: [fileId] }, { method: "limit", values: [1] })}`).catch(() => null);
+  if (had?.rows?.[0]) return finalizeMedia(had.rows[0].$id, { backup: false });
   const src = await presign(key, "GET", 3600);
-  const read = async (start: number) => {
-    const end = Math.min(size, start + CHUNK);
-    const part = await fetch(src, { headers: size ? { Range: `bytes=${start}-${end - 1}` } : {}, cache: "no-store" });
-    if (!part.ok) throw new Error(`could not read the upload: ${part.status}`);
-    return part.arrayBuffer();
+  const read = async (start: number, end: number) => {
+    for (let attempt = 0; ; attempt++) {
+      const part = await fetch(src, { headers: size ? { Range: `bytes=${start}-${end - 1}` } : {}, cache: "no-store" }).catch((e: Error) => e);
+      if (!(part instanceof Error) && part.ok) return part.arrayBuffer();
+      if (attempt >= 3) throw new Error(`could not read the upload: ${part instanceof Error ? part.message : part.status}`);
+      await sleep(1000 * 2 ** attempt);
+    }
   };
-  // the next 5 MB is read from R2 while this one goes up (Appwrite wants the chunks in order)
-  let next: Promise<ArrayBuffer> | null = read(0);
-  for (let start = 0; start < Math.max(size, 1); start += CHUNK) {
-    const end = Math.min(size, start + CHUNK);
-    const bytes = await next!;
-    next = end < size ? read(end) : null;
-    next?.catch(() => null); // a failed read surfaces when awaited, not as an unhandled rejection
-    const form = new FormData();
-    form.set("fileId", fileId);
-    form.set("file", new Blob([bytes], { type: mime }), name);
-    const headers: Record<string, string> = { "X-Appwrite-Project": AW.project, "X-Appwrite-Key": process.env.APPWRITE_API_KEY ?? "" };
-    if (size > CHUNK) { headers["Content-Range"] = `bytes ${start}-${end - 1}/${size}`; if (start) headers["X-Appwrite-ID"] = fileId; }
-    const up = await fetch(`${AW.endpoint}/storage/buckets/${AW.bucket}/files`, { method: "POST", headers, body: form });
-    if (!up.ok) throw new AppwriteError(`upload failed: ${(await up.text()).slice(0, 200)}`, up.status);
-  }
+  await sendChunks(fileId, name, mime, size, read);
   return mediaRow(fileId, name, mime, size, key, { ...opts, backup: false }, actor);
 }
