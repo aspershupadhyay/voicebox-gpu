@@ -356,7 +356,8 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
       {mode === "curve" ? (
         <div ref={stage} className="cs-stage" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
           >
-          <div className="cs-ring" key={s.key} style={{ "--pw": `${pw}px` } as React.CSSProperties}>
+          {/* the cards take the carousel's own shape (its first measured slide): a slide is shown whole, never trimmed */}
+          <div className="cs-ring" key={s.key} style={{ "--pw": `${pw}px`, "--car": first ? String(ratio) : undefined } as React.CSSProperties}>
             {s.members.map((m, i) => {
               const near = Math.abs(i - focus) <= span + 1;
               const bad = issues.get(m.key);
