@@ -22,6 +22,8 @@ export type PackKind = "video" | "carousel" | "photo" | "voiced" | "text";
 export type Pack = {
   post: string; at: number; by: string;
   keyword: string; fmt: Fmt; kind: PackKind;
+  /** the keyword was chosen by someone (not guessed from the title) */
+  given?: boolean;
   title: string;
   /** every title it weighed, best first: overall score = search and click together */
   titles: { title: string; score: number; seo: number; click: number; from: string }[];
@@ -45,10 +47,14 @@ export function cleanName(name: string) {
   return name.replace(EXT, "").replace(/^[0-9a-f]{6,}[-_]/i, "")
     .replace(/\b(from[_ -]+)?(klickpin|snapinsta|snaptik|ssstik|savefrom|y2mate|igram|fastdl|pinterestdownloader|tikmate|savetik|sssinstagram|instadownloader)(\.(com|io|app|net|org))?\b[_ -]*/gi, "")
     .replace(/[_ -]*pin[_ -]?id[_ -]*\d+/gi, "").replace(/[_ -]*(carousel|slide|img|image|video|vid)[_ -]*\d+\b/gi, "")
+    // an editor's export name: "case-025-veliz-tech-never-neutral-9x16" → "veliz tech never neutral"
+    .replace(/^([\p{L}\p{N}]+(-[\p{L}\p{N}]+)+)$/u, (m) => m.replace(/-/g, " "))
+    .replace(/\b(9x16|16x9|4x5|1x1|9 16|16 9|vertical|horizontal|final|copy|edit(ed)?|export(ed)?|render(ed)?|draft|v\d+)\b/gi, " ")
+    .replace(/^\s*(case|ep|episode|part|pt|vol|day|no)[\s.#-]*\d+\b[\s:-]*/i, "")
     .replace(/\b\d{4,}\b/g, "").replace(/[_]+/g, " ").replace(/\s*-\s*$/, "").replace(/^\s*-\s*/, "").replace(/\s+/g, " ").trim();
 }
 /** A title that's really a file name ("IMG_2041.mp4", "From_Klickpin.com-_Tiny_House…") */
-export const looksLikeFile = (t: string) => EXT.test(t) || /_/.test(t) || /pin[-_ ]?id/i.test(t) || /^(img|vid|dsc|pxl|screen ?shot|video|untitled)[\s_-]*\d/i.test(t) || /klickpin|snapinsta|ssstik/i.test(t);
+export const looksLikeFile = (t: string) => EXT.test(t) || /^[\p{L}\p{N}]+(-[\p{L}\p{N}]+){2,}$/u.test(t.trim()) || /\b(9x16|16x9|4x5|1x1)\b/i.test(t) || /_/.test(t) || /pin[-_ ]?id/i.test(t) || /^(img|vid|dsc|pxl|screen ?shot|video|untitled)[\s_-]*\d/i.test(t) || /klickpin|snapinsta|ssstik/i.test(t);
 
 const STOPS = new Set("a an the and or but of to in on for with is are was were be that this these those will you your my our their it its how why what when who which from by at as so not into than then there here just about ever every that's".split(" "));
 /** The topic to research: the title's leading run of meaningful words (up to four), else its first meaningful words. */
@@ -105,7 +111,8 @@ export async function buildPack(postId: string, o: { keyword?: string | null; cr
   const media = await listMedia(postId, 100).catch(() => [] as Media[]);
   const { fmt, kind } = await formatOf(post, media);
   const own = looksLikeFile(post.title) ? cleanName(post.title) : post.title.trim();
-  const kw = (o.keyword?.trim() || prev?.keyword || keywordOf(own || media[0]?.name || "")).slice(0, 80);
+  // an earlier package's topic is kept only if someone chose it; one guessed from a file name is guessed again
+  const kw = (o.keyword?.trim() || (prev?.given ? prev.keyword : "") || keywordOf(own || media[0]?.name || "")).slice(0, 80);
   if (kw.length < 2) throw new Error("this post has no title to research: give it a title or pass keyword");
   const room = await (await import("./writing-data")).writingData().catch(() => null);
   const model = room ? titleModel(room.items) : null;
@@ -137,7 +144,7 @@ export async function buildPack(postId: string, o: { keyword?: string | null; cr
 
   const hashtags = [...new Set([...(r?.hashtags ?? []).map((h) => h.tag), radar.norm(kw).replace(/[^\p{L}\p{N}]+/gu, "")])].filter((h) => h.length >= 3 && h.length <= 24).slice(0, 8);
   const credit = creditOf(o.credit ?? prev?.credit ?? null, media.map((m) => m.name), post.notes);
-  const said = (post.caption ?? "").replace(/(^|\s)#[\p{L}\p{N}_]+/gu, "").trim();
+  const said = looksLikeFile((post.caption ?? "").trim()) || (post.caption ?? "").trim() === post.title.trim() ? "" : (post.caption ?? "").replace(/(^|\s)#[\p{L}\p{N}_]+/gu, "").trim();
   const script = (post.script ?? "").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
   const summary = said.length >= 20 ? said.split(/\n{2,}/)[0]
     : script.length ? script.slice(0, 2).join(" ")
@@ -152,7 +159,7 @@ export async function buildPack(postId: string, o: { keyword?: string | null; cr
   const caption = [best.title, summary !== best.title ? summary : "", kind === "carousel" ? "Save this for later and send it to someone who'd love it." : "Save this for later.", creditLine, igTags].filter(Boolean).join("\n\n").slice(0, 2150);
   const seo = radar.seoScore({ q: kw, title: best.title, description, tags, related, fmt });
   return {
-    post: postId, at: Date.now(), by: o.by, keyword: kw, fmt, kind, title: best.title, titles: titles.slice(0, 6), description,
+    post: postId, at: Date.now(), by: o.by, keyword: kw, given: !!o.keyword?.trim() || (!!prev?.given && kw === prev.keyword), fmt, kind, title: best.title, titles: titles.slice(0, 6), description,
     seo: { score: seo.score, failing: seo.checks.filter((c) => !c.ok).map((c) => `${c.label}: ${c.why}`) },
     tags, hashtags, caption, credit: credit.line, credit_from: credit.from,
     research: r ? { opportunity: r.opportunity, verdict: r.verdict, confidence: r.confidence, sources: `${r.sources.filter((s) => s.ok).length} of ${r.sources.length} sources answered` } : null,

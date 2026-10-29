@@ -29,6 +29,7 @@ import {
 } from "./fileparts";
 import { CarouselCard, CarouselRow, CarouselStage, CarouselStrip, countOf, isStack, type Checks, type Stack, type Stats } from "./Carousel";
 import { Composer } from "./Publish";
+import { UploadOverlay } from "./UploadOverlay";
 import { planFor, usePublish } from "./usePublish";
 import { ImageCard, JobCard, VideoCard, type LibJob } from "./Library";
 import { useStatus } from "./Shell";
@@ -161,6 +162,8 @@ export default function Files() {
   const [dragging, setDragging] = useState<string[] | null>(null);
   const [over, setOver] = useState<string | null>(null); // a folder id, "root" for All files
   const [osDrag, setOsDrag] = useState(false);
+  const [dragN, setDragN] = useState(0); // how many files are being dragged in
+  const [upOpen, setUpOpen] = useState(false); // the upload overlay
   const [playing, setPlaying] = useState<string | null>(null);
   const [sortAt, setSortAt] = useState<Anchor | null>(null);
   const [subNote, setSubNote] = useState("");
@@ -175,7 +178,6 @@ export default function Files() {
   const anchor = useRef<string | null>(null);
   const search = useRef<HTMLInputElement>(null);
   const sortBtn = useRef<HTMLButtonElement>(null);
-  const input = useRef<HTMLInputElement>(null);
   const player = useRef<HTMLAudioElement | null>(null);
   const pending = useRef<Map<string, string[]>>(new Map());
   const flushT = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -682,7 +684,7 @@ export default function Files() {
   // ── keyboard and the clipboard
   useEffect(() => {
     const typing = (el: EventTarget | null) => !!(el as HTMLElement)?.closest?.("input:not([type=checkbox]), textarea, [contenteditable=true]");
-    const overlay = () => !!document.querySelector(".modal, .lightbox, .fm-drawer, .palette, .fv, .cs, .pub");
+    const overlay = () => !!document.querySelector(".modal, .lightbox, .fm-drawer, .palette, .fv, .cs, .pub, .up-ov:not(.is-drag)");
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "f" && !overlay()) { e.preventDefault(); search.current?.focus(); search.current?.select(); return; }
@@ -1007,17 +1009,16 @@ export default function Files() {
 
   return (
     <div className={`fm ${sel.size ? "selecting" : ""}`}
-      onDragOver={(e) => { if (!trashView && e.dataTransfer.types.includes("Files") && !e.dataTransfer.types.includes(DT)) { e.preventDefault(); setOsDrag(true); } }}
+      onDragOver={(e) => { if (!trashView && e.dataTransfer.types.includes("Files") && !e.dataTransfer.types.includes(DT)) { e.preventDefault(); setOsDrag(true); const n = [...e.dataTransfer.items].filter((x) => x.kind === "file").length; if (n !== dragN) setDragN(n); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) { setOsDrag(false); setOver(null); } }}
       onDrop={(e) => { if (!trashView && e.dataTransfer.files.length && !e.dataTransfer.types.includes(DT)) { e.preventDefault(); setOsDrag(false); sendFiles([...e.dataTransfer.files]); } }}>
-      <input ref={input} type="file" multiple hidden onChange={(e) => { if (e.target.files?.length) sendFiles([...e.target.files]); e.target.value = ""; }} />
       <PageHeader title={trashView ? "Trash" : "Files"} sub={trashView ? "Deleted things wait here for 30 days, then they're gone for good." : "Every upload and everything the GPU made, sorted by kind. Drop, paste or drag files anywhere."}
         actions={trashView ? <>
           <button className="ghost" onClick={() => go(null)}><FolderSimple size={15} weight="duotone" />Back to files</button>
           <button className="danger" onClick={emptyTrash} disabled={!trashCount}><TrashSimple size={15} weight="bold" />Empty trash</button>
         </> : <>
           <button className="ghost" onClick={() => newFolder()}><FolderPlus size={15} weight="duotone" />New folder</button>
-          <button onClick={() => (wsOn ? input.current?.click() : needWs())}><UploadSimple size={15} weight="bold" />Upload</button>
+          <button onClick={() => (wsOn ? setUpOpen(true) : needWs())}><UploadSimple size={15} weight="bold" />Upload</button>
         </>} />
 
       {me && !wsOn && !trashView && (
@@ -1155,7 +1156,7 @@ export default function Files() {
                 <div className="empty"><MagnifyingGlass size={22} /><b>Nothing matches</b><span>Try another word or filter.</span>
                   <button className="ghost sm" onClick={() => { setQ(""); setStarOnly(false); setType("all"); setSource("any"); setDate("any"); setBy("anyone"); setColor("any"); }}>Clear search and filters</button></div>
               ) : (
-                <button type="button" className={`drop fm-drop ${over === (cwdId ?? "root") ? "over" : ""}`} onClick={() => (wsOn ? input.current?.click() : needWs())} {...dropOn(cwdId)}>
+                <button type="button" className={`drop fm-drop ${over === (cwdId ?? "root") ? "over" : ""}`} onClick={() => (wsOn ? setUpOpen(true) : needWs())} {...dropOn(cwdId)}>
                   <span className="d-ic"><UploadSimple size={22} weight="duotone" /></span>
                   <b>{here?.system ? `No ${here.name.toLowerCase()} yet` : "This folder is empty"}</b>
                   <span>Drop files here, paste a photo or a link, or drag files in from another folder.</span>
@@ -1167,7 +1168,8 @@ export default function Files() {
         </>
       )}
 
-      {osDrag && <div className="page-drop">Drop to upload to {here && !here.system ? here.name : "Files (sorted by kind)"}</div>}
+      {osDrag && <UploadOverlay mode="drag" count={dragN} where={here && !here.system ? here.name : "Files, sorted by kind"} onClose={() => setOsDrag(false)} onFiles={() => {}} onLink={() => {}} />}
+      {upOpen && !osDrag && <UploadOverlay mode="pick" where={here && !here.system ? here.name : "Files, sorted by kind"} onClose={() => setUpOpen(false)} onFiles={(f) => sendFiles(f)} onLink={importLink} />}
 
       {menu && (() => { const m = menuFor(menu.keys); return <ContextMenu at={menu.at} title={m.title} entries={m.entries} onClose={() => setMenu(null)} />; })()}
 
