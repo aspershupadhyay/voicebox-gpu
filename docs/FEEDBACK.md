@@ -4,7 +4,23 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round ("fetch failed", 2026-10-29)
+## Latest round (the L4 for downloads, side by side, full-size carousel photos, 2026-10-29)
+
+- **"It just keeps saying connecting to Colab; keep it on the L4"**: the runtime the downloads started had been stopped
+  ("downloads done"), but its worker kept heartbeating while Colab tore it down, so a new download kept sending to a
+  dead tunnel (530) and never started a runtime. Now stopping a runtime marks its worker offline at once, heartbeats
+  from a stopped runtime are ignored, and a worker that stays unreachable for three looks starts a fresh runtime (if
+  Colab has none assigned). Downloads start the L4 again (the owner's call), not the CPU runtime; it still stops itself
+  once they're in.
+- **"Downloads should run at the same time, not queue"**: the worker has its own download lane, four at once, beside
+  the GPU and CPU lanes (VOICEBOX_FETCH_WORKERS); the per-site pacing still spaces each site's requests.
+- **Carousel photos came at 150x150** (slide check: "Too small (150x150)" on #02-#08): Instagram lists each photo's
+  sizes smallest first and without dimensions for a signed-out downloader, and the picker took the first. Now sizes
+  are ranked by their dimensions, else the size in the address (s150x150, p1080x1350), else later = bigger; the saved
+  photo's real size is checked and the next sizes are tried while it's under 600 px. If the site offers nothing bigger,
+  the row says so ("Photo 4 only came at 150x150: Instagram gave a signed-out downloader nothing bigger").
+
+## Earlier round ("fetch failed", 2026-10-29)
 
 - **"It says fetch failed"**: the Colab CPU runtime started (0.08 units an hour) and its worker registered 7 s after
   launch, but its brand-new trycloudflare address didn't resolve yet, so the dashboard's first job request threw
