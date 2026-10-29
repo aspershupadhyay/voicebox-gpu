@@ -136,6 +136,15 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "qmodels" && !b) return Response.json({ models: await (await import("@/lib/qwenmodels")).listQwenModelsWithSamples() });
     if (a === "kvoices" && !b) return Response.json({ voices: await listKVoices() });
     if (a === "spaces" && !b) return Response.json(await getSpaces());
+    if (a === "radar") {
+      // Grow → Radar (lib/radar-data.ts): the sweep, watchlist and track record; radar/kw?q= one keyword; radar/compare?q=a|b
+      const rd = await import("@/lib/radar-data");
+      const q = new URL(req.url).searchParams;
+      const fmt = (["yt_video", "yt_short", "ig_reel", "ig_post"] as const).find((f) => f === q.get("fmt")) ?? null;
+      if (!b) { after(() => rd.refreshWatch().catch(() => null)); return Response.json(await rd.overview(q.get("fresh") === "1")); }
+      if (b === "kw") return Response.json(await rd.keyword(q.get("q") ?? "", { geo: q.get("geo") ?? undefined, fmt, deep: q.get("deep") === "1", fresh: q.get("fresh") === "1" }));
+      if (b === "compare") return Response.json({ results: await rd.compare((q.get("q") ?? "").split("|").filter(Boolean), { geo: q.get("geo") ?? undefined, fmt }) });
+    }
     if (a === "writing" && !b) {
       // the Writing room: your posts and scores, rivals' uploads, what lengths and tags work, captions per target
       const { writingData } = await import("@/lib/writing-data");
@@ -235,6 +244,15 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     let body = await req.json().catch(() => ({}));
     if (a === "publish") return await (await import("@/lib/publish/api")).publishPost(g.path.slice(1), body);
+    if (a === "radar") {
+      // Grow → Radar: watch / unwatch a keyword, the lane (seeds and countries), a title's SEO score
+      const rd = await import("@/lib/radar-data");
+      const by = (await currentUser())?.name ?? "Dashboard";
+      const fmt = (["yt_video", "yt_short", "ig_reel", "ig_post"] as const).find((f) => f === body.fmt) ?? null;
+      if (b === "watch") return Response.json(await rd.watch(String(body.q ?? ""), by, fmt));
+      if (b === "unwatch") return Response.json({ watch: await rd.unwatch(String(body.q ?? "")) });
+      if (b === "config") return Response.json(await rd.setConfig({ seeds: Array.isArray(body.seeds) ? body.seeds.map(String) : undefined, geos: Array.isArray(body.geos) ? body.geos.map(String) : undefined }));
+    }
     if (a === "pipeline" && b && ID.test(b)) {
       // the post pipeline: { step: "all" | "voice" | "subtitles" | "thumbnail" | "schedule", force? }, or /<post>/stop
       const pl = await import("@/lib/pipeline");

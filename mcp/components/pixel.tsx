@@ -298,6 +298,18 @@ const SCENES: Record<string, { label: string; rects: R[] }> = {
       ground,
     ],
   },
+  radar: {
+    label: "A radar dish on a hill scanning the night sky, signals blinking in",
+    rects: [
+      ...sky([[3, 1], [9, 5], [44, 2], [40, 7]]),
+      ...ring(14, 4, 2, 1, 0, "k-ringg"), ...ring(14, 4, 4, 3, 0.35, "k-ringg"), ...ring(14, 4, 6, 5, 0.7, "k-ringg"),
+      [30, 3, 1, 1, "k-y k-blink"], [36, 6, 1, 1, "k-live k-blink2"], [26, 7, 1, 1, "k-v k-blink"],
+      [18, 6, 2, 1, "k-ink2"], [17, 7, 4, 1, "k-ink2"], [16, 8, 6, 1, "k-ink2"], [17, 9, 4, 1, "k-d"], [19, 10, 1, 3, "k-d"], [18, 13, 3, 1, "k-d"],
+      [20, 5, 1, 1, "k-ink k-glow"],
+      [8, 14, 30, 1, "k-gd"], [12, 13, 20, 1, "k-gd"],
+      ground,
+    ],
+  },
   writing: {
     label: "A typewriter on a desk, a page rising out of it and an ink pot",
     rects: [
@@ -315,7 +327,7 @@ const SCENES: Record<string, { label: string; rects: R[] }> = {
 const SCENE_OF: [RegExp, string][] = [
   [/^\/writing/, "writing"], [/^\/voices/, "voices"], [/^\/posts/, "posts"], [/^\/files/, "files"], [/^\/voiceover/, "voiceover"], [/^\/clean-up/, "cleanup"],
   [/^\/subtitles/, "subtitles"], [/^\/images/, "images"], [/^\/analytics\/live/, "live"], [/^\/analytics\/content/, "content"],
-  [/^\/analytics\/audience/, "audience"], [/^\/analytics\/when-to-post/, "when"], [/^\/analytics\/competitors/, "competitors"],
+  [/^\/analytics\/audience/, "audience"], [/^\/analytics\/when-to-post/, "when"], [/^\/analytics\/competitors/, "competitors"], [/^\/analytics\/radar/, "radar"],
   [/^\/analytics\/youtube/, "youtube"], [/^\/analytics\/instagram/, "instagram"], [/^\/analytics/, "grow"],
 ];
 export const sceneFor = (path: string) => SCENE_OF.find(([re]) => re.test(path))?.[1];

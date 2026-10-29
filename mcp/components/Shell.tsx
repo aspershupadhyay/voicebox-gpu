@@ -4,7 +4,7 @@
 // sidebar as a drawer. Create is the studio (voices, audio, images, files); Grow is analytics (everything under
 // /analytics), with its own pages, its own tabs on phones and the rivals you pinned. The switch remembers where you were.
 import {
-  ArrowsClockwise, Broadcast, CalendarDots, SidebarSimple, CaretDown, ChartLineUp, Rows, SquaresFour, Trophy, UsersThree, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
+  ArrowsClockwise, Broadcast, CalendarDots, Crosshair, SidebarSimple, CaretDown, ChartLineUp, Rows, SquaresFour, Trophy, UsersThree, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
   FileAudio, FileText, FilmStrip, Folder, Folders, MagicWand, MagnifyingGlass, Microphone, Paperclip, PenNib, Plus, Power, SignOut, Star, UserSound, X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
@@ -49,6 +49,7 @@ export const GROW: { href: string; name: string; Icon: typeof House; mv?: string
   { href: "/analytics/audience", name: "Audience", Icon: UsersThree, mv: "users" },
   { href: "/analytics/when-to-post", name: "When to post", Icon: CalendarDots, mv: "calendar" },
   { href: "/analytics/competitors", name: "Competitors", Icon: Trophy, mv: "trophy" },
+  { href: "/analytics/radar", name: "Radar", Icon: Crosshair },
   { href: "/analytics/youtube", name: "YouTube", Icon: ChartLineUp, net: "youtube" },
   { href: "/analytics/instagram", name: "Instagram", Icon: ChartLineUp, net: "instagram" },
 ];

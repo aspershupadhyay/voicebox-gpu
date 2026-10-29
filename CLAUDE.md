@@ -24,7 +24,7 @@ Every dashboard change follows `docs/DESIGN.md`. In short:
 - Build from `components/ui.tsx`; every text colour is a token at 4.5:1 or better; every control has a label.
 - Two modes, switched at the top of the sidebar: Create (Home at `/home`, Voices, Posts, Files, Voiceover,
   Clean-up/Subtitles/Images) and Grow (analytics under `/analytics`: Overview, Live, Content, Audience, When to post,
-  Competitors, YouTube, Instagram, pinned rivals). The studio opens on Grow. Search and Settings are at the top right;
+  Competitors, Radar, YouTube, Instagram, pinned rivals). The studio opens on Grow. Search and Settings are at the top right;
   the GPU lives only in Settings → GPU & engines. Making a voice lives under Voices (`/voices/new`, `/voices/professional`, `/voices/revoice`).
 - Never a native `<select>`: use `Select` from `components/pop.tsx`. Every popup closes on Escape and a click outside.
   New capabilities become views or tabs, not new pages. Pages rise in; only live things loop.
