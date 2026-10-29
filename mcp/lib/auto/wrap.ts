@@ -11,12 +11,30 @@ type Args = Record<string, unknown>;
 type Ctx = { http?: { req?: Request; authInfo?: { clientId?: string } }; authInfo?: { clientId?: string } } | undefined;
 type Result = { content: { type: string; text?: string }[]; isError?: boolean };
 
-/** Which approval a call needs, if any. Later phases add their own (repo merges, schedules that publish). */
-export const GATES: Record<string, (a: Args) => AskKey | null> = {
+/** Which approval a call needs, if any; `always` asks even when the owner switched that kind off (the platform repo's
+ *  merges). Later phases add their own. */
+type Gate = AskKey | { key: AskKey; always: boolean } | null;
+export const GATES: Record<string, (a: Args) => Gate | Promise<Gate>> = {
   publish_post: (a) => (a.go === "now" || a.go === "share_to_story" ? "publish_now" : null),
   auto_post: (a) => (a.go === "now" ? "publish_now" : null),
   automation_rules: (a) => (a.set && Object.keys(a.set as object).length ? "publishing_rules" : null),
   delete_post: () => "delete", delete_media: () => "delete", delete_folder: () => "delete", delete_files: () => "delete", empty_trash: () => "delete",
+  repo: async (a) => {
+    if (a.action === "allow") return "add_repo";
+    if (a.action === "merge") {
+      const r = await import("./repo");
+      const repo = String(a.repo ?? "").toLowerCase();
+      // a red or unknown PR is refused by the tool itself: the owner isn't asked about something that can't merge
+      const s = await r.allowed(repo).then(() => r.status(repo, Number(a.pr))).catch(() => null);
+      return s?.green ? { key: "merge_pr", always: repo === r.PLATFORM } : null;
+    }
+    if ((a.action === "commit" || a.action === "push") && typeof a.repo === "string" && typeof a.branch === "string") {
+      const r = await import("./repo");
+      const w = await r.writable(a.repo.toLowerCase(), a.branch).catch(() => null); // a bad branch is refused by the tool itself
+      return w?.protected ? "push_protected" : null;
+    }
+    return null;
+  },
 };
 
 /** Calls that spend Colab units or change things: stopped by the kill switch; the GPU ones also count against the cap. */
@@ -26,10 +44,12 @@ export const SPENDS: Record<string, (a: Args) => boolean> = {
   voice_dataset: (a) => !!a.action && a.action !== "list",
   gpu: (a) => a.action === "start" || a.action === "train_draft",
   run: () => true,
+  repo: (a) => a.action === "checkout" || a.action === "push",
 };
 /** Changes that aren't GPU work but still stop while paused (the gated ones always do). */
 const PAUSES: Record<string, (a: Args) => boolean> = {
   publish_post: (a) => !!a.go && a.go !== "save", auto_post: () => true,
+  repo: (a) => ["branch", "commit", "push", "pr", "comment", "merge", "allow"].includes(String(a.action)),
 };
 
 /** Which model made the call: the X-Model header (Gemini CLI and others set it, docs/AUTOMATION.md), else the client
@@ -62,9 +82,17 @@ export function later(p: Promise<unknown>) {
   try { after(() => p); } catch { void p; }
 }
 
+/** One line the owner reads in the inbox. */
+function describe(tool: string, a: Args) {
+  if (tool === "repo") return `${a.action} ${a.repo}${a.pr ? ` PR #${a.pr}` : ""}${a.branch ? ` on ${a.branch}` : ""}${Array.isArray(a.files) ? ` (${a.files.length} files)` : ""}`;
+  return `${tool} ${trimArgs(a)}`;
+}
+
 /** The checks one call has to pass before it runs. null = go; else the answer to give instead. */
 export async function preflight(tool: string, args: Args, model: string): Promise<Result | null> {
-  const gate = GATES[tool]?.(args) ?? null;
+  const g = (await GATES[tool]?.(args)) ?? null;
+  const gate = typeof g === "string" ? g : g?.key ?? null;
+  const always = typeof g === "object" && !!g?.always;
   const spends = SPENDS[tool]?.(args) ?? false;
   if (!gate && !spends && !PAUSES[tool]?.(args)) return null;
   const c = await getControl();
@@ -79,7 +107,7 @@ export async function preflight(tool: string, args: Args, model: string): Promis
       return stop(`NEEDS APPROVAL (id ${ap.id}): ${u.spent} of the day's ${c.cap_units} Colab units are spent. The owner has been asked to allow more today (Settings → Automation). Call approvals action=wait id=${ap.id}, then repeat this call.`);
     }
   }
-  if (gate && c.ask_first.includes(gate)) {
+  if (gate && (always || c.ask_first.includes(gate))) {
     const h = callHash(tool, args);
     const id = typeof args.approval_id === "string" ? args.approval_id : "";
     if (id) {
@@ -87,7 +115,7 @@ export async function preflight(tool: string, args: Args, model: string): Promis
       if (why) return stop(`APPROVAL NOT USABLE (${id}): ${why}. ${why.includes("hasn't decided") ? `Call approvals action=wait id=${id}.` : "Call this tool again without approval_id to ask afresh."}`);
       return null;
     }
-    const ap = await requestApproval({ action: gate, summary: `${tool} ${trimArgs(args)}`, tool, hash: h, by: model });
+    const ap = await requestApproval({ action: gate, summary: describe(tool, args), tool, hash: h, by: model });
     return stop(`NEEDS APPROVAL (id ${ap.id}): ${ASK_FIRST[gate].toLowerCase()} waits for the owner's click in Settings → Automation. Call approvals action=wait id=${ap.id} (waits up to 45 s a call); once approved, repeat this exact call with approval_id "${ap.id}". Don't retry without it.`);
   }
   return null;

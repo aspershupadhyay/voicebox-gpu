@@ -107,8 +107,12 @@ The owner's feedback still goes into `docs/FEEDBACK.md` in the same PR as the ch
   worker's home closed, its local ports refused by iptables, a clean environment, time and memory limits, trimmed
   output, `out/` saved to Files; the `voicebox` code-mode module), `lib/auto/bench.ts`, `lib/auto/playbook.ts` with
   `scripts/build_playbook.py` (run at every deploy), tools `run` and `playbook`.
-- [ ] **3. Repos**: `repo` with the allow-list and the GitHub key (needs the owner's key). Done when: a model can open a
-  PR on the workbench repo and read its CI.
+- [x] **3. Repos**: `repo` with the allow-list and the GitHub key (needs the owner's key). Done when: a model can open a
+  PR on the workbench repo and read its CI. **Shipped** (works once the key is added): `lib/auto/repo.ts`
+  (GitHub REST: tree, read, branch, one commit of many files through the git data API, PR, status with every check
+  and the end of a failed job's log, comment, merge only when green), tool `repo`, bench ops `clone` (the key in a
+  header for that one clone, never in the clone's config) and `diff` (the workspace's changes read as the sandbox
+  user, committed through the API, so the key never sits on the worker), the Repos card in Settings → Automation.
 - [ ] **4. Media I**: `edit_video`, `inspect_media`, `video_qa` (ffmpeg, NVENC on the L4, Whisper captions, QA runs
   after every render). Done when: a Reel is cut, captioned and checked in 3 calls.
 - [ ] **5. Web**: `browse` (Playwright on the worker), `search` (needs a key). Done when: a model reads a page and
@@ -163,12 +167,24 @@ Any MCP client that speaks streamable HTTP works the same way. claude.ai uses th
 - Rendering is HyperFrames; Remotion is not used.
 - About 15 new tools in total, never one per small step.
 
+## How repos are checked
+
+Against a stand-in GitHub API: a repo off the allow-list is refused; `allow` asks the owner; the default branch is
+refused outright; a protected branch asks first; commit, PR and status work; a failed check's log tail comes back;
+a red PR is refused without bothering the owner; a green one merges after approval; the platform repo's merges ask
+even with "Merging a pull request" switched off. On the worker: clone and diff with a local repo, the key absent from
+the clone's config, a symlink in the clone left out of the diff.
+
 ## How the sandbox is checked
 
 Tested on a Linux box as root, as on Colab: code runs as `vbsandbox`, can't read the worker's home (PermissionError),
 sees no `WORKER_SECRET`, can't open the worker's local ports (refused), is killed at its time limit and its memory
 limit, its output is trimmed (head and tail), `out/` files are collected; Python, Node and Bash run. Code mode from a
 script: four tool calls in one run, a gated one held for approval, each logged as `<model> code`, via code.
+Root never touches the workspace by path: inputs and code are written as the sandbox user, outputs come back through a
+tar stream read as the sandbox user (regular files only), so a symlink planted in `out/` or `in/` can't make the worker
+read or write its own files (tested: a link to a worker file in `out/` is left out; no file appears through a link in
+`in/`).
 
 ## Waiting on the owner
 

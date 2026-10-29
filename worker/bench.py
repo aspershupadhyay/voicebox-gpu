@@ -7,7 +7,7 @@ limit, a memory watchdog and trimmed output. A workspace lives as long as the ru
 are saved to Files by the dashboard. Code mode: `import voicebox` calls any VoiceBox tool from the script with a key
 that lasts as long as the run (it still goes through the owner's approvals, the units cap and the call log), so a
 script can filter a thousand rows and print five instead of passing them through the model."""
-import ipaddress, json, os, pwd, re, shutil, signal, socket, subprocess, threading, time, urllib.parse, urllib.request
+import ipaddress, json, os, pwd, re, shutil, signal, socket, stat, subprocess, threading, time, urllib.parse
 
 import config as C
 
@@ -103,7 +103,8 @@ def workspace(name):
 
 
 def safe_url(u):
-    """Inputs are fetched by the worker: https/http to the internet only, never this machine or a private network."""
+    """Inputs: http(s) to the internet only (checked here, then fetched as the sandbox user, who can't reach this
+    machine anyway)."""
     p = urllib.parse.urlparse(str(u or ""))
     if p.scheme not in ("http", "https") or not p.hostname:
         raise ValueError(f"not a web address: {str(u)[:80]}")
@@ -115,19 +116,56 @@ def safe_url(u):
     return p.geturl()
 
 
+def _drop(ids, fsize=4 << 30):
+    """preexec for anything run as the sandbox user: its own session (so it's killed as a group), limits, then the user."""
+    def go():
+        os.setsid()
+        import resource
+        resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        if ids:
+            os.setgroups([])
+            os.setgid(ids[1])
+            os.setuid(ids[0])
+    return go
+
+
+BASE_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
+
+
+def as_user(argv, cwd, stdin=None, timeout=600, env=None):
+    """Run a helper as the sandbox user (never as root inside the workspace: the code there could have left symlinks
+    pointing at the worker's files). Returns (exit code, stdout bytes, stderr text)."""
+    r = subprocess.run(argv, cwd=cwd, input=stdin, capture_output=True, timeout=timeout, env={**BASE_ENV, "HOME": cwd, **(env or {})},
+                       preexec_fn=_drop(_ids()))
+    return r.returncode, r.stdout, r.stderr.decode("utf-8", "replace")[-2000:]
+
+
+FETCH_PY = r"""
+import sys, urllib.request, shutil
+req = urllib.request.Request(sys.argv[1], headers={"User-Agent": "voicebox-bench"})
+with urllib.request.urlopen(req, timeout=300) as r, open(sys.argv[2], "wb") as out:
+    shutil.copyfileobj(r, out, 1 << 20)
+print(out.tell() if hasattr(out, "tell") else 0)
+"""
+
+
 def fetch_inputs(job, ws):
     got = []
     for f in job["bench"].get("files") or []:
-        name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(f.get("name") or "file"))[:120] or "file"
-        dst = os.path.join(ws, "in", name)
-        req = urllib.request.Request(safe_url(f.get("url")), headers={"User-Agent": "voicebox-bench"})
-        with urllib.request.urlopen(req, timeout=300) as r, open(dst, "wb") as out:
-            shutil.copyfileobj(r, out, 1 << 20)
-        ids = _ids()
-        if ids:
-            os.lchown(dst, *ids)
-        got.append({"name": f"in/{name}", "mb": round(os.path.getsize(dst) / 1e6, 2)})
+        name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(f.get("name") or "file"))[:120].lstrip(".") or "file"
+        code, out, err = as_user(["python3", "-c", FETCH_PY, safe_url(f.get("url")), f"in/{name}"], ws, timeout=900)
+        if code:
+            raise ValueError(f"couldn't fetch {name}: {err.strip().splitlines()[-1] if err.strip() else code}")
+        size = os.lstat(os.path.join(ws, "in", name)).st_size
+        got.append({"name": f"in/{name}", "mb": round(size / 1e6, 2)})
     return got
+
+
+def write_as_user(ws, rel, data):
+    code, _, err = as_user(["sh", "-c", 'mkdir -p "$(dirname "$1")" && cat > "$1"', "sh", rel], ws, stdin=data, timeout=60)
+    if code:
+        raise ValueError(f"couldn't write {rel}: {err.strip()}")
 
 
 # ── running code ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -156,13 +194,15 @@ def _rss_mb(pgid):
 
 
 def snapshot(d):
+    """Regular files under d (never following a link), with their mtime and size."""
     out = {}
     for dirpath, _, files in os.walk(d):
         for n in files:
             p = os.path.join(dirpath, n)
             try:
-                st = os.stat(p)
-                out[os.path.relpath(p, d)] = (st.st_mtime_ns, st.st_size)
+                st = os.lstat(p)
+                if stat.S_ISREG(st.st_mode):
+                    out[os.path.relpath(p, d)] = (st.st_mtime_ns, st.st_size)
             except OSError:
                 pass
     return out
@@ -175,46 +215,25 @@ def run_code(job, jdir):
     b["stage"] = "fetching inputs"
     b["inputs"] = fetch_inputs(job, ws)
     fname, cmd = LANGS[b["lang"]]
-    code_path = os.path.join(ws, ".run", f"{job['id']}-{fname}")
-    os.makedirs(os.path.dirname(code_path), exist_ok=True)
-    with open(code_path, "w") as f:
-        f.write(b["code"])
-    ids = _ids()
-    if ids:
-        for p in (os.path.dirname(code_path), code_path):
-            os.lchown(p, *ids)
+    rel = f".run/{job['id']}-{fname}"
+    write_as_user(ws, rel, b["code"].encode())
     before = snapshot(os.path.join(ws, "out"))
-    env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": ws, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
-           "PYTHONPATH": KIT, "PYTHONUNBUFFERED": "1", "MPLBACKEND": "Agg", "TMPDIR": os.path.join(ws, ".tmp"),
-           "PIP_USER": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PYTHONUSERBASE": os.path.join(ws, ".local"),
-           "VOICEBOX_WORKSPACE": ws}
+    env = {**BASE_ENV, "HOME": ws, "PYTHONPATH": KIT, "PYTHONUNBUFFERED": "1", "MPLBACKEND": "Agg", "TMPDIR": os.path.join(ws, ".tmp"),
+           "PIP_USER": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PYTHONUSERBASE": os.path.join(ws, ".local"), "VOICEBOX_WORKSPACE": ws}
     for k in ("VOICEBOX_URL", "VOICEBOX_KEY", "VOICEBOX_MODEL"):
         if b.get(k.lower()):
             env[k] = b[k.lower()]
     for k in ("CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES", "LD_LIBRARY_PATH"):  # the GPU, not the secrets
         if os.environ.get(k):
             env[k] = os.environ[k]
-    os.makedirs(env["TMPDIR"], exist_ok=True)
-    if ids:
-        os.lchown(env["TMPDIR"], *ids)
-
-    def drop():
-        os.setsid()
-        import resource
-        resource.setrlimit(resource.RLIMIT_FSIZE, (4 << 30, 4 << 30))
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-        if ids:
-            os.setgroups([])
-            os.setgid(ids[1])
-            os.setuid(ids[0])
-
+    as_user(["mkdir", "-p", ".tmp"], ws, timeout=30)
     out_p, err_p = os.path.join(jdir, "stdout.txt"), os.path.join(jdir, "stderr.txt")
     b["stage"] = "running"
     t0 = time.time()
     killed = None
     with open(out_p, "wb") as so, open(err_p, "wb") as se:
-        p = subprocess.Popen(cmd + [code_path] + [str(a) for a in b.get("args") or []], cwd=ws, env=env, stdout=so, stderr=se,
-                             stdin=subprocess.DEVNULL, preexec_fn=drop)
+        p = subprocess.Popen(cmd + [os.path.join(ws, rel)] + [str(a) for a in b.get("args") or []], cwd=ws, env=env, stdout=so, stderr=se,
+                             stdin=subprocess.DEVNULL, preexec_fn=_drop(_ids()))
         while p.poll() is None:
             time.sleep(0.5)
             elapsed = time.time() - t0
@@ -225,15 +244,15 @@ def run_code(job, jdir):
             elif int(elapsed * 2) % 6 == 0 and _rss_mb(p.pid) > b["memory_mb"]:
                 killed = f"memory limit ({b['memory_mb']} MB)"
             if killed:
-                try:
-                    os.killpg(p.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                p.wait()
                 break
             with open(out_p, "rb") as f:  # the live tail, for get_job while it runs
                 f.seek(max(0, os.path.getsize(out_p) - 1500))
                 b["tail"] = f.read().decode("utf-8", "replace")
+        try:  # whatever it left running in the background goes too
+            os.killpg(p.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        p.wait()
     b["seconds"] = round(time.time() - t0, 2)
     b["exit"] = p.returncode
     read = lambda path: open(path, "rb").read().decode("utf-8", "replace")
@@ -244,33 +263,120 @@ def run_code(job, jdir):
         raise Cancelled()
     if killed:
         b["killed"] = killed
-    collect_outputs(job, jdir, os.path.join(ws, "out"), before)
+    collect_outputs(job, jdir, ws, "out", before)
     b["stage"] = "done"
 
 
-def collect_outputs(job, jdir, out_dir, before):
+def pull_files(ws, base, rels, dst_dir, limit=MAX_OUT_BYTES):
+    """Copy files out of the workspace as the sandbox user, through a tar stream, keeping regular files only: what
+    it hands over is only what it could read itself. Returns {rel: local path}."""
+    import tarfile
+    got, total = {}, 0
+    p = subprocess.Popen(["tar", "-C", base, "-cf", "-", "--null", "-T", "-"], cwd=ws, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, env={**BASE_ENV, "HOME": ws}, preexec_fn=_drop(_ids()))
+    feeder = threading.Thread(target=lambda: (p.stdin.write(b"\0".join(r.encode() for r in rels)), p.stdin.close()), daemon=True)
+    feeder.start()
+    with tarfile.open(fileobj=p.stdout, mode="r|") as tf:
+        for m in tf:
+            if not m.isfile() or m.name not in rels or total + m.size > limit:
+                continue
+            flat = re.sub(r"[^A-Za-z0-9._-]+", "_", m.name.replace("/", "__"))[-120:]
+            dst = os.path.join(dst_dir, flat)
+            with tf.extractfile(m) as src, open(dst, "wb") as out:
+                shutil.copyfileobj(src, out, 1 << 20)
+            total += m.size
+            got[m.name] = dst
+    p.wait()
+    return got
+
+
+def collect_outputs(job, jdir, ws, sub, before):
     """New or changed files in out/ are copied next to the job, for the dashboard to save into Files."""
     b = job["bench"]
-    after = snapshot(out_dir)
+    after = snapshot(os.path.join(ws, sub))
     changed = sorted(k for k, v in after.items() if before.get(k) != v)
-    files, total = [], 0
-    for rel in changed[:MAX_OUT_FILES]:
-        size = after[rel][1]
-        if total + size > MAX_OUT_BYTES:
-            b.setdefault("notes", []).append(f"{rel} left out: outputs go up to 2 GB a run")
-            continue
-        flat = re.sub(r"[^A-Za-z0-9._-]+", "_", rel.replace("/", "__"))[-120:]
-        shutil.copy2(os.path.join(out_dir, rel), os.path.join(jdir, flat))
-        total += size
-        files.append({"name": flat, "path": f"out/{rel}", "bytes": size})
     if len(changed) > MAX_OUT_FILES:
         b.setdefault("notes", []).append(f"{len(changed) - MAX_OUT_FILES} more files in out/ weren't kept (40 a run)")
-    b["outputs"] = files
+    got = pull_files(ws, os.path.join(ws, sub), changed[:MAX_OUT_FILES], jdir) if changed else {}
+    for rel in changed[:MAX_OUT_FILES]:
+        if rel not in got:
+            b.setdefault("notes", []).append(f"out/{rel} left out (over 2 GB a run, or it changed while being copied)")
+    b["outputs"] = [{"name": os.path.basename(path), "path": f"out/{rel}", "bytes": os.path.getsize(path)} for rel, path in got.items()]
+
+
+# ── repos: a clone for a workspace, and its changes back (lib/auto/repo.ts commits them through the API) ─────────────
+
+def clone_repo(job, jdir):
+    """Clone as root with the key in a header (never written into the clone), hand it to the sandbox user, move it
+    into the workspace. The key leaves with this job."""
+    b = job["bench"]
+    b["isolation"] = setup()
+    ws = workspace(b["workspace"])
+    dest = os.path.join(ws, b["dir"])
+    if os.path.lexists(dest):
+        if not b.get("fresh"):
+            raise ValueError(f"{b['dir']} is already in workspace {b['workspace']}: pass fresh to clone it again (its changes are lost)")
+        as_user(["rm", "-rf", "--", b["dir"]], ws, timeout=300)
+    stage = os.path.join(ROOT, ".stage", job["id"])
+    os.makedirs(os.path.dirname(stage), exist_ok=True)
+    os.chmod(os.path.dirname(stage), 0o711)
+    b["stage"] = "cloning"
+    key = b.pop("header", "")
+    r = subprocess.run(["git", "-c", f"http.extraHeader={key}", "-c", "core.hooksPath=/dev/null", "clone", "--depth", str(b["depth"]),
+                        "--branch", b["ref"], "--", b["url"], stage], capture_output=True, timeout=900, env={**BASE_ENV, "HOME": jdir, "GIT_TERMINAL_PROMPT": "0"})
+    if r.returncode:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise ValueError(f"clone failed: {r.stderr.decode('utf-8', 'replace').replace(key, '***')[-600:]}")
+    ids = _ids()
+    if ids:
+        subprocess.run(["chown", "-R", "-P", f"{ids[0]}:{ids[1]}", stage], check=True)
+    os.rename(stage, dest)  # the final name isn't followed: a link left there can't redirect it
+    head = as_user(["git", "-C", b["dir"], "rev-parse", "--short", "HEAD"], ws, timeout=30)[1].decode().strip()
+    b.update(stage="done", head=head, path=f"{b['dir']}/")
+
+
+DIFF_PY = r"""
+import base64, json, os, subprocess, sys
+os.chdir(sys.argv[1])
+z = subprocess.run(["git", "status", "--porcelain=v1", "-z", "-uall"], capture_output=True, check=True).stdout.decode().split("\0")
+out, total, i = [], 0, 0
+while i < len(z):
+    e = z[i]; i += 1
+    if not e:
+        continue
+    st, path = e[:2], e[3:]
+    if st[0] == "R":
+        out.append({"path": z[i], "delete": True}); i += 1
+    if "D" in st:
+        out.append({"path": path, "delete": True}); continue
+    if os.path.islink(path) or not os.path.isfile(path):
+        continue
+    data = open(path, "rb").read()
+    total += len(data)
+    if total > 20_000_000:
+        print(json.dumps({"error": "over 20 MB of changes: commit less at once"})); sys.exit(0)
+    out.append({"path": path, "base64": base64.b64encode(data).decode()})
+head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True).stdout.decode().strip()
+print(json.dumps({"changes": out, "head": head}))
+"""
+
+
+def diff_repo(job, jdir):
+    """The clone's changes (new, changed, deleted files), read as the sandbox user, for a commit made by the dashboard."""
+    b = job["bench"]
+    ws = workspace(b["workspace"])
+    code, out, err = as_user(["python3", "-c", DIFF_PY, b["dir"]], ws, timeout=120)
+    if code:
+        raise ValueError(f"couldn't read the changes: {err.strip()[-400:]}")
+    d = json.loads(out.decode() or "{}")
+    if d.get("error"):
+        raise ValueError(d["error"])
+    b.update(stage="done", changes=d["changes"], head=d["head"], count=len(d["changes"]))
 
 
 # ── the job ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-OPS = {"run": run_code}
+OPS = {"run": run_code, "clone": clone_repo, "diff": diff_repo}
 
 
 def prepare(job, body):
@@ -298,6 +404,20 @@ def prepare(job, body):
         if not WS_RE.match(b["workspace"]):
             raise ValueError("workspace: lowercase letters, digits and dashes, up to 40 (e.g. case-025)")
         job["est_total"] = float(min(b["timeout_s"], 60))
+    if op in ("clone", "diff"):
+        d = str(body.get("dir") or "")
+        if not re.match(r"^[A-Za-z0-9._-]{1,100}$", d) or d.startswith("."):
+            raise ValueError("dir: the folder for the clone in the workspace, e.g. voicebox-workbench")
+        b.update(workspace=str(body.get("workspace") or "default"), dir=d)
+        if not WS_RE.match(b["workspace"]):
+            raise ValueError("workspace: lowercase letters, digits and dashes, up to 40 (e.g. case-025)")
+    if op == "clone":
+        url, ref = str(body.get("url") or ""), str(body.get("ref") or "")
+        if not re.match(r"^https://[A-Za-z0-9.-]+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(\.git)?$", url) and not (os.environ.get("VOICEBOX_BENCH_ALLOW_LOCAL") == "1" and url.startswith("/")):
+            raise ValueError("url: https://github.com/<owner>/<repo>.git")
+        if not re.match(r"^[A-Za-z0-9._/-]{1,100}$", ref):
+            raise ValueError("ref: a branch or tag")
+        b.update(url=url, ref=ref, header=str(body.get("header") or "")[:500], fresh=bool(body.get("fresh")), depth=max(1, min(500, int(body.get("depth") or 50))))
     job["bench"] = b
     job["engine"], job["voice"] = op, ""
 
@@ -307,11 +427,13 @@ def run(job, jdir):
     OPS[job["bench"]["op"]](job, jdir)
 
 
-def view(job):
-    """What get_job shows: never the key, never the whole code."""
+def view(job, full=True):
+    """What get_job shows: never a key, never the whole code; a diff's file contents only to a job's own read."""
     b = dict(job.get("bench") or {})
-    for k in ("voicebox_key", "code", "files"):
+    for k in ("voicebox_key", "code", "files", "header"):
         b.pop(k, None)
+    if not full:
+        b.pop("changes", None)
     return b
 
 

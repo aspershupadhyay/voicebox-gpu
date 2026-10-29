@@ -2,7 +2,7 @@
 // Settings → Automation (docs/AUTOMATION.md): what models and automations may do on their own. The approvals inbox
 // (risky actions wait here for a click), the kill switch, the day's Colab units cap, which actions ask first, and the
 // call log of every MCP call with the model that made it. Acts at once; server side lib/auto/control.ts.
-import { CheckCircle, Hand, Pause, Play, Robot, Stop, WarningCircle, X } from "@phosphor-icons/react";
+import { CheckCircle, GitBranch, Hand, Pause, Play, Plus, Robot, Stop, WarningCircle, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
@@ -15,7 +15,7 @@ type Log = { t: number; tool: string; model: string; ok: boolean; ms: number; er
 type Data = {
   control: { paused: boolean; paused_at?: number; paused_by?: string; pause_reason?: string; cap_units: number; ask_first: string[]; repos: string[] };
   units: { spent: number | null; balance: number | null };
-  approvals: Approval[]; log: Log[]; ask_first: Record<string, string>;
+  approvals: Approval[]; log: Log[]; ask_first: Record<string, string>; github_key: boolean; platform: string;
 };
 
 const ago = (t: number) => {
@@ -31,6 +31,7 @@ export default function Automation() {
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState("");
   const [cap, setCap] = useState("");
+  const [repo, setRepo] = useState("");
   const load = useCallback(() => {
     api<Data>(`automation${model ? `?model=${encodeURIComponent(model)}` : ""}`).then((r) => { setD(r); setErr(null); setCap((c) => c || String(r.control.cap_units || "")); }).catch((e) => setErr((e as Error).message));
   }, [model]);
@@ -120,7 +121,7 @@ export default function Automation() {
         </section>
       </div>
 
-      <section className="card b-2">
+      <section className="card b-3">
         <div className="card-head"><div><h2>Ask me first</h2><p className="sub">What waits for your click.</p></div>
           <Info label="Ask me first">Switched off, a model does it without asking. The units cap switched off here is a hard stop instead.</Info></div>
         {Object.entries(d.ask_first).map(([k, label]) => (
@@ -128,7 +129,28 @@ export default function Automation() {
         ))}
       </section>
 
-      <section className="card b-4">
+      <section className="card b-3">
+        <div className="card-head"><div><h2><GitBranch size={17} /> Repos</h2><p className="sub">Where models may branch, commit and open PRs. Never main.</p></div>
+          <span className={`pill ${d.github_key ? "ok" : "warn"}`}>{d.github_key ? "Key set" : "No key yet"}</span></div>
+        {!d.github_key && <p className="tiny dim" style={{ marginTop: 0 }}>Add GITHUB_AGENT_TOKEN on Vercel: a fine-grained key with contents and pull requests, for these repos only.</p>}
+        <div className="stack" style={{ gap: 0 }}>
+          {c.repos.map((r) => (
+            <div key={r} className="sec-row">
+              <GitBranch size={16} className="dim" />
+              <div className="small au-wrap"><span className="mono">{r}</span>{r === d.platform ? <span className="dim"> · the studio itself: merges always wait for you</span> : null}</div>
+              <button className="icon-btn danger-h" aria-label={`Remove ${r}`} title={`Remove ${r}`} disabled={busy}
+                onClick={() => act("settings", { repos: c.repos.filter((x) => x !== r) }, `${r} removed`)}><X size={14} /></button>
+            </div>
+          ))}
+          {!c.repos.length && <p className="tiny dim" style={{ margin: "4px 0 0" }}>None yet.</p>}
+        </div>
+        <form className="row" style={{ gap: 8, marginTop: 12 }} onSubmit={(e) => { e.preventDefault(); if (repo.trim()) act("settings", { repos: [...c.repos, repo.trim()] }, `${repo.trim()} added`).then(() => setRepo("")); }}>
+          <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/repo" aria-label="Repo to allow" style={{ flex: 1, minWidth: 0 }} />
+          <button className="ghost" disabled={busy || !repo.trim()}><Plus size={14} />Add</button>
+        </form>
+      </section>
+
+      <section className="card b-6">
         <div className="card-head"><div><h2>Call log</h2><p className="sub">Every MCP call, with the model that made it. Last 2 days.</p></div>
           <Select size="sm" label="Model" style={{ width: 180, flex: "none" }} value={model} onChange={setModel} options={[["", "Every model"], ...models.map((m) => [m, m] as const)]} /></div>
         <div className="table-wrap au-log">

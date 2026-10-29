@@ -4555,7 +4555,7 @@ def job_view(job, urls=True):
                                  "eagle", "polish_engine", "polish", "dl")}
     v["resources"] = job_resources(job)
     if job["kind"] == "bench":
-        v["bench"] = bench.view(job)
+        v["bench"] = bench.view(job, full=urls)
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
     if job["kind"] == "tts":
