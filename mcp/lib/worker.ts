@@ -2,6 +2,17 @@
 import { loadWorker, STALE_MS, type WorkerRecord } from "./registry";
 
 export class WorkerOffline extends Error {}
+/** The worker is registered (it heartbeats) but a request to it didn't get through: a tunnel that's seconds old and
+ *  doesn't resolve yet, a tunnel reconnecting, a worker restarting. */
+export class WorkerUnreachable extends Error {}
+
+/** Why a fetch threw, from Node's "fetch failed" and its cause: the code (ENOTFOUND…) and whether the request
+ *  certainly never reached the worker (then even a POST is safe to send again). */
+function netError(e: unknown) {
+  const err = e as Error & { cause?: { code?: string; message?: string } };
+  const code = err.cause?.code ?? (err.name === "TimeoutError" ? "TIMEOUT" : "");
+  return { code: code || err.message, neverArrived: /^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|UND_ERR_CONNECT_TIMEOUT|EHOSTUNREACH|ENETUNREACH)$/.test(code) };
+}
 
 export async function currentWorker(): Promise<WorkerRecord> {
   const rec = await loadWorker();
@@ -26,13 +37,25 @@ export async function call<T = unknown>(path: string, init: { method?: string; b
   // 530 / 1033 = the tunnel isn't connected (the request never reached the worker), 502-504 = it didn't answer.
   // Reads try again briefly; a POST only on 530, where it certainly never arrived (no job is ever sent twice).
   for (let attempt = 0; ; attempt++) {
-    const r = await fetch(w.url + path, {
-      method,
-      headers: { Authorization: `Bearer ${process.env.WORKER_SECRET}`, "Content-Type": "application/json" },
-      body: init.body ? JSON.stringify(init.body) : undefined,
-      signal: AbortSignal.timeout(init.timeoutMs ?? 25_000),
-      cache: "no-store",
-    });
+    let r: Response;
+    try {
+      r = await fetch(w.url + path, {
+        method,
+        headers: { Authorization: `Bearer ${process.env.WORKER_SECRET}`, "Content-Type": "application/json" },
+        body: init.body ? JSON.stringify(init.body) : undefined,
+        signal: AbortSignal.timeout(init.timeoutMs ?? 25_000),
+        cache: "no-store",
+      });
+    } catch (e) {
+      // a brand-new trycloudflare address takes a few seconds to resolve: a request that never left is sent again
+      // (a POST too: it can't have arrived); a read also on any other network error
+      const n = netError(e);
+      if (attempt < 4 && (n.neverArrived || method === "GET")) {
+        await new Promise((res) => setTimeout(res, 2000 * (attempt + 1)));
+        continue;
+      }
+      throw new WorkerUnreachable(`couldn't reach the Colab worker (${n.code}): ${n.neverArrived ? "its tunnel isn't up yet" : n.code === "TIMEOUT" ? "it didn't answer in time" : "the connection dropped"}`);
+    }
     const text = await r.text();
     let data: unknown;
     try {
@@ -46,7 +69,7 @@ export async function call<T = unknown>(path: string, init: { method?: string; b
       await new Promise((res) => setTimeout(res, 3000 * (attempt + 1)));
       continue;
     }
-    if (edge) throw new Error(`worker ${r.status}: the worker isn't reachable right now (restarting, or its tunnel is reconnecting); try again in a minute`);
+    if (edge) throw new WorkerUnreachable(`worker ${r.status}: the worker isn't reachable right now (restarting, or its tunnel is reconnecting); try again in a minute`);
     throw new Error(`worker ${r.status}: ${(data as { error?: string } | null)?.error ?? text.slice(0, 300)}`);
   }
 }
