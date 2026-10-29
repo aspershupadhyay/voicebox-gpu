@@ -5,12 +5,15 @@
 //           a direct file link, or any page's own preview (og:video / og:image: Cosmos, Unsplash, news sites…);
 //   worker: Instagram, YouTube, TikTok, Facebook, Threads, Reddit, Vimeo and anything the server can't read go to the
 //           Colab worker's yt-dlp (kind "fetch", worker/gateway.py), which uploads each file straight to R2 through a
-//           presigned PUT; the next look at the list copies them into Files.
+//           presigned PUT; the next look at the list (or the worker's next heartbeat) copies them into Files. With the
+//           worker off, the first such link starts the GPU by itself (the cheap voice GPU), and that GPU is stopped
+//           again as soon as its downloads are in (lib/colab.ts onHeartbeat).
+// Each site gets its own folder inside the one picked (default "Downloads"): Downloads/Instagram, Downloads/YouTube…
 // Every link the server fetches is checked first (http(s) only, no private or internal addresses, on every redirect).
 // The list lives in workspace/downloads.json (written with If-Match so two people never lose each other's).
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { getJson, getJsonTagged, getObj, headObj, presign, putJsonIf, putObj } from "./store";
+import { getJson, getJsonTagged, getObj, headObj, presign, putJson, putJsonIf, putObj } from "./store";
 
 export type Source = "instagram" | "youtube" | "tiktok" | "x" | "pinterest" | "cosmos" | "facebook" | "threads" | "reddit" | "vimeo" | "web";
 export type DlItem = { media: string; name: string; kind: string; size: number; preview: string | null };
@@ -28,7 +31,9 @@ const MAX = 200;
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
 const SERVER_MAX = 140e6; // bigger files go through the worker (the server holds a file in memory to copy it)
 const SLOTS = 20;
+const GPU_CLAIM = "workspace/downloads-gpu.json"; // who started the GPU for downloads and when: one start, not one per link
 
+// name: in labels ("@handle on Instagram"); its folder is the same name, except "the web", which goes to "Web"
 export const SOURCES: Record<Source, { name: string; via: "server" | "worker" }> = {
   instagram: { name: "Instagram", via: "worker" }, youtube: { name: "YouTube", via: "worker" }, tiktok: { name: "TikTok", via: "worker" },
   x: { name: "X", via: "server" }, pinterest: { name: "Pinterest", via: "server" }, cosmos: { name: "Cosmos", via: "server" },
@@ -192,14 +197,18 @@ async function change<T>(fn: (list: Dl[]) => T): Promise<T> {
 const patch = (id: string, p: Partial<Dl>) => change((list) => { const d = list.find((x) => x.id === id); if (d) Object.assign(d, p, { updated: Date.now() }); return d ? { ...d } : null; });
 export async function listDownloads() { return (await getJson<{ list: Dl[] }>(KEY))?.list ?? []; }
 
-/** Where downloads go: the folder given (an id or a name path, made if it's a new name), else "Downloads". */
-async function folderFor(ref: string | null | undefined, by: string) {
+const folderName = (source: Source) => (source === "web" ? "Web" : SOURCES[source].name);
+
+/** Where downloads go: the folder given (an id or a name path, made if it's a new name), else "Downloads", and in it
+ *  the site's own folder (Downloads/Instagram, Downloads/YouTube…), made the first time. */
+async function folderFor(ref: string | null | undefined, source: Source, by: string) {
   const fs = await import("./files");
   const t = await fs.getTree();
   const name = (ref?.trim() || "Downloads").replace(/^\/+|\/+$/g, "");
-  try { const f = fs.findFolder(t, name); if (f) return f.id; } catch { /* not there yet: made below */ }
   let parent: string | null = null;
-  for (const part of name.split("/").map((s) => s.trim()).filter(Boolean)) {
+  let base: string[] = name.split("/").map((s) => s.trim()).filter(Boolean);
+  try { const f = fs.findFolder(t, name); if (f) { parent = f.id; base = []; } } catch { /* not there yet: made below */ }
+  for (const part of [...base, folderName(source)]) {
     const t2 = await fs.getTree();
     const have = t2.folders.find((f) => f.parent === parent && f.name.toLowerCase() === part.toLowerCase() && !t2.trash[`f:${f.id}`]);
     parent = have ? have.id : (await fs.createFolder({ name: part, parent }, by)).id;
@@ -224,11 +233,12 @@ export async function startDownloads(urls: string[], o: { folder?: string | null
   const clean = [...new Set(urls.map((u) => u.trim()).filter(Boolean))].slice(0, 20);
   if (!clean.length) throw new DlError("give a link to download");
   for (const u of clean) await checkUrl(u);
-  const folder = await folderFor(o.folder, actor.name);
+  const folders = new Map<Source, string | null>();
+  for (const src of new Set(clean.map(sourceOf))) folders.set(src, await folderFor(o.folder, src, actor.name)); // one at a time: no twin folders
   const now = Date.now();
   const made: Dl[] = clean.map((url, i) => ({
     id: `${now.toString(36)}${i}${Math.random().toString(36).slice(2, 6)}`, url, source: sourceOf(url), status: "fetching", via: null, title: null, author: null, thumb: null,
-    folder, post: o.post ?? null, name: clean.length === 1 ? o.name?.trim().slice(0, 150) || null : null, by: actor.name, at: now, updated: now, items: [], error: null, job: null, pct: 0, stage: "Reading the link",
+    folder: folders.get(sourceOf(url)) ?? null, post: o.post ?? null, name: clean.length === 1 ? o.name?.trim().slice(0, 150) || null : null, by: actor.name, at: now, updated: now, items: [], error: null, job: null, pct: 0, stage: "Reading the link",
   }));
   await change((list) => { list.unshift(...made); });
   for (const d of made) later(() => run(d, actor));
@@ -298,7 +308,8 @@ async function finish(id: string, items: DlItem[], actor: Actor) {
   void actor;
 }
 
-/** Hand the link to the worker's yt-dlp; with the worker off it waits, and starts the next time someone looks. */
+/** Hand the link to the worker's yt-dlp; with the worker off it starts the GPU and waits, and goes as soon as the
+ *  worker is on (its first heartbeat hands the waiting ones over). */
 async function toWorker(d: Dl, found: Found | null) {
   const { call, WorkerOffline } = await import("./worker");
   const slots = await Promise.all(Array.from({ length: SLOTS }, (_, i) => presign(`workspace/downloads/${d.id}/${i}`, "PUT", 6 * 3600)));
@@ -307,12 +318,36 @@ async function toWorker(d: Dl, found: Found | null) {
     const job = await call<{ id: string }>("/jobs", { body: { kind: "fetch", url: d.url, put_urls: slots, info_put: info, cookies: await cookies(), label: `Download from ${SOURCES[d.source].name}` } });
     await patch(d.id, { status: "worker", via: "worker", job: job.id, stage: "Queued on the worker", pct: 0.05, ...(found ? { title: found.title, author: found.author, thumb: found.thumb } : {}) });
   } catch (e) {
-    if (e instanceof WorkerOffline) await patch(d.id, { status: "waiting", via: "worker", stage: `${SOURCES[d.source].name} needs the GPU worker: it starts by itself once the worker is on`, pct: 0 });
-    else throw e;
+    if (!(e instanceof WorkerOffline)) throw e;
+    await patch(d.id, { status: "waiting", via: "worker", pct: 0, stage: `Starting the GPU worker for ${SOURCES[d.source].name} (about a minute)` });
+    const why = await startGpu();
+    if (why) await patch(d.id, { stage: `${SOURCES[d.source].name} needs the GPU worker, and it couldn't start: ${why}` });
   }
 }
 
-/** Bring running downloads up to date (the page and the MCP tool call this when they look). */
+/** The worker is off: start the cheap GPU for the downloads, once (a claim kept 5 min, so a dozen links start one GPU;
+ *  colab.start refuses too while a runtime is assigned). null when it started or one is on its way, else why not. */
+async function startGpu(): Promise<string | null> {
+  const { value, etag } = await getJsonTagged<{ at: number; error?: string | null }>(GPU_CLAIM);
+  if (value && Date.now() - value.at < 5 * 60_000) return value.error ?? null; // a failed start is tried again after 5 min, not on every look
+  if (!(await putJsonIf(GPU_CLAIM, { at: Date.now() }, etag))) return null; // someone else is starting it
+  const colab = await import("./colab");
+  try {
+    if ((await colab.runtimes()).length) return null; // assigned already: its worker is booting
+    await colab.start(colab.appOrigin(), undefined, { purpose: "voice", high_ram: false, for_downloads: true });
+    return null;
+  } catch (e) {
+    const m = (e as Error).message;
+    const error = /not connected|token|sign.?in|oauth/i.test(m) ? "connect Colab in Settings → GPU & engines, or run the notebook" : m.slice(0, 160);
+    await putJson(GPU_CLAIM, { at: Date.now(), error }).catch(() => null);
+    return error;
+  }
+}
+
+/** Something still under way (the GPU started for downloads stays on until there isn't). */
+export const anyLive = async () => (await listDownloads()).some((d) => ["fetching", "worker", "waiting", "saving"].includes(d.status) && Date.now() - d.updated < 30 * 60_000);
+
+/** Bring running downloads up to date (the page and the MCP tool call this when they look, and every worker heartbeat). */
 export async function refresh(later: (f: () => Promise<unknown>) => void, actor: Actor) {
   const list = await listDownloads();
   const live = list.filter((d) => d.status === "worker" || d.status === "waiting" || (d.status === "saving" && Date.now() - (d.saving_at ?? 0) > 120_000));

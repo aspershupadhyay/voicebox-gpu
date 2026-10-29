@@ -4,7 +4,21 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (Download from any link, 2026-10-29)
+## Latest round (downloads start and stop the GPU, a folder per site, 2026-10-29)
+
+- **"Make sure it auto starts quickly"**: an Instagram link "didn't work" because the GPU worker was off and the
+  download sat waiting. Now an Instagram, YouTube, TikTok (any worker-only) link with the worker off starts the cheap
+  voice GPU (an L4) by itself, once for any number of links, and the worker's first heartbeat hands the waiting ones over,
+  with nobody on the page. If it can't start, the row says why (connect Colab, or run the notebook).
+- **"Once the task is done stop the GPU"**: a GPU the Download page started is stopped as soon as nothing is running on
+  it and no download is still under way (checked on every heartbeat, at least 3 min after it started). A GPU someone
+  started themselves keeps the usual idle stop.
+- **"Each platform has its own folder"**: downloads land in the site's folder inside the one picked:
+  Downloads/Instagram, Downloads/YouTube, Downloads/X, Downloads/Web…, made the first time.
+- **"Is there any way to run without the GPU? Don't build it, suggest it"**: suggested, not built (yt-dlp needs no GPU:
+  a CPU-only Colab runtime, or a small always-on box, would do the same for a fraction of the units).
+
+## Earlier round (Download from any link, 2026-10-29)
 
 - **"Give you a link from Instagram, YouTube or X and it downloads through our website, over MCP too, into a folder;
   images from Pinterest, Cosmos or any source"**: Create → Download (`/download`, also in the Create menu). Paste a

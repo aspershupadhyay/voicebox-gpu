@@ -2,7 +2,8 @@
 // Create → Download: paste a link (Instagram, YouTube, TikTok, X, Pinterest, Cosmos, any page or file) and the photo
 // or video lands in Files, in the folder picked here. Pasting a link into the empty bar (or anywhere on the page) starts
 // it at once; several links, one per line, go together. Each row shows where it's at, live, and opens in Files when
-// it's in. Instagram, YouTube and TikTok go through the GPU worker's yt-dlp; sign-in cookies for posts behind a login
+// it's in, in the site's own folder (Downloads/Instagram…). Instagram, YouTube and TikTok go through the GPU worker's
+// yt-dlp, which starts by itself and stops when they're in; sign-in cookies for posts behind a login
 // live under Sign-ins. The server side is lib/downloads.ts; styles under "download" in app/globals.css.
 import {
   ArrowClockwise, ArrowSquareOut, CheckCircle, CloudArrowDown, FacebookLogo, FolderSimple, Globe, InstagramLogo, Key, LinkSimple, PinterestLogo, Planet,
@@ -175,10 +176,11 @@ export default function Download() {
     return () => removeEventListener("paste", onPaste);
   }, [start, text]);
 
-  const folderName = useMemo(() => { const m = new Map(folders.map((f) => [f.id, f.name])); return (id: string | null) => (id ? m.get(id) ?? "Downloads" : "Files"); }, [folders]);
+  // each site lands in its own folder inside the one picked (Downloads/Instagram…): a folder made since the page loaded is the site's
+  const folderName = useMemo(() => { const m = new Map(folders.map((f) => [f.id, f.name])); return (id: string | null, src: Source) => (id ? m.get(id) ?? (src === "web" ? "Web" : SRC[src].name) : "Files"); }, [folders]);
   const pick = (v: string) => { setFolder(v); try { localStorage.setItem("vb-dl-folder", v); } catch { /* private window */ } };
   const opts = useMemo(() => {
-    const names = [...new Set(["Downloads", ...folders.map((f) => f.name)])];
+    const names = [...new Set(["Downloads", ...folders.filter((f) => !f.parent).map((f) => f.name)])]; // top-level: the site folders go inside
     return names.map((n) => [n, n] as const);
   }, [folders]);
   const hint = links.map(sourceOf).filter(Boolean) as Source[];
@@ -201,7 +203,7 @@ export default function Download() {
           <div className="dl-found" aria-live="polite">
             {links.length ? hint.map((h, i) => { const S = SRC[h]; return <span key={i} className="dl-chip" style={{ animationDelay: `${i * 40}ms` }}><S.Icon size={13} weight="bold" aria-hidden />{S.name}</span>; })
               : <span className="tiny dim">Press Enter, or just paste: it starts on its own.</span>}
-            {needsWorker && <span className={`tiny ${data?.worker ? "dim" : "warn-t"}`}>{data?.worker ? "· through the GPU worker" : "· needs the GPU worker: it waits until it's on"}</span>}
+            {needsWorker && <span className={`tiny ${data?.worker ? "dim" : "warn-t"}`}>{data?.worker ? "· through the GPU worker" : "· starts the GPU worker by itself, and stops it when done"}</span>}
           </div>
           <div className="dl-go">
             <Select size="sm" label="Save to" value={folder} onChange={pick} options={opts} className="dl-folder" />
@@ -225,7 +227,7 @@ export default function Download() {
         ) : list.length ? (
           <ul className="dl-list">
             {list.map((d) => (
-              <Row key={d.id} d={d} folderName={folderName(d.folder)}
+              <Row key={d.id} d={d} folderName={folderName(d.folder, d.source)}
                 onRetry={() => api(`downloads/${d.id}/retry`, { body: {} }).then(load).catch((e) => toast((e as Error).message, "bad"))}
                 onForget={() => { setData((x) => (x ? { ...x, list: x.list.filter((y) => y.id !== d.id) } : x)); api(`downloads/${d.id}`, { method: "DELETE" }).catch(() => load()); }} />
             ))}
