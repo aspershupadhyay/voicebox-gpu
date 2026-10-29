@@ -23,7 +23,7 @@ Every dashboard change follows `docs/DESIGN.md`. In short:
 - Geist only (Mono for moving numbers). Every page opens with `PageHeader` (the page name as the H1, one sub line).
 - Build from `components/ui.tsx`; every text colour is a token at 4.5:1 or better; every control has a label.
 - Two modes, switched at the top of the sidebar: Create (Home at `/home`, Voices, Posts, Files, Voiceover,
-  Clean-up/Subtitles/Images) and Grow (analytics under `/analytics`: Overview, Live, Content, Audience, When to post,
+  Clean-up/Subtitles/Images, Download) and Grow (analytics under `/analytics`: Overview, Live, Content, Audience, When to post,
   Competitors, Radar, YouTube, Instagram, pinned rivals). The studio opens on Grow. Search and Settings are at the top right;
   the GPU lives only in Settings → GPU & engines. Making a voice lives under Voices (`/voices/new`, `/voices/professional`, `/voices/revoice`).
 - Never a native `<select>`: use `Select` from `components/pop.tsx`. Every popup closes on Escape and a click outside.

@@ -753,6 +753,10 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     if (!hasKey()) return { ...text("ERROR: the shared workspace is not configured on the server (APPWRITE_API_KEY)."), isError: true };
     try { return text(await fn()); } catch (e) { return fail(e); }
   };
+  const dlRow = (d: import("@/lib/downloads").Dl) => ({
+    id: d.id, url: d.url, source: d.source, status: d.status, via: d.via, title: d.title, author: d.author, folder: d.folder, stage: d.stage,
+    progress: d.pct == null ? null : Math.round(d.pct * 100), error: d.error, files: d.items.map((x) => ({ file_id: `m:${x.media}`, name: x.name, kind: x.kind, mb: +(x.size / 1e6).toFixed(1) })),
+  });
   const files = async <T,>(fn: () => Promise<T>) => { try { return text(await fn()); } catch (e) { return fail(e); } };
   const FILE_ID = z.string().regex(/^[mg]:[A-Za-z0-9._-]{1,64}$/).describe("a file id from list_files: m:<upload id> or g:<generated id>");
   const ITEM_ID = z.string().regex(/^(?:[mg]:[A-Za-z0-9._-]{1,64}|f:[a-z0-9]{6,16})$/).describe("a file id (m:… / g:…) or a folder as f:<folder id>");
@@ -1078,6 +1082,54 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       id: m.$id, name: m.name, kind: m.kind, mb: m.size ? +(m.size / 1e6).toFixed(1) : null, post_id: m.post_id, by: m.uploaded_name, at: m.$createdAt,
       url: m.token ? fileUrl(m) : null, backed_up_to_r2: !!m.r2_key,
     }))),
+  );
+
+  server.registerTool(
+    "download",
+    {
+      title: "Download from a link (Instagram, YouTube, TikTok, X, Pinterest, Cosmos, any page)",
+      description: "Download the photo(s) or video behind a link into Files, in a folder (made if it's a new name; default \"Downloads\"). Works for Instagram posts, reels and carousels, YouTube videos and Shorts, TikTok, X, Facebook, Threads, Reddit, Vimeo (through the GPU worker's yt-dlp: start the worker first if it's off; the download waits for it), and X, Pinterest pins (video or the original-size image), Cosmos and any page's own photo or video, or a direct file link (straight from the server, no worker). Files are named \"@handle on Instagram - title\" so post_package can credit the creator. Pass several links in urls (up to 20). wait (default true) waits up to ~50 s and returns the files (m:<id>, ready for auto_post, publish_post, add to a carousel); otherwise check later with downloads. A post that needs a sign-in (YouTube's bot check, some Instagram posts) asks for sign-in cookies, which the user adds on the Download page.",
+      inputSchema: z.object({
+        url: z.string().url().optional(), urls: z.array(z.string().url()).max(20).optional(),
+        folder: z.string().max(200).optional().describe("a folder id or name path (\"Downloads/Case 025\"); made if new; default Downloads"),
+        name: z.string().max(150).optional().describe("a file name to use instead (one link only)"), post_id: POST_ID.optional(),
+        wait: z.boolean().optional().describe("default true: wait up to ~50 s for the files to land"),
+      }),
+    },
+    async ({ url, urls, folder, name, post_id, wait }) => ws(async () => {
+      const dl = await import("@/lib/downloads");
+      const { after } = await import("next/server");
+      const later = (f: () => Promise<unknown>) => { const p = f().catch(() => null); after(() => p); }; // starts now, kept alive after the reply
+      const list = [...(urls ?? []), ...(url ? [url] : [])];
+      if (!list.length) throw new Error("give url or urls");
+      const made = await dl.startDownloads(list, { folder, name, post: post_id ?? null }, CLAUDE, later);
+      const ids = new Set(made.map((d) => d.id));
+      const until = Date.now() + 50_000;
+      let rows = made;
+      while (wait !== false && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 2500));
+        rows = (await dl.refresh(later, CLAUDE)).filter((d) => ids.has(d.id));
+        if (rows.every((d) => d.status === "done" || d.status === "error" || d.status === "waiting")) break;
+      }
+      return rows.map(dlRow);
+    }),
+  );
+
+  server.registerTool(
+    "downloads",
+    {
+      title: "Downloads: list, check, retry",
+      description: "The Download page's list, newest first, brought up to date: each link's status (fetching, waiting for the worker, worker, saving, done, error), where it came from, its files (m:<id>) and any error in plain words. retry starts one again (after the worker is on, or sign-in cookies were added); forget takes it off the list (the files stay in Files).",
+      inputSchema: z.object({ limit: z.number().int().min(1).max(50).optional(), retry: z.string().max(40).optional(), forget: z.string().max(40).optional() }),
+    },
+    async ({ limit, retry, forget }) => ws(async () => {
+      const dl = await import("@/lib/downloads");
+      const { after } = await import("next/server");
+      const later = (f: () => Promise<unknown>) => { const p = f().catch(() => null); after(() => p); };
+      if (retry) return dlRow(await dl.retryDownload(retry, CLAUDE, later));
+      if (forget) return { forgotten: await dl.forgetDownload(forget) };
+      return (await dl.refresh(later, CLAUDE)).slice(0, limit ?? 15).map(dlRow);
+    }),
   );
 
   server.registerTool(
@@ -1681,6 +1733,7 @@ export const INSTRUCTIONS = [
     "5) Long jobs return a job id: poll get_job (each call waits up to 45 s). Results are archived to the dashboard's Files page; links expire after 6 h.",
     "6) The user's own voice model: voice_dataset to see or grow the training data, then the training notebook; once trained it is engine myvoice with voice = that person's name (my_voices lists both people's). benchmark_voices compares it with their clones on held-out sentences. voice_coach shows how a trained voice is doing and writes the next recording script around its weak spots; recording it makes the voice more natural (retrains only go live when they beat the current model).",
     "Content spaces: each post goes to one or more spaces (YouTube Videos / Shorts / Posts, Instagram Reels / Posts / Stories, X Posts / Threads, TikTok, LinkedIn, Podcast), each with its own stage and publish time; cross-post by adding targets (update_post targets, merge). Files: save_file (any size up to 2 GB: get an upload address, curl the file to it, hand back the ticket), upload_media (small bytes) or add_media (a link); delete_media / delete_post only when asked.",
+    "Downloading: download takes any link (Instagram, YouTube, TikTok, X, Pinterest, Cosmos, any page or file) and puts the photos or video in Files, in a folder you name (default Downloads), named so the post package credits the creator; downloads lists them. Use it instead of asking the user to download and upload by hand.",
     "Files page (a Drive-like file manager over uploads and generated items; category folders Videos, Images, Audio, Docs & scripts and Other file things by kind on their own): list_files browses folders and searches; get_file gives download links; create_folder / update_folder / move_files / rename_file / star_files keep it tidy (upload_media and add_media take a folder). delete_files and delete_folder move things to the trash (30 days, restore_files brings them back) and only when asked; forever / empty_trash only when asked for that.",
     "Posting in one go: auto_post turns uploaded files into a post that's ready (a video: Reel + Short; photos: an Instagram carousel), with the post package (post_package: researched title, description with keywords, tags, hashtags and credits for the original creator) on every target, armed for the next posting slots. Every arm or send gets the package first, so nothing goes out without a title, description, hashtags and the credit.",
     "Publishing: publish_accounts shows the connected YouTube / Instagram accounts and the queue; publish_post sets up a target (files, cover, every YouTube or Instagram option) and saves, arms it for its publish time, or sends it now (only when asked); publish_status follows it; automation_rules reads or changes cross-posting, posting slots, retries and footers. analytics shows how the channels are doing (per format, every post's score against the usual, best times, lengths, hashtags, tips): read it before planning so the next posts build on what works. X, TikTok, LinkedIn and podcasts stay hand-offs: the user posts those and marks them posted.",

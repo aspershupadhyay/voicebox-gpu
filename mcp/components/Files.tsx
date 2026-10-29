@@ -628,10 +628,13 @@ export default function Files() {
   const upRows: UpRow[] = uploads.map((u) => ({ key: u.key, name: u.name, size: u.size, kind: u.kind, progress: u.progress, error: u.error && !u.done ? u.error : undefined, done: u.done,
     folder: pendingUp[u.key]?.folder ? folderById.get(pendingUp[u.key].folder!)?.name ?? "All files" : SYSTEM.find((s) => s.kind === u.kind)?.name ?? "All files" }));
 
+  /** A pasted link goes through Download (lib/downloads.ts): a post or a pin, not just a file link, lands here. */
   function importLink(url: string) {
     if (!wsOn) return needWs();
-    setSnack({ text: "Adding the file from the link…" });
-    write(() => {}, () => api<{ folder: string | null }>("files/import", { body: { url, folder: cwdId && !here?.system ? cwdId : null } })).then((r) => { if (r) setSnack({ text: "Added from the link" }); });
+    const folder = cwdId && !here?.system ? cwdId : "Downloads";
+    api("downloads", { body: { urls: [url], folder } })
+      .then(() => setSnack({ text: "Downloading from the link: it shows up here in a moment", action: "Follow it", run: () => router.push("/download") }))
+      .catch((e) => toast((e as Error).message, "bad"));
   }
 
   async function subtitle(j: { id: string; label?: string; language?: string | null; text?: string }) {

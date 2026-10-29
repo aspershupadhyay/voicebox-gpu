@@ -3538,3 +3538,82 @@ html.cur-custom :is(input:not([type="range"]):not([type="checkbox"]):not([type="
   .up-ways { flex-direction: column; gap: 8px; align-items: center; }
 }
 @media (prefers-reduced-motion: reduce) { .up-ov, .up-panel, .up-card, .up-px i, .up-dot { animation: none !important; } .up-panel.hot { transform: none; } }
+
+/* ── download (components/Download.tsx): a bracketed command bar, the sources, live rows */
+.dl { display: flex; flex-direction: column; gap: 18px; max-width: 980px; }
+.dl-bar { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 18px 18px 14px; background: #050505; border: 1px solid var(--line2); border-radius: 16px; transition: border-color .2s, box-shadow .2s; animation: up-rise .35s var(--ease); }
+.dl-bar:focus-within { border-color: var(--line3); }
+.dl-bar.has { border-color: var(--ink2); }
+.dl-br { position: absolute; width: 12px; height: 12px; border: 0 solid var(--mute); transition: border-color .2s, inset .25s var(--ease); pointer-events: none; }
+.dl-br.tl { top: 7px; left: 7px; border-top-width: 1.5px; border-left-width: 1.5px; } .dl-br.tr { top: 7px; right: 7px; border-top-width: 1.5px; border-right-width: 1.5px; }
+.dl-br.bl { bottom: 7px; left: 7px; border-bottom-width: 1.5px; border-left-width: 1.5px; } .dl-br.br { bottom: 7px; right: 7px; border-bottom-width: 1.5px; border-right-width: 1.5px; }
+.dl-bar.has .dl-br { border-color: var(--live); }
+.dl-bar.sending .dl-br { animation: up-blink .6s steps(2, jump-none) infinite; }
+.dl-in { display: flex; align-items: flex-start; gap: 12px; }
+.dl-in-ic { color: var(--mute); margin-top: 7px; flex: none; transition: color .2s, transform .3s var(--ease); }
+.dl-bar.has .dl-in-ic { color: var(--live); transform: translateY(2px); }
+.dl-in textarea { flex: 1; min-width: 0; min-height: 40px; max-height: 160px; field-sizing: content; resize: none; border: 0; background: none; padding: 7px 0; color: var(--ink); font: 400 18px/1.4 var(--sans); outline: none; box-shadow: none; }
+.dl-in textarea::placeholder { color: var(--mute); }
+.dl-under { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--line); }
+.dl-found { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.dl-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 99px; background: var(--fill2); color: var(--ink); font-size: 12px; font-weight: 500; animation: up-rise .25s var(--ease) backwards; }
+.dl-go { display: flex; align-items: center; gap: 8px; }
+.dl-go button[type=submit] { height: 36px; }
+.dl-go .vp-spin.sm { width: 13px; height: 13px; position: static; margin: 0; }
+.dl-folder { min-width: 150px; }
+.dl-sources { list-style: none; margin: 0; padding: 0; display: flex; gap: 8px; flex-wrap: wrap; }
+.dl-sources li { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink2); font-size: 13px; animation: up-rise .3s var(--ease) backwards; }
+.dl-w { width: 6px; height: 6px; border-radius: 1px; background: var(--line3); }
+.dl-w.on { background: var(--live); animation: up-blink 1.6s steps(2, jump-none) infinite; }
+.dl-list-wrap { display: flex; flex-direction: column; gap: 8px; }
+.dl-list-head { display: flex; align-items: baseline; gap: 10px; padding: 4px 2px; }
+.dl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.dl-row { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-top: 1px solid var(--line); background: var(--bg); animation: dl-in .35s var(--ease) backwards; transition: background .15s; }
+.dl-row:first-child { border-top: 0; }
+.dl-row:hover { background: var(--surface); }
+.dl-thumb { position: relative; width: 56px; height: 56px; flex: none; border-radius: 10px; overflow: hidden; background: var(--fill); border: 1px solid var(--line2); display: grid; place-items: center; color: var(--mute); }
+.dl-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; animation: dl-fade .4s var(--ease); }
+.dl-n { position: absolute; right: 4px; bottom: 4px; z-index: 2; font-size: 10.5px; padding: 0 5px; border-radius: 5px; background: rgb(0 0 0 / .75); color: #fff; }
+.dl-scan { position: absolute; left: 0; right: 0; top: 0; height: 2px; z-index: 2; background: var(--live); animation: dl-scan 1.3s var(--ease) infinite; }
+.dl-thumb.busy { border-color: color-mix(in srgb, var(--live) 45%, var(--line2)); }
+.dl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.dl-title { font-weight: 500; font-size: 14.5px; }
+.dl-meta { display: flex; align-items: center; gap: 10px; color: var(--mute); min-width: 0; flex-wrap: wrap; }
+.dl-meta > span { display: inline-flex; align-items: center; gap: 4px; }
+.dl-src { color: var(--ink2); }
+.dl-prog { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dl-meter { flex: 0 0 min(220px, 40%); height: 6px; border-radius: 3px; background: var(--fill2); overflow: hidden; }
+.dl-meter i { display: block; height: 100%; border-radius: 3px; background-color: color-mix(in srgb, var(--live) 55%, var(--surface)); background-image: repeating-linear-gradient(135deg, var(--live) 0 3px, transparent 3px 6px); background-size: 8.5px 8.5px; transition: width .5s var(--ease); animation: dl-march .6s linear infinite; }
+.dl-ok { display: inline-flex; align-items: center; gap: 5px; color: var(--ok); }
+.dl-err { display: inline-flex; align-items: flex-start; gap: 5px; color: var(--bad); }
+.dl-err svg { flex: none; margin-top: 1px; }
+.dl-acts { display: flex; align-items: center; gap: 4px; flex: none; }
+.dl-row.done { animation: dl-in .35s var(--ease) backwards, dl-land .9s var(--ease); }
+.dl-row.skel .dl-thumb { animation: up-blink 1.2s infinite; }
+.dl-sk { display: block; height: 10px; width: 60%; border-radius: 4px; background: var(--fill2); animation: up-blink 1.2s infinite; }
+.dl-sk.s { width: 35%; }
+.dl-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 36px 16px; border: 1px dashed var(--line2); border-radius: 14px; }
+.dl-empty-px { display: flex; gap: 4px; margin-bottom: 6px; }
+.dl-empty-px i { width: 5px; height: 5px; background: var(--line3); animation: up-px 1.8s steps(1, end) infinite; }
+.dl-signin { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.dl-si-head { width: 100%; height: auto; min-height: 48px; padding: 10px 14px; display: flex; align-items: center; gap: 10px; background: none; color: var(--ink); border: 0; border-radius: 0; justify-content: flex-start; text-align: left; flex-wrap: wrap; white-space: normal; }
+.dl-si-head:hover { background: var(--surface); opacity: 1; }
+.dl-si-body { display: flex; flex-direction: column; gap: 10px; padding: 4px 14px 14px; animation: up-rise .25s var(--ease); }
+.dl-si-body p { margin: 0; max-width: 70ch; }
+.dl-si-body textarea { width: 100%; font: 12px/1.5 var(--mono); }
+@keyframes dl-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes dl-fade { from { opacity: 0; transform: scale(1.06); } }
+@keyframes dl-scan { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateY(54px); opacity: 0; } }
+@keyframes dl-march { to { background-position: 8.5px 0; } }
+@keyframes dl-land { 0% { box-shadow: inset 2px 0 0 var(--live); } 100% { box-shadow: inset 2px 0 0 transparent; } }
+@media (max-width: 640px) {
+  .dl-in textarea { font-size: 16px; }
+  .dl-go { width: 100%; } .dl-go .dl-folder { flex: 1; min-width: 0; } .dl-go button[type=submit] { flex: 1; }
+  .dl-row { flex-wrap: wrap; gap: 10px 12px; }
+  .dl-thumb { width: 48px; height: 48px; }
+  .dl-acts { width: 100%; justify-content: flex-end; margin-top: -4px; }
+  .dl-meter { flex-basis: 45%; }
+}
+@media (prefers-reduced-motion: reduce) { .dl-bar, .dl-row, .dl-chip, .dl-sources li, .dl-scan, .dl-meter i, .dl-w.on, .dl-empty-px i, .dl-thumb img, .dl-br, .dl-sk { animation: none !important; } }
+.dl-acts a.icon-btn { display: inline-grid; place-items: center; background: none; color: var(--dim); }
+.dl-acts a.icon-btn:hover { background: var(--fill2); color: var(--ink); }

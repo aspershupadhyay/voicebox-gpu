@@ -4,7 +4,27 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (the upload overlay, research ignores file names, 2026-10-29)
+## Latest round (Download from any link, 2026-10-29)
+
+- **"Give you a link from Instagram, YouTube or X and it downloads through our website, over MCP too, into a folder;
+  images from Pinterest, Cosmos or any source"**: Create → Download (`/download`, also in the Create menu). Paste a
+  link (or several, one per line) and it starts on its own; pick the folder (default "Downloads", made if new). X,
+  Pinterest (the video, else the original-size image), Cosmos, any page's own photo or video, a Google Images link and a
+  direct file come straight from the server; Instagram, YouTube, TikTok, Facebook, Threads, Reddit and Vimeo go through
+  the GPU worker's yt-dlp (photo posts through gallery-dl), which uploads straight to storage. Files are named
+  "@handle on Instagram - title" so the post package credits the creator. Claude has `download` (waits until the files
+  are in, returns m: ids ready for auto_post) and `downloads` (list, retry, forget). Pasting a link in Files or the
+  upload overlay uses the same downloader now.
+- **"Handle everything smartly"**: every link the server fetches is checked (http(s), public addresses only, on every
+  redirect); a site that refuses the server falls through to the worker; with the worker off, a download waits and
+  starts on its own when it's back; errors say what to do ("YouTube asked the worker to sign in: add your sign-in
+  cookies, then Retry"). YouTube's bot check and Instagram's login wall need sign-in cookies (Download → Sign-ins,
+  kept privately, only sent to the worker).
+- **"Clean and animated, fast"**: a bracketed command bar that turns green when it sees links and shows which site
+  each one is, the sources with the worker's state, rows that rise in and show live progress (a scan line over the
+  thumbnail, marching stripes), a green edge when one lands. Still for people who ask for less motion.
+
+## Earlier round (the upload overlay, research ignores file names, 2026-10-29)
 
 - **"The best upload overlay: upload files, drag and drop or paste images; premium, animated"**: Files → Upload opens
   one overlay with all three ways (Choose files or a folder, a link box, and the hints for dropping and ⌘V). Pasting

@@ -1285,7 +1285,7 @@ def resolve_voice(engine, voice):
 def _cpu_only(job):
     """A job that never touches the GPU (a Kokoro voiceover with no listening pass, subtitles or studio polish): it runs
     in the CPU lane, next to whatever the GPU is doing, instead of waiting behind it."""
-    if job["kind"] == "storycard":  # ffmpeg only
+    if job["kind"] in ("storycard", "fetch"):  # ffmpeg / yt-dlp only
         return True
     return (job["kind"] == "tts" and not job.get("mode") and C.ENGINES.get(job.get("engine"), {}).get("gpu_gb", 1) == 0
             and job.get("takes", 1) == 1 and not job.get("review") and not job.get("subtitles") and not (job.get("post") or {}).get("enhance"))
@@ -1347,7 +1347,7 @@ def _enqueue(job):
 def _base_job(kind, body):
     return {"id": uuid.uuid4().hex[:12], "kind": kind, "status": "queued", "created": time.time(), "results": [],
             "error": None, "cancel": False, "label": str(body.get("label") or "")[:120], "stage": "queued",
-            "est_total": 0.0, "est_done": 0.0, "cur": None, "language": body.get("language") or None, "warnings": []}
+            "est_total": 0.0, "est_done": 0.0, "cur": None, "language": body.get("language") or None, "warnings": [], "lines": []}
 
 
 def make_job(body):
@@ -1379,6 +1379,8 @@ def make_job(body):
         return make_eagle_job(body)
     if body.get("kind") == "storycard":
         return make_storycard_job(body)
+    if body.get("kind") == "fetch":
+        return make_fetch_job(body)
     job = _base_job("tts", body)
     _voice_setup(job, body, body.get("lines") or [])
     return _enqueue(job)
@@ -2936,6 +2938,116 @@ def make_storycard_job(body):
     return _enqueue(job)
 
 
+def make_fetch_job(body):
+    """A link from Instagram, YouTube, TikTok, X, Facebook, Reddit, Vimeo or any page yt-dlp knows, downloaded for the
+    dashboard's Download page (mcp/lib/downloads.ts): sites that refuse servers answer a Colab runtime. Each file goes
+    straight to storage through its own presigned PUT (put_urls, in order, up to 20: a carousel is several), then a
+    manifest of what each one is goes to info_put. cookies (Netscape format) is optional, for posts behind a login."""
+    url = _http_url(body.get("url"), "url")
+    puts = [str(u) for u in (body.get("put_urls") or []) if str(u).startswith("https://")][:20]
+    info = str(body.get("info_put") or "")
+    if not url or not puts or not info.startswith("https://"):
+        raise ValueError("url, put_urls and info_put (https) are required")
+    job = _base_job("fetch", body)
+    job.update({"engine": "yt-dlp", "voice": "", "fetch": {"url": url, "puts": puts, "info": info, "cookies": str(body.get("cookies") or "")[:200_000]},
+                "dl": {"pct": 0.0, "speed": None, "files": 0}})
+    job["est_total"] = 45.0
+    return _enqueue(job)
+
+
+YTDLP_FRESH = [False]  # sites change often: yt-dlp is brought up to date once per runtime, on first use
+
+
+def _ytdlp():
+    if not YTDLP_FRESH[0]:
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "yt-dlp"], capture_output=True, timeout=180)
+        YTDLP_FRESH[0] = True
+    import yt_dlp
+    return yt_dlp
+
+
+FETCH_TYPES = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska", ".m4a": "audio/mp4",
+               ".mp3": "audio/mpeg", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif", ".heic": "image/heic"}
+
+
+def _put_file(url, path, ctype):
+    with open(path, "rb") as f:  # streamed from disk
+        req = urllib.request.Request(url, data=f, method="PUT", headers={"Content-Type": ctype, "Content-Length": str(os.path.getsize(path))})
+        with urllib.request.urlopen(req, timeout=1800) as r:
+            if r.status >= 300:
+                raise RuntimeError(f"storage refused {os.path.basename(path)} ({r.status})")
+
+
+def run_fetch(job):
+    ft, jdir = job["fetch"], os.path.join(JOBS_DIR, job["id"])
+    os.makedirs(jdir, exist_ok=True)
+    job["stage"] = "preparing"
+    yt_dlp = _ytdlp()
+    job["stage"] = "downloading"
+
+    def hook(d):
+        if job["cancel"]:
+            raise Cancelled()
+        if d.get("status") == "downloading":
+            tot = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            if tot:
+                job["dl"]["pct"] = round(min(0.98, d.get("downloaded_bytes", 0) / tot), 3)
+            job["dl"]["speed"] = d.get("speed")
+    opts = {"outtmpl": os.path.join(jdir, "%(autonumber)02d-%(id)s.%(ext)s"), "format": "bv*+ba/b",
+            # h264 in an mp4 first: it plays everywhere and Instagram and YouTube take it back as it is
+            "format_sort": ["res:1920", "vcodec:h264", "ext:mp4:m4a"], "merge_output_format": "mp4", "noplaylist": True,
+            "playlistend": 20, "max_filesize": 1900 * 1024 * 1024, "quiet": True, "no_warnings": True, "progress_hooks": [hook],
+            "restrictfilenames": True, "socket_timeout": 20, "retries": 2, "extractor_retries": 1, "noprogress": True}
+    if ft.get("cookies"):
+        cpath = os.path.join(jdir, "cookies.txt")
+        with open(cpath, "w") as f:
+            f.write(ft["cookies"])
+        opts["cookiefile"] = cpath
+    info, err = {}, None
+    try:
+        with yt_dlp.YoutubeDL(opts) as y:
+            info = y.extract_info(ft["url"], download=True) or {}
+    except Cancelled:
+        raise
+    except Exception as e:  # noqa: BLE001 - a photo post has no video: gallery-dl takes those
+        err = re.sub(r"\x1b\[[0-9;]*m", "", str(e)).replace("ERROR: ", "")[:300]
+    files = sorted(f for f in os.listdir(jdir) if os.path.splitext(f)[1].lower() in FETCH_TYPES)
+    if not files:
+        job["stage"] = "downloading photos"
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "gallery-dl"], capture_output=True, timeout=180)
+        cmd = [sys.executable, "-m", "gallery_dl", "-D", jdir, "--range", "1-20"]
+        if ft.get("cookies"):
+            cmd += ["--cookies", os.path.join(jdir, "cookies.txt")]
+        try:
+            r = subprocess.run(cmd + [ft["url"]], capture_output=True, text=True, timeout=240)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(err or "the site didn't answer in time")
+        files = sorted(f for f in os.listdir(jdir) if os.path.splitext(f)[1].lower() in FETCH_TYPES)
+        if not files:
+            raise RuntimeError(err or (r.stderr.strip().splitlines() or ["nothing to download at that link"])[-1][:300])
+    files = files[:len(ft["puts"])]
+    job["stage"] = "uploading"
+    job["dl"]["pct"] = 0.99
+    items = []
+    for i, name in enumerate(files):
+        path = os.path.join(jdir, name)
+        ctype = FETCH_TYPES[os.path.splitext(name)[1].lower()]
+        _put_file(ft["puts"][i], path, ctype)
+        items.append({"slot": i, "name": name, "mime": ctype, "size": os.path.getsize(path)})
+        job["dl"]["files"] = i + 1
+    first = (info.get("entries") or [info])[0] or {} if isinstance(info.get("entries"), list) else info
+    meta = {"title": info.get("title") or first.get("title"), "uploader": info.get("uploader") or first.get("uploader") or info.get("channel"),
+            "handle": info.get("uploader_id") or first.get("uploader_id") or info.get("channel_id"), "description": (info.get("description") or first.get("description") or "")[:2000],
+            "webpage_url": info.get("webpage_url") or ft["url"], "thumbnail": info.get("thumbnail") or first.get("thumbnail"),
+            "duration": info.get("duration") or first.get("duration"), "extractor": info.get("extractor_key"), "items": items}
+    mpath = os.path.join(jdir, "info.json")
+    with open(mpath, "w") as f:
+        json.dump(meta, f)
+    _put_file(ft["info"], mpath, "application/json")
+    job["dl"]["pct"] = 1.0
+    log(f"job {job['id']} downloaded {len(items)} file(s) from {urlparse(ft['url']).netloc}")
+
+
 def run_storycard(job):
     st, jdir = job["story"], os.path.join(JOBS_DIR, job["id"])
     os.makedirs(jdir, exist_ok=True)
@@ -3905,7 +4017,7 @@ def run_train(job):
 
 def package(job):
     job["stage"] = "packaging"
-    if job["kind"] in ("video", "reference", "image", "dataset", "train", "voicewalk", "eagle", "storycard"):
+    if job["kind"] in ("video", "reference", "image", "dataset", "train", "voicewalk", "eagle", "storycard", "fetch"):
         return  # single files, served directly; no zip copy of a large video (a dataset packs its own zip)
     jdir = os.path.join(JOBS_DIR, job["id"])
     with zipfile.ZipFile(os.path.join(JOBS_DIR, f"{job['id']}.zip"), "w") as z:
@@ -3979,7 +4091,7 @@ def worker_loop(q=None):
         try:
             {"transcribe": run_transcribe, "video": run_video, "reference": run_reference,
              "image": run_image, "dataset": run_dataset, "train": run_train, "voicewalk": run_voicewalk,
-             "eagle": run_eagle, "storycard": run_storycard}.get(job["kind"], run_tts)(job)
+             "eagle": run_eagle, "storycard": run_storycard, "fetch": run_fetch}.get(job["kind"], run_tts)(job)
             package(job)
             job["status"], job["stage"] = "done", "done"
         except Cancelled:
@@ -4113,7 +4225,7 @@ def job_view(job, urls=True):
     v = {k: job.get(k) for k in ("id", "kind", "engine", "voice", "style", "status", "error", "label", "language", "warnings", "subs", "match", "attach_to", "video", "version",
                                  "platform", "captions", "takes", "mode", "similarity", "scenes", "review", "trials", "profile", "cleanup", "decode",
                                  "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method", "lane", "review_batch", "stream",
-                                 "eagle", "polish_engine", "polish")}
+                                 "eagle", "polish_engine", "polish", "dl")}
     v["resources"] = job_resources(job)
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
