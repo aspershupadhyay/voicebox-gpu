@@ -38,6 +38,9 @@ export type IgOptions = {
   alt_text: string | null; ai_generated: boolean;
   /** posted as the first comment right after it goes live (hashtags there keep the caption clean) */
   first_comment: string | null;
+  /** Stories: card = the whole post as a card on a blur with your @handle (like sharing a post by hand; default),
+   *  fit = the whole picture on a blur, fill = Instagram's own crop to 9:16 (lib/publish/storycard.ts) */
+  story_style?: "card" | "fit" | "fill";
 };
 
 export type PlanState = "draft" | "armed" | "queued" | "uploading" | "processing" | "published" | "failed" | "canceled";
@@ -53,6 +56,8 @@ export type RunState = {
   started: number; lock?: number | null;
   yt_session?: string | null; offset?: number; size?: number; video_id?: string | null;
   ig_children?: string[]; ig_container?: string | null; ig_media?: string | null;
+  /** a video story being built on the GPU worker, and where it lands */
+  story_job?: string | null; story_url?: string | null;
   /** YouTube: uploaded early, goes public at publish_at on its own */
   publish_at?: string | null;
 };

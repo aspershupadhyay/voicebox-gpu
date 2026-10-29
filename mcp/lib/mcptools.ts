@@ -952,11 +952,11 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     "publish_post",
     {
       title: "Publish a post",
-      description: "Set up and send a post's target to YouTube (yt_video, yt_short) or Instagram (ig_reel, ig_post: a photo, video or carousel of up to 20, ig_story). The post must already have that target (update_post targets). Pass files from list_files / workspace_media (m:<upload id>, or g:<generated video id>); cover is an image (m:) used as the YouTube thumbnail or the Reel cover. account: an id from publish_accounts (left out: the only one connected). YouTube options: title, description, tags, category (id, 28 = Science & Technology, 27 Education, 22 People & Blogs, 24 Entertainment), privacy, made_for_kids, synthetic (realistic AI voice/visuals: disclose it), playlist (id), language, notify, youtube_schedules (upload early, YouTube flips it public on the minute). Instagram options: caption, share_to_feed, collaborators (up to 3 usernames), user_tags, trial (MANUAL / SS_PERFORMANCE trial reel), audio_name, alt_text, ai_generated, first_comment, location_id. go: save (default, just saves), arm (goes out by itself at the target's publish time), now (publish right away). Only publish when the user asked; it's public and can't be undone from here.",
+      description: "Set up and send a post's target to YouTube (yt_video, yt_short) or Instagram (ig_reel, ig_post: a photo, video or carousel of up to 20, ig_story). The post must already have that target (update_post targets). Pass files from list_files / workspace_media (m:<upload id>, or g:<generated video id>); cover is an image (m:) used as the YouTube thumbnail or the Reel cover. account: an id from publish_accounts (left out: the only one connected). YouTube options: title, description, tags, category (id, 28 = Science & Technology, 27 Education, 22 People & Blogs, 24 Entertainment), privacy, made_for_kids, synthetic (realistic AI voice/visuals: disclose it), playlist (id), language, notify, youtube_schedules (upload early, YouTube flips it public on the minute). Instagram options: caption, share_to_feed, collaborators (up to 3 usernames), user_tags, trial (MANUAL / SS_PERFORMANCE trial reel), audio_name, alt_text, ai_generated, first_comment, location_id. go: save (default, just saves), arm (goes out by itself at the target's publish time), now (publish right away), update (a YouTube video or Short that's already up: sends the plan's title, description, tags, privacy… and the cover as its thumbnail again), share_to_story (space ig_story: the post's live Instagram post or reel goes to the story now). Stories: instagram.story_style card (default: the whole post as a card with the @handle on a blur of itself, like sharing by hand; videos are laid out on the GPU worker), fit (the whole picture on a blur) or fill (Instagram's own crop). An Instagram Post's cover is its first file; a single video posted to the feed takes a cover image. YouTube Community posts can't be made through YouTube's API: they stay a hand-off. Only publish when the user asked; it's public and can't be undone from here.",
       inputSchema: z.object({
         post_id: POST_ID, space: PUB_SPACE,
         account: z.string().max(64).optional(), files: z.array(FILE_ID).max(20).optional(), cover: FILE_ID.nullable().optional(),
-        go: z.enum(["save", "arm", "now", "disarm"]).optional(),
+        go: z.enum(["save", "arm", "now", "disarm", "update", "share_to_story"]).optional(),
         youtube: z.object({
           title: z.string().max(100), description: z.string().max(5000), tags: z.array(z.string().max(100)).max(60), category: z.string().max(3),
           privacy: z.enum(["public", "unlisted", "private"]), made_for_kids: z.boolean(), synthetic: z.boolean(), playlist: z.string().max(64).nullable(),
@@ -967,11 +967,18 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
           caption: z.string().max(2200), share_to_feed: z.boolean(), collaborators: z.array(z.string().max(30)).max(3), user_tags: z.array(z.string().max(30)).max(20),
           trial: z.enum(["MANUAL", "SS_PERFORMANCE"]).nullable(), audio_name: z.string().max(100).nullable(), alt_text: z.string().max(1000).nullable(),
           ai_generated: z.boolean(), first_comment: z.string().max(2200).nullable(), location_id: z.string().max(30).nullable(), thumb_offset_ms: z.number().int().min(0).nullable(),
+          story_style: z.enum(["card", "fit", "fill"]),
         }).partial().optional(),
       }),
     },
     async ({ post_id, space, account, files, cover, go, youtube, instagram }) => ws(async () => {
       const api = await import("@/lib/publish/api");
+      if (go === "share_to_story") {
+        const r = await api.publishPost([post_id, "ig_story", "share"], { go: "now", style: instagram?.story_style });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error);
+        return { ...j, next: "Going to the story now: publish_status with space ig_story follows it." };
+      }
       let acc = account;
       if (!acc) {
         const { listAccounts } = await import("@/lib/publish/accounts");
@@ -985,6 +992,12 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       const saved = await (await api.publishPost([post_id, space], body)).json();
       if (saved.error) throw new Error(saved.error);
       if (!go || go === "save") return saved;
+      if (go === "update") {
+        const r = await api.publishPost([post_id, space, "update"], {});
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error);
+        return j;
+      }
       const r = await api.publishPost([post_id, space, "go"], { mode: go });
       const j = await r.json();
       if (!r.ok) throw new Error(`${j.error}${j.problems?.length > 1 ? ` (also: ${j.problems.slice(1).join("; ")})` : ""}`);

@@ -62,6 +62,12 @@ shape. Long-lived tokens last 60 days and the autopilot renews them from 20 days
 |---|---|
 | Title (100), description (5000), tags (500 in all), category, visibility, playlist, language, license, recording date | Caption (2200, 30 hashtags, 20 mentions), carousel order, cover image or a frame (Reels) |
 | Thumbnail, made for kids, altered or synthetic content, allow embedding, show views and likes, notify subscribers | Also in the feed (Reels), collaborators (3), tag people, trial reel (manual / automatic), audio name, alt text, AI label, location, first comment |
+| Shorts take a custom thumbnail too | A Post's cover is its first slide (pick it in the composer); a single feed video takes a cover image |
+| **After it's up**: change the title, description, tags, privacy, licence… and the thumbnail, then *Update on YouTube* (Videos and Shorts) | **Stories** are built like sharing a post by hand (`lib/publish/storycard.ts`): *Post card* (the whole post with your @handle on a blur of itself; default), *Whole picture*, or *Fill the screen* (Instagram's own crop). Photos are built on the server, videos on the GPU worker (job `storycard`). *Share to story* sends a live Post or Reel to the story that way |
+
+What the platforms' APIs don't allow, so Voicebox can't either: YouTube Community posts (no API: they stay a hand-off),
+changing an Instagram cover or caption after it's posted, and Instagram's tappable "post" sticker in a story (the card is
+a picture of it).
 
 ## Rules (Posts → Autopilot)
 

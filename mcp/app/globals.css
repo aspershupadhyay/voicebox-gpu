@@ -1655,7 +1655,6 @@ html:has(.cs) body, html:has(.fv) body { overscroll-behavior-x: none; }
   .cs-name { flex-basis: calc(100% - 120px); }
   .cs-tools { order: 3; width: 100%; flex-wrap: wrap; gap: 6px; }
   .cs-chip { height: 32px; padding: 0 10px; font-size: 12.5px; } .cs-more { display: none; }
-  .cs-top .fv-acts .vp-btn:not(:last-child) { display: none; }
   .cs-foot { grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; padding: 6px 12px 14px; }
   .cs-jump { width: 44px; height: 44px; padding: 0; justify-content: center; }
   .cs-jump-t, .cs-keys { display: none; }
@@ -3278,3 +3277,16 @@ html.cur-custom :is(input:not([type="range"]):not([type="checkbox"]):not([type="
 .sh-list { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 4px; }
 .sh-row { display: flex; align-items: center; gap: 8px; min-height: 32px; }
 .sh-row .small { flex: 1; min-width: 0; }
+
+/* a story built like a share by hand (lib/publish/storycard.ts): the post as a card on a blur of itself */
+.pv-story-card { position: absolute; inset: 0; overflow: hidden; background: #000; container-type: size; }
+.pv-story-bg { position: absolute; inset: -20px; filter: blur(16px) brightness(.62); }
+.pv-story-bg img, .pv-story-bg video { width: 100%; height: 100%; object-fit: cover; }
+.pv-story-mid { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; gap: 8px; padding: 0 7%; }
+.pv-story-card.fit .pv-story-mid { padding: 0; }
+.pv-story-pic { position: relative; width: 100%; display: flex; justify-content: center; }
+.pv-story-pic img, .pv-story-pic video { display: block; width: auto; height: auto; max-width: 100%; max-height: 68cqh; }
+.pv-story-card.fit .pv-story-pic img, .pv-story-card.fit .pv-story-pic video { max-height: 100cqh; }
+.pv-story-card.card .pv-story-pic img, .pv-story-card.card .pv-story-pic video { border-radius: 10px; }
+.pv-story-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: fit-content; max-width: 100%; margin: 0 auto; }
+.pv-story-who { color: #fff; font-size: 12px; }

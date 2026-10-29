@@ -70,7 +70,45 @@ export async function publishPost(path: string[], body: Record<string, unknown>)
     await putPlan(next);
     return Response.json({ plan: next, problems: await readiness(next) });
   }
+  if (d === "share" && c === "ig_story") {
+    // share a live Instagram post or reel to the story, built like the app does it by hand (lib/publish/storycard.ts)
+    const plans = await listPlans();
+    const from = plans.find((p) => p.post === b && p.network === "instagram" && p.space !== "ig_story" && p.state === "published" && (!body.from || p.space === body.from))
+      ?? plans.find((p) => p.post === b && p.network === "instagram" && p.space !== "ig_story" && p.media.length);
+    if (!from?.media.length) return bad("Nothing on Instagram to share yet: post it (or set up its Post or Reel) first", 404);
+    const post = await getPost(b);
+    const { getTargets, setTargets } = await import("../spacestore");
+    const { targetsOf } = await import("../spaces");
+    const ts = targetsOf(post, await getTargets());
+    if (!ts.some((t) => t.space === "ig_story")) await setTargets(b, [...ts, { space: "ig_story", status: "draft" }], { name: await who() });
+    if (cur && BUSY.includes(cur.state)) return bad("The story is going out right now", 409);
+    if (cur?.state === "published" && !body.again) return bad("This story is already up. Pass again: true to share it once more.", 409);
+    const style = ["card", "fit", "fill"].includes(String(body.style)) ? body.style : cur?.ig?.story_style ?? "card";
+    const base = cur && ["published", "failed", "canceled"].includes(cur.state) ? { ...cur, state: "draft" as const, run: null, result: null, attempts: 0, error: null, progress: 0, step: null } : cur;
+    const next = editPlan(base, b, "ig_story", { account: from.account, media: [from.media[0]], ig: { story_style: style } }, await who(), await getRules(), { title: post.title, caption: "" });
+    next.log.push({ at: Date.now(), text: `Shared from ${from.space === "ig_reel" ? "the Reel" : "the post"} by ${await who()}` });
+    await putPlan(next);
+    if (body.go === "now") return publishPost([b, c, "go"], { mode: "now", again: body.again });
+    return Response.json({ plan: next, problems: await readiness(next) });
+  }
   if (!cur) return bad("Set it up first", 404);
+  if (d === "update") {
+    // a video that's already up: send the plan's title, description, tags, privacy… and thumbnail to YouTube again
+    if (cur.network !== "youtube" || cur.state !== "published" || !cur.result?.id) return bad("Only a YouTube video that's already up can be updated", 409);
+    const acc = cur.account ? await getAccount(cur.account) : null;
+    if (!acc) return bad("Its channel was disconnected", 409);
+    const token = await YT.accessToken(acc);
+    await YT.updateVideo(token, cur.result.id, cur.yt!);
+    let thumb = "";
+    if (cur.cover) {
+      const { jpegUrl, resolve } = await import("./sources");
+      const c = await resolve(cur.cover);
+      const bytes = new Uint8Array(await (await fetch((c.m ? jpegUrl(c.m, 1280) : c.url)!, { cache: "no-store" })).arrayBuffer());
+      await YT.setThumbnail(token, cur.result.id, bytes, "image/jpeg").then(() => { thumb = " and thumbnail"; }).catch((e) => { thumb = ` (thumbnail not changed: ${(e as Error).message})`; });
+    }
+    cur.log.push({ at: Date.now(), text: `Updated on YouTube: details${thumb}, by ${await who()}`, ok: true });
+    return Response.json({ plan: await putPlan(cur), problems: [] });
+  }
   if (d === "go") {
     const mode = String(body.mode ?? "now");
     if (mode === "disarm") {

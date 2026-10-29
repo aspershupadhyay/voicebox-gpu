@@ -25,11 +25,13 @@ class Stopped extends Error {}
 /** Something that must not be retried by itself (the same photos are already live). */
 class Hold extends Error {}
 
+/** a story is its own thing: the same photo as a live post may go to a story (that's what sharing it is) */
+const lane = (space: string) => (space === "ig_story" ? "story" : "feed");
 const sameSet = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
 /** Another plan on the same account that already put these exact files live: posting them again would be a repeat. */
 export async function liveTwin(p: Pick<Plan, "post" | "space" | "network" | "account" | "media">, plans?: Plan[]) {
   if (!p.media.length) return null;
-  return (plans ?? (await listPlans())).find((x) => x.state === "published" && x.result && x.network === p.network && x.account === p.account &&
+  return (plans ?? (await listPlans())).find((x) => x.state === "published" && x.result && x.network === p.network && x.account === p.account && lane(x.space) === lane(p.space) &&
     !(x.post === p.post && x.space === p.space) && sameSet(x.media, p.media)) ?? null;
 }
 /** Someone pressed Stop: the stored plan says canceled. Checked between pieces. */
@@ -242,6 +244,44 @@ async function waitFinished(p: Plan, token: string, id: string, deadline: number
   }
 }
 
+/** A story built the way you'd share it by hand (lib/publish/storycard.ts): photos here, videos on the GPU worker. */
+async function storyItem(p: Plan, src: Source, acc: Account, deadline: number): Promise<IG.IgItem> {
+  const style = p.ig?.story_style ?? "card";
+  const S = await import("./storycard");
+  const who = { handle: acc.handle ?? acc.name, avatar: acc.avatar };
+  if (src.kind === "image") {
+    p.step = "Building the story";
+    const { url } = await S.keep(p.post, await S.photoStory(src, style, who), "jpg");
+    return { kind: "image", url };
+  }
+  if (src.kind !== "video") throw new Error(`${src.name}: only photos and videos go to Instagram`);
+  const run = p.run!;
+  if (run.story_url && !run.story_job) return { kind: "video", url: run.story_url };
+  const { call, WorkerOffline } = await import("../worker");
+  try {
+    if (!run.story_job) {
+      const slot = await S.videoSlot(p.post);
+      const header = style === "card" ? (await S.keep(p.post, await S.headerPng(who.handle, who.avatar), "png")).url : null;
+      const job = await call<{ id: string }>("/jobs", { body: { kind: "storycard", video_url: src.url, put_url: slot.put, header_url: header, style, label: "Story" } });
+      run.story_job = job.id; run.story_url = slot.get;
+      line(p, "Building the story video on the GPU worker");
+      await putPlan(p);
+    }
+    for (;;) {
+      const j = await call<{ status: string; error?: string }>(`/jobs/${run.story_job}`);
+      if (j.status === "done") { run.story_job = null; await putPlan(p); return { kind: "video", url: run.story_url! }; }
+      if (j.status === "error" || j.status === "cancelled") { run.story_job = null; run.story_url = null; throw new Error(`Couldn't build the story video: ${j.error ?? j.status}`); }
+      if (Date.now() > deadline - 20_000) throw new Budget();
+      await checkStop(p);
+      p.step = "Building the story video";
+      await sleep(4000);
+    }
+  } catch (e) {
+    if (e instanceof WorkerOffline) throw new IG.IgError("Video stories are laid out on the GPU worker, which is off. Start it (Settings → GPU & engines) and Voicebox tries again, or pick Fill.", 0, 0, true);
+    throw e;
+  }
+}
+
 async function runInstagram(p: Plan, acc: Account & { tokens: Tokens }, deadline: number) {
   const o = p.ig!;
   const token = await IG.accessToken(acc);
@@ -270,8 +310,10 @@ async function runInstagram(p: Plan, acc: Account & { tokens: Tokens }, deadline
         for (const [i, c] of run.ig_children.entries()) await waitFinished(p, token, c, deadline, `item ${i + 1}`);
         run.ig_container = await IG.createCarousel(token, user, run.ig_children, o);
       } else {
-        const cover = p.cover && p.space === "ig_reel" ? await resolve(p.cover).then((c) => (c.m ? jpegUrl(c.m, 1080) : null)).catch(() => null) : null;
-        run.ig_container = await IG.createContainer(token, user, await igItem(srcs[0]), p.space, o, { cover_url: cover });
+        // a Reel's cover (or a single video posted to the feed, which Instagram makes a Reel)
+        const cover = p.cover && (p.space === "ig_reel" || (p.space === "ig_post" && srcs[0].kind === "video")) ? await resolve(p.cover).then((c) => (c.m ? jpegUrl(c.m, 1080) : null)).catch(() => null) : null;
+        const item = p.space === "ig_story" && (o.story_style ?? "card") !== "fill" ? await storyItem(p, srcs[0], acc, deadline) : await igItem(srcs[0]);
+        run.ig_container = await IG.createContainer(token, user, item, p.space, o, { cover_url: cover });
       }
       line(p, "Instagram has the file; processing");
       p.state = "processing"; p.progress = 0.6;

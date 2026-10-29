@@ -12,7 +12,7 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Group } from "@/lib/carouselrules";
-import { anchorOf, ByMark, Hit, KindIcon, Name, when, type CardEvents, type Item } from "./fileparts";
+import { anchorOf, ByMark, ContextMenu, Hit, KindIcon, Name, when, type Anchor, type CardEvents, type Item } from "./fileparts";
 
 export type Stack = { key: string; g: Group; members: Item[]; at: number; starred: boolean };
 export const isStack = (e: Item | Stack): e is Stack => "g" in e;
@@ -94,7 +94,7 @@ export function CarouselRow({ s, folderName, ...ev }: { s: Stack; folderName?: s
 type Near = { name: string; go: () => void } | null;
 export type SlideCheck = { file_id: string; position: number; w: number | null; h: number | null; issues: { level: "bad" | "warn"; text: string }[] };
 export type Checks = { slides: SlideCheck[]; bad: number; warn: number; ok: number; notes: string[] };
-export type Stats = { live: boolean; state?: string | null; url?: string; at?: number; views?: number | null; reach?: number | null; likes?: number | null;
+export type Stats = { live: boolean; post_id?: string; state?: string | null; url?: string; at?: number; views?: number | null; reach?: number | null; likes?: number | null;
   comments?: number | null; shares?: number | null; saves?: number | null; er?: number | null; notes?: string[]; error?: string };
 
 export const short = (n?: number | null) => (n == null ? "—" : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
@@ -126,9 +126,9 @@ const moved = (n: number, from: number, to: number) => { const o = Array.from({ 
 /** The opened carousel: the photos rise from the bottom onto a curved row. The row is placed straight on the DOM
  *  (no re-render while you drag), so it keeps up at 60 fps. Drag sideways to browse; lift a card (drag it up, or press
  *  and hold) and drop it elsewhere to reorder. */
-export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, onUngroup, onMove, onDownload, onShare, onPost, onStar, onInstagram, igBusy, at, checks, stats, handle, avatar }: {
+export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, onUngroup, onMove, onDownload, onShare, onStory, onPost, onStar, onInstagram, igBusy, at, checks, stats, handle, avatar }: {
   s: Stack; onClose: () => void; onOpen: (i: number) => void; onPrev: Near; onNext: Near; at?: number;
-  onRename?: (name: string) => void; onUngroup?: () => void; onMove?: (from: number, to: number) => void; onDownload: () => void; onShare?: () => void; onPost?: () => void; onStar: () => void;
+  onRename?: (name: string) => void; onUngroup?: () => void; onMove?: (from: number, to: number) => void; onDownload: () => void; onShare?: () => void; onStory?: () => void; onPost?: () => void; onStar: () => void;
   onInstagram?: () => void; igBusy?: boolean; checks?: Checks | null; stats?: Stats | null; handle?: string | null; avatar?: string | null;
 }) {
   const n = s.members.length;
@@ -137,6 +137,8 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
   const [renaming, setRenaming] = useState(false);
   const [mode, setMode] = useState<"curve" | "phone">("curve");
   const [panel, setPanel] = useState<"checks" | "stats" | null>(null);
+  const [more, setMore] = useState<Anchor | null>(null);
+  const moreBtn = useRef<HTMLButtonElement>(null);
   const [size, setSize] = useState({ w: 1200, h: 600 });
   const box = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
@@ -313,34 +315,42 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
         </div>
         <div className="cs-tools">
           <div className="seg cs-seg" role="radiogroup" aria-label="View">
-            <button role="radio" aria-checked={mode === "curve"} className={mode === "curve" ? "on" : ""} onClick={() => setMode("curve")} title="The curve"><Cards size={15} /><span>Curve</span></button>
-            <button role="radio" aria-checked={mode === "phone"} className={mode === "phone" ? "on" : ""} onClick={() => setMode("phone")} title="As it looks on Instagram (P)"><DeviceMobile size={15} /><span>Phone</span></button>
+            <button role="radio" aria-checked={mode === "curve"} className={mode === "curve" ? "on" : ""} onClick={() => setMode("curve")} aria-label="Curve" title="Curve"><Cards size={16} /></button>
+            <button role="radio" aria-checked={mode === "phone"} className={mode === "phone" ? "on" : ""} onClick={() => setMode("phone")} aria-label="Phone: as it looks on Instagram (P)" title="Phone (P)"><DeviceMobile size={16} /></button>
           </div>
-          <button type="button" className={`cs-chip ${checks ? (checks.bad ? "bad" : checks.warn ? "warn" : "ok") : ""} ${panel === "checks" ? "on" : ""}`} onClick={() => setPanel(panel === "checks" ? null : "checks")} aria-pressed={panel === "checks"}>
-            {!checks ? <><span className="vp-spin sm" />Checking</> : flagged ? <><Warning size={14} weight="bold" />{flagged} to look at</> : <><CheckCircle size={14} weight="bold" />Slides look good</>}
-          </button>
-          {stats?.live && (
-            <button type="button" className={`cs-chip live ${panel === "stats" ? "on" : ""}`} onClick={() => setPanel(panel === "stats" ? null : "stats")} aria-pressed={panel === "stats"}>
-              <i className="cs-live-dot" />Live · {short(stats.saves)} saves<span className="cs-more"> · {short(stats.shares)} shares</span>
+          {/* one chip: how it's doing once it's out, else only slides that need a look */}
+          {stats?.live ? (
+            <button type="button" className={`cs-chip live ${panel === "stats" ? "on" : ""}`} onClick={() => setPanel(panel === "stats" ? null : "stats")} aria-pressed={panel === "stats"} title="On Instagram: its numbers">
+              <i className="cs-live-dot" />Live<span className="cs-more"> · {short(stats.saves)} saves · {short(stats.shares)} shares</span>
             </button>
-          )}
-          {stats?.live && stats.url ? (
-            <a className="btn sm cs-ig" href={stats.url} target="_blank" rel="noreferrer" title="It's live: it won't be posted again"><InstagramLogo size={15} weight="bold" /><span>Live on Instagram</span></a>
-          ) : onInstagram && (
+          ) : checks && flagged ? (
+            <button type="button" className={`cs-chip ${checks.bad ? "bad" : "warn"} ${panel === "checks" ? "on" : ""}`} onClick={() => setPanel(panel === "checks" ? null : "checks")} aria-pressed={panel === "checks"}>
+              <Warning size={14} weight="bold" />{flagged}<span className="cs-more"> to look at</span>
+            </button>
+          ) : null}
+          {!stats?.live && onInstagram && (
             <button type="button" className="sm cs-ig" onClick={onInstagram} disabled={igBusy} aria-busy={igBusy} aria-label="Post to Instagram" title="Post to Instagram">
               {igBusy ? <span className="vp-spin sm" /> : <InstagramLogo size={15} weight="bold" />}<span>{igBusy ? "Setting up…" : "Post to Instagram"}</span>
             </button>
           )}
         </div>
         <div className="fv-acts">
-          <button className="vp-btn" onClick={onStar} aria-label={s.starred ? "Remove star" : "Star every file"} title={s.starred ? "Remove star" : "Star"}><Star size={19} weight={s.starred ? "fill" : "regular"} className={s.starred ? "fm-star" : ""} /></button>
-          {onRename && <button className="vp-btn" onClick={() => setRenaming(true)} aria-label="Rename the carousel" title="Rename"><PencilSimple size={19} /></button>}
-          {onPost && <button className="vp-btn" onClick={onPost} aria-label="Open its post" title="Open its post"><ArrowSquareOut size={19} /></button>}
-          {onShare && <button className="vp-btn" onClick={onShare} aria-label="Share a link (no account needed)" title="Share a link"><ShareNetwork size={19} /></button>}
-          <button className="vp-btn" onClick={onDownload} aria-label={`Download all ${n}`} title={`Download all ${n}`}><DownloadSimple size={19} /></button>
-          {onUngroup && <button className="vp-btn" onClick={onUngroup} aria-label="Ungroup (the files stay)" title="Ungroup"><StackMinus size={19} /></button>}
+          <button ref={moreBtn} className="vp-btn" aria-haspopup="menu" aria-expanded={!!more} aria-label="More" title="More"
+            onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMore(more ? null : { x: r.left, y: r.top, w: r.width, h: r.height, align: "end" }); }}><DotsThree size={20} weight="bold" /></button>
           <button className="vp-btn" onClick={close} aria-label="Close (Esc)" title="Close (Esc)"><X size={20} /></button>
         </div>
+        {more && <ContextMenu at={more} title={s.g.name} inside={moreBtn} onClose={() => setMore(null)} entries={[
+          ...(stats?.live && stats.url ? [{ label: "Open on Instagram", icon: <InstagramLogo size={16} />, run: () => window.open(stats.url, "_blank", "noopener") }] : []),
+          { label: checks ? (flagged ? `Slide checks · ${flagged} to look at` : "Slide checks · all good") : "Slide checks", icon: <CheckCircle size={16} />, run: () => setPanel("checks") },
+          ...(stats?.live ? [{ label: "Numbers on Instagram", icon: <BookmarkSimple size={16} />, run: () => setPanel("stats") }] : []),
+          "-" as const,
+          { label: s.starred ? "Remove star" : "Star every file", icon: <Star size={16} />, run: onStar },
+          ...(onRename ? [{ label: "Rename", icon: <PencilSimple size={16} />, run: () => setRenaming(true) }] : []),
+          ...(onPost ? [{ label: "Open its post", icon: <ArrowSquareOut size={16} />, run: onPost }] : []),
+          ...(onShare ? [{ label: "Share link…", icon: <ShareNetwork size={16} />, run: onShare }] : []),
+          { label: `Download all ${n}`, icon: <DownloadSimple size={16} />, run: onDownload },
+          ...(onUngroup ? ["-" as const, { label: "Ungroup (files stay)", icon: <StackMinus size={16} />, run: onUngroup }] : []),
+        ]} />}
       </div>
 
       {mode === "curve" ? (
@@ -397,7 +407,7 @@ export function CarouselStage({ s, onClose, onOpen, onPrev, onNext, onRename, on
       )}
       {panel === "stats" && stats?.live && (
         <aside className="cs-panel" aria-label="How it did">
-          <div className="cs-panel-h"><b>On Instagram</b>{stats.url && <a className="tiny" href={stats.url} target="_blank" rel="noreferrer">Open the post</a>}<button className="vp-btn" onClick={() => setPanel(null)} aria-label="Close"><X size={16} /></button></div>
+          <div className="cs-panel-h"><b>On Instagram</b>{stats.url && <a className="tiny" href={stats.url} target="_blank" rel="noreferrer">Open the post</a>}{onStory && <button type="button" className="quiet xs" onClick={onStory}>Share to story</button>}<button className="vp-btn" onClick={() => setPanel(null)} aria-label="Close"><X size={16} /></button></div>
           {stats.error ? <p className="cs-note bad">{stats.error}</p> : (
             <div className="cs-kpis">
               {([["Views", stats.views], ["Reach", stats.reach], ["Likes", stats.likes], ["Comments", stats.comments], ["Shares", stats.shares], ["Saves", stats.saves]] as const).map(([l, v]) => (

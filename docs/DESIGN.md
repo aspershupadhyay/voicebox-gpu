@@ -80,8 +80,10 @@ status and history under it, and the actions in a footer. It saves as you type.
   Opening it stands each photo up from below the screen in turn onto a concave curved row on black (the owner's
   reference), starting on the first photo, the one in focus ~40% bigger than the rest, each with `#01` in ginger mono and its name under it. A click opens that photo in the file viewer with
   the carousel as a strip along the bottom. Keys: ← → browse, Enter open, 1–9, Alt+← → reorder, `[` `]` (or Shift+← →)
-  the previous or next post's carousel, Esc back. Drag a card up (or hold it) and drop it to reorder. The top bar
-  switches Curve / Phone (the feed on a phone, swipeable, cropped to the first slide's shape), shows the slide checks
+  the previous or next post's carousel, Esc back. Drag a card up (or hold it) and drop it to reorder. The top bar stays
+  calm (the owner's call): an icon toggle for Curve / Phone, one chip (Live with saves and shares once it's out, else
+  only slides that need a look), Post to Instagram, and the rest (star, rename, its post, share link, download,
+  ungroup, slide checks) under ⋯. It switches Curve / Phone (the feed on a phone, swipeable, cropped to the first slide's shape), shows the slide checks
   as a chip (a panel lists each slide's size and problems) and, once posted, a Live chip with saves and shares; "Post to
   Instagram" opens the publish composer with the slides in order. The curve is positioned imperatively (no React
   render per drag frame). The motion is transforms only and stops for reduced motion.
