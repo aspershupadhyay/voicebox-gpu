@@ -4,7 +4,22 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (a CPU runtime for downloads, faster, never stuck, 2026-10-29)
+## Latest round (errors that say what happened, any link, a gentle downloader, 2026-10-29)
+
+- **"Why am I getting 470? Make the error obvious instead of BS"**: a site refusing the server's file fetch showed as
+  a bare "the file answered 470" and stopped there. Now every error says who refused (the site by name, Colab, or
+  storage), what the HTTP code means (404 gone, 401/403 needs a sign-in, 429 too many requests, 5xx the site is down,
+  any other 4xx such as 470: the site blocking automated downloads) and what to do. The worker reports the most telling
+  of everything it tried.
+- **"Any link should work"**: when the server can't get a file, the Colab downloader now tries it (yt-dlp, gallery-dl,
+  the page scan) instead of giving up; the final error keeps what the server got.
+- **"No bot behaviour, so our IP doesn't get flagged"**: the downloader paces itself: the same site at most once every
+  few seconds (social sites longer, with a little randomness), short pauses between a site's requests and a carousel's
+  items, fewer parallel connections on YouTube. Signed-in cookies (Download → Sign-ins) are the way through a site's
+  bot check. Disguising requests (spoofed browser headers or fingerprints, proxies to hide the IP) is not built: it's
+  against the sites' terms and gets accounts flagged faster.
+
+## Earlier round (a CPU runtime for downloads, faster, never stuck, 2026-10-29)
 
 - **"Build the Colab one"** (the no-GPU way suggested last round): downloads now start a Colab CPU runtime
   (`variant=DEFAULT`, the worker in `VOICEBOX_MODE=fetch`: no engines fetched or checked, fetch jobs only, anything else
