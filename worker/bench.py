@@ -57,7 +57,7 @@ def setup():
                     pass
             iso.append("the worker's folders are closed to it")
             # the engines listen on localhost without a key: the sandbox user can't open connections to this machine
-            if shutil.which("iptables"):
+            if shutil.which("iptables") and os.environ.get("VOICEBOX_BENCH_ALLOW_LOCAL") != "1":  # local tests serve inputs on localhost
                 r = subprocess.run(["iptables", "-C", "OUTPUT", "-o", "lo", "-m", "owner", "--uid-owner", USER, "-j", "REJECT"], capture_output=True)
                 if r.returncode != 0:
                     r = subprocess.run(["iptables", "-A", "OUTPUT", "-o", "lo", "-m", "owner", "--uid-owner", USER, "-j", "REJECT"], capture_output=True)
@@ -133,32 +133,35 @@ def _drop(ids, fsize=4 << 30):
 BASE_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
 
 
-def as_user(argv, cwd, stdin=None, timeout=600, env=None):
+def as_user(argv, cwd, stdin=None, timeout=600, env=None, err_tail=2000):
     """Run a helper as the sandbox user (never as root inside the workspace: the code there could have left symlinks
     pointing at the worker's files). Returns (exit code, stdout bytes, stderr text)."""
     r = subprocess.run(argv, cwd=cwd, input=stdin, capture_output=True, timeout=timeout, env={**BASE_ENV, "HOME": cwd, **(env or {})},
                        preexec_fn=_drop(_ids()))
-    return r.returncode, r.stdout, r.stderr.decode("utf-8", "replace")[-2000:]
+    err = r.stderr.decode("utf-8", "replace")
+    return r.returncode, r.stdout, err[-err_tail:] if err_tail else err
 
 
 FETCH_PY = r"""
-import sys, urllib.request, shutil
+import os, sys, urllib.request, shutil
 req = urllib.request.Request(sys.argv[1], headers={"User-Agent": "voicebox-bench"})
 with urllib.request.urlopen(req, timeout=300) as r, open(sys.argv[2], "wb") as out:
     shutil.copyfileobj(r, out, 1 << 20)
-print(out.tell() if hasattr(out, "tell") else 0)
+print(os.path.getsize(sys.argv[2]))
 """
 
 
 def fetch_inputs(job, ws):
     got = []
     for f in job["bench"].get("files") or []:
+        if job.get("cancel"):
+            raise Cancelled()
         name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(f.get("name") or "file"))[:120].lstrip(".") or "file"
         code, out, err = as_user(["python3", "-c", FETCH_PY, safe_url(f.get("url")), f"in/{name}"], ws, timeout=900)
         if code:
             raise ValueError(f"couldn't fetch {name}: {err.strip().splitlines()[-1] if err.strip() else code}")
         size = os.lstat(os.path.join(ws, "in", name)).st_size
-        got.append({"name": f"in/{name}", "mb": round(size / 1e6, 2)})
+        got.append({"name": f"in/{name}", "mb": round(size / 1e6, 2), **({"key": f["key"]} if f.get("key") else {})})
     return got
 
 
@@ -374,9 +377,150 @@ def diff_repo(job, jdir):
     b.update(stage="done", changes=d["changes"], head=d["head"], count=len(d["changes"]))
 
 
+# ── media: edits and inspections (media.py holds the recipes) ───────────────────────────────────────────────────
+
+HOOKS = {}  # set by gateway.py: transcribe(job, wav path, language) -> {"words": [{w, s, e}], "text", "duration"}
+
+
+def _media_ws(job):
+    """A fresh workspace for one media job, emptied after it (the result goes to Files)."""
+    return workspace(f"job-{job['id']}")
+
+
+def _media_run(ws):
+    return lambda argv, timeout=1800: as_user(argv, ws, timeout=timeout, err_tail=None)
+
+
+def _words(job, ws, jdir, run, src_path, cap, inputs):
+    """Word timings for captions: given, from an SRT input, or heard by Whisper on the GPU."""
+    import media
+    b = job["bench"]
+    if cap.get("words"):
+        return [{"w": str(x["w"]), "s": float(x["s"]), "e": float(x["e"])} for x in cap["words"]][:5000]
+    if cap.get("srt"):
+        ins = {i["key"]: i["name"] for i in inputs if i.get("key")}
+        if cap["srt"] not in ins:
+            raise ValueError(f"captions.srt: no input called {cap['srt']!r}")
+        code, out, _ = as_user(["cat", "--", ins[cap["srt"]]], ws, timeout=30)
+        return media.words_from_srt(out.decode("utf-8", "replace"))
+    if "transcribe" not in HOOKS:
+        raise ValueError("captions from speech need the GPU worker's Whisper (this worker has none): give captions.srt or captions.words")
+    b["stage"] = "hearing the words"
+    code, _, err = run(["ffmpeg", "-hide_banner", "-y", "-i", src_path, "-vn", "-ac", "1", "-ar", "16000", "speech.wav"], timeout=900)
+    if code:
+        raise ValueError(f"couldn't take the sound out: {err.strip()[-200:]}")
+    got = pull_files(ws, ws, ["speech.wav"], jdir)
+    heard = HOOKS["transcribe"](job, got["speech.wav"], cap.get("language"))
+    os.remove(got["speech.wav"])
+    return heard["words"]
+
+
+def edit_media(job, jdir):
+    import media
+    b = job["bench"]
+    b["isolation"] = setup()
+    ws = _media_ws(job)
+    run = _media_run(ws)
+    try:
+        b["stage"] = "fetching"
+        b["inputs"] = fetch_inputs(job, ws)
+        infos = {}
+        for i in b["inputs"]:
+            infos[i["key"]] = (i["name"], media.probe(run, i["name"]))
+        spec = dict(b["spec"])
+        for k in ("voice", "music", "logo"):
+            if spec.get(k) and spec[k].get("src") not in infos:
+                raise ValueError(f"{k}.src: no input called {spec[k].get('src')!r} (inputs: {', '.join(infos)})")
+        nv = media.has_nvenc()
+        args, layout, seconds, extra = media.plan_edit(spec, {k: v for k, v in infos.items() if not v[0].lower().endswith(".srt")}, nv, media.font_file())
+        for name, content in extra.items():
+            write_as_user(ws, name, content.encode())
+        b["stage"] = f"rendering {seconds:.0f} s ({'NVENC on the GPU' if nv else 'x264 on the CPU'})"
+        t0 = time.time()
+        code, _, err = run(args, timeout=3600)
+        if code:
+            raise ValueError(f"ffmpeg failed: {err.strip()[-900:]}")
+        final = "out.mp4"
+        if spec.get("captions"):
+            words = _words(job, ws, jdir, run, "out.mp4", spec["captions"], b["inputs"])
+            info = media.probe(run, "out.mp4")
+            cap = spec["captions"]
+            ass, boxes = media.captions_ass(words, info["width"], info["height"], cap.get("style") or "pop", cap.get("position") or "lower",
+                                            platform=spec.get("platform") or "reels")
+            write_as_user(ws, "captions.ass", ass.encode())
+            layout += boxes
+            b["stage"] = "burning in the captions"
+            enc = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "21", "-b:v", "0"] if nv else ["-c:v", "libx264", "-preset", "medium", "-crf", "20"]
+            code, _, err = run(["ffmpeg", "-hide_banner", "-y", "-nostats", "-i", "out.mp4", "-vf", "subtitles=filename=captions.ass", *enc, "-pix_fmt", "yuv420p",
+                                "-c:a", "copy", "-movflags", "+faststart", "final.mp4"], timeout=3600)
+            if code:
+                raise ValueError(f"captions failed: {err.strip()[-600:]}")
+            final = "final.mp4"
+            b["captions"] = {"words": len(words), "style": cap.get("style") or "pop"}
+        b["render_s"] = round(time.time() - t0, 1)
+        b["stage"] = "checking"
+        b["qa"] = media.qa(run, final, spec.get("platform") or "reels", layout)
+        name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(spec.get("name") or "edit"))[:80].removesuffix(".mp4") + ".mp4"
+        write_as_user(ws, f"res/{name}", b"")  # the result's own folder, so pull_files names it plainly
+        as_user(["mv", "-f", final, f"res/{name}"], ws, timeout=60)
+        got = pull_files(ws, os.path.join(ws, "res"), [name], jdir)
+        b["outputs"] = [{"name": name, "path": name, "bytes": os.path.getsize(p)} for p in got.values()]
+        b["seconds_out"] = seconds
+        b["stage"] = "done"
+    finally:
+        as_user(["rm", "-rf", "--", ws], ROOT, timeout=300)
+        try:
+            os.rmdir(ws)
+        except OSError:
+            pass
+
+
+INSPECT = ("probe", "scenes", "loudness", "sheet", "words", "qa")
+
+
+def inspect_media(job, jdir):
+    import media
+    b = job["bench"]
+    b["isolation"] = setup()
+    ws = _media_ws(job)
+    run = _media_run(ws)
+    try:
+        b["stage"] = "fetching"
+        b["inputs"] = fetch_inputs(job, ws)
+        path = b["inputs"][0]["name"]
+        rep = {"probe": media.probe(run, path)}
+        want = b["checks"]
+        b["stage"] = "looking"
+        if "scenes" in want and rep["probe"].get("has_video"):
+            rep["scenes"] = media.scenes(run, path, b.get("threshold") or 0.3)
+        if "loudness" in want and rep["probe"].get("has_audio"):
+            rep["loudness"] = media.loudness(run, path)
+        if "qa" in want:
+            q = media.qa(run, path, b.get("platform") or "reels")
+            rep["qa"] = {k: q[k] for k in ("verdict", "platform", "checks")}
+        if "words" in want and rep["probe"].get("has_audio"):
+            w = _words(job, ws, jdir, run, path, {}, b["inputs"])
+            rep["words"] = [{"w": x["w"], "s": round(x["s"], 2), "e": round(x["e"], 2)} for x in w][:3000]
+            rep["text"] = " ".join(x["w"] for x in w)[:20000]
+        if "sheet" in want and rep["probe"].get("has_video"):
+            os.makedirs(jdir, exist_ok=True)
+            as_user(["mkdir", "-p", "res"], ws, timeout=30)
+            rep["sheet"] = media.contact_sheet(run, path, "res/contact-sheet.jpg", rep["probe"]["duration"] or 1)
+            got = pull_files(ws, os.path.join(ws, "res"), ["contact-sheet.jpg"], jdir)
+            b["outputs"] = [{"name": "contact-sheet.jpg", "path": "contact-sheet.jpg", "bytes": os.path.getsize(p)} for p in got.values()]
+        b["report"] = rep
+        b["stage"] = "done"
+    finally:
+        as_user(["rm", "-rf", "--", ws], ROOT, timeout=300)
+        try:
+            os.rmdir(ws)
+        except OSError:
+            pass
+
+
 # ── the job ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-OPS = {"run": run_code, "clone": clone_repo, "diff": diff_repo}
+OPS = {"run": run_code, "clone": clone_repo, "diff": diff_repo, "edit": edit_media, "inspect": inspect_media}
 
 
 def prepare(job, body):
@@ -404,6 +548,21 @@ def prepare(job, body):
         if not WS_RE.match(b["workspace"]):
             raise ValueError("workspace: lowercase letters, digits and dashes, up to 40 (e.g. case-025)")
         job["est_total"] = float(min(b["timeout_s"], 60))
+    if op in ("edit", "inspect"):
+        files = body.get("files") or []
+        if not isinstance(files, list) or not files or len(files) > 30:
+            raise ValueError("inputs: 1 to 30 files")
+        b["files"] = [{"url": str(f.get("url") or ""), "name": f"{re.sub(r'[^A-Za-z0-9_-]+', '_', str(f.get('key') or 'f'))[:40]}-{re.sub(r'[^A-Za-z0-9._-]+', '_', str(f.get('name') or 'file'))[-80:]}",
+                       "key": str(f.get("key") or "")[:40]} for f in files]
+        job["est_total"] = 60.0
+    if op == "edit":
+        spec = body.get("spec")
+        if not isinstance(spec, dict):
+            raise ValueError("spec: the edit (clips, shape, voice, music, captions…)")
+        b["spec"] = spec
+    if op == "inspect":
+        want = [c for c in (body.get("checks") or ["probe", "qa"]) if c in INSPECT]
+        b.update(checks=want or ["probe"], platform=str(body.get("platform") or "reels"), threshold=float(body.get("threshold") or 0.3))
     if op in ("clone", "diff"):
         d = str(body.get("dir") or "")
         if not re.match(r"^[A-Za-z0-9._-]{1,100}$", d) or d.startswith("."):
