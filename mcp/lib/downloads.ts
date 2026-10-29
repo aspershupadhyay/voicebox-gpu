@@ -28,6 +28,7 @@ export type Dl = {
   retry_at?: number | null; // a block that passes (too many requests, a 5xx, a timeout): the whole chain runs again then
   auto_retries?: number; // how many times it has done that by itself (RETRY_AFTER_MIN.length at most)
   carousel?: string | null; // a post with several files lands as one carousel in Files (its id), in the post's order
+  unreachable?: number; // looks at it while the worker was on but couldn't be reached (a tunnel seconds old)
 };
 type Actor = { id?: string; name: string };
 
@@ -260,7 +261,7 @@ export async function startDownloads(urls: string[], o: { folder?: string | null
 }
 
 export async function retryDownload(id: string, actor: Actor, later: (f: () => Promise<unknown>) => void) {
-  const d = await patch(id, { status: "fetching", error: null, job: null, pct: 0, stage: "Reading the link", via: null, saving_at: undefined, server_error: null, requeued: 0, retry_at: null, auto_retries: 0 });
+  const d = await patch(id, { status: "fetching", error: null, job: null, pct: 0, stage: "Reading the link", via: null, saving_at: undefined, server_error: null, requeued: 0, retry_at: null, auto_retries: 0, unreachable: 0 });
   if (!d) throw new DlError("no such download", 404);
   later(() => run(d, actor));
   return d;
@@ -335,13 +336,20 @@ async function finish(id: string, items: DlItem[], actor: Actor) {
 /** Hand the link to the worker's yt-dlp; with the worker off it starts the GPU and waits, and goes as soon as the
  *  worker is on (its first heartbeat hands the waiting ones over). */
 async function toWorker(d: Dl, found: Found | null) {
-  const { call, WorkerOffline } = await import("./worker");
+  const { call, WorkerOffline, WorkerUnreachable } = await import("./worker");
   const slots = await Promise.all(Array.from({ length: SLOTS }, (_, i) => presign(`workspace/downloads/${d.id}/${i}`, "PUT", 6 * 3600)));
   const info = await presign(`workspace/downloads/${d.id}/info.json`, "PUT", 6 * 3600);
   try {
     const job = await call<{ id: string }>("/jobs", { body: { kind: "fetch", url: d.url, put_urls: slots, info_put: info, cookies: await cookies(), label: `Download from ${SOURCES[d.source].name}`, notify: true } });
-    await patch(d.id, { status: "worker", via: "worker", job: job.id, stage: "Queued on the worker", pct: 0.05, ...(found ? { title: found.title, author: found.author, thumb: found.thumb } : {}) });
+    await patch(d.id, { status: "worker", via: "worker", job: job.id, stage: "Queued on the worker", pct: 0.05, unreachable: 0, ...(found ? { title: found.title, author: found.author, thumb: found.thumb } : {}) });
   } catch (e) {
+    if (e instanceof WorkerUnreachable) {
+      // on, but not answering yet (a tunnel a few seconds old resolves a moment later): wait, the next look sends it
+      const n = (d.unreachable ?? 0) + 1;
+      if (n > 15) throw new Error(`the Colab downloader is on but can't be reached (${e.message})`);
+      await patch(d.id, { status: "waiting", via: "worker", pct: 0, unreachable: n, stage: "Connecting to the Colab downloader" });
+      return;
+    }
     if (!(e instanceof WorkerOffline)) throw e;
     await patch(d.id, { status: "waiting", via: "worker", pct: 0, stage: `Starting the downloader for ${SOURCES[d.source].name} (about a minute)` });
     const why = await startGpu();
@@ -361,7 +369,8 @@ async function startGpu(): Promise<string | null> {
     await colab.start(colab.appOrigin(), undefined, { purpose: "voice", high_ram: false, for_downloads: true, cpu: true });
     return null;
   } catch (e) {
-    const m = (e as Error).message;
+    const c = (e as Error & { cause?: { code?: string } }).cause?.code;
+    const m = c ? `couldn't reach Colab (${c})` : (e as Error).message;
     const error = /not connected|token|sign.?in|oauth/i.test(m) ? "connect Colab in Settings → GPU & engines, or run the notebook" : m.slice(0, 160);
     await putJson(GPU_CLAIM, { at: Date.now(), error }).catch(() => null);
     return error;
@@ -442,7 +451,7 @@ function passes(raw: string) {
   if (/sign in|log ?in|login|private|age.?restrict|confirm your age|country|unsupported url|nothing to download/i.test(raw)) return false;
   const code = Number(/HTTP(?: Error)?:? (\d{3})|answered (\d{3})|status(?: code)? (\d{3})/i.exec(raw)?.slice(1).find(Boolean) ?? 0);
   if (code) return code === 408 || code === 425 || code === 429 || code >= 500 || (code >= 400 && ![400, 401, 403, 404, 410, 451].includes(code));
-  return /timed? ?out|timeout|didn't answer in time|rate.?limit|too many requests|temporarily|try again later|connection (reset|refused|aborted)|ECONNRESET/i.test(raw);
+  return /timed? ?out|timeout|didn't answer in time|rate.?limit|too many requests|temporarily|try again later|connection (reset|refused|aborted|dropped)|ECONNRESET|fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|can't be reached|couldn't reach|socket hang up|other side closed/i.test(raw);
 }
 
 /** A download failed. A block that passes is tried again by itself (the whole chain, from the server's own try) after
@@ -474,6 +483,8 @@ export function plain(raw: string, site = "The site", serverWhy?: string | null)
   if (/age.?(restricted|verification|gate)|confirm your age/i.test(m)) return `${site} age-restricts this one: ${SIGN_IN}.`;
   if (/not available in your country|geo.?restrict|blocked it in your country/i.test(m)) return `${site} doesn't offer this one in the country the downloader runs in.`;
   if (/^Colab \d{3}|couldn't start|Colab didn't/i.test(m)) return `The Colab downloader couldn't start: ${m.replace(/^Colab \d{3}:\s*/, "")}`;
+  if (/can't be reached|couldn't reach the Colab worker/i.test(m)) return `The Colab downloader is on, but the dashboard couldn't connect to it (${m.replace(/^.*?\(/, "").replace(/\)[^)]*$/, "")}). Nothing is wrong with the link: Retry in a minute.`;
+  if (/^(TypeError: )?fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang up|other side closed/i.test(m)) return `A connection dropped on the way (${m.slice(0, 80)}): nothing is wrong with the link. Retry.`;
   if (/upload failed|storage (GET|PUT)|could not read the upload|Appwrite/i.test(m)) return `Saving to Files failed (${m.slice(0, 140)}). The download itself worked: Retry.`;
   const code = Number(/HTTP(?: Error)?:? (\d{3})|answered (\d{3})|status(?: code)? (\d{3})/i.exec(m)?.slice(1).find(Boolean) ?? 0);
   if (code === 404 || code === 410) return `That link is gone: ${site} says it doesn't exist (HTTP ${code}). Check the link.`;

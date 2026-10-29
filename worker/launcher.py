@@ -163,6 +163,21 @@ def register(register_url, secret, url):
     raise RuntimeError(f"too many redirects registering at {register_url}")
 
 
+def wait_public(url, secret, limit=45):
+    """Until the tunnel's public address answers (/health through Cloudflare), at most limit seconds: registering
+    sooner hands the dashboard an address its first request can't resolve ("fetch failed")."""
+    t = time.time()
+    while time.time() - t < limit:
+        try:
+            urllib.request.urlopen(urllib.request.Request(url + "/health", headers={"Authorization": f"Bearer {secret}"}), timeout=5)
+            log(f"public URL answers after {time.time() - t:.1f} s")
+            return True
+        except Exception:  # noqa: BLE001  not resolving / not connected yet
+            time.sleep(1.5)
+    log(f"public URL still not answering after {limit} s: registering anyway (the dashboard retries)")
+    return False
+
+
 BOOT = {}  # step 6: seconds from launcher start to each phase, written to HOME/boot.json (the gateway's /health shows it)
 T0 = time.time()
 
@@ -241,6 +256,8 @@ def main():
     tunnel, url = tunnel_box["t"]
     mark("tunnel")
     log(f"public URL {url}")
+    wait_public(url, secret)  # a trycloudflare address takes a few seconds to resolve: don't announce one that doesn't work yet
+    mark("reachable")
     if register_url:  # register now, not after prewarming: the dashboard shows the worker online from this moment
         try:
             register_url = register(register_url, secret, url)
@@ -286,6 +303,7 @@ def tick(gw, tunnel, url, register_url, last_status, secret, cf):
         log("tunnel died; reopening")
         tunnel, url = start_tunnel(cf)
         log(f"new public URL {url}")
+        wait_public(url, secret, limit=30)
     if register_url:
         try:
             register_url = register(register_url, secret, url)

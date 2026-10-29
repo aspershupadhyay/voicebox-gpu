@@ -4,7 +4,17 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (a downloaded carousel stays one carousel, 2026-10-29)
+## Latest round ("fetch failed", 2026-10-29)
+
+- **"It says fetch failed"**: the Colab CPU runtime started (0.08 units an hour) and its worker registered 7 s after
+  launch, but its brand-new trycloudflare address didn't resolve yet, so the dashboard's first job request threw
+  Node's bare "fetch failed" and the download ended there; no job ever reached the worker. Now the worker only
+  registers once its public address answers; a request that never left (the address not resolving, a refused
+  connection) is sent again for ~20 s, a POST too; "on but unreachable" keeps a download waiting ("Connecting to the
+  Colab downloader") instead of failing it, and goes to the automatic retry after ~15 looks. A connection error never
+  shows as a bare "fetch failed": it says which hop dropped and that the link is fine.
+
+## Earlier round (a downloaded carousel stays one carousel, 2026-10-29)
 
 - **"Will a carousel be grouped as one?"**: it wasn't: its photos and videos landed as loose files. Now a download
   with several files becomes one carousel in Files, in the post's order, named after the post ("@handle on Instagram -
