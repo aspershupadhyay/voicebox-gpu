@@ -25,6 +25,8 @@ export type Dl = {
   items: DlItem[]; error: string | null; job: string | null; pct: number | null; stage: string | null; saving_at?: number;
   requeued?: number; // times the worker went away mid-download and it was handed to the next one
   server_error?: string | null; // why the server couldn't get it itself (the worker tried next), kept for the final error
+  retry_at?: number | null; // a block that passes (too many requests, a 5xx, a timeout): the whole chain runs again then
+  auto_retries?: number; // how many times it has done that by itself (RETRY_AFTER_MIN.length at most)
 };
 type Actor = { id?: string; name: string };
 
@@ -34,6 +36,7 @@ const MAX = 200;
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
 const SERVER_MAX = 140e6; // bigger files go through the worker (the server holds a file in memory to copy it)
 const SLOTS = 20;
+const RETRY_AFTER_MIN = [10, 25]; // waits before the 1st and 2nd automatic try: long enough for a site's rate limit to lift
 const GPU_CLAIM = "workspace/downloads-gpu.json"; // who started the GPU for downloads and when: one start, not one per link
 
 // name: in labels ("@handle on Instagram"); its folder is the same name, except "the web", which goes to "Web"
@@ -256,7 +259,7 @@ export async function startDownloads(urls: string[], o: { folder?: string | null
 }
 
 export async function retryDownload(id: string, actor: Actor, later: (f: () => Promise<unknown>) => void) {
-  const d = await patch(id, { status: "fetching", error: null, job: null, pct: 0, stage: "Reading the link", via: null, saving_at: undefined, server_error: null, requeued: 0 });
+  const d = await patch(id, { status: "fetching", error: null, job: null, pct: 0, stage: "Reading the link", via: null, saving_at: undefined, server_error: null, requeued: 0, retry_at: null, auto_retries: 0 });
   if (!d) throw new DlError("no such download", 404);
   later(() => run(d, actor));
   return d;
@@ -279,7 +282,7 @@ async function run(d: Dl, actor: Actor) {
     }
     await toWorker(d, found);
   } catch (e) {
-    await patch(d.id, { status: "error", error: plain((e as Error).message, siteOf(d), d.server_error), stage: null });
+    await fail(d, (e as Error).message);
   }
 }
 
@@ -358,7 +361,8 @@ async function startGpu(): Promise<string | null> {
 }
 
 /** Something still under way (the GPU started for downloads stays on until there isn't). */
-export const anyLive = async () => (await listDownloads()).some((d) => ["fetching", "worker", "waiting", "saving"].includes(d.status) && Date.now() - d.updated < 30 * 60_000);
+export const anyLive = async () => (await listDownloads()).some((d) => ["fetching", "worker", "waiting", "saving"].includes(d.status)
+  && !(d.retry_at && d.retry_at > Date.now()) && Date.now() - d.updated < 30 * 60_000); // one waiting to try again later doesn't keep the runtime on
 
 /** Bring running downloads up to date (the page and the MCP tool call this when they look, and every worker heartbeat). */
 export async function refresh(later: (f: () => Promise<unknown>) => void, actor: Actor) {
@@ -367,7 +371,15 @@ export async function refresh(later: (f: () => Promise<unknown>) => void, actor:
   if (!live.length) return list;
   const { call, WorkerOffline } = await import("./worker");
   for (const d of live) {
-    if (d.status === "waiting") { if (Date.now() - d.updated < 20_000) continue; later(() => toWorker(d, null).catch((e) => patch(d.id, { status: "error", error: plain((e as Error).message, siteOf(d), d.server_error) }))); continue; }
+    if (d.status === "waiting" && d.retry_at) {
+      if (Date.now() < d.retry_at) continue;
+      // its time has come: claim it (the page, the sweep and a heartbeat may all look at once), then the whole chain again
+      const claimed = await change((l) => { const x = l.find((y) => y.id === d.id); if (!x || x.status !== "waiting" || !x.retry_at || Date.now() < x.retry_at) return false;
+        Object.assign(x, { status: "fetching", retry_at: null, via: null, stage: "Trying again", updated: Date.now() }); return true; });
+      if (claimed) later(() => run({ ...d, status: "fetching", retry_at: null }, actor));
+      continue;
+    }
+    if (d.status === "waiting") { if (Date.now() - d.updated < 20_000) continue; later(() => toWorker(d, null).catch((e) => fail(d, (e as Error).message))); continue; }
     if (d.status === "saving") { later(() => saveFromWorker(d, actor)); continue; }
     try {
       const j = await call<{ status: string; error?: string | null; stage?: string; dl?: { pct: number; files: number } }>(`/jobs/${d.job}`, { timeoutMs: 8000 });
@@ -375,7 +387,7 @@ export async function refresh(later: (f: () => Promise<unknown>) => void, actor:
         const claimed = await change((l) => { const x = l.find((y) => y.id === d.id); if (!x || x.status !== "worker") return false; x.status = "saving"; x.saving_at = Date.now(); x.stage = "Saving to Files"; x.pct = 0.97; return true; });
         if (claimed) later(() => saveFromWorker(d, actor));
       } else if (j.status === "error" || j.status === "cancelled") {
-        await patch(d.id, { status: "error", error: plain(j.error ?? j.status, siteOf(d), d.server_error), stage: null });
+        await fail(d, j.error ?? j.status);
       } else {
         const stage = j.status === "queued" ? "Queued on the worker" : j.stage === "preparing" ? "Getting the downloader ready" : j.stage === "uploading" ? "Sending it to Files" : j.stage === "downloading photos" ? "Downloading the photos" : "Downloading";
         const pct = Math.max(0.05, j.dl?.pct ?? 0);
@@ -412,8 +424,32 @@ async function saveFromWorker(d: Dl, actor: Actor) {
     await patch(d.id, { title: info.title ?? d.title, author: who || d.author, thumb: info.thumbnail ?? d.thumb });
     await finish(d.id, items, actor);
   } catch (e) {
-    await patch(d.id, { status: "error", error: plain((e as Error).message, siteOf(d), d.server_error), stage: null });
+    await fail(d, (e as Error).message);
   }
+}
+
+/** A failure that goes away by itself: the site rate-limiting or blocking for a while (429, an odd 4xx such as 470),
+ *  a 5xx, a timeout. Not a missing post, a sign-in wall, a private post or our own storage. */
+function passes(raw: string) {
+  if (/sign in|log ?in|login|private|age.?restrict|confirm your age|country|unsupported url|nothing to download/i.test(raw)) return false;
+  const code = Number(/HTTP(?: Error)?:? (\d{3})|answered (\d{3})|status(?: code)? (\d{3})/i.exec(raw)?.slice(1).find(Boolean) ?? 0);
+  if (code) return code === 408 || code === 425 || code === 429 || code >= 500 || (code >= 400 && ![400, 401, 403, 404, 410, 451].includes(code));
+  return /timed? ?out|timeout|didn't answer in time|rate.?limit|too many requests|temporarily|try again later|connection (reset|refused|aborted)|ECONNRESET/i.test(raw);
+}
+
+/** A download failed. A block that passes is tried again by itself (the whole chain, from the server's own try) after
+ *  RETRY_AFTER_MIN; anything else, or once those are used up, is an error that says what happened. */
+async function fail(d: Dl, raw: string) {
+  const cur = (await listDownloads()).find((x) => x.id === d.id) ?? d;
+  const n = cur.auto_retries ?? 0;
+  const why = plain(raw, siteOf(cur), cur.server_error);
+  if (passes(raw) && n < RETRY_AFTER_MIN.length) {
+    const mins = RETRY_AFTER_MIN[n];
+    await patch(d.id, { status: "waiting", job: null, pct: 0, error: null, retry_at: Date.now() + mins * 60_000, auto_retries: n + 1,
+      stage: `${why.replace(/ Wait [^.]*\.| Retry in [^.]*\.| Retry\.|: Retry\.?/g, "").trim()} Trying again by itself in ${mins} min (${n + 1} of ${RETRY_AFTER_MIN.length}).` });
+    return;
+  }
+  await patch(d.id, { status: "error", error: n ? `${why} (tried ${n + 1} times)` : why, stage: null, retry_at: null });
 }
 
 const siteOf = (d: Dl) => (d.source === "web" ? (() => { try { return new URL(d.url).hostname.replace(/^www\./, ""); } catch { return "The site"; } })() : SOURCES[d.source].name);
