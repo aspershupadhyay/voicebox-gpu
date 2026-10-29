@@ -4,7 +4,21 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (errors that say what happened, any link, a gentle downloader, 2026-10-29)
+## Latest round (tries again by itself, whole carousels, 2026-10-29)
+
+- **"Build the auto retry"**: a block that passes (too many requests, a non-standard 4xx such as 470, a 5xx, a timeout)
+  no longer ends the download: it waits 10 minutes, then 25, and runs the whole chain again by itself (server, then
+  the Colab downloader), saying so on the row ("Trying again by itself in 10 min (1 of 2)"). The 10-minute sweep wakes
+  it with nobody on the page and the worker off; one waiting to try later doesn't keep the runtime on. A missing post,
+  a sign-in wall or a private post isn't retried; it says what to do. Retry by hand starts the count again.
+- **"Keep the Chrome one"**: kept, as the second step of the chain.
+- **"Change the IP too, so we don't get flagged"**: not built (rotating IPs to get past a site's blocks); the
+  automatic retry after the block lifts is what's built instead.
+- **"Carousels as well; whatever the platform offers"**: an Instagram (or Threads, Facebook…) carousel came back with
+  its videos only, or failed at its first photo. Now the post is read once, then every item is saved in the post's
+  order: each video through yt-dlp, each photo at the biggest size the post lists. A photo post works the same way.
+
+## Earlier round (errors that say what happened, any link, a gentle downloader, 2026-10-29)
 
 - **"Why am I getting 470? Make the error obvious instead of BS"**: a site refusing the server's file fetch showed as
   a bare "the file answered 470" and stopped there. Now every error says who refused (the site by name, Colab, or

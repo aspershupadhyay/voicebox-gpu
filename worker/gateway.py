@@ -3036,7 +3036,15 @@ class _Uploader:
             if path in self.seen or ext not in FETCH_TYPES or not os.path.exists(path) or len(self.futs) >= len(self.puts):
                 return
             self.seen.add(path)
-            slot = len(self.futs)
+            # a carousel's items are named by their place in it ("03-…"): that place is their slot, so Files keeps
+            # the post's order whatever order they finish in; anything else takes the next free slot
+            taken = getattr(self, "taken", set())
+            self.taken = taken
+            m = re.match(r"(\d{2})-", os.path.basename(path))
+            slot = int(m.group(1)) - 1 if m and 0 < int(m.group(1)) <= len(self.puts) and int(m.group(1)) - 1 not in taken else None
+            if slot is None:
+                slot = next(i for i in range(len(self.puts)) if i not in taken)
+            taken.add(slot)
             self.futs.append(self.pool.submit(self._up, slot, path, FETCH_TYPES[ext]))
 
     def _up(self, slot, path, ctype):
@@ -3160,6 +3168,54 @@ def run_fetch(job):
         with yt_dlp.YoutubeDL(opts_for(**kw)) as y:
             return y.extract_info(url, download=True) or {}
 
+    def photo(entry, i):
+        """A carousel's photo (or a photo post): the biggest image the post lists, saved as item i."""
+        th = [t for t in (entry.get("thumbnails") or []) if t.get("url")] or ([{"url": entry["thumbnail"]}] if entry.get("thumbnail") else [])
+        if not th:
+            return False
+        best = max(th, key=lambda t: ((t.get("width") or 0) * (t.get("height") or 0), t.get("preference") or 0))
+        ext = os.path.splitext(urlparse(best["url"]).path)[1].lower()
+        ext = ext if ext in (".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif") else ".jpg"
+        path = os.path.join(jdir, f"{i:02d}-{re.sub(r'[^A-Za-z0-9_-]', '', str(entry.get('id') or 'photo'))[:40] or 'photo'}{ext}")
+        req = urllib.request.Request(best["url"], headers={"User-Agent": UA_CHROME, "Referer": ft["url"]})
+        with urllib.request.urlopen(req, timeout=60) as r, open(path + ".part", "wb") as f:
+            shutil.copyfileobj(r, f)
+        os.replace(path + ".part", path)
+        up.add(path)
+        return True
+
+    def whole(url, **kw):
+        """Everything the post has, in its order: read it once, then each video through yt-dlp and each photo from the
+        post's own image list (yt-dlp alone stops at a carousel's first photo, which has no video to download)."""
+        probe = {**opts_for(**kw), "ignore_no_formats_error": True}
+        with yt_dlp.YoutubeDL(probe) as y:
+            raw = y.extract_info(url, download=False, process=False) or {}
+        top = {k: raw[k] for k in ("extractor", "extractor_key", "webpage_url", "webpage_url_basename", "webpage_url_domain", "original_url") if k in raw}
+        entries = raw.get("entries")
+        if raw.get("_type") in ("playlist", "multi_video") and entries is not None:
+            import itertools
+            for i, e in enumerate(itertools.islice(entries, len(ft["puts"])), 1):
+                if job["cancel"]:
+                    raise Cancelled()
+                if not e:
+                    continue
+                if e.get("formats") or e.get("_type") in ("url", "url_transparent"):
+                    try:
+                        with yt_dlp.YoutubeDL({**opts_for(**kw), "outtmpl": os.path.join(jdir, f"{i:02d}-%(id)s.%(ext)s")}) as y:
+                            y.process_ie_result({**top, **e}, download=True)
+                        continue
+                    except Cancelled:
+                        raise
+                    except Exception as err:  # noqa: BLE001  its cover photo, rather than nothing
+                        errors.append(re.sub(r"\x1b\[[0-9;]*m", "", str(err)).replace("ERROR: ", "")[:300])
+                photo(e, i)
+            return raw
+        if raw.get("formats") or raw.get("_type") in ("url", "url_transparent"):
+            with yt_dlp.YoutubeDL(opts_for(**kw)) as y:  # what was read already: no second visit to the site
+                return y.process_ie_result(raw, download=True) or raw
+        photo(raw, 1)  # a photo post
+        return raw
+
     def have():
         up.sweep(jdir)
         return bool(up.futs)
@@ -3169,7 +3225,7 @@ def run_fetch(job):
     target = _impersonate_target(yt_dlp)
     # 1) yt-dlp, 2) the same as Chrome (sites that refuse plain clients), 3) gallery-dl (photo posts),
     # 4) every video link in the page itself. The first that gets a file wins.
-    attempts = [lambda: ytdlp(ft["url"])] + ([lambda: ytdlp(ft["url"], impersonate=target)] if target is not None else [])
+    attempts = [lambda: whole(ft["url"])] + ([lambda: whole(ft["url"], impersonate=target)] if target is not None else [])
     for attempt in attempts:
         try:
             info = attempt() or info
