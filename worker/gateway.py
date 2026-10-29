@@ -23,6 +23,7 @@ import dataset  # noqa: E402
 import quality  # noqa: E402
 import voicewalk  # noqa: E402
 import r2cache  # noqa: E402
+import bench  # noqa: E402
 
 SECRET = os.environ.get("WORKER_SECRET", "")
 FETCH_ONLY = os.environ.get("VOICEBOX_MODE") == "fetch"  # a CPU runtime started for downloads: only fetch jobs
@@ -1275,6 +1276,8 @@ QUEUE = []       # the GPU lane: one job at a time
 CPU_QUEUE = []   # the CPU lane: jobs that need no GPU, run alongside
 FETCH_QUEUE = []  # the download lane: links download side by side (FETCH_WORKERS at once), never behind a voiceover
 FETCH_WORKERS = int(os.environ.get("VOICEBOX_FETCH_WORKERS", "4"))
+BENCH_QUEUE = []  # the workbench lane (bench.py: a model's code, media edits, the browser), beside the others
+BENCH_WORKERS = int(os.environ.get("VOICEBOX_BENCH_WORKERS", "2"))
 QCOND = threading.Condition()
 MAX_LINES, MAX_TEXT = 1000, 100_000
 
@@ -1295,6 +1298,8 @@ def _cpu_only(job):
 
 
 def _queue_of(job):
+    if job.get("lane") == "bench":
+        return BENCH_QUEUE
     return FETCH_QUEUE if job.get("lane") == "fetch" else CPU_QUEUE if job.get("lane") == "cpu" else QUEUE
 
 
@@ -1331,7 +1336,7 @@ def prune_jobs():
 
 def _enqueue(job):
     os.makedirs(os.path.join(JOBS_DIR, job["id"]), exist_ok=True)
-    job["lane"] = "fetch" if job["kind"] == "fetch" else "cpu" if _cpu_only(job) else "gpu"
+    job["lane"] = "bench" if job["kind"] == "bench" else "fetch" if job["kind"] == "fetch" else "cpu" if _cpu_only(job) else "gpu"
     g = gpu_info_cached()
     if job["kind"] in ("train", "video") and 0 < g["total_gb"] < 30:
         job.setdefault("warnings", []).append(f"{'training' if job['kind'] == 'train' else 'video'} on a {g['total_gb']:.0f} GB {g['name'].replace('NVIDIA ', '')}: "
@@ -1353,7 +1358,23 @@ def _base_job(kind, body):
             "est_total": 0.0, "est_done": 0.0, "cur": None, "language": body.get("language") or None, "warnings": [], "lines": []}
 
 
+def make_bench_job(body):
+    """The workbench (bench.py): a model's code in the sandbox, and later media edits, inspections and the browser."""
+    job = _base_job("bench", body)
+    bench.prepare(job, body)
+    return _enqueue(job)
+
+
+def run_bench(job):
+    try:
+        bench.run(job, os.path.join(JOBS_DIR, job["id"]))
+    except bench.Cancelled:
+        raise Cancelled()
+
+
 def make_job(body):
+    if body.get("kind") == "bench":
+        return make_bench_job(body)
     if FETCH_ONLY and body.get("kind") != "fetch":
         raise ValueError("this is the downloads-only worker (a CPU runtime, no GPU): start the GPU for voice, clean-up and video (it replaces this one)")
     if body.get("kind") == "transcribe":
@@ -4303,7 +4324,7 @@ def run_train(job):
 
 def package(job):
     job["stage"] = "packaging"
-    if job["kind"] in ("video", "reference", "image", "dataset", "train", "voicewalk", "eagle", "storycard", "fetch"):
+    if job["kind"] in ("video", "reference", "image", "dataset", "train", "voicewalk", "eagle", "storycard", "fetch", "bench"):
         return  # single files, served directly; no zip copy of a large video (a dataset packs its own zip)
     jdir = os.path.join(JOBS_DIR, job["id"])
     with zipfile.ZipFile(os.path.join(JOBS_DIR, f"{job['id']}.zip"), "w") as z:
@@ -4377,7 +4398,7 @@ def worker_loop(q=None):
         try:
             {"transcribe": run_transcribe, "video": run_video, "reference": run_reference,
              "image": run_image, "dataset": run_dataset, "train": run_train, "voicewalk": run_voicewalk,
-             "eagle": run_eagle, "storycard": run_storycard, "fetch": run_fetch}.get(job["kind"], run_tts)(job)
+             "eagle": run_eagle, "storycard": run_storycard, "fetch": run_fetch, "bench": run_bench}.get(job["kind"], run_tts)(job)
             package(job)
             job["status"], job["stage"] = "done", "done"
         except Cancelled:
@@ -4533,6 +4554,8 @@ def job_view(job, urls=True):
                                  "dataset", "benchmark", "train", "kvoice", "walk", "auto_train", "train_engine", "timings", "pairs", "method", "lane", "review_batch", "stream",
                                  "eagle", "polish_engine", "polish", "dl")}
     v["resources"] = job_resources(job)
+    if job["kind"] == "bench":
+        v["bench"] = bench.view(job)
     if job["kind"] in ("video", "image"):
         v["gen"] = job["gen"]
     if job["kind"] == "tts":
@@ -4568,7 +4591,7 @@ def job_view(job, urls=True):
                 r["json_url"] = sign(f"/files/{job['id']}/{r['id']}.subs.json")
         res.append(r)
     v["results"] = res
-    if urls and job["status"] == "done" and job["kind"] not in ("video", "reference", "dataset", "train", "voicewalk", "eagle"):
+    if urls and job["status"] == "done" and job["kind"] not in ("video", "reference", "dataset", "train", "voicewalk", "eagle", "bench"):
         v["zip_url"] = sign(f"/files/{job['id']}.zip")
         if job.get("subs"):
             v["subs_urls"] = {ext: sign(f"/files/{job['id']}/subtitles.{ext}") for ext in ("srt", "vtt", "json")}
@@ -4601,7 +4624,7 @@ def catalogue():
 def lanes():
     """What each lane is doing: the GPU lane (one job at a time), the CPU lane beside it, and the downloads."""
     out = {}
-    for name, q in (("gpu", QUEUE), ("cpu", CPU_QUEUE), ("fetch", FETCH_QUEUE)):
+    for name, q in (("gpu", QUEUE), ("cpu", CPU_QUEUE), ("fetch", FETCH_QUEUE), ("bench", BENCH_QUEUE)):
         run = [j for j in list(JOBS.values()) if j["status"] == "running" and j.get("lane", "gpu") == name]
         out[name] = {"running": [{"id": j["id"], "label": j.get("label"), "stage": j.get("stage"), "engine": j.get("engine")} for j in run], "queued": len(q)}
     return out
@@ -4913,6 +4936,8 @@ def main():
         sys.exit("WORKER_SECRET must be set (>= 24 chars)")
     threading.Thread(target=worker_loop, daemon=True).start()
     threading.Thread(target=worker_loop, args=(CPU_QUEUE,), daemon=True).start()
+    for _ in range(BENCH_WORKERS):
+        threading.Thread(target=worker_loop, args=(BENCH_QUEUE,), daemon=True).start()
     for _ in range(FETCH_WORKERS):  # downloads run side by side: they need a little CPU and bandwidth, not the GPU
         threading.Thread(target=worker_loop, args=(FETCH_QUEUE,), daemon=True).start()
     os.environ["VOICEBOX_PORT"] = str(a.port)

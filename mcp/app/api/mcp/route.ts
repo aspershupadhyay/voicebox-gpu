@@ -27,7 +27,10 @@ const authed = withMcpAuth(
     if (safeEqual(token, expected)) return { token, clientId: "owner", scopes: [SCOPE] };
     // OAuth access token from /api/oauth/token (claude.ai connectors and other header-less clients)
     const at = verify<{ typ: "access"; cid: string; exp: number }>(token, "access");
-    return at && { token, clientId: at.cid, scopes: [SCOPE], expiresAt: at.exp };
+    if (at) return { token, clientId: at.cid, scopes: [SCOPE], expiresAt: at.exp };
+    // code mode: a script in the sandbox (lib/auto/bench.ts runKey), for as long as its run
+    const run = verify<{ typ: "run"; model: string; exp: number }>(token, "run");
+    return run && { token, clientId: `run:${run.model}`, scopes: [SCOPE], expiresAt: run.exp };
   },
   { required: true },
 );

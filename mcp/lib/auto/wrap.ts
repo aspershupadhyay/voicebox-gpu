@@ -25,6 +25,7 @@ export const SPENDS: Record<string, (a: Args) => boolean> = {
   train_voice: () => true, benchmark_voices: () => true, download: () => true, post_pipeline: () => true,
   voice_dataset: (a) => !!a.action && a.action !== "list",
   gpu: (a) => a.action === "start" || a.action === "train_draft",
+  run: () => true,
 };
 /** Changes that aren't GPU work but still stop while paused (the gated ones always do). */
 const PAUSES: Record<string, (a: Args) => boolean> = {
@@ -113,8 +114,9 @@ export function guarded(server: ToolServer, via?: string): ToolServer {
         res = stop(`ERROR: ${(e as Error).message}`);
       }
       const text = said(res);
+      const from = via ?? (ctx?.http?.authInfo?.clientId?.startsWith("run:") ? "code" : undefined); // a sandbox script
       later(logCall({ t, tool: name, model, client: ctx?.http?.authInfo?.clientId, args: trimArgs(args ?? {}), ok: !res.isError, ms: Date.now() - t,
-        ...(res.isError ? { err: text.slice(0, 300) } : {}), ...(jobIn(text) ? { job: jobIn(text) } : {}), ...(gate ? { gate } : {}), ...(via ? { via } : {}) }));
+        ...(res.isError ? { err: text.slice(0, 300) } : {}), ...(jobIn(text) ? { job: jobIn(text) } : {}), ...(gate ? { gate } : {}), ...(from ? { via: from } : {}) }));
       return res;
     });
   };

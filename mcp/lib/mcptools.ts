@@ -60,6 +60,7 @@ async function waitFor(id: string, seconds: number): Promise<Job> {
     return { ...job, model: model ?? { saved: false, note: "still uploading the model; call get_job again in a minute" } } as Job;
   }
   if ((job.kind as string) === "eagle") return job; // a draft model, not audio: nothing for the Library
+  if ((job.kind as string) === "bench") return job; // the workbench: get_job shows it through lib/auto/bench.ts
   if (job.status === "done") {
     try {
       const lib = await archiveWorkerJob(job as unknown as Parameters<typeof archiveWorkerJob>[0]);
@@ -609,7 +610,9 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     },
     async ({ job_id, wait_seconds }) => {
       try {
-        return text(withHint(await waitFor(job_id, wait_seconds ?? MAX_WAIT)));
+        const job = await waitFor(job_id, wait_seconds ?? MAX_WAIT);
+        if ((job.kind as string) === "bench") return text(await (await import("@/lib/auto/bench")).view(job as never, CLAUDE));
+        return text(withHint(job));
       } catch (e) {
         return fail(e);
       }
@@ -1741,7 +1744,7 @@ export const INSTRUCTIONS = [
     "Publishing: publish_accounts shows the connected YouTube / Instagram accounts and the queue; publish_post sets up a target (files, cover, every YouTube or Instagram option) and saves, arms it for its publish time, or sends it now (only when asked); publish_status follows it; automation_rules reads or changes cross-posting, posting slots, retries and footers. analytics shows how the channels are doing (per format, every post's score against the usual, best times, lengths, hashtags, tips): read it before planning so the next posts build on what works. X, TikTok, LinkedIn and podcasts stay hand-offs: the user posts those and marks them posted.",
     "Writing room (scores from the user's own numbers, no AI on the server, so you do the writing): hook_score on a script before voicing it (aim for 70+); title_lab for title ideas and thumbnail briefs that follow what their hits do; captions to fit a post's caption to each target (X 280, Instagram 2,200…); weekly_digest for what worked, what rivals did and what to post next.",
     "Radar (Grow → Radar; free public signals plus the user's own numbers, scored by rules that show their working): radar for what to post right now (topics moving across Google Trends, Google News, Hacker News, Lobsters, DEV, Mastodon, Hugging Face, GitHub, Wikipedia's most read, autocomplete, YouTube trending and rivals' outliers, scored by heat and fit with a confidence); keyword_research for one keyword's demand, momentum, competition, fit, opportunity, long tail, questions and a view prediction against the user's usual (post_id keeps it for the track record); seo_score for titles, descriptions and tags against a keyword; radar_watch for the watchlist. Quote the scores and their parts; never invent search volumes.",
-    "Automation (Settings → Automation): risky actions (publishing now, deleting, changing publishing rules, spending past the day's units cap) answer NEEDS APPROVAL with an id: call approvals action=wait with it, then repeat the call with approval_id. PAUSED means the owner stopped everything: stop and tell the user. control shows the units budget and the call log; control action=stop_all is the kill switch for anything running away.",
+    "Automation (Settings → Automation): risky actions (publishing now, deleting, changing publishing rules, spending past the day's units cap) answer NEEDS APPROVAL with an id: call approvals action=wait with it, then repeat the call with approval_id. PAUSED means the owner stopped everything: stop and tell the user. control shows the units budget and the call log; control action=stop_all is the kill switch for anything running away. Before a task, playbook search finds the studio's rules for it. run executes Python / Node / Bash on the Colab worker in a sandbox; inside it `import voicebox as vb` calls any tool from code (vb.<tool>(**args)), so loop and filter there and print only what matters.",
     "7) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",
     "Scores: match = how closely Whisper heard the script (>=0.95 good); similarity = voice match vs the recording (>=0.86 same speaker).",
 ].join("\n");

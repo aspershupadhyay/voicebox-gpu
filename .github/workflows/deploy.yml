@@ -7,7 +7,7 @@ name: Deploy
 on:
   push:
     branches: [main, claude/optimistic-heisenberg-ik2pah, claude/voicebox-mcp-config-edlw25]
-    paths: [mcp/**, worker/**, notebook/build_notebook.py, scripts/vercel_deploy.py, .github/workflows/deploy.yml]
+    paths: [mcp/**, worker/**, docs/**, CLAUDE.md, notebook/build_notebook.py, scripts/build_playbook.py, scripts/vercel_deploy.py, .github/workflows/deploy.yml]
   workflow_dispatch:
 concurrency: { group: deploy, cancel-in-progress: false }
 jobs:
@@ -31,6 +31,8 @@ jobs:
           done
       - name: Worker bundle (what Colab pulls from /api/bundle)
         run: python3 notebook/build_notebook.py
+      - name: Playbook (the docs the playbook MCP tool serves)
+        run: python3 scripts/build_playbook.py
       - name: Deploy
         # REST API, not the Vercel CLI: project-scoped tokens can't load a user, which the CLI always does
         run: python3 scripts/vercel_deploy.py --scope "$VERCEL_SCOPE" --project "$VERCEL_PROJECT"
