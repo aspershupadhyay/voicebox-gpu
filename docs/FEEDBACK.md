@@ -4,7 +4,23 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (covers, thumbnails, stories, a calmer top bar, 2026-10-29)
+## Latest round (Radar: keyword research and what to post, 2026-10-29)
+
+- **Build a radar and elite keyword research, "like Palantir and World Monitor but for content"**: Grow → Radar
+  (`/analytics/radar`). A sweep of what's moving in the lane right now (Google Trends, Google News, Hacker News,
+  autocomplete, YouTube trending, rivals' outliers) on a radar scope; deep research on any keyword (demand, momentum,
+  competition, fit, opportunity, long tail, questions, what ranks); the best titles with SEO and click scores; a
+  watchlist over time.
+- **Free resources only**: every source is free and public (autocompletes of YouTube, Google, Bing and DuckDuckGo,
+  YouTube's search page, Google News, Hacker News, Wikipedia pageviews, Google Trends). Reddit refuses servers without a
+  paid key, so it's left out and the page says so.
+- **"The best prediction, not BS"**: every score lists what it's made of and which sources answered, with a confidence;
+  the prediction is your own usual views moved by named factors, with a range and a hit chance, and every prediction is
+  kept and judged against the real post a week after it goes out (the track record), which then corrects later ones.
+- **Everything through the MCP**: `radar`, `keyword_research` (compare, watch, save a prediction for a post),
+  `seo_score` and `radar_watch`.
+
+## Earlier round (covers, thumbnails, stories, a calmer top bar, 2026-10-29)
 
 - **Stories shouldn't be Instagram's stretched crop**: build them the way you share a post by hand, the whole post as a
   card with the @handle on a blur of itself (videos too), for anything already posted ("Share to story"). Fill stays

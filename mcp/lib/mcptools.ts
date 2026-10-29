@@ -1505,6 +1505,129 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     }),
   );
 
+  // ───────────── Radar (lib/radar.ts, radar-data.ts): free public signals + the user's own numbers, scored by rules
+  const FMT = z.enum(["yt_video", "yt_short", "ig_reel", "ig_post"]);
+  const GEO = z.string().regex(/^[A-Za-z]{2}$/).optional().describe("2-letter country code for autocomplete, search and news (default: the first of the Radar's countries, e.g. US or IN)");
+  const slimKw = (r: Awaited<ReturnType<typeof import("@/lib/radar-data").keyword>>, full = true) => ({
+    keyword: r.q, geo: r.geo, format: r.fmt, opportunity: r.opportunity, verdict: r.verdict, confidence: `${r.confidence} (${r.confidence_n} of 6 key sources answered)`, why: r.why,
+    scores: Object.fromEntries((["demand", "momentum", "competition", "fit"] as const).map((k) => [k, { score: r[k].score, line: r[k].line, parts: r[k].parts.map((p) => `${p.label}: ${p.value} → ${p.score}`) }])),
+    prediction: { ...r.prediction, note: "Expected views vs the user's usual for the format; low/high is the middle half. hit_chance = chance of 1.5x usual or more." },
+    ...(full ? {
+      longtail: r.longtail, questions: r.questions, related_words: r.related.slice(0, 15).map((x) => x.word),
+      your_history: r.fit.history, top_results: r.top.slice(0, 8).map((h) => ({ title: h.title, channel: h.channel, views: h.views, age_days: h.age_days, subs: h.subs ?? null, url: `https://youtu.be/${h.id}` })),
+      this_month: r.month.slice(0, 5).map((h) => ({ title: h.title, channel: h.channel, views: h.views, age_days: h.age_days, url: `https://youtu.be/${h.id}` })),
+      news: r.news.slice(0, 5).map((n) => ({ title: n.title, source: n.source, at: new Date(n.at).toISOString().slice(0, 10), url: n.url })),
+      hacker_news: r.hn.slice(0, 4), starter_titles: r.titles,
+    } : {}),
+    sources: r.sources.map((s) => `${s.id}: ${s.ok ? "ok" : `failed (${s.note ?? "?"})`}`), cached: r.cached,
+    track_record: { played_out: r.record.n, waiting: r.record.open, typical_miss: r.record.median_err == null ? null : `${r.record.median_err}x`, within_2x: r.record.within, hit_calls_right: r.record.hit_calls },
+  });
+
+  server.registerTool(
+    "radar",
+    {
+      title: "Radar: what to post right now",
+      description: "Grow → Radar's sweep, like a world monitor for content: reads free public signals (Google Trends' daily searches for the Radar's countries, Google News on each seed this week, Hacker News' front page, YouTube autocomplete for each seed, YouTube's trending tech videos, the user's rivals' outliers), groups them by topic and scores each blip: heat (how many independent sources, how strong, how fresh) and fit (the user's lane: seeds, their hits' words, rivals' hits). Also returns the watchlist with each keyword's scores over time and the prediction track record. Use it to answer \"what should we post\": pick the hottest blips that fit, run keyword_research on each (or a sharper long-tail), then write titles and score them with seo_score. Cached 20 minutes; fresh re-reads. seeds/geos change the lane for good (only when asked).",
+      inputSchema: z.object({
+        fresh: z.boolean().optional(),
+        seeds: z.array(z.string().min(2).max(80)).max(16).optional().describe("set the Radar's lane (topics it watches) for good; only when the user asks"),
+        geos: z.array(z.string().regex(/^[A-Za-z]{2}$/)).max(4).optional().describe("set the countries it reads, e.g. [\"US\",\"IN\"]; only when asked"),
+      }),
+    },
+    async ({ fresh, seeds, geos }) => ws(async () => {
+      const rd = await import("@/lib/radar-data");
+      if (seeds || geos) await rd.setConfig({ seeds, geos });
+      const o = await rd.overview(fresh || !!seeds || !!geos);
+      return {
+        lane: { seeds: o.config.seeds, countries: o.config.geos, auto: o.config.auto ? "seeds picked from your hits and rivals' hits; set your own with seeds" : undefined },
+        blips: o.sweep.blips.map((b) => ({ topic: b.topic, score: b.score, verdict: b.verdict, heat: b.heat, fit: b.fit, why: b.why, sources: b.sources, evidence: b.signals.slice(0, 5).map((s) => ({ from: s.src, title: s.title.slice(0, 160), metric: s.metric, url: s.url, at: new Date(s.at).toISOString() })), angles: b.angles })),
+        trending_searches: o.sweep.trending.map((t) => `${t.title.split(" · ")[0]} (${t.metric}, ${t.geo})`),
+        watchlist: o.watch.map((w) => { const h = w.history.at(-1); return { keyword: w.q, opportunity: h?.opp, demand: h?.d, momentum: h?.m, competition: h?.c, fit: h?.f, predicted_x: h?.x, trend: w.history.length > 1 ? (h!.opp - w.history[w.history.length - 2].opp) : 0, points: w.history.length }; }),
+        track_record: { played_out: o.record.n, waiting: o.record.open, typical_miss: o.record.median_err, within_2x: o.record.within, hit_calls_right: o.record.hit_calls },
+        sources: o.sweep.sources.map((s) => `${s.id}: ${s.ok ? "ok" : `failed (${s.note ?? "?"})`}`), checked: new Date(o.sweep.at).toISOString(), cached: o.sweep.cached, needs: o.needs,
+      };
+    }),
+  );
+
+  server.registerTool(
+    "keyword_research",
+    {
+      title: "Keyword research",
+      description: "Deep research on a keyword or topic (Grow → Radar → Keyword), from free sources: YouTube / Google / Bing / DuckDuckGo autocomplete (depth, rank while typing, long tail and questions), YouTube's search page (top results' views per day, age, exact-match titles, the channels' subscribers via the connected channel), Google News and Hacker News (this week against the month), Wikipedia daily readers and Google Trends. Scores 0-100: demand, momentum (50 = steady), competition (higher = harder) and fit (the user's own posts on it vs their usual, their hits' words, rivals' hits), then opportunity = 0.35 demand + 0.2 momentum + 0.3 (100 - competition) + 0.15 fit, a verdict (Go now 72+, Strong 58+, Maybe 44+, Skip), confidence (how many sources answered) and a prediction: expected views vs the user's usual for the format with the middle-half range and the chance of a hit, moved by their history on the topic, the opportunity, the momentum and the track record. Every score lists what it's made of: quote those, don't invent numbers. Also: long-tail searches each rated, the questions people ask, related words to cover, starter titles scored. keywords (2-5) compares them side by side. post_id saves the prediction against that post so it's judged once it's out (the track record); watch adds it to the watchlist. Cached 6 h per keyword and country; deep adds an a-z long-tail sweep.",
+      inputSchema: z.object({
+        keyword: z.string().min(2).max(80).optional(), keywords: z.array(z.string().min(2).max(80)).min(2).max(5).optional(),
+        geo: GEO, format: FMT.optional().describe("the format it's for (sets the prediction's usual); defaults to the user's main YouTube format"),
+        deep: z.boolean().optional(), fresh: z.boolean().optional(), post_id: POST_ID.optional(), watch: z.boolean().optional(),
+      }),
+    },
+    async ({ keyword, keywords, geo, format, deep, fresh, post_id, watch }) => ws(async () => {
+      const rd = await import("@/lib/radar-data");
+      if (keywords?.length) {
+        const rs = await rd.compare(keywords, { geo, fmt: format ?? null });
+        return { compared: rs.map((r) => ("error" in r ? r : slimKw(r, false))), next: "Run keyword_research on the winner for its long tail, questions and titles." };
+      }
+      if (!keyword) throw new Error("give keyword (or keywords to compare)");
+      const r = watch ? await rd.watch(keyword, CLAUDE.name, format ?? null) : await rd.keyword(keyword, { geo, fmt: format ?? null, deep, fresh });
+      const full = "record" in r ? r : await rd.keyword(keyword, { geo, fmt: format ?? null });
+      if (post_id) await rd.predictFor(full, post_id, CLAUDE.name);
+      return { ...slimKw(full), saved: { watching: !!watch, prediction_for_post: post_id ?? null } };
+    }),
+  );
+
+  server.registerTool(
+    "seo_score",
+    {
+      title: "SEO and title score",
+      description: "Scores titles (and optionally a description and tags) for a keyword the way search reads them: keyword in the title as a phrase, up front, 30-60 characters, the related words searchers add (from keyword_research's autocomplete data) covered, keyword early in the description, enough description, no stuffing, 1-5 hashtags, chapters, tags. Each title also gets the click score from the user's own hits (title_lab's model) and a combined title score (search and click; Shorts and Reels lean on click). Give post_id to score that post's title and caption. To write titles: read keyword_research, write 8-12 candidates that put the keyword first and cover the related words and the user's winning habits, score them here, rewrite the weak ones, and offer the best 3-5 with their scores. Put one on a post with update_post only when asked.",
+      inputSchema: z.object({
+        keyword: z.string().min(2).max(80), titles: z.array(z.string().min(1).max(200)).max(30).optional(),
+        description: z.string().max(5000).optional(), tags: z.array(z.string().max(100)).max(60).optional(),
+        post_id: POST_ID.optional(), format: FMT.optional(), geo: GEO,
+      }),
+    },
+    async ({ keyword, titles, description, tags, post_id, format, geo }) => ws(async () => {
+      const [{ seoScore, titleScore }, rd] = await Promise.all([import("@/lib/radar"), import("@/lib/radar-data")]);
+      const post = post_id ? await getPost(post_id) : null;
+      const r = await rd.keyword(keyword, { geo, fmt: format ?? null });
+      const fmt = format ?? r.fmt;
+      const related = r.related.slice(0, 8).map((x) => x.word);
+      const { titleModel } = await import("@/lib/writing");
+      const model = titleModel((await room().catch(() => null))?.items ?? []);
+      const cands = [...(post ? [post.title] : []), ...(titles ?? [])];
+      if (!cands.length) throw new Error("give titles or post_id");
+      const desc = description ?? post?.caption ?? undefined;
+      return {
+        keyword: r.q, format: fmt, related_words: related, keyword_opportunity: r.opportunity,
+        scored: cands.map((t) => {
+          const s = seoScore({ q: keyword, title: t, description: desc, tags: tags ?? null, related, fmt });
+          const c = titleScore(t, keyword, model, { related, fmt });
+          return { title: t, title_score: c.score, seo: s.score, click: c.click, partial: s.partial, missing_related: s.missing, failing: s.checks.filter((x) => !x.ok).map((x) => `${x.label}: ${x.why}`) };
+        }).sort((a, b) => b.title_score - a.title_score),
+      };
+    }),
+  );
+
+  server.registerTool(
+    "radar_watch",
+    {
+      title: "Radar watchlist",
+      description: "The keywords Radar follows: each is re-read about once a day (when the Radar page or this tool is used) and keeps its scores over time, so a rising keyword shows before it peaks. action list (default) shows them with the latest scores and the change; add / remove change it (add only when asked). The prediction track record (predictions made for posts and watched keywords, judged against the post once it's a week old) comes with the list.",
+      inputSchema: z.object({ action: z.enum(["list", "add", "remove"]).optional(), keyword: z.string().min(2).max(80).optional(), format: FMT.optional() }),
+    },
+    async ({ action, keyword, format }) => ws(async () => {
+      const rd = await import("@/lib/radar-data");
+      if ((action === "add" || action === "remove") && !keyword) throw new Error("give keyword");
+      if (action === "add") await rd.watch(keyword!, CLAUDE.name, format ?? null);
+      if (action === "remove") await rd.unwatch(keyword!);
+      await rd.refreshWatch(3).catch(() => 0);
+      const [w, rec] = await Promise.all([rd.loadWatch(), rd.trackRecord()]);
+      return {
+        watchlist: w.map((x) => ({ keyword: x.q, added_by: x.by, since: new Date(x.added).toISOString().slice(0, 10), history: x.history.slice(-10).map((h) => ({ at: new Date(h.at).toISOString().slice(0, 10), opportunity: h.opp, demand: h.d, momentum: h.m, competition: h.c, fit: h.f, predicted_x: h.x })) })),
+        track_record: { played_out: rec.n, waiting: rec.open, typical_miss: rec.median_err, within_2x: rec.within, hit_calls_right: rec.hit_calls, correction: rec.calib, recent: rec.recent.map((p) => ({ keyword: p.q, format: p.fmt, predicted_x: p.x, hit_chance: p.hit_chance, post_id: p.post_id, actual: p.actual ?? null })) },
+      };
+    }),
+  );
+
   server.registerTool(
     "workspace_members",
     {
@@ -1528,6 +1651,7 @@ export const INSTRUCTIONS = [
     "Files page (a Drive-like file manager over uploads and generated items; category folders Videos, Images, Audio, Docs & scripts and Other file things by kind on their own): list_files browses folders and searches; get_file gives download links; create_folder / update_folder / move_files / rename_file / star_files keep it tidy (upload_media and add_media take a folder). delete_files and delete_folder move things to the trash (30 days, restore_files brings them back) and only when asked; forever / empty_trash only when asked for that.",
     "Publishing: publish_accounts shows the connected YouTube / Instagram accounts and the queue; publish_post sets up a target (files, cover, every YouTube or Instagram option) and saves, arms it for its publish time, or sends it now (only when asked); publish_status follows it; automation_rules reads or changes cross-posting, posting slots, retries and footers. analytics shows how the channels are doing (per format, every post's score against the usual, best times, lengths, hashtags, tips): read it before planning so the next posts build on what works. X, TikTok, LinkedIn and podcasts stay hand-offs: the user posts those and marks them posted.",
     "Writing room (scores from the user's own numbers, no AI on the server, so you do the writing): hook_score on a script before voicing it (aim for 70+); title_lab for title ideas and thumbnail briefs that follow what their hits do; captions to fit a post's caption to each target (X 280, Instagram 2,200…); weekly_digest for what worked, what rivals did and what to post next.",
+    "Radar (Grow → Radar; free public signals plus the user's own numbers, scored by rules that show their working): radar for what to post right now (topics moving across Google Trends, news, Hacker News, autocomplete and rivals' outliers, scored by heat and fit); keyword_research for one keyword's demand, momentum, competition, fit, opportunity, long tail, questions and a view prediction against the user's usual (post_id keeps it for the track record); seo_score for titles, descriptions and tags against a keyword; radar_watch for the watchlist. Quote the scores and their parts; never invent search volumes.",
     "7) Move the post along (status draft -> review -> scheduled -> posted) as work lands; add the live link when it's out. Never delete posts or change settings unless asked.",
     "Scores: match = how closely Whisper heard the script (>=0.95 good); similarity = voice match vs the recording (>=0.86 same speaker).",
 ].join("\n");

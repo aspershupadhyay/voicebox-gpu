@@ -29,6 +29,7 @@ export const VIEWS = [
   { href: "/analytics/audience", name: "Audience", sub: "Who's watching, where they come from and how fast you're growing." },
   { href: "/analytics/when-to-post", name: "When to post", sub: "The days and times your posts do best, and your rhythm." },
   { href: "/analytics/competitors", name: "Competitors", sub: "You against the channels you're chasing, and what's working for them right now.", live: true },
+  { href: "/analytics/radar", name: "Radar", plain: true, sub: "What to post next: what people search for, what's rising, how crowded it is and how well it suits you." },
   { href: "/analytics/youtube", name: "YouTube", net: "youtube" as const, sub: "Your YouTube in depth: reach, watch time, audience and every video." },
   { href: "/analytics/instagram", name: "Instagram", net: "instagram" as const, sub: "Your Instagram in depth: reach, engagement, audience and every post." },
 ];
@@ -52,6 +53,7 @@ const before = (from: string, range: number) => { const s = Date.parse(`${from}T
 export default function AnalyticsShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const view = [...VIEWS].reverse().find((v) => (v.href === "/analytics" ? path === v.href : path.startsWith(v.href))) ?? VIEWS[0];
+  if ("plain" in view) return <PlainShell view={view}>{children}</PlainShell>;
   return view.live ? <LiveShell view={view}>{children}</LiveShell> : <ReportShell view={view}>{children}</ReportShell>;
 }
 
@@ -87,6 +89,18 @@ function LiveShell({ view, children }: { view: (typeof VIEWS)[number]; children:
   return (
     <>
       <PageHeader className="fx-head" title={view.name} actions={<LiveChip at={data?.at} paused={paused} />} />
+      <Tabs path={path} />
+      <div key={path} className="an-wrap an-view">{children}</div>
+    </>
+  );
+}
+
+/** Radar: its own sources and its own top bar (components/Radar.tsx), no report to wait on. */
+function PlainShell({ view, children }: { view: (typeof VIEWS)[number]; children: React.ReactNode }) {
+  const path = usePathname();
+  return (
+    <>
+      <PageHeader className="fx-head" title={view.name} sub={view.sub} />
       <Tabs path={path} />
       <div key={path} className="an-wrap an-view">{children}</div>
     </>
