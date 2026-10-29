@@ -2,8 +2,8 @@
 // Create → Download: paste a link (Instagram, YouTube, TikTok, X, Pinterest, Cosmos, any page or file) and the photo
 // or video lands in Files, in the folder picked here. Pasting a link into the empty bar (or anywhere on the page) starts
 // it at once; several links, one per line, go together. Each row shows where it's at, live, and opens in Files when
-// it's in, in the site's own folder (Downloads/Instagram…). Instagram, YouTube and TikTok go through the GPU worker's
-// yt-dlp, which starts by itself and stops when they're in; sign-in cookies for posts behind a login
+// it's in, in the site's own folder (Downloads/Instagram…). Instagram, YouTube and TikTok go through the Colab worker's
+// yt-dlp (a CPU runtime), which starts by itself and stops when they're in; sign-in cookies for posts behind a login
 // live under Sign-ins. The server side is lib/downloads.ts; styles under "download" in app/globals.css.
 import {
   ArrowClockwise, ArrowSquareOut, CheckCircle, CloudArrowDown, FacebookLogo, FolderSimple, Globe, InstagramLogo, Key, LinkSimple, PinterestLogo, Planet,
@@ -113,7 +113,7 @@ function SignIns({ set, onSaved }: { set: boolean; onSaved: () => void }) {
       </button>
       {open && (
         <div className="dl-si-body">
-          <p className="small dim">Export your cookies from a browser where you're signed in (an extension such as “Get cookies.txt LOCALLY”) and paste the file here. It's kept privately in your storage, only ever sent to your own GPU worker, and never shown again.</p>
+          <p className="small dim">Export your cookies from a browser where you're signed in (an extension such as “Get cookies.txt LOCALLY”) and paste the file here. It's kept privately in your storage, only ever sent to your own Colab worker, and never shown again.</p>
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} placeholder="# Netscape HTTP Cookie File…" aria-label="cookies.txt" spellCheck={false} />
           <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
             {set && <button type="button" className="ghost sm" onClick={() => save(null)} disabled={busy}>Remove</button>}
@@ -203,7 +203,7 @@ export default function Download() {
           <div className="dl-found" aria-live="polite">
             {links.length ? hint.map((h, i) => { const S = SRC[h]; return <span key={i} className="dl-chip" style={{ animationDelay: `${i * 40}ms` }}><S.Icon size={13} weight="bold" aria-hidden />{S.name}</span>; })
               : <span className="tiny dim">Press Enter, or just paste: it starts on its own.</span>}
-            {needsWorker && <span className={`tiny ${data?.worker ? "dim" : "warn-t"}`}>{data?.worker ? "· through the GPU worker" : "· starts the GPU worker by itself, and stops it when done"}</span>}
+            {needsWorker && <span className={`tiny ${data?.worker ? "dim" : "warn-t"}`}>{data?.worker ? "· through the Colab worker" : "· starts the Colab downloader by itself (a CPU runtime), and stops it when done"}</span>}
           </div>
           <div className="dl-go">
             <Select size="sm" label="Save to" value={folder} onChange={pick} options={opts} className="dl-folder" />
@@ -214,7 +214,7 @@ export default function Download() {
 
       <ul className="dl-sources" aria-label="Where it downloads from">
         {SHOWN.map((k, i) => { const S = SRC[k]; return (
-          <li key={k} style={{ animationDelay: `${i * 45}ms` }} title={S.worker ? `${S.name}: through the GPU worker (${data?.worker ? "on" : "off"})` : `${S.name}: straight from the server`}>
+          <li key={k} style={{ animationDelay: `${i * 45}ms` }} title={S.worker ? `${S.name}: through the Colab worker (${data?.worker ? "on" : "off"})` : `${S.name}: straight from the server`}>
             <S.Icon size={15} weight="duotone" aria-hidden />{S.name}{S.worker && <i className={`dl-w ${data?.worker ? "on" : ""}`} aria-label={data?.worker ? "worker on" : "worker off"} />}
           </li>
         ); })}
