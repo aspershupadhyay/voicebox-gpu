@@ -121,8 +121,13 @@ The owner's feedback still goes into `docs/FEEDBACK.md` in the same PR as the ch
   file, wrapped to the safe width and shrunk past 3 lines; fades; loudnorm; NVENC when there's a GPU; QA after every
   render), bench ops `edit` and `inspect`, tools `edit_video` and `inspect_media` (probe, qa, scenes, loudness,
   words, a contact sheet).
-- [ ] **5. Web**: `browse` (Playwright on the worker), `search` (needs a key). Done when: a model reads a page and
-  takes a 390 px screenshot.
+- [x] **5. Web**: `browse` (Playwright on the worker), `search` (needs a key). Done when: a model reads a page and
+  takes a 390 px screenshot. **Shipped**: bench op `browse` (Playwright 1.48 and Chromium installed once per
+  runtime into /opt/vb-browsers, run as the sandbox user, who can't reach the worker's ports; steps click, fill,
+  press, wait, scroll, goto, screenshot; the main text, description and links; screenshots saved to Files),
+  `lib/auto/search.ts` (Brave or Tavily by the key's shape), one tool `browse` (read, screenshot, search). Tested: a
+  page read after a fill and a click, a 390 px screenshot of the login page at 2x, search answers from canned Brave and
+  Tavily responses; without `SEARCH_API_KEY` search says so and suggests browsing instead.
 - [ ] **6. Media II**: `video_template` (HyperFrames + brand kit from `videos-post`, cached on R2), `repurpose`
   recipes. Done when: `long_to_shorts` turns one long video into captioned 9:16 shorts in one call.
 - [ ] **7. Automations**: `workflow`, `schedule` (on the 10-minute sweep), `triggers` (on job and post events).
