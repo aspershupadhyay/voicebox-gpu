@@ -31,6 +31,13 @@ Every dashboard change follows `docs/DESIGN.md`. In short:
 
 Check dark (the only theme) and 390px width before you ship.
 
+## The automation suite (in progress)
+
+The owner's next big goal: the MCP as a full cloud workbench any model (Claude, Gemini…) can drive, with a sandbox,
+repos, browser, media recipes, schedules, an auditor and a learning loop, all on the Colab L4. The plan, the phases,
+the decisions and what's waiting on the owner are in `docs/AUTOMATION.md`: read it before working on it, and tick its
+phases as they ship.
+
 ## Inference work
 
 Speed-ups for the voice engines follow `docs/INFERENCE.md` (the plan, in order, with its rules: behind a flag, works

@@ -4,7 +4,20 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (square and portrait, whole, 2026-10-29)
+## Latest round (the automation suite plan, 2026-10-29)
+
+- **"Any AI, everything you can do in a cloud environment, through our MCP; a full automation suite; save it so a new
+  session picks it up"**: the plan is `docs/AUTOMATION.md` (linked from `CLAUDE.md`): ten building blocks (control,
+  sandbox, know-how, repos, media, web, automations, agents and audit, memory), safety first, nine phases.
+- **"On Colab"**: everything runs on the Colab L4, not Modal.
+- **"Save my tokens; I'll add Gemini through the MCP"**: the server holds recipes, templates and checks so a cheaper
+  model works in 2–3 calls; a setup guide for Gemini CLI is in the plan.
+- **"A separate repo so it doesn't mess up what we built; audit their work"**: models work freely in a separate
+  workbench repo; here they may only open PRs that the auditor and the owner merge.
+- **"Any model doing anything must improve and save the feedback, like you do"**: the learning loop: log, grade,
+  audit, lessons, promote to rules, serve to every model, scorecards per model.
+
+## Earlier round (square and portrait, whole, 2026-10-29)
 
 - **"It's cutting the actual size of the posts; give us what Instagram stores; ready for both square and portrait"**:
   the carousel's photos came as 1080x1080, Instagram's square grid crop of 4:5 posts (the top line and the bottom of
