@@ -284,6 +284,7 @@ export async function autoPost(files: string[], actor: Actor, o: { go?: "draft" 
   const next = [...cur.filter((t) => !spaces.includes(t.space)), ...spaces.map((space) => {
     const have = cur.find((t) => t.space === space);
     if (have?.status === "posted") return have;
+    if (o.go === "draft") return have ?? { space, status: "draft" as const }; // set up to check in the composer: nothing on the calendar yet
     const due = now ? new Date().toISOString() : have?.due_at ?? nextSlot(rules, space, taken(space)) ?? new Date(Date.now() + 24 * 3600_000).toISOString();
     return { space, status: "scheduled" as const, due_at: due };
   })];
@@ -313,5 +314,5 @@ export async function autoPost(files: string[], actor: Actor, o: { go?: "draft" 
       else r.state = j.plan?.state ?? r.state;
     }
   }
-  return { post_id: pid, made_post: made, title: saved.title, targets: out, pack: saved, changed, autopilot: rules.autopilot };
+  return { post_id: pid, made_post: made, title: saved.title, targets: out, pack: saved, changed, autopilot: rules.autopilot, post: await aw.getPost(pid).catch(() => post) };
 }

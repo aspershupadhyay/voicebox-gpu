@@ -1531,6 +1531,10 @@ input.cs-title { height: 32px; padding: 0 10px; border-radius: 8px; background: 
 .cs-chip .vp-spin.sm { width: 12px; height: 12px; position: static; margin: 0; }
 .cs-live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ig-pink); flex: none; box-shadow: 0 0 0 3px rgb(225 48 108 / .22); }
 .cs-ig { gap: 7px; }
+/* a video or photo straight to Instagram or YouTube, from the viewer's top bar */
+.fv-post { gap: 7px; }
+.fv-post .vp-spin.sm { width: 12px; height: 12px; position: static; margin: 0; }
+@media (max-width: 640px) { .fv-post span:not(.vp-spin) { display: none; } .fv-post { width: 34px; padding: 0; } }
 /* the curve */
 /* sideways swipes stay inside the carousel and the viewer: the browser never takes one as Back */
 html:has(.cs), html:has(.fv) { overscroll-behavior-x: none; }
@@ -3395,11 +3399,12 @@ html.cur-custom :is(input:not([type="range"]):not([type="checkbox"]):not([type="
 .rd-v-text { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .rd-v-text h2 { margin: 0; font-size: 22px; overflow-wrap: anywhere; }
 .rd-v-text p { margin: 0; }
-.rd-opp { position: relative; margin: 0; width: 150px; height: 150px; }
-.rd-opp svg { width: 100%; height: 100%; }
+.rd-opp { margin: 0; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.rd-opp-dial { position: relative; width: 150px; height: 150px; display: grid; place-items: center; }
+.rd-opp svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .rd-opp circle { fill: none; stroke: var(--line2); stroke-width: 1.5; transition: stroke .3s; }
 .rd-opp circle.lit { stroke: var(--live); }
-.rd-opp figcaption { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.rd-opp figcaption { letter-spacing: .02em; }
 .rd-opp b { font-size: 30px; font-weight: 600; }
 .rd-four { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .rd-score { display: flex; flex-direction: column; gap: 10px; padding: 16px; }

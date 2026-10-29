@@ -425,8 +425,11 @@ function OppRing({ v }: { v: number }) {
   const n = 9, lit = Math.round((v / 100) * n);
   return (
     <figure className="rd-opp" aria-label={`Opportunity ${v} out of 100`}>
-      <svg viewBox="-60 -60 120 120" aria-hidden>{Array.from({ length: n }, (_, i) => <circle key={i} r={18 + i * 4.6} className={i < lit ? "lit" : ""} style={{ transitionDelay: `${i * 40}ms` }} />)}</svg>
-      <figcaption><b className="mono">{v}</b><span className="tiny dim">Opportunity</span></figcaption>
+      <span className="rd-opp-dial">
+        <svg viewBox="-60 -60 120 120" aria-hidden>{Array.from({ length: n }, (_, i) => <circle key={i} r={24 + i * 4} className={i < lit ? "lit" : ""} style={{ transitionDelay: `${i * 40}ms` }} />)}</svg>
+        <b className="mono">{v}</b>
+      </span>
+      <figcaption className="tiny dim">Opportunity</figcaption>
     </figure>
   );
 }
