@@ -27,6 +27,7 @@ export type Dl = {
   server_error?: string | null; // why the server couldn't get it itself (the worker tried next), kept for the final error
   retry_at?: number | null; // a block that passes (too many requests, a 5xx, a timeout): the whole chain runs again then
   auto_retries?: number; // how many times it has done that by itself (RETRY_AFTER_MIN.length at most)
+  carousel?: string | null; // a post with several files lands as one carousel in Files (its id), in the post's order
 };
 type Actor = { id?: string; name: string };
 
@@ -319,9 +320,16 @@ async function itemOf(media: { $id: string; name: string; kind: string; size?: n
 
 async function finish(id: string, items: DlItem[], actor: Actor) {
   const d = (await listDownloads()).find((x) => x.id === id);
-  if (d?.folder) await (await import("./files")).moveItems(items.map((x) => `m:${x.media}`), d.folder).catch(() => null);
-  await patch(id, { status: "done", items, pct: 1, stage: null, error: null, saving_at: undefined });
-  void actor;
+  const keys = items.map((x) => `m:${x.media}`);
+  if (d?.folder) await (await import("./files")).moveItems(keys, d.folder).catch(() => null);
+  // a carousel (several photos or videos from one post) stays one: grouped in Files, in the post's order, named after
+  // the post ("@handle on Instagram - title"), for the post it was downloaded for
+  let carousel = d?.carousel ?? null;
+  if (keys.length > 1 && !carousel) {
+    const name = (d?.name || items[0].name.replace(/ \(\d+\)(\.\w{2,4})?$|\.\w{2,4}$/, "")).slice(0, 120);
+    carousel = await (await import("./carousels")).createCarousel({ name, items: keys, post: d?.post ?? null }, actor.name).then((c) => c.id).catch(() => null);
+  }
+  await patch(id, { status: "done", items, pct: 1, stage: null, error: null, saving_at: undefined, carousel });
 }
 
 /** Hand the link to the worker's yt-dlp; with the worker off it starts the GPU and waits, and goes as soon as the
