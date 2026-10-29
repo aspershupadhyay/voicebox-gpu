@@ -4,7 +4,18 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (the L4 for downloads, side by side, full-size carousel photos, 2026-10-29)
+## Latest round (square and portrait, whole, 2026-10-29)
+
+- **"It's cutting the actual size of the posts; give us what Instagram stores; ready for both square and portrait"**:
+  the carousel's photos came as 1080x1080, Instagram's square grid crop of 4:5 posts (the top line and the bottom of
+  the picture cut off). Instagram lists the crop (c<x>.<y>.<w>.<h> in its address) beside the photo as posted, and the
+  crop claimed to be bigger. Now every uncropped size is tried before any crop, and the whole photo wins: a portrait
+  post comes at 1080x1350, a square one at 1080x1080.
+- **The carousel viewer trimmed slides too**: its cards were a fixed 5:7 with object-fit cover, so a square or 4:5
+  slide lost its sides. The cards take the carousel's own shape now (its first measured slide) and show each slide
+  whole (contain). The phone preview still crops like Instagram does (every slide to the first one's shape).
+
+## Earlier round (the L4 for downloads, side by side, full-size carousel photos, 2026-10-29)
 
 - **"It just keeps saying connecting to Colab; keep it on the L4"**: the runtime the downloads started had been stopped
   ("downloads done"), but its worker kept heartbeating while Colab tore it down, so a new download kept sending to a

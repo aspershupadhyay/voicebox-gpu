@@ -3202,10 +3202,13 @@ def run_fetch(job):
                 pass
             m = re.search(r"[_/.-][sp](\d{2,4})x(\d{2,4})(?:[_/.&?-]|$)", t["url"])
             return int(m.group(1)) * int(m.group(2)) if m else None
-        ranked = sorted(enumerate(th), key=lambda it: (area(it[1], it[0]) or 0, area(it[1], it[0]) is None, it[0]), reverse=True)
+        # a crop (Instagram's square grid version: c<x>.<y>.<w>.<h> in its address) only after every uncropped size: the
+        # photo as it was posted, whole, is what's wanted
+        cropped = lambda t: bool(re.search(r"[=_/]c\d+(?:\.\d+){3}", t["url"]))  # noqa: E731
+        ranked = sorted(enumerate(th), key=lambda it: (not cropped(it[1]), area(it[1], it[0]) or 0, area(it[1], it[0]) is None, it[0]), reverse=True)
         ranked = [t for _, t in ranked]
         base = os.path.join(jdir, f"{i:02d}-{re.sub(r'[^A-Za-z0-9_-]', '', str(entry.get('id') or 'photo'))[:40] or 'photo'}")
-        best = None  # (final path, temp path, (w, h) or None)
+        best = None  # (final path, temp path, (w, h) or None, the size it came from)
         for n, t in enumerate(ranked[:6]):
             ext = os.path.splitext(urlparse(t["url"]).path)[1].lower()
             path = base + (ext if ext in (".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif") else ".jpg")
@@ -3218,17 +3221,20 @@ def run_fetch(job):
                 errors.append(f"photo {i}: {e}"[:200])
                 continue
             size = _image_size(tmp)
+            # the bigger real picture wins: the whole 1080x1350 holds more than its 1080x1080 crop
             if best is None or (size and (not best[2] or size[0] * size[1] > best[2][0] * best[2][1])):
                 if best:
                     os.remove(best[1])
-                best = (path, tmp, size)
+                best = (path, tmp, size, t)
             else:
                 os.remove(tmp)
-            if size and min(size) >= 600:
+            if size and min(size) >= 600 and not cropped(t):
                 break
         if not best:
             return False
         os.replace(best[1], best[0])
+        if cropped(best[3]):
+            job.setdefault("warnings", []).append(f"photo {i} is the square grid crop: the full photo wasn't offered to a signed-out downloader")
         if best[2] and min(best[2]) < 600:
             job.setdefault("warnings", []).append(f"photo {i} only came at {best[2][0]}x{best[2][1]}: the site gave a signed-out downloader nothing bigger")
         up.add(best[0])
