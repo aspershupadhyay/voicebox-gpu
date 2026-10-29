@@ -120,8 +120,9 @@ def contact_sheet(run, path, dst, duration, cols=4, rows=4, width=1600):
 
 # ── QA ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def qa(run, path, platform="reels", layout=None):
-    """Every check a finished video should pass for where it's going, PASS / WARN / FAIL each, worst first."""
+def qa(run, path, platform="reels", layout=None, stills=False):
+    """Every check a finished video should pass for where it's going, PASS / WARN / FAIL each, worst first. stills: it's
+    made of photos or a cover (a slideshow, an audiogram), so frames that barely move are the point, not a fault."""
     p = PLATFORMS.get(platform) or PLATFORMS["reels"]
     info = probe(run, path)
     checks = []
@@ -154,7 +155,8 @@ def qa(run, path, platform="reels", layout=None):
         black = [b for b in d["black"] if (b[1] - b[0]) >= 0.4]
         add("FAIL" if any(b[0] < 0.2 for b in black) else "WARN" if black else "PASS", "black frames",
             "none" if not black else "; ".join(f"{a}-{b} s" for a, b in black[:5]) + (" (it opens on black: the first frame is the thumbnail)" if any(b[0] < 0.2 for b in black) else ""))
-        add("WARN" if d["frozen"] else "PASS", "frozen frames", "none" if not d["frozen"] else "; ".join(f"{a}-{b if b is not None else 'end'} s" for a, b in d["frozen"][:5]))
+        if not stills:
+            add("WARN" if d["frozen"] else "PASS", "frozen frames", "none" if not d["frozen"] else "; ".join(f"{a}-{b if b is not None else 'end'} s" for a, b in d["frozen"][:5]))
     if info.get("has_audio"):
         long_quiet = [s for s in d["silence"] if (s[1] if s[1] is not None else info["duration"]) - s[0] >= 1.2]
         add("WARN" if long_quiet else "PASS", "silences", "none" if not long_quiet else "; ".join(f"{a}-{b if b is not None else 'end'} s" for a, b in long_quiet[:5]))
@@ -198,9 +200,11 @@ def captions_ass(words, w, h, style="pop", position="lower", font="DejaVu Sans",
     # lower: just above the bottom safe line; middle: the centre; upper: under the top safe line
     margin_v = {"lower": round(p["safe"]["bottom"] * h / p["h"] + 40), "middle": round(h / 2 - size), "upper": round(p["safe"]["top"] * h / p["h"] + 20)}[position if position in ("lower", "middle", "upper") else "lower"]
     align = 8 if position == "upper" else 2
+    ml = max(round(w * 0.08), round(p["safe"]["left"] * w / p["w"]) + 20)
+    mr = max(round(w * 0.08), round(p["safe"]["right"] * w / p["w"]) + 20)
     head = (f"[Script Info]\nScriptType: v4.00+\nPlayResX: {w}\nPlayResY: {h}\nWrapStyle: 0\n\n[V4+ Styles]\n"
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-            f"Style: Cap,{font},{size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,{st['bold']},0,0,0,100,100,0,0,1,{st['outline']},0,{align},{round(w * 0.08)},{round(w * 0.08)},{margin_v},1\n\n"
+            f"Style: Cap,{font},{size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,{st['bold']},0,0,0,100,100,0,0,1,{st['outline']},0,{align},{ml},{mr},{margin_v},1\n\n"
             "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
     groups, cur = [], []
     for wd in words:
@@ -222,9 +226,12 @@ def captions_ass(words, w, h, style="pop", position="lower", font="DejaVu Sans",
                 lines.append(f"Dialogue: 0,{_ass_time(a)},{_ass_time(b)},Cap,,0,0,0,,{txt}")
         else:
             lines.append(f"Dialogue: 0,{_ass_time(g[0]['s'])},{_ass_time(end_all)},Cap,,0,0,0,,{_esc(' '.join(toks))}")
-        tw = min(w * 0.84, len(" ".join(toks)) * size * 0.58)
-        y1 = h - margin_v if align == 2 else margin_v + size * 1.2
-        boxes.append({"text": " ".join(toks), "x0": (w - tw) / 2, "x1": (w + tw) / 2, "y0": y1 - size * 1.2, "y1": y1})
+        # libass wraps a line that's too long inside the margins, so the box is never wider than that
+        tw = min(w - ml - mr, len(" ".join(toks)) * size * 0.58)
+        lines_n = max(1, math.ceil(len(" ".join(toks)) * size * 0.58 / (w - ml - mr)))
+        y1 = h - margin_v if align == 2 else margin_v + size * 1.2 * lines_n
+        x0 = ml + (w - ml - mr - tw) / 2
+        boxes.append({"text": " ".join(toks), "x0": x0, "x1": x0 + tw, "y0": y1 - size * 1.2 * lines_n, "y1": y1})
     # one box per distinct height is enough for QA: the widest group
     widest = max(boxes, key=lambda b: b["x1"] - b["x0"]) if boxes else None
     return head + "\n".join(lines) + "\n", [widest] if widest else []
@@ -297,11 +304,13 @@ def plan_edit(spec, infos, nvenc, font_file):
         speed = num(c.get("speed"), 0.25, 4, 1.0)
         if info.get("image"):
             dur = num(c.get("seconds"), 0.5, 60, 3.0)
-            n = add_input(key, ["-loop", "1", "-framerate", str(fps), "-t", f"{dur:.3f}"])
             zoom = c.get("zoom", True)
+            # zoompan makes all d frames from one picture: feed it the photo once (looped, every frame would make d more)
+            n = add_input(key) if zoom else add_input(key, ["-loop", "1", "-framerate", str(fps), "-t", f"{dur:.3f}"])
             if zoom:  # a slow push-in so a still doesn't sit dead
-                fg.append(f"[{n}:v]scale={W * 2}:{H * 2}:force_original_aspect_ratio=increase,crop={W * 2}:{H * 2},"
-                          f"zoompan=z='min(zoom+0.0008,1.12)':d={int(dur * fps)}:s={W}x{H}:fps={fps}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)',setsar=1,format=yuv420p[v{i}]")
+                zw, zh = int(W * 1.25) // 2 * 2, int(H * 1.25) // 2 * 2  # a little headroom is enough for a 10% push-in, and 4x cheaper than 2x
+                fg.append(f"[{n}:v]scale={zw}:{zh}:force_original_aspect_ratio=increase,crop={zw}:{zh},"
+                          f"zoompan=z='min(zoom+0.0006,1.10)':d={int(dur * fps)}:s={W}x{H}:fps={fps}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)',setsar=1,format=yuv420p[v{i}]")
             else:
                 fg.append(shape_filter("pad" if fit == "crop" and c.get("whole") else fit, W, H, f"{n}:v", f"v{i}s"))
                 fg.append(f"[v{i}s]fps={fps},format=yuv420p[v{i}]")
@@ -435,3 +444,118 @@ def font_file():
         return subprocess.run(["fc-match", "-f", "%{file}", "DejaVu Sans:bold"], capture_output=True, text=True, timeout=10).stdout.strip() or None
     except Exception:  # noqa: BLE001
         return None
+
+
+def fix_loudness(run, src, dst, target):
+    """Two-pass loudness for the finished file (the one pass inside an edit drifts on short clips): measure, then set it
+    exactly, the picture copied as it is. Returns the LUFS it ended at, or None when it was already within 1 LU."""
+    code, _, err = run(["ffmpeg", "-hide_banner", "-nostats", "-i", src, "-vn", "-af", f"loudnorm=I={target}:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"], timeout=1800)
+    m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", err)
+    if code or not m:
+        return None
+    d = json.loads(m.group(0))
+    if abs(float(d["input_i"]) - target) <= 1.0:
+        return None
+    af = (f"loudnorm=I={target}:TP=-1.5:LRA=11:measured_I={d['input_i']}:measured_TP={d['input_tp']}:measured_LRA={d['input_lra']}:"
+          f"measured_thresh={d['input_thresh']}:offset={d['target_offset']}:linear=true,aresample=48000")
+    code, _, err = run(["ffmpeg", "-hide_banner", "-y", "-nostats", "-i", src, "-c:v", "copy", "-af", af, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", dst], timeout=1800)
+    if code:
+        raise MediaError(f"loudness pass failed: {err.strip()[-300:]}")
+    return target
+
+
+# ── repurposing: picking shorts, carousel frames, the audiogram ────────────────────────────────────────────────────
+
+HOOK_WORDS = {"how", "why", "what", "secret", "mistake", "never", "always", "stop", "best", "worst", "easy", "fast", "free", "truth",
+              "nobody", "everyone", "you", "here's", "this", "biggest", "simple", "actually", "wrong", "need"}
+
+
+def sentences(words):
+    out, cur = [], []
+    for w in words:
+        cur.append(w)
+        if re.search(r"[.!?]$", w["w"]) or (len(cur) > 1 and w["s"] - cur[-2]["e"] > 0.9):
+            out.append(cur)
+            cur = []
+    if cur:
+        out.append(cur)
+    return [{"s": c[0]["s"], "e": c[-1]["e"], "text": " ".join(x["w"] for x in c), "n": len(c)} for c in out]
+
+
+def pick_segments(words, duration, count=3, min_s=20, max_s=55):
+    """Shorts out of a long video from what's said: windows that start and end on a sentence, dense with speech, that
+    open on a hook (a question, a number, how / why / mistake…). Each says why it was picked. No words: even spacing."""
+    if not words:
+        if duration < min_s:
+            return []
+        step = duration / max(count, 1)
+        return [{"from": round(i * step, 2), "to": round(min(i * step + max_s, duration), 2), "why": "spaced evenly (no words to go on)"} for i in range(count)]
+    sents = sentences(words)
+    cands = []
+    for i, first in enumerate(sents):
+        for j in range(i, len(sents)):
+            span = sents[j]["e"] - first["s"]
+            if span > max_s:
+                break
+            if span < min_s:
+                continue
+            n = sum(x["n"] for x in sents[i:j + 1])
+            pace = n / span  # words a second: dense talk holds a viewer
+            opener = first["text"].lower()
+            hook = sum(1 for t in re.findall(r"[a-z']+", opener)[:12] if t in HOOK_WORDS) + (2 if "?" in first["text"] else 0) + (1 if re.search(r"\d", opener) else 0)
+            ends = 1 if re.search(r"[.!]$", sents[j]["text"]) else 0
+            cands.append({"from": round(max(0, first["s"] - 0.15), 2), "to": round(min(duration, sents[j]["e"] + 0.35), 2), "score": pace + hook * 0.6 + ends * 0.3,
+                          "why": f"opens \"{first['text'][:60]}\"; {pace:.1f} words/s" + (f"; hook words {hook}" if hook else "")})
+    cands.sort(key=lambda c: -c["score"])
+    picked = []
+    for c in cands:
+        if all(c["to"] <= p["from"] or c["from"] >= p["to"] for p in picked):
+            picked.append(c)
+        if len(picked) >= count:
+            break
+    return [{k: v for k, v in c.items() if k != "score"} for c in sorted(picked, key=lambda c: c["from"])]
+
+
+def carousel_times(cuts, duration, n):
+    """Where to take a carousel's slides: the middle of each shot when there are enough, else evenly through it."""
+    bounds = [0.0] + [c for c in cuts if 0.3 < c < duration - 0.3] + [duration]
+    mids = [(a + b) / 2 for a, b in zip(bounds, bounds[1:]) if b - a > 0.6]
+    if len(mids) >= n:
+        step = len(mids) / n
+        return [mids[int(i * step)] for i in range(n)]
+    return [duration * (i + 0.5) / n for i in range(n)]
+
+
+def frame(run, src, t, dst, w, h):
+    code, _, err = run(["ffmpeg", "-hide_banner", "-y", "-ss", f"{t:.3f}", "-i", src, "-frames:v", "1",
+                        "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}", "-q:v", "2", dst], timeout=300)
+    if code:
+        raise MediaError(f"couldn't take a frame at {t:.1f} s: {err.strip()[-200:]}")
+
+
+def audiogram(audio, cover, a, z, W, H, title, font_file):
+    """A podcast clip as a video: the cover (or black) blurred behind, the cover sharp in the middle, a waveform under
+    it moving with the voice, the title on top. Captions go on in a second pass (render_spec)."""
+    d = z - a
+    font = f"fontfile='{font_file}':" if font_file else ""
+    files = {}
+    args = ["ffmpeg", "-hide_banner", "-y", "-nostats", "-ss", f"{a:.3f}", "-t", f"{d:.3f}", "-i", audio]
+    if cover:
+        args += ["-loop", "1", "-t", f"{d:.3f}", "-i", cover]
+        bg = (f"[1:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=30:2,eq=brightness=-0.25[bg];"
+              f"[1:v]scale={int(W * 0.7)}:{int(W * 0.7)}:force_original_aspect_ratio=increase,crop={int(W * 0.7)}:{int(W * 0.7)}[cv];"
+              f"[bg][cv]overlay=(W-w)/2:{int(H * 0.22)}[base]")
+    else:
+        args += ["-f", "lavfi", "-t", f"{d:.3f}", "-i", f"color=c=0x0a0a0a:s={W}x{H}:r=30"]
+        bg = "[1:v]null[base]"
+    wave_h = int(H * 0.12)
+    fg = (f"{bg};[0:a]aformat=channel_layouts=mono,showwaves=s={int(W * 0.84)}x{wave_h}:mode=cline:rate=30:colors=white:scale=sqrt:draw=full[wv];"
+          f"[base][wv]overlay=(W-w)/2:{int(H * 0.22 + W * 0.7 + 60) if cover else int(H / 2 - wave_h / 2)}:shortest=1[v0]")
+    if title:
+        files["title.txt"] = "\n".join(textwrap.wrap(title, 26)[:3])
+        fg += f";[v0]drawtext={font}textfile=title.txt:expansion=none:fontsize={int(W * 0.06)}:line_spacing=12:fontcolor=white:x=(w-text_w)/2:y={int(H * 0.1)}[v1]"
+    else:
+        fg += ";[v0]null[v1]"
+    args += ["-filter_complex", fg, "-map", "[v1]", "-map", "0:a", "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", "-b:a", "192k", "-shortest", "audiogram.mp4"]
+    return args, files

@@ -230,7 +230,7 @@ export function registerAutoTools(server: ToolServer) {
 
   const SRC = z.string().regex(/^[a-z0-9_]{1,20}$/).describe("an input's key");
   const PLAT = z.enum(["reels", "shorts", "tiktok", "youtube", "ig_post", "square"]);
-  const media = async (op: "edit" | "inspect", inputs: Record<string, string>, body: Record<string, unknown>, ctx: unknown, save_to?: string | null, label?: string) => {
+  const media = async (op: "edit" | "inspect" | "template" | "repurpose", inputs: Record<string, string>, body: Record<string, unknown>, ctx: unknown, save_to?: string | null, label?: string) => {
     const b = await import("./bench");
     const model = await modelName(ctx as Ctx);
     const files = await Promise.all(Object.entries(inputs).map(async ([key, ref]) => ({ key, ...(await b.inputFile(ref)) })));
@@ -326,6 +326,68 @@ export function registerAutoTools(server: ToolServer) {
         const job = await b.submit({ op: "browse", spec }, { model, folder: action === "screenshot" ? (save_to === undefined ? "Workbench/Screenshots" : save_to) : null, label: `browse ${new URL(url).hostname}` });
         return text(await b.view(await b.wait(job.id, 45), { name: model }));
       } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "video_template",
+    {
+      title: "Video from a template (HyperFrames)",
+      description: [
+        "Branded motion pieces filled from a little JSON; you never write HTML. action render (default): template + fields (+ inputs for any photo or video it uses) + shape (9:16 default) + brand {bg, ink, accent: hex colours, font: a Google font}, rendered on the Colab worker with HyperFrames, checked, saved to Files. action list: the templates and their fields.",
+        "Templates: title_card {title, sub?, media?, seconds?}; list {title, items: 2-6, per_item?} (\"3 tips\"); quote {quote, author?, media?}; lower_third {media: a video, name, role?, at?, hold?, seconds}.",
+        "A custom scene from a repo at a commit (the owner's videos-post cases): repo action checkout (ref = the commit), then {\"action\":\"render\",\"project\":{\"workspace\":\"default\",\"dir\":\"videos-post/cases/025\"}}. Example: {\"template\":\"list\",\"fields\":{\"title\":\"3 Reels mistakes\",\"items\":[\"No hook\",\"Too long\",\"No captions\"]}}.",
+      ].join(" "),
+      inputSchema: z.object({
+        action: z.enum(["render", "list"]).optional(),
+        template: z.string().max(40).optional(), fields: z.record(z.string(), z.unknown()).optional(),
+        inputs: z.record(z.string().regex(/^[a-z0-9_]{1,20}$/), z.string().max(2000)).optional(),
+        shape: z.enum(["9:16", "16:9", "1:1", "4:5"]).optional(), brand: z.object({ bg: z.string().max(9).optional(), ink: z.string().max(9).optional(), accent: z.string().max(9).optional(), font: z.string().max(40).optional() }).optional(),
+        project: z.object({ workspace: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/), dir: z.string().max(200) }).optional(), composition: z.string().max(200).optional(),
+        platform: PLAT.optional(), quality: z.enum(["draft", "standard", "high", "delivery"]).optional(), name: z.string().max(80).optional(),
+        save_to: z.string().max(200).nullable().optional(),
+      }),
+    },
+    async ({ action = "render", template, fields, inputs, shape, brand, project, composition, platform, quality, name, save_to }, ctx) => {
+      try {
+        const t = await import("./templates");
+        if (action === "list") return text(Object.entries(t.TEMPLATES).map(([id, x]) => ({ template: id, about: x.about, fields: x.fields })));
+        if (project) return await media("template" as never, inputs ?? {}, { project, composition, platform, quality, name }, ctx, save_to, `template ${project.dir}`);
+        if (!template) throw new Error("render needs template (action list shows them) or project");
+        const built = t.build(template, fields ?? {}, shape ?? "9:16", brand ?? {});
+        const missing = built.media.filter((k) => !(inputs ?? {})[k]);
+        if (missing.length) throw new Error(`fields name media that isn't in inputs: ${missing.join(", ")}`);
+        return await media("template" as never, inputs ?? {}, { html: built.html, platform: platform ?? (shape === "16:9" ? "youtube" : "reels"), quality, name: name ?? template }, ctx, save_to, `template ${template}`);
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "repurpose",
+    {
+      title: "Repurpose: one piece into others (recipes)",
+      description: [
+        "Recipes that turn one piece into finished others in one call, each rendered on the Colab worker, QA-checked and saved to Files.",
+        "long_to_shorts: a long video into count (3) captioned 9:16 shorts of min_s-max_s (20-55 s), picked from what's said (Whisper: sentences that open on a hook, dense with talk), each saying why; or segments [{from, to, title}] you choose. carousel_to_reel: photos (+ music, voice) into a Reel, seconds each with a slow push-in. reel_to_carousel: a video into count (8) slides at its shots (4:5). podcast_to_audiogram: audio (+ a cover photo) from-to into a 9:16 waveform video with the title and captions. add_voiceover: a video + a voice file, the original sound turned down (original_volume_db -14), captions.",
+        "options: count, min_s, max_s, segments, words, captions (pop / bold / clean / null for none), platform, fit, seconds, from, to, title, shape, voice / music (an input's key), name. Example: {\"recipe\":\"long_to_shorts\",\"inputs\":{\"v\":\"m:abc\"},\"options\":{\"count\":3}}.",
+      ].join(" "),
+      inputSchema: z.object({
+        recipe: z.enum(["long_to_shorts", "carousel_to_reel", "reel_to_carousel", "podcast_to_audiogram", "add_voiceover"]),
+        inputs: z.record(z.string().regex(/^[a-z0-9_]{1,20}$/), z.string().max(2000)).refine((o) => Object.keys(o).length >= 1 && Object.keys(o).length <= 30, "1 to 30 inputs"),
+        options: z.object({
+          count: z.number().int().min(1).max(10).optional(), min_s: z.number().min(5).max(170).optional(), max_s: z.number().min(8).max(180).optional(),
+          segments: z.array(z.object({ from: z.number().min(0), to: z.number().min(0), title: z.string().max(120).optional() })).max(10).optional(),
+          words: z.array(z.object({ w: z.string().max(60), s: z.number(), e: z.number() })).max(20_000).optional(),
+          captions: z.enum(["pop", "bold", "clean"]).nullable().optional(), platform: PLAT.optional(), fit: z.enum(["crop", "pad", "blur"]).optional(),
+          seconds: z.number().min(0.5).max(20).optional(), zoom: z.boolean().optional(), from: z.number().min(0).optional(), to: z.number().min(0).optional(),
+          title: z.string().max(120).optional(), shape: z.enum(["9:16", "16:9", "1:1", "4:5"]).optional(), voice: SRC.optional(), music: SRC.optional(),
+          at: z.number().min(0).optional(), original_volume_db: z.union([z.number().min(-60).max(12), z.literal("mute")]).optional(), name: z.string().max(60).optional(),
+        }).optional(),
+        save_to: z.string().max(200).nullable().optional(),
+      }),
+    },
+    async ({ recipe, inputs, options, save_to }, ctx) => {
+      try { return await media("repurpose" as never, inputs, { recipe, options: options ?? {} }, ctx, save_to, recipe.replace(/_/g, " ")); } catch (e) { return fail(e); }
     },
   );
 }
