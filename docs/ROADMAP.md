@@ -112,6 +112,22 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
       (`/writing`, Create; rules on your own numbers in `lib/writing.ts`, no AI on the server; Claude writes through the
       `hook_score`, `title_lab`, `captions` and `weekly_digest` MCP tools, which score with the same rules)
 
+## Radar: the research studio (plan in docs/RADAR.md; one PR per step)
+- [ ] R1 Clarity: one Bet score and verdict everywhere (Room instead of "higher is harder" Competition), calibrated so
+      100 is rare; Brief / Dossier / Watch instead of Sweep / Keyword / Watchlist; a command bar, a status rail, one
+      action bar per topic; the lane from phrases, not single words; plain words for every code on screen
+- [ ] R2 History and sources: daily snapshots and a timeline per topic; Bluesky, TikTok and Amazon suggestions, GDELT,
+      Polymarket, Product Hunt, Lemmy, arXiv, podcasts, YouTube channel RSS; trend stages and seasonality
+- [ ] R3 Win the topic: outlier finder, rival tracker for any channel, content gaps, thumbnail patterns, "vs" and
+      question maps
+- [ ] R4 Don't miss it: spike alerts against each topic's own baseline, rival outlier alerts, the morning Brief,
+      watcher feeds
+- [ ] R5 Idea to post: Make a post from a Dossier (outline, title, package, prediction), a calibration chart, compare
+- [ ] R6 For every creator: a lane per person, bring your own channel; opening beyond the studio only when the owner
+      decides (sign-up, quotas, a shared cache, each source's terms)
+- [ ] Every step lands with its MCP tool (`radar_brief`, `topic_dossier`, `outliers`, `rivals`, `content_gaps`,
+      `trend_history`, `alerts`)
+
 ## Later (not started)
 - [ ] Listen to a few of the cut training clips per session on Your model (the worker would push samples next to the zip)
 - [x] Per-target caption overrides (X 280 vs Instagram 2200): Writing room → Captions, kept in `workspace/captions.json`;

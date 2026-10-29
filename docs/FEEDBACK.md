@@ -4,7 +4,24 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (Radar as an instrument, one-click posting with a researched package, 2026-10-29)
+## Latest round (post a video like a carousel, Radar's plan, 2026-10-29)
+
+- **"An option like the carousel's, to just post on Instagram or YouTube, for videos as well"**: a video open in Files
+  has **Instagram** (a Reel) and **YouTube** (a Short at 3 minutes or less, else a Video) in its top bar, and its menu
+  has all three ("Post to Instagram as a Reel…", "…YouTube as a Short…", "…as a Video…"); a photo gets "Post to
+  Instagram". Like the carousel's button it sets up the post with the researched package as a draft (nothing is
+  armed or sent) and opens the composer to check and send.
+- **"Make Radar the Palantir of content research, better than the paid tools, for any creator, free"**: the plan is
+  `docs/RADAR.md` (an audit of today's screens, the redesign, sources checked live, the features in order) and
+  ROADMAP → Radar. Not built yet; next session starts at R1.
+- **"Radar must feel like a different world, but clean and organised; nobody should be confused about what an option
+  does"**: one score for a topic everywhere (today Sweep says 100 and Keyword says 63 for "apple"), every part
+  higher-is-better, no codes without words, one action bar per topic in a fixed order, three moves (Brief,
+  Investigate, Track) instead of three unrelated tabs, and an operations-room look in our theme (command bar,
+  bracketed panels, status rail, timeline, link graph).
+- **The "Opportunity" label sat on the rings**: it's under the dial now.
+
+## Earlier round (Radar as an instrument, one-click posting with a researched package, 2026-10-29)
 
 - **"I don't see the Radar tab"**: Radar is now second in Grow (right after Overview), in Create's sidebar next to the
   Writing room, and one of the four phone tabs in Grow.

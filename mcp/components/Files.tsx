@@ -11,13 +11,14 @@
 import {
   ArrowClockwise, ArrowCounterClockwise, ArrowSquareOut, ArrowsDownUp, CaretRight, Check, CheckSquare, ClosedCaptioning, Copy, DownloadSimple, FolderOpen,
   FolderPlus, FolderSimple, LinkSimple, ShareNetwork, ListBullets, MagnifyingGlass, PencilSimple, Scissors, SquaresFour, StackMinus, StackPlus, Star, Trash, TrashSimple,
-  UploadSimple, UsersThree, X, Cards, RocketLaunch, PaperPlaneTilt,
+  UploadSimple, UsersThree, X, Cards, RocketLaunch, PaperPlaneTilt, InstagramLogo, YoutubeLogo,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { folderFor, folderTrashed, isTrashed, newFolderId, normalize, ROOT, subtree, SYSTEM, within as inside, type FileTree, type Folder } from "@/lib/filetree";
 import { groupsOf, visual, type Carousel, type Group } from "@/lib/carouselrules";
+import type { SpaceId } from "@/lib/spaces";
 import { fileUrl as mediaUrl, kindOf, screenPreview, libKind, libName, libType, type Media, type MediaKind, type Post } from "@/lib/workspace";
 import { api, fileUrl as libFileUrl } from "./api";
 import { Query, signOut, useLive, useMe } from "./aw";
@@ -168,8 +169,8 @@ export default function Files() {
   const [cv, setCv] = useState<{ id: string; i: number } | null>(null); // one of its photos, full size
   const [checks, setChecks] = useState<Record<string, Checks>>({}); // slide checks per carousel, once it's opened
   const [stats, setStats] = useState<Record<string, Stats>>({}); // Instagram numbers per posted carousel
-  const [compose, setCompose] = useState<{ id: string; post: Post } | null>(null); // the Instagram composer on a carousel's post
-  const [igBusy, setIgBusy] = useState<string | null>(null); // a carousel being set up for Instagram (one click at a time)
+  const [compose, setCompose] = useState<{ id: string; post: Post; space: SpaceId } | null>(null); // the composer on a carousel's or a video's post
+  const [igBusy, setIgBusy] = useState<string | null>(null); // a carousel or file being set up to post (one click at a time)
   const { accounts } = usePublish();
   const anchor = useRef<string | null>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -763,7 +764,7 @@ export default function Files() {
     try {
       const r = await api<{ post_id: string; post: Post; carousel: string; slides: number; skipped: string[]; over: number; made_post: boolean }>(`files/carousels/${encodeURIComponent(id)}/publish`, { body: {} });
       setStage(null);
-      setCompose({ id: r.post_id, post: r.post });
+      setCompose({ id: r.post_id, post: r.post, space: "ig_post" });
       const left = [r.skipped.length && `${r.skipped.length} made on the GPU stay out`, r.over && `${r.over} over Instagram's 20 stay out`].filter(Boolean).join("; ");
       setSnack({ text: `${r.slides} slides in order on ${r.made_post ? "a new post" : `"${r.post.title}"`}, ready to check and send${left ? ` (${left})` : ""}` });
       if (r.carousel !== id) loadTree();
@@ -776,6 +777,29 @@ export default function Files() {
       } else toast((e as Error).message, "bad");
     } finally { setIgBusy(null); }
   }
+  /** One file straight to one place, like a carousel's "Post to Instagram": a video as a Reel, a Short or a Video, a
+   *  photo as an Instagram post. The post, the target and a draft plan with the researched package are set up (nothing is
+   *  armed), then the composer opens to check it and send or schedule it. */
+  async function postTo(key: string, space: SpaceId) {
+    if (igBusy || !key.startsWith("m:")) return;
+    setIgBusy(`${key}:${space}`);
+    try {
+      const r = await api<{ post_id: string; post: Post; targets: { space: string; state: string; error?: string }[] }>("autopost", { body: { files: [key], go: "draft", spaces: [space] } });
+      const t = r.targets.find((x) => x.space === space);
+      if (t?.state === "published") { setSnack({ text: "Already live there: it won't be posted twice", action: "Open post", run: () => router.push(`/posts?post=${r.post_id}`) }); return; }
+      setDetail(null);
+      setCompose({ id: r.post_id, post: r.post, space });
+      setSnack({ text: `Set up on "${r.post.title}" with a researched title, description and hashtags: check it and send` });
+    } catch (e) { toast((e as Error).message, "bad"); }
+    finally { setIgBusy(null); }
+  }
+  /** Where one file can go on its own: a video to a Reel, a Short (3 minutes or less) or a Video; a photo to a post. */
+  const postsFor = (it: Item): { space: SpaceId; label: string; short: string; icon: React.ReactNode }[] =>
+    !it.m ? [] : it.kind === "video" ? [
+      { space: "ig_reel", label: "Post to Instagram as a Reel", short: "Instagram", icon: <InstagramLogo size={16} /> },
+      ...((it.seconds ?? 0) <= 180 ? [{ space: "yt_short" as const, label: "Post to YouTube as a Short", short: "YouTube", icon: <YoutubeLogo size={16} /> }] : []),
+      { space: "yt_video", label: "Post to YouTube as a Video", short: "YouTube", icon: <YoutubeLogo size={16} /> },
+    ] : it.kind === "image" ? [{ space: "ig_post", label: "Post to Instagram", short: "Instagram", icon: <InstagramLogo size={16} /> }] : [];
   /** The one click (lib/postpack.ts): the files become a post with researched title, description, hashtags and credits,
    *  on a Reel and a Short (a video) or an Instagram post (photos), armed for the next posting slots, or sent now. */
   async function autoPost(keys: string[], now = false) {
@@ -899,6 +923,7 @@ export default function Files() {
       title: it.name,
       entries: [
         { label: "Open", icon: <ArrowSquareOut size={16} />, run: () => open(k) },
+        ...(k.startsWith("m:") && visual(it.kind) && wsOn ? postsFor(it).map((p) => ({ label: `${p.label}…`, icon: p.icon, run: () => postTo(k, p.space) })) : []),
         ...(k.startsWith("m:") && visual(it.kind) ? [{ label: "Auto-post", icon: <RocketLaunch size={16} />, run: () => autoPost([k]) }, { label: "Post now", icon: <PaperPlaneTilt size={16} />, run: () => autoPost([k], true) }] : []),
         { label: "Rename", icon: <PencilSimple size={16} />, kbd: "F2", run: () => setRenaming(k) },
         ...common,
@@ -1161,7 +1186,17 @@ export default function Files() {
           <FileViewer file={viewFile(detailItem)} index={at} total={seq.length} onClose={closeDetail}
             onPrev={seq.length > 1 && at >= 0 ? () => step(-1) : undefined} onNext={seq.length > 1 && at >= 0 ? () => step(1) : undefined}
             onDelete={() => { const k = detailItem.key; const nxt = seq.length > 1 ? seq[(at + 1) % seq.length] : null; remove([k]); if (nxt && nxt !== k) setDetail(nxt); else closeDetail(); }}
-            extra={<StarBtn on={detailItem.starred} onClick={() => star([detailItem.key], !detailItem.starred)} />} />
+            extra={<>
+              {wsOn && postsFor(detailItem).filter((p, i, all) => all.findIndex((x) => x.short === p.short) === i).map((p, i) => {
+                const busy = igBusy === `${detailItem.key}:${p.space}`;
+                return (
+                  <button key={p.space} type="button" className={`sm fv-post ${i ? "ghost" : ""}`} onClick={() => postTo(detailItem.key, p.space)} disabled={!!igBusy} aria-busy={busy} aria-label={p.label} title={p.label}>
+                    {busy ? <span className="vp-spin sm" /> : p.icon}<span>{busy ? "Setting up…" : p.short}</span>
+                  </button>
+                );
+              })}
+              <StarBtn on={detailItem.starred} onClick={() => star([detailItem.key], !detailItem.starred)} />
+            </>} />
         );
       })()}
       {(() => {
@@ -1198,7 +1233,7 @@ export default function Files() {
           </>
         );
       })()}
-      {composePost && <Composer post={composePost} space="ig_post" onClose={() => setCompose(null)} />}
+      {composePost && compose && <Composer post={composePost} space={compose.space} onClose={() => setCompose(null)} />}
       {detailItem?.j && (
         <>
           <div className="scrim" onClick={closeDetail} />
