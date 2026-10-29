@@ -360,3 +360,5 @@ in a workspace and read its changes back. Ops `edit` (`files: [{key, url, name}]
 `edit_video` tool) and `inspect` (`files`, `checks`: probe, qa, scenes, loudness, words, sheet; `platform`) run
 `worker/media.py` in a throwaway workspace as the sandbox user; `bench.qa` / `bench.report` hold the checks, `outputs`
 the rendered file or contact sheet.
+Op `browse` (`spec`: url, steps, width, screenshot, full_page, read, max_chars, links, keep_going; `timeout_s`) runs
+one Chromium visit as the sandbox user; `bench.page` holds the title, text, links and steps, `outputs` the screenshots.
