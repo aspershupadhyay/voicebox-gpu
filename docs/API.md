@@ -362,3 +362,6 @@ in a workspace and read its changes back. Ops `edit` (`files: [{key, url, name}]
 the rendered file or contact sheet.
 Op `browse` (`spec`: url, steps, width, screenshot, full_page, read, max_chars, links, keep_going; `timeout_s`) runs
 one Chromium visit as the sandbox user; `bench.page` holds the title, text, links and steps, `outputs` the screenshots.
+Op `repurpose` (`recipe`, `options`, `files`) runs one of the recipes in `worker/bench.py` and lists what it `made`
+(each with its QA). Op `template` (`html` from `lib/auto/templates.ts` with `files` for its media, or `project`
+{workspace, dir} from a checkout; `platform`, `quality`, `name`) renders with HyperFrames.

@@ -128,8 +128,17 @@ The owner's feedback still goes into `docs/FEEDBACK.md` in the same PR as the ch
   `lib/auto/search.ts` (Brave or Tavily by the key's shape), one tool `browse` (read, screenshot, search). Tested: a
   page read after a fill and a click, a 390 px screenshot of the login page at 2x, search answers from canned Brave and
   Tavily responses; without `SEARCH_API_KEY` search says so and suggests browsing instead.
-- [ ] **6. Media II**: `video_template` (HyperFrames + brand kit from `videos-post`, cached on R2), `repurpose`
-  recipes. Done when: `long_to_shorts` turns one long video into captioned 9:16 shorts in one call.
+- [x] **6. Media II**: `video_template` (HyperFrames + brand kit from `videos-post`, cached on R2), `repurpose`
+  recipes. Done when: `long_to_shorts` turns one long video into captioned 9:16 shorts in one call. **Shipped**:
+  `repurpose` (long_to_shorts picks windows from what's said: sentence-aligned, dense with talk, opening on a hook,
+  each with its reason; carousel_to_reel; reel_to_carousel at the shots; podcast_to_audiogram; add_voiceover), all on
+  the edit pipeline with QA and a two-pass loudness fix; `video_template` (templates in `lib/auto/templates.ts`:
+  title_card, list, quote, lower_third, brand colours and font; or a repo's own HyperFrames project at a commit),
+  rendered by HyperFrames 0.8.217 on Node 22, both installed once per runtime. Tested: all five recipes rendered and
+  passed QA locally (a slideshow went from 72 s to 6 s to render once zoompan was fed one frame); the templates'
+  compositions load in Chromium with their GSAP timelines registered and lay out right. **Not tested here**: the
+  HyperFrames render itself (running the npm package wasn't allowed in the build session): the first run on Colab is
+  the check, and its error comes back whole if it fails. The brand kit from `videos-post` waits on that repo.
 - [ ] **7. Automations**: `workflow`, `schedule` (on the 10-minute sweep), `triggers` (on job and post events).
   Done when: "every morning, Radar → 3 ideas → drafts" runs with nobody there.
 - [ ] **8. Agents, audit, memory**: roles, the auditor, lessons, scorecards, the promote step. Done when: an audit run
@@ -175,7 +184,11 @@ Any MCP client that speaks streamable HTTP works the same way. claude.ai uses th
   (3) scripts that work are saved as skills and served by `playbook` (phase 8).
 
 - Everything runs on Colab (the L4), not Modal or Cloud Run (owner, 2026-10-29).
-- Rendering is HyperFrames; Remotion is not used.
+- Rendering is HyperFrames; Remotion is not used. HyperFrames renders a folder whose `index.html` holds the
+  composition (`data-composition-id`, `data-width`, `data-height`, timed `.clip`s with `data-start` / `data-duration`
+  / `data-track-index`, a paused GSAP timeline in `window.__timelines`); it needs Node 22 and ffmpeg.
+- Translate and dub isn't a recipe: it's a workflow (phase 7): inspect_media words → the model translates →
+  voice_lines → repurpose add_voiceover.
 - About 15 new tools in total, never one per small step.
 
 ## How media is checked

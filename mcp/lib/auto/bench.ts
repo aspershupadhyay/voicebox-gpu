@@ -96,6 +96,20 @@ export async function view(job: BenchJob, actor: { name: string } = { name: "Wor
       next: job.status === "error" ? "Fix the input the error names and run again." : b.exit === 0 ? "Done." : b.killed ? `It was stopped (${b.killed}): give it a longer timeout_s or memory_mb, or do less per run.` : "It failed: read stderr, fix the code, run again (the workspace keeps its files).",
     };
   }
+  if (b.op === "repurpose") {
+    const saved = files && "saved" in files ? files.saved : [];
+    const made = ((b.made ?? []) as { name: string; qa?: { verdict: string; checks: { status: string; check: string; why: string }[] }; [k: string]: unknown }[]).map((m, i) => ({
+      file: saved?.[i]?.file_id ?? saved?.[i]?.error ?? m.name, ...Object.fromEntries(Object.entries(m).filter(([k]) => ["from", "to", "title", "why", "at", "seconds"].includes(k))),
+      ...(m.qa ? { qa: m.qa.verdict, ...(m.qa.checks.some((c) => c.status !== "PASS") ? { issues: m.qa.checks.filter((c) => c.status !== "PASS").map((c) => `${c.status} ${c.check}: ${c.why}`) } : {}) } : {}),
+    }));
+    return { ...base, made, ...(files && "error" in files ? { files } : {}), next: job.status === "error" ? "Fix what the error names and try again." : "Done: they're in Files." };
+  }
+  if (b.op === "template") {
+    const qa = b.qa as { verdict: string; checks: { status: string; check: string; why: string }[] } | undefined;
+    const saved = files && "saved" in files ? files.saved : undefined;
+    return { ...base, render_s: b.render_s, qa: qa ? { verdict: qa.verdict, issues: qa.checks.filter((c) => c.status !== "PASS").map((c) => `${c.status} ${c.check}: ${c.why}`) } : null,
+      file: saved?.[0] ?? (files && "error" in files ? files : b.outputs?.[0]?.name), next: job.status === "error" ? "Read the error: a template field, or HyperFrames itself (the first run installs it)." : "Done: it's in Files." };
+  }
   if (b.op === "edit" || b.op === "inspect") {
     const qa = (b.op === "edit" ? b.qa : (b.report as { qa?: unknown } | undefined)?.qa) as { verdict: string; checks: { status: string; check: string; why: string }[] } | undefined;
     const issues = qa?.checks.filter((c) => c.status !== "PASS").map((c) => `${c.status} ${c.check}: ${c.why}`);

@@ -416,64 +416,293 @@ def _words(job, ws, jdir, run, src_path, cap, inputs):
     return heard["words"]
 
 
-def edit_media(job, jdir):
+def render_spec(job, ws, jdir, run, infos, spec, inputs, out_name):
+    """One edit spec rendered (two passes when it has captions), checked and copied next to the job. Returns what it made."""
     import media
+    b = job["bench"]
+    for k in ("voice", "music", "logo"):
+        if spec.get(k) and spec[k].get("src") not in infos:
+            raise ValueError(f"{k}.src: no input called {spec[k].get('src')!r} (inputs: {', '.join(infos)})")
+    nv = media.has_nvenc()
+    args, layout, seconds, extra = media.plan_edit(spec, {k: v for k, v in infos.items() if not v[0].lower().endswith(".srt")}, nv, media.font_file())
+    for name, content in extra.items():
+        write_as_user(ws, name, content.encode())
+    b["stage"] = f"rendering {out_name}: {seconds:.0f} s ({'NVENC on the GPU' if nv else 'x264 on the CPU'})"
+    t0 = time.time()
+    code, _, err = run(args, timeout=3600)
+    if code:
+        raise ValueError(f"ffmpeg failed: {err.strip()[-900:]}")
+    final, caps = "out.mp4", None
+    if spec.get("captions"):
+        words = _words(job, ws, jdir, run, "out.mp4", spec["captions"], inputs)
+        info = media.probe(run, "out.mp4")
+        cap = spec["captions"]
+        ass, boxes = media.captions_ass(words, info["width"], info["height"], cap.get("style") or "pop", cap.get("position") or "lower",
+                                        platform=spec.get("platform") or "reels")
+        write_as_user(ws, "captions.ass", ass.encode())
+        layout += boxes
+        b["stage"] = f"burning in the captions: {out_name}"
+        enc = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "21", "-b:v", "0"] if nv else ["-c:v", "libx264", "-preset", "medium", "-crf", "20"]
+        code, _, err = run(["ffmpeg", "-hide_banner", "-y", "-nostats", "-i", "out.mp4", "-vf", "subtitles=filename=captions.ass", *enc, "-pix_fmt", "yuv420p",
+                            "-c:a", "copy", "-movflags", "+faststart", "final.mp4"], timeout=3600)
+        if code:
+            raise ValueError(f"captions failed: {err.strip()[-600:]}")
+        final, caps = "final.mp4", {"words": len(words), "style": cap.get("style") or "pop"}
+    target = media.num(spec.get("lufs"), -30, -8, (media.PLATFORMS.get(spec.get("platform") or "reels") or media.PLATFORMS["reels"])["lufs"])
+    if media.fix_loudness(run, final, "level.mp4", target) is not None:
+        final = "level.mp4"
+    render_s = round(time.time() - t0, 1)
+    b["stage"] = f"checking {out_name}"
+    stills = spec.get("_stills") or any(infos.get(c.get("src"), ("", {}))[1].get("image") for c in spec.get("clips") or [])
+    q = media.qa(run, final, spec.get("platform") or "reels", layout, stills=bool(stills))
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", out_name)[:80].removesuffix(".mp4") + ".mp4"
+    return {**keep_result(ws, jdir, final, name), "qa": q, "seconds": seconds, "render_s": render_s, **({"captions": caps} if caps else {})}
+
+
+def keep_result(ws, jdir, path, name):
+    """A file the job made in its workspace, copied next to the job under `name` (read as the sandbox user)."""
+    as_user(["mkdir", "-p", "res"], ws, timeout=30)
+    as_user(["mv", "-f", "--", path, f"res/{name}"], ws, timeout=60)
+    got = pull_files(ws, os.path.join(ws, "res"), [name], jdir)
+    if name not in got:
+        raise ValueError(f"{name} wasn't made")
+    return {"name": name, "path": name, "bytes": os.path.getsize(got[name])}
+
+
+def _probe_inputs(job, ws, run):
+    import media
+    b = job["bench"]
+    b["stage"] = "fetching"
+    b["inputs"] = fetch_inputs(job, ws)
+    return {i["key"]: (i["name"], media.probe(run, i["name"])) for i in b["inputs"]}
+
+
+def _done_ws(ws):
+    as_user(["rm", "-rf", "--", ws], ROOT, timeout=300)
+    try:
+        os.rmdir(ws)
+    except OSError:
+        pass
+
+
+def edit_media(job, jdir):
     b = job["bench"]
     b["isolation"] = setup()
     ws = _media_ws(job)
     run = _media_run(ws)
     try:
-        b["stage"] = "fetching"
-        b["inputs"] = fetch_inputs(job, ws)
-        infos = {}
-        for i in b["inputs"]:
-            infos[i["key"]] = (i["name"], media.probe(run, i["name"]))
+        infos = _probe_inputs(job, ws, run)
         spec = dict(b["spec"])
-        for k in ("voice", "music", "logo"):
-            if spec.get(k) and spec[k].get("src") not in infos:
-                raise ValueError(f"{k}.src: no input called {spec[k].get('src')!r} (inputs: {', '.join(infos)})")
-        nv = media.has_nvenc()
-        args, layout, seconds, extra = media.plan_edit(spec, {k: v for k, v in infos.items() if not v[0].lower().endswith(".srt")}, nv, media.font_file())
-        for name, content in extra.items():
-            write_as_user(ws, name, content.encode())
-        b["stage"] = f"rendering {seconds:.0f} s ({'NVENC on the GPU' if nv else 'x264 on the CPU'})"
-        t0 = time.time()
-        code, _, err = run(args, timeout=3600)
-        if code:
-            raise ValueError(f"ffmpeg failed: {err.strip()[-900:]}")
-        final = "out.mp4"
-        if spec.get("captions"):
-            words = _words(job, ws, jdir, run, "out.mp4", spec["captions"], b["inputs"])
-            info = media.probe(run, "out.mp4")
-            cap = spec["captions"]
-            ass, boxes = media.captions_ass(words, info["width"], info["height"], cap.get("style") or "pop", cap.get("position") or "lower",
-                                            platform=spec.get("platform") or "reels")
-            write_as_user(ws, "captions.ass", ass.encode())
-            layout += boxes
-            b["stage"] = "burning in the captions"
-            enc = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "21", "-b:v", "0"] if nv else ["-c:v", "libx264", "-preset", "medium", "-crf", "20"]
-            code, _, err = run(["ffmpeg", "-hide_banner", "-y", "-nostats", "-i", "out.mp4", "-vf", "subtitles=filename=captions.ass", *enc, "-pix_fmt", "yuv420p",
-                                "-c:a", "copy", "-movflags", "+faststart", "final.mp4"], timeout=3600)
-            if code:
-                raise ValueError(f"captions failed: {err.strip()[-600:]}")
-            final = "final.mp4"
-            b["captions"] = {"words": len(words), "style": cap.get("style") or "pop"}
-        b["render_s"] = round(time.time() - t0, 1)
-        b["stage"] = "checking"
-        b["qa"] = media.qa(run, final, spec.get("platform") or "reels", layout)
-        name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(spec.get("name") or "edit"))[:80].removesuffix(".mp4") + ".mp4"
-        write_as_user(ws, f"res/{name}", b"")  # the result's own folder, so pull_files names it plainly
-        as_user(["mv", "-f", final, f"res/{name}"], ws, timeout=60)
-        got = pull_files(ws, os.path.join(ws, "res"), [name], jdir)
-        b["outputs"] = [{"name": name, "path": name, "bytes": os.path.getsize(p)} for p in got.values()]
-        b["seconds_out"] = seconds
+        r = render_spec(job, ws, jdir, run, infos, spec, b["inputs"], str(spec.get("name") or "edit"))
+        b.update(qa=r["qa"], render_s=r["render_s"], seconds_out=r["seconds"], outputs=[{k: r[k] for k in ("name", "path", "bytes")}],
+                 **({"captions": r["captions"]} if r.get("captions") else {}))
         b["stage"] = "done"
     finally:
-        as_user(["rm", "-rf", "--", ws], ROOT, timeout=300)
-        try:
-            os.rmdir(ws)
-        except OSError:
-            pass
+        _done_ws(ws)
+
+
+# ── templates: HyperFrames compositions (lib/auto/templates.ts writes them; custom ones come from a repo) ────────────
+
+HF_VERSION = "0.8.217"
+NODE_DIR, HF_DIR = "/opt/vb-node", "/opt/vb-hyperframes"
+_HF = {"ready": None, "lock": threading.Lock()}
+
+
+def _node_ok(node):
+    try:
+        v = subprocess.run([node, "-v"], capture_output=True, text=True, timeout=20).stdout.strip().lstrip("v")
+        return int(v.split(".")[0]) >= 22
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def ensure_hyperframes(b):
+    """Node 22 and HyperFrames, once per runtime, readable by the sandbox user. Returns (node, hyperframes cli, env)."""
+    with _HF["lock"]:
+        if _HF["ready"]:
+            return _HF["ready"]
+        b["stage"] = "installing HyperFrames (once per runtime, ~1 min)"
+        node = shutil.which("node") if shutil.which("node") and _node_ok(shutil.which("node")) else os.path.join(NODE_DIR, "bin", "node")
+        if not _node_ok(node):
+            os.makedirs(NODE_DIR, exist_ok=True)
+            url = "https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.xz"
+            r = subprocess.run(f"curl -fsSL {url} | tar -xJ -C {NODE_DIR} --strip-components=1", shell=True, capture_output=True, timeout=600)
+            if r.returncode or not _node_ok(node):
+                raise ValueError(f"couldn't install Node 22: {r.stderr.decode('utf-8', 'replace')[-300:]}")
+        npm = os.path.join(os.path.dirname(node), "npm")
+        cli = os.path.join(HF_DIR, "node_modules", "hyperframes", "bin", "hyperframes.mjs")
+        path = f"{os.path.dirname(node)}:{BASE_ENV['PATH']}"
+        if not os.path.exists(cli):
+            os.makedirs(HF_DIR, exist_ok=True)
+            r = subprocess.run([npm, "install", "--prefix", HF_DIR, "--no-audit", "--no-fund", f"hyperframes@{HF_VERSION}"], capture_output=True, timeout=900,
+                               env={**os.environ, "PATH": path})
+            if r.returncode or not os.path.exists(cli):
+                raise ValueError(f"couldn't install HyperFrames: {r.stderr.decode('utf-8', 'replace')[-400:]}")
+        ensure_browser(b)  # one Chromium for the browser and the renderer
+        chrome = os.environ.get("VOICEBOX_CHROMIUM") or next(iter(sorted(__import__("glob").glob(f"{BROWSERS}/chromium-*/chrome-linux*/chrome"))), "")
+        subprocess.run(["chmod", "-R", "a+rX", NODE_DIR, HF_DIR], check=False)
+        env = {"PATH": path, "HYPERFRAMES_BROWSER_PATH": chrome, "PUPPETEER_EXECUTABLE_PATH": chrome, "PRODUCER_LOW_MEMORY_MODE": "0"}
+        _HF["ready"] = (node, cli, env)
+        return _HF["ready"]
+
+
+VIDEO_EXT = (".mp4", ".mov", ".webm", ".mkv", ".m4v")
+
+
+def with_media(html, inputs):
+    """The template's data-media placeholders become real <img> / muted <video> clips with their files; a photo's
+    sound track is dropped."""
+    for i in inputs:
+        k, fn = i.get("key"), os.path.basename(i["name"])
+        if not k:
+            continue
+        ext = os.path.splitext(fn)[1].lower()
+        src = f"media/{k}{ext}"
+        if ext in VIDEO_EXT:
+            html = html.replace(f'<img data-media="{k}"', f'<video src="{src}" muted playsinline')
+            html = re.sub(rf'<audio data-media-audio="{re.escape(k)}"', f'<audio src="{src}"', html)
+        else:
+            html = html.replace(f'<img data-media="{k}"', f'<img src="{src}"')
+            html = re.sub(rf'<audio data-media-audio="{re.escape(k)}"[^>]*></audio>', "", html)
+    if 'data-media="' in html:
+        raise ValueError("the template names media that wasn't given: " + ", ".join(re.findall(r'data-media="([^"]+)"', html)))
+    return html
+
+
+def render_template(job, jdir):
+    import media
+    b = job["bench"]
+    b["isolation"] = setup()
+    node, cli, env = ensure_hyperframes(b)
+    ws = _media_ws(job) if not b.get("project") else workspace(b["project"]["workspace"])
+    run = _media_run(ws)
+    try:
+        b["stage"] = "fetching"
+        b["inputs"] = fetch_inputs(job, ws)
+        if b.get("project"):  # a project from a repo checkout, rendered as it is at that commit
+            proj = b["project"]["dir"]
+        else:
+            proj = "project"
+            as_user(["mkdir", "-p", f"{proj}/media"], ws, timeout=30)
+            for i in b["inputs"]:
+                ext = os.path.splitext(i["name"])[1].lower()
+                as_user(["mv", "-f", "--", i["name"], f"{proj}/media/{i['key']}{ext}"], ws, timeout=60)
+            write_as_user(ws, f"{proj}/index.html", with_media(b["html"], b["inputs"]).encode())
+        b["stage"] = "rendering the template"
+        t0 = time.time()
+        args = [node, cli, "render", "-o", os.path.join(ws, "tpl.mp4"), "--quality", b.get("quality") or "standard"]
+        if b.get("composition"):
+            args += ["-c", b["composition"]]
+        code, out, err = as_user(args, os.path.join(ws, proj), timeout=1800, env={**env, "HOME": ws}, err_tail=4000)
+        if code or not os.path.exists(os.path.join(ws, "tpl.mp4")):
+            raise ValueError(f"HyperFrames couldn't render it: {(err or out.decode('utf-8', 'replace')).strip()[-900:]}")
+        final = "tpl.mp4"
+        target = (media.PLATFORMS.get(b.get("platform") or "reels") or media.PLATFORMS["reels"])["lufs"]
+        if media.probe(run, final).get("has_audio") and media.fix_loudness(run, final, "level.mp4", target) is not None:
+            final = "level.mp4"
+        q = media.qa(run, final, b.get("platform") or "reels", None, stills=True)
+        name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(b.get("name") or "template"))[:80].removesuffix(".mp4") + ".mp4"
+        out_f = keep_result(ws, jdir, final, name)
+        b.update(qa=q, render_s=round(time.time() - t0, 1), outputs=[out_f], stage="done")
+    finally:
+        if not b.get("project"):
+            _done_ws(ws)
+
+
+RECIPES = ("long_to_shorts", "carousel_to_reel", "reel_to_carousel", "podcast_to_audiogram", "add_voiceover")
+
+
+def repurpose(job, jdir):
+    """Recipes over the edit pipeline: one call, several finished pieces, each checked."""
+    import media
+    b = job["bench"]
+    b["isolation"] = setup()
+    ws = _media_ws(job)
+    run = _media_run(ws)
+    o = b["options"]
+    made = []
+    try:
+        infos = _probe_inputs(job, ws, run)
+        keys = list(infos)
+        first = keys[0]
+        style = o.get("captions") if o.get("captions") in ("pop", "bold", "clean", None) else "pop"
+        plat = o.get("platform") or "reels"
+        if b["recipe"] == "long_to_shorts":
+            src, info = infos[first]
+            words = [{"w": str(x["w"]), "s": float(x["s"]), "e": float(x["e"])} for x in (o.get("words") or [])] or None
+            if not words and (o.get("segments") is None or style) and "transcribe" in HOOKS:
+                words = _words(job, ws, jdir, run, src, {}, b["inputs"])  # what's said picks the segments and makes the captions
+            segs = o.get("segments") or media.pick_segments(words or [], info["duration"], int(o.get("count") or 3), float(o.get("min_s") or 20), float(o.get("max_s") or 55))
+            if not segs:
+                raise ValueError("no segments: give segments [{from, to, title}], or words / a GPU worker so they can be picked from what's said")
+            for i, sg in enumerate(segs[:10]):
+                a, z = float(sg["from"]), float(sg["to"])
+                spec = {"platform": plat, "fit": o.get("fit") or "blur", "clips": [{"src": first, "from": a, "to": z}], "fade": {"out": 0.3}}
+                if style and words:
+                    spec["captions"] = {"style": style, "words": [{**w, "s": w["s"] - a, "e": w["e"] - a} for w in words if a <= w["s"] < z]}
+                if sg.get("title"):
+                    spec["texts"] = [{"text": sg["title"], "position": "top", "size": 64, "to": 3}]
+                r = render_spec(job, ws, jdir, run, infos, spec, b["inputs"], f"{o.get('name') or 'short'}-{i + 1}")
+                made.append({**r, "from": a, "to": z, **({"title": sg["title"]} if sg.get("title") else {}), **({"why": sg["why"]} if sg.get("why") else {})})
+        elif b["recipe"] == "carousel_to_reel":
+            photos = [k for k in keys if infos[k][1].get("image")]
+            if not photos:
+                raise ValueError("carousel_to_reel needs photos")
+            spec = {"platform": plat, "fit": o.get("fit") or "blur", "clips": [{"src": k, "seconds": float(o.get("seconds") or 2.5), "zoom": o.get("zoom", True)} for k in photos],
+                    "fade": {"in": 0.2, "out": 0.4}}
+            aud = [k for k in keys if not infos[k][1].get("image") and infos[k][1].get("has_audio")]
+            if o.get("music") in infos or aud:
+                spec["music"] = {"src": o.get("music") if o.get("music") in infos else aud[0], "volume_db": -12, "duck": bool(o.get("voice"))}
+            if o.get("voice") in infos:
+                spec["voice"] = {"src": o["voice"]}
+                if style:
+                    spec["captions"] = {"style": style}
+            made.append(render_spec(job, ws, jdir, run, infos, spec, b["inputs"], o.get("name") or "carousel-reel"))
+        elif b["recipe"] == "reel_to_carousel":
+            src, info = infos[first]
+            n = int(o.get("count") or 8)
+            cuts = media.scenes(run, src, 0.3)
+            times = media.carousel_times(cuts, info["duration"], n)
+            shape = o.get("shape") or "4:5"
+            for i, t in enumerate(times):
+                fn = f"slide-{i + 1:02d}.jpg"
+                media.frame(run, src, t, fn, *media.SHAPES.get(shape, (1080, 1350)))
+                made.append({**keep_result(ws, jdir, fn, f"{o.get('name') or 'slide'}-{i + 1:02d}.jpg"), "at": round(t, 2)})
+        elif b["recipe"] == "podcast_to_audiogram":
+            audio = next((k for k in keys if infos[k][1].get("has_audio") and not infos[k][1].get("image")), None)
+            if not audio:
+                raise ValueError("podcast_to_audiogram needs an audio or video file")
+            cover = next((k for k in keys if infos[k][1].get("image")), None)
+            a = float(o.get("from") or 0)
+            z = min(float(o.get("to") or a + 60), infos[audio][1]["duration"])
+            W, H = media.SHAPES.get(o.get("shape") or "9:16", (1080, 1920))
+            args, extra = media.audiogram(infos[audio][0], infos[cover][0] if cover else None, a, z, W, H, o.get("title") or "", media.font_file())
+            for name, content in extra.items():
+                write_as_user(ws, name, content.encode())
+            b["stage"] = "drawing the audiogram"
+            code, _, err = run(args, timeout=3600)
+            if code:
+                raise ValueError(f"audiogram failed: {err.strip()[-600:]}")
+            spec = {"platform": plat, "clips": [{"src": "ag"}], "fit": "pad", "_stills": True}
+            if style:
+                spec["captions"] = {"style": style, "position": "middle"} if not o.get("words") else {"style": style, "position": "middle", "words": o["words"]}
+            infos2 = {"ag": ("audiogram.mp4", media.probe(run, "audiogram.mp4"))}
+            made.append(render_spec(job, ws, jdir, run, infos2, spec, b["inputs"], o.get("name") or "audiogram"))
+        elif b["recipe"] == "add_voiceover":
+            video = next((k for k in keys if infos[k][1].get("has_video") and not infos[k][1].get("image")), None)
+            voice = o.get("voice") if o.get("voice") in infos else next((k for k in keys if k != video and infos[k][1].get("has_audio")), None)
+            if not video or not voice:
+                raise ValueError("add_voiceover needs a video and a voice file (options.voice: its key)")
+            spec = {"platform": plat, "fit": o.get("fit") or "crop", "clips": [{"src": video}], "voice": {"src": voice, "at": float(o.get("at") or 0)},
+                    "original_volume_db": o.get("original_volume_db", -14)}
+            if style:
+                spec["captions"] = {"style": style}
+            made.append(render_spec(job, ws, jdir, run, infos, spec, b["inputs"], o.get("name") or "voiced"))
+        b["made"] = made
+        b["outputs"] = [{k: m[k] for k in ("name", "path", "bytes")} for m in made]
+        b["stage"] = "done"
+    finally:
+        _done_ws(ws)
 
 
 INSPECT = ("probe", "scenes", "loudness", "sheet", "words", "qa")
@@ -647,7 +876,7 @@ print(json.dumps(out))
 
 # ── the job ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-OPS = {"run": run_code, "clone": clone_repo, "diff": diff_repo, "edit": edit_media, "inspect": inspect_media, "browse": browse}
+OPS = {"run": run_code, "clone": clone_repo, "diff": diff_repo, "edit": edit_media, "inspect": inspect_media, "browse": browse, "repurpose": repurpose, "template": render_template}
 
 
 def prepare(job, body):
@@ -675,9 +904,28 @@ def prepare(job, body):
         if not WS_RE.match(b["workspace"]):
             raise ValueError("workspace: lowercase letters, digits and dashes, up to 40 (e.g. case-025)")
         job["est_total"] = float(min(b["timeout_s"], 60))
-    if op in ("edit", "inspect"):
+    if op == "repurpose":
+        if body.get("recipe") not in RECIPES:
+            raise ValueError(f"recipe: one of {', '.join(RECIPES)}")
+        b.update(recipe=body["recipe"], options=body.get("options") if isinstance(body.get("options"), dict) else {})
+    if op == "template":
+        html, proj = body.get("html"), body.get("project")
+        if not html and not proj:
+            raise ValueError("template needs html (from lib/auto/templates.ts) or project {workspace, dir} (a repo checkout)")
+        if html:
+            b["html"] = str(html)[:500_000]
+        else:
+            if not WS_RE.match(str(proj.get("workspace") or "")) or not re.match(r"^[A-Za-z0-9_-][A-Za-z0-9._/-]{0,199}$", str(proj.get("dir") or "")) or ".." in str(proj.get("dir")):
+                raise ValueError("project: {workspace, dir} inside the workspace")
+            b["project"] = {"workspace": proj["workspace"], "dir": proj["dir"]}
+            if body.get("composition"):
+                b["composition"] = re.sub(r"[^A-Za-z0-9._/-]", "", str(body["composition"]))[:200]
+        b.update(platform=str(body.get("platform") or "reels"), name=str(body.get("name") or "template")[:80],
+                 quality=body.get("quality") if body.get("quality") in ("draft", "standard", "high", "delivery") else "standard")
+        body = {**body, "files": body.get("files") or []}
+    if op in ("edit", "inspect", "repurpose") or (op == "template" and body.get("files")):
         files = body.get("files") or []
-        if not isinstance(files, list) or not files or len(files) > 30:
+        if not isinstance(files, list) or (not files and op != "template") or len(files) > 30:
             raise ValueError("inputs: 1 to 30 files")
         b["files"] = [{"url": str(f.get("url") or ""), "name": f"{re.sub(r'[^A-Za-z0-9_-]+', '_', str(f.get('key') or 'f'))[:40]}-{re.sub(r'[^A-Za-z0-9._-]+', '_', str(f.get('name') or 'file'))[-80:]}",
                        "key": str(f.get("key") or "")[:40]} for f in files]
