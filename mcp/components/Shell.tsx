@@ -5,7 +5,7 @@
 // /analytics), with its own pages, its own tabs on phones and the rivals you pinned. The switch remembers where you were.
 import {
   ArrowsClockwise, Broadcast, CalendarDots, Crosshair, SidebarSimple, CaretDown, ChartLineUp, Rows, SquaresFour, Trophy, UsersThree, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
-  FileAudio, FileText, FilmStrip, Folder, Folders, MagicWand, MagnifyingGlass, Microphone, Paperclip, PenNib, Plus, Power, SignOut, Star, UserSound, X,
+  CloudArrowDown, FileAudio, FileText, FilmStrip, Folder, Folders, MagicWand, MagnifyingGlass, Microphone, Paperclip, PenNib, Plus, Power, SignOut, Star, UserSound, X,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -37,6 +37,7 @@ export const NAV: Nav[] = [
   { href: "/clean-up", name: "Clean-up", Icon: MagicWand, mv: "wand", sec: "create" },
   { href: "/subtitles", name: "Subtitles", Icon: ClosedCaptioning, mv: "cc", sec: "create" },
   { href: "/images", name: "Images", Icon: ImageSquare, mv: "image", sec: "create" },
+  { href: "/download", name: "Download", Icon: CloudArrowDown, mv: "files", sec: "create" },
   { href: "/settings?tab=gpu", name: "GPU & engines", Icon: Cpu, mv: "chip", sec: "studio" },
   { href: "/settings", name: "Settings", Icon: GearSix, mv: "gear", sec: "studio" },
 ];
@@ -337,6 +338,7 @@ function Frame({ children, status }: { children: React.ReactNode; status: Status
                   <Link className="pm-item" role="menuitem" href="/images" onClick={close}><ImageSquare size={16} className="ic" />Image</Link>
                   <Link className="pm-item" role="menuitem" href="/subtitles" onClick={close}><ClosedCaptioning size={16} className="ic" />Subtitles</Link>
                   <Link className="pm-item" role="menuitem" href="/clean-up" onClick={close}><MagicWand size={16} className="ic" />Clean-up</Link>
+                  <Link className="pm-item" role="menuitem" href="/download" onClick={close}><CloudArrowDown size={16} className="ic" />Download from a link</Link>
                 </>
               )}
             </PopMenu>}

@@ -326,7 +326,7 @@ const SCENES: Record<string, { label: string; rects: R[] }> = {
 
 const SCENE_OF: [RegExp, string][] = [
   [/^\/writing/, "writing"], [/^\/voices/, "voices"], [/^\/posts/, "posts"], [/^\/files/, "files"], [/^\/voiceover/, "voiceover"], [/^\/clean-up/, "cleanup"],
-  [/^\/subtitles/, "subtitles"], [/^\/images/, "images"], [/^\/analytics\/live/, "live"], [/^\/analytics\/content/, "content"],
+  [/^\/subtitles/, "subtitles"], [/^\/images/, "images"], [/^\/download/, "files"], [/^\/analytics\/live/, "live"], [/^\/analytics\/content/, "content"],
   [/^\/analytics\/audience/, "audience"], [/^\/analytics\/when-to-post/, "when"], [/^\/analytics\/competitors/, "competitors"], [/^\/analytics\/radar/, "radar"],
   [/^\/analytics\/youtube/, "youtube"], [/^\/analytics\/instagram/, "instagram"], [/^\/analytics/, "grow"],
 ];

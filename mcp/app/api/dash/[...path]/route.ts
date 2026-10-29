@@ -49,6 +49,14 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "publish") return await (await import("@/lib/publish/api")).publishGet(g.path.slice(1));
     if (a === "pipeline" && b && ID.test(b)) return Response.json(await (await import("@/lib/pipeline")).advance(b)); // the post pipeline, moved along as it's looked at
     if (a === "pack" && b && ID.test(b)) return Response.json({ pack: await (await import("@/lib/postpack")).getPack(b) }); // the post package (lib/postpack.ts)
+    if (a === "downloads" && !b) {
+      // Create → Download: the list, brought up to date as it's looked at (lib/downloads.ts)
+      const dl = await import("@/lib/downloads");
+      const actor = { name: (await currentUser())?.name ?? "someone" };
+      const rec = await loadWorker();
+      const [list, cookies] = await Promise.all([dl.refresh((f) => after(f), actor), dl.cookieState()]);
+      return Response.json({ list, cookies, worker: !!rec && Date.now() - rec.last_seen < STALE_MS, sources: dl.SOURCES });
+    }
     if (a === "analytics" && b === "post" && (c === "youtube" || c === "instagram") && g.path[3] && ID.test(g.path[3])) {
       // one post in depth: analytics/post/<youtube|instagram>/<platform id>
       const { getPostDetail } = await import("@/lib/analytics");
@@ -261,6 +269,22 @@ export async function POST(req: Request, ctx: Ctx) {
       const o = { keyword: typeof body.keyword === "string" ? body.keyword.slice(0, 80) : null, credit: typeof body.credit === "string" ? body.credit.slice(0, 200) : null };
       if (body.preview === true) return Response.json({ pack: await pp.buildPack(b, { ...o, by: actor.name }), changed: [] });
       return Response.json(await pp.packPost(b, actor, { ...o, overwrite: body.overwrite === true }));
+    }
+    if (a === "downloads") {
+      // { urls: [...], folder?, name?, post? } starts downloads; /<id>/retry; /cookies { text } sets the sign-ins
+      const dl = await import("@/lib/downloads");
+      const actor = { name: (await currentUser())?.name ?? "someone" };
+      try {
+        if (b === "cookies") return Response.json(await dl.setCookies(typeof body.text === "string" ? body.text : null));
+        if (b && ID.test(b) && c === "retry") return Response.json({ download: await dl.retryDownload(b, actor, (f) => after(f)) });
+        if (!b) {
+          const urls = (Array.isArray(body.urls) ? body.urls : [body.url]).map(String).flatMap((u: string) => u.split(/\s+/)).filter((u: string) => /^https?:\/\//i.test(u));
+          return Response.json({ list: await dl.startDownloads(urls, { folder: body.folder ? String(body.folder) : null, name: body.name ? String(body.name) : null, post: body.post && ID.test(String(body.post)) ? String(body.post) : null }, actor, (f) => after(f)) });
+        }
+      } catch (e) {
+        if (e instanceof dl.DlError) return Response.json({ error: e.message }, { status: e.status });
+        throw e;
+      }
     }
     if (a === "autopost" && !b) {
       // the one click (Files): { files: ["m:<id>"…], go: "arm" | "now" | "draft", spaces?, keyword?, credit? }
@@ -638,6 +662,7 @@ export async function DELETE(req: Request, ctx: Ctx) {
   if (g.deny) return g.deny;
   const [a, b] = g.path;
   if (a === "publish") return (await import("@/lib/publish/api")).publishDelete(g.path.slice(1)).catch((e) => err(e));
+  if (a === "downloads" && b && ID.test(b)) return Response.json({ ok: await (await import("@/lib/downloads")).forgetDownload(b) }); // off the list; the files stay
   if (a === "datasets" && b && VOICE_RE.test(b) && ID.test(String(g.path[2] ?? ""))) {
     await deleteDatasetPart(b, String(g.path[2]));
     return Response.json({ ok: true });
