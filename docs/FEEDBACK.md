@@ -4,7 +4,14 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (tries again by itself, whole carousels, 2026-10-29)
+## Latest round (a downloaded carousel stays one carousel, 2026-10-29)
+
+- **"Will a carousel be grouped as one?"**: it wasn't: its photos and videos landed as loose files. Now a download
+  with several files becomes one carousel in Files, in the post's order, named after the post ("@handle on Instagram -
+  title"), for the post it was downloaded for. The row says "Carousel of 5" and Open goes straight to it; the
+  `download` tool returns its carousel id.
+
+## Earlier round (tries again by itself, whole carousels, 2026-10-29)
 
 - **"Build the auto retry"**: a block that passes (too many requests, a non-standard 4xx such as 470, a 5xx, a timeout)
   no longer ends the download: it waits 10 minutes, then 25, and runs the whole chain again by itself (server, then

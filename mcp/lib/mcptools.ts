@@ -756,6 +756,8 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
   const dlRow = (d: import("@/lib/downloads").Dl) => ({
     id: d.id, url: d.url, source: d.source, status: d.status, via: d.via, title: d.title, author: d.author, folder: d.folder, stage: d.stage,
     progress: d.pct == null ? null : Math.round(d.pct * 100), error: d.error, files: d.items.map((x) => ({ file_id: `m:${x.media}`, name: x.name, kind: x.kind, mb: +(x.size / 1e6).toFixed(1) })),
+    carousel: d.carousel ?? null, // a post with several files is one carousel in Files (its id, for the carousels tool)
+    retry_at: d.retry_at ? new Date(d.retry_at).toISOString() : null,
   });
   const files = async <T,>(fn: () => Promise<T>) => { try { return text(await fn()); } catch (e) { return fail(e); } };
   const FILE_ID = z.string().regex(/^[mg]:[A-Za-z0-9._-]{1,64}$/).describe("a file id from list_files: m:<upload id> or g:<generated id>");
