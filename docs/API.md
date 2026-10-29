@@ -345,3 +345,12 @@ voice stands 6 dB above the noise and within 50 dB of its peak), room echo (T60 
 7 kHz, echo over 0.45 s or SNR under 18 dB → Resemble Enhance (strength by severity). Afterwards the speaker similarity
 to the input must stay at least 0.80, or the last step is dropped. DeepFilterNet is the official static CLI, fetched once
 into `$VOICEBOX_HOME/bin`.
+
+## The workbench (`kind: "bench"`)
+
+`POST /jobs` with `{"kind": "bench", "op": "run", "code": "...", "lang": "python"|"node"|"bash", "workspace": "default",
+"files": [{"url", "name"}], "args": [], "timeout_s": 120, "memory_mb": 8000, "voicebox_url", "voicebox_key",
+"voicebox_model"}` runs code in the sandbox (`worker/bench.py`, docs/AUTOMATION.md) on the `bench` lane (two at once,
+`VOICEBOX_BENCH_WORKERS`). `GET /jobs/<id>` shows `bench`: stage, the live tail while it runs, then exit, seconds,
+stdout and stderr (trimmed), killed (time or memory limit), isolation and outputs (files written to `out/`, copied
+next to the job for `/jobs/<id>/push`). The key and the code are never shown back.

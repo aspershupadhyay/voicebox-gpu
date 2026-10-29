@@ -89,4 +89,68 @@ export function registerAutoTools(server: ToolServer) {
       } catch (e) { return fail(e); }
     },
   );
+
+  server.registerTool(
+    "run",
+    {
+      title: "Run code on the Colab worker (sandbox)",
+      description: [
+        "Python (default), Node or Bash in a private workspace on the Colab worker (the L4: GPU, ffmpeg, pip): its own Linux user, no secrets, no way into the worker, a time limit (timeout_s, default 120, up to 1800) and a memory limit (memory_mb, default 8000).",
+        "Code mode (on by default): `import voicebox as vb` calls any VoiceBox tool from the script, vb.<tool>(**args) (vb.tools(\"keyword\") lists them), so filter and loop in code and print only what matters: it saves tokens. Gated calls still wait for the owner.",
+        "files: Files ids (m:…, g:…) or links, fetched into in/ first. Anything the code writes to out/ is saved to Files (folder save_to, default \"Workbench\"; null to keep it in the workspace only). The workspace (default \"default\", or a name per project) keeps its files between runs while the runtime is on; pip install --user works.",
+        "Waits up to 45 s; a longer run returns its job id for get_job. Example: {\"code\":\"import voicebox as vb\\nposts = vb.workspace_board()\\nprint(len(posts))\"}.",
+      ].join(" "),
+      inputSchema: z.object({
+        code: z.string().min(1).max(200_000),
+        lang: z.enum(["python", "node", "bash"]).optional(),
+        workspace: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/).optional(),
+        files: z.array(z.string().max(2000)).max(20).optional().describe("Files ids (m:…, g:…) or https links, fetched into in/"),
+        args: z.array(z.string().max(500)).max(20).optional(),
+        timeout_s: z.number().int().min(5).max(1800).optional(), memory_mb: z.number().int().min(256).max(48_000).optional(),
+        voicebox: z.boolean().optional().describe("code mode: import voicebox (default true)"),
+        save_to: z.string().max(200).nullable().optional().describe("folder for out/ files (default Workbench); null keeps them in the workspace"),
+      }),
+    },
+    async ({ code, lang, workspace, files, args, timeout_s, memory_mb, voicebox, save_to }, ctx) => {
+      try {
+        const b = await import("./bench");
+        const model = await modelName(ctx as Ctx);
+        const t = timeout_s ?? 120;
+        const origin = (await import("../colab")).appOrigin(ctx && (ctx as Ctx)?.http?.req ? new URL((ctx as Ctx)!.http!.req!.url).origin : undefined);
+        const inputs = await Promise.all((files ?? []).map((f) => b.inputFile(f)));
+        const job = await b.submit({ op: "run", code, lang, workspace, files: inputs, args, timeout_s: t, memory_mb,
+          ...(voicebox === false ? {} : { voicebox_url: `${origin}/api/mcp`, voicebox_key: b.runKey(model, t), voicebox_model: model }) },
+          { model, folder: save_to === undefined ? undefined : save_to });
+        return text(await b.view(await b.wait(job.id, 45), { name: model }));
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "playbook",
+    {
+      title: "The playbook: the studio's rules and know-how",
+      description: [
+        "Read before working: how this studio wants things done (CLAUDE.md, the owner's feedback, the design rules, the automation plan, publishing, Radar, the API), by section, so you read only what the task needs.",
+        "action search (default): the sections that match a few words, with a snippet. read: one doc (doc id), or one section of it (section: words from its title, or its number), in parts of 12k characters. index: every doc and its section titles.",
+        "Example: {\"query\":\"instagram carousel slide shape\"} then {\"action\":\"read\",\"doc\":\"feedback\",\"section\":\"square and portrait\"}. The owner's feedback (doc feedback) wins over older rules.",
+      ].join(" "),
+      inputSchema: z.object({
+        action: z.enum(["search", "read", "index"]).optional(),
+        query: z.string().max(200).optional(), doc: z.string().max(60).optional(), section: z.string().max(120).optional(),
+        part: z.number().int().min(1).max(50).optional(),
+      }),
+    },
+    async ({ action, query, doc, section, part }) => {
+      try {
+        const pb = await import("./playbook");
+        const act = action ?? (doc ? "read" : query ? "search" : "index");
+        if (act === "index") return text(pb.index());
+        if (act === "read") { if (!doc) throw new Error("read needs doc (index lists them)"); return text(pb.read(doc, section, part)); }
+        if (!query) throw new Error("search needs query");
+        const hits = pb.search(query);
+        return text(hits.length ? { hits, next: "read the best one: action read, doc, section" } : { hits, next: "nothing matched: try other words, or action index" });
+      } catch (e) { return fail(e); }
+    },
+  );
 }

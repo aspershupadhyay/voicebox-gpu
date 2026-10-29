@@ -101,8 +101,12 @@ The owner's feedback still goes into `docs/FEEDBACK.md` in the same PR as the ch
   start, every MCP call shows in the log. **Shipped**: `lib/auto/control.ts` (switches, units, approvals, log, kill
   switch), `lib/auto/wrap.ts` (every call guarded and logged), `lib/auto/tools.ts` (`approvals`, `control`),
   `components/Automation.tsx`.
-- [ ] **2. Sandbox and know-how**: `run` (sandbox lane on the worker, isolated user, no secrets, limits), `playbook`
+- [x] **2. Sandbox and know-how**: `run` (sandbox lane on the worker, isolated user, no secrets, limits), `playbook`
   (sections of the docs and lessons). Done when: a model can run a Python script on Colab and read a rule by section.
+  **Shipped**: `worker/bench.py` (the `bench` job kind on its own lane, 2 at once; op `run`: user `vbsandbox`, the
+  worker's home closed, its local ports refused by iptables, a clean environment, time and memory limits, trimmed
+  output, `out/` saved to Files; the `voicebox` code-mode module), `lib/auto/bench.ts`, `lib/auto/playbook.ts` with
+  `scripts/build_playbook.py` (run at every deploy), tools `run` and `playbook`.
 - [ ] **3. Repos**: `repo` with the allow-list and the GitHub key (needs the owner's key). Done when: a model can open a
   PR on the workbench repo and read its CI.
 - [ ] **4. Media I**: `edit_video`, `inspect_media`, `video_qa` (ffmpeg, NVENC on the L4, Whisper captions, QA runs
@@ -158,6 +162,13 @@ Any MCP client that speaks streamable HTTP works the same way. claude.ai uses th
 - Everything runs on Colab (the L4), not Modal or Cloud Run (owner, 2026-10-29).
 - Rendering is HyperFrames; Remotion is not used.
 - About 15 new tools in total, never one per small step.
+
+## How the sandbox is checked
+
+Tested on a Linux box as root, as on Colab: code runs as `vbsandbox`, can't read the worker's home (PermissionError),
+sees no `WORKER_SECRET`, can't open the worker's local ports (refused), is killed at its time limit and its memory
+limit, its output is trimmed (head and tail), `out/` files are collected; Python, Node and Bash run. Code mode from a
+script: four tool calls in one run, a gated one held for approval, each logged as `<model> code`, via code.
 
 ## Waiting on the owner
 
