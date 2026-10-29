@@ -175,7 +175,9 @@ export async function applyPack(pack: Pack, actor: Actor, o: { overwrite?: boole
   const changed: string[] = [];
   const applied: Record<string, string> = { ...pack.applied };
   const patch: Partial<Post> = {};
-  if (looksLikeFile(post.title) || free("title", post.title)) if (post.title !== pack.title) { patch.title = pack.title; applied.title = pack.title; }
+  // the post's own title and caption, before this package touched them: a person's words unless empty or the package's
+  const titleFree = looksLikeFile(post.title) || free("title", post.title), captionFree = free("caption", post.caption);
+  if (titleFree) if (post.title !== pack.title) { patch.title = pack.title; applied.title = pack.title; }
   if (free("caption", post.caption)) { patch.caption = pack.caption; applied.caption = pack.caption; }
   if (Object.keys(patch).length) { await updatePost(pack.post, patch, actor); changed.push(...Object.keys(patch).map((k) => `post ${k}`)); }
 
@@ -195,14 +197,20 @@ export async function applyPack(pack: Pack, actor: Actor, o: { overwrite?: boole
     const p = await plans.getPlan(pack.post, t.space);
     if (!p || BUSY.includes(p.state) || p.state === "published") continue;
     let touched = false;
+    // a plan seeded from the post's title and caption only counts as unwritten if the post's own were unwritten; a
+    // caption saved for this target (captions tool, Writing room) wins over the package
+    const own = !free(`cap:${t.space}`, caps[t.space]) ? (caps[t.space] ?? "").trim() : "";
     if (p.yt) {
-      // the plan was seeded from the post's title and caption when it was made: those count as not written by a person
-      if (free(`yt.title:${t.space}`, p.yt.title) || p.yt.title === post.title) { p.yt.title = pack.title.slice(0, 100); applied[`yt.title:${t.space}`] = p.yt.title; touched = true; }
-      if (free(`yt.description:${t.space}`, p.yt.description) || p.yt.description.trim() === (post.caption ?? "").trim()) { p.yt.description = pack.description; applied[`yt.description:${t.space}`] = pack.description; touched = true; }
+      if (free(`yt.title:${t.space}`, p.yt.title) || (titleFree && p.yt.title === post.title)) { p.yt.title = pack.title.slice(0, 100); applied[`yt.title:${t.space}`] = p.yt.title; touched = true; }
+      if (free(`yt.description:${t.space}`, p.yt.description) || (captionFree && p.yt.description.trim() === (post.caption ?? "").trim())) {
+        if (own) { if (p.yt.description.trim() !== own) { p.yt.description = own; touched = true; } } else { p.yt.description = pack.description; applied[`yt.description:${t.space}`] = pack.description; touched = true; }
+      }
       if (!p.yt.tags.length || o.overwrite || p.yt.tags.join(",") === (applied[`yt.tags:${t.space}`] ?? "")) { p.yt.tags = pack.tags; applied[`yt.tags:${t.space}`] = pack.tags.join(","); touched = true; }
     }
     if (p.ig && t.space !== "ig_story") {
-      if (free(`ig.caption:${t.space}`, p.ig.caption) || p.ig.caption.trim() === (post.caption ?? "").trim()) { p.ig.caption = pack.caption; applied[`ig.caption:${t.space}`] = pack.caption; touched = true; }
+      if (free(`ig.caption:${t.space}`, p.ig.caption) || (captionFree && p.ig.caption.trim() === (post.caption ?? "").trim())) {
+        if (own) { if (p.ig.caption.trim() !== own) { p.ig.caption = own; touched = true; } } else { p.ig.caption = pack.caption; applied[`ig.caption:${t.space}`] = pack.caption; touched = true; }
+      }
     }
     // whoever wrote it, it never goes out without hashtags, the credit, or tags
     const top = topUp(p.yt ? p.yt.description : p.ig?.caption ?? "", pack, p.yt ? 4900 : 2150, p.yt ? (t.space === "yt_short" ? ["shorts", ...pack.hashtags] : pack.hashtags).slice(0, 3) : pack.hashtags.slice(0, 5));
@@ -222,7 +230,7 @@ export async function applyPack(pack: Pack, actor: Actor, o: { overwrite?: boole
 export function topUp(text: string, pack: Pick<Pack, "credit" | "hashtags">, max: number, tags: string[]) {
   let out = text.trim();
   const added: string[] = [];
-  if (pack.credit && !/\bcredits?\b|\bvia @|all rights belong/i.test(out)) {
+  if (pack.credit && !/\bcredits?\b|\bvia @|\bby @|\bsource\b|\bcourtesy\b|\boriginal(ly)?\b|all rights belong|©|📸|📷|🎥|(^|\s)@[\p{L}\p{N}._]{2,}/iu.test(out)) {
     const line = `Credit: ${pack.credit}. All rights belong to the original creator.`;
     const at = out.search(/(^|\n)\s*#[\p{L}\p{N}_]+(\s+#[\p{L}\p{N}_]+)*\s*$/u);
     out = at >= 0 ? `${out.slice(0, at).trim()}\n\n${line}\n\n${out.slice(at).trim()}` : `${out}\n\n${line}`;
