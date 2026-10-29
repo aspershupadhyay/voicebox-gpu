@@ -354,3 +354,9 @@ into `$VOICEBOX_HOME/bin`.
 `VOICEBOX_BENCH_WORKERS`). `GET /jobs/<id>` shows `bench`: stage, the live tail while it runs, then exit, seconds,
 stdout and stderr (trimmed), killed (time or memory limit), isolation and outputs (files written to `out/`, copied
 next to the job for `/jobs/<id>/push`). The key and the code are never shown back.
+
+Ops `clone` / `diff` (`dir`, `workspace`; clone takes `url`, `ref`, `header` with the key, never shown back) put a repo
+in a workspace and read its changes back. Ops `edit` (`files: [{key, url, name}]`, `spec`: the timeline, see the
+`edit_video` tool) and `inspect` (`files`, `checks`: probe, qa, scenes, loudness, words, sheet; `platform`) run
+`worker/media.py` in a throwaway workspace as the sandbox user; `bench.qa` / `bench.report` hold the checks, `outputs`
+the rendered file or contact sheet.

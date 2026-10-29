@@ -43,7 +43,7 @@ export const SPENDS: Record<string, (a: Args) => boolean> = {
   train_voice: () => true, benchmark_voices: () => true, download: () => true, post_pipeline: () => true,
   voice_dataset: (a) => !!a.action && a.action !== "list",
   gpu: (a) => a.action === "start" || a.action === "train_draft",
-  run: () => true,
+  run: () => true, edit_video: () => true, inspect_media: () => true,
   repo: (a) => a.action === "checkout" || a.action === "push",
 };
 /** Changes that aren't GPU work but still stop while paused (the gated ones always do). */

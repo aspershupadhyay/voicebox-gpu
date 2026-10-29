@@ -113,8 +113,14 @@ The owner's feedback still goes into `docs/FEEDBACK.md` in the same PR as the ch
   and the end of a failed job's log, comment, merge only when green), tool `repo`, bench ops `clone` (the key in a
   header for that one clone, never in the clone's config) and `diff` (the workspace's changes read as the sandbox
   user, committed through the API, so the key never sits on the worker), the Repos card in Settings → Automation.
-- [ ] **4. Media I**: `edit_video`, `inspect_media`, `video_qa` (ffmpeg, NVENC on the L4, Whisper captions, QA runs
-  after every render). Done when: a Reel is cut, captioned and checked in 3 calls.
+- [x] **4. Media I**: `edit_video`, `inspect_media`, `video_qa` (ffmpeg, NVENC on the L4, Whisper captions, QA runs
+  after every render). Done when: a Reel is cut, captioned and checked in 3 calls. **Shipped** (one call does it):
+  `worker/media.py` (the recipes: platforms with their shapes, safe zones, length limits and -14 LUFS; clips trimmed,
+  sped up, shaped by crop, pad or a blurred fill, photos with a slow push-in; voiceover; music ducked under speech by
+  a sidechain; captions from word timings as ASS, a few words at a time with the spoken word lit; logo; text from a
+  file, wrapped to the safe width and shrunk past 3 lines; fades; loudnorm; NVENC when there's a GPU; QA after every
+  render), bench ops `edit` and `inspect`, tools `edit_video` and `inspect_media` (probe, qa, scenes, loudness,
+  words, a contact sheet).
 - [ ] **5. Web**: `browse` (Playwright on the worker), `search` (needs a key). Done when: a model reads a page and
   takes a 390 px screenshot.
 - [ ] **6. Media II**: `video_template` (HyperFrames + brand kit from `videos-post`, cached on R2), `repurpose`
@@ -166,6 +172,16 @@ Any MCP client that speaks streamable HTTP works the same way. claude.ai uses th
 - Everything runs on Colab (the L4), not Modal or Cloud Run (owner, 2026-10-29).
 - Rendering is HyperFrames; Remotion is not used.
 - About 15 new tools in total, never one per small step.
+
+## How media is checked
+
+On a Linux box with ffmpeg 6.1 (Colab has 4.4; every filter used exists there): a 3-clip edit (a cut, a cut at 2x,
+a photo) with blur fill, voiceover, ducked music, logo, a title for 3 s, pop captions and fades rendered in 12 s on the
+CPU to 1080x1920, 7.0 s, -14.8 LUFS, QA all PASS; its contact sheet showed every layer where it should be. Through MCP:
+a too-long headline was caught by QA, then wrapped and shrunk by the server instead; a 16:9 file inspected for Reels
+failed shape and loudness as it should. Found and fixed while testing: inputs failed to fetch (the size was read
+after the file closed), captions ignored the spec, and drawtext dropped text with commas, colons or line breaks (now
+from a file). Not checked here: NVENC and Whisper captions (they need the L4).
 
 ## How repos are checked
 

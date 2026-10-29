@@ -227,4 +227,69 @@ export function registerAutoTools(server: ToolServer) {
       } catch (e) { return fail(e); }
     },
   );
+
+  const SRC = z.string().regex(/^[a-z0-9_]{1,20}$/).describe("an input's key");
+  const PLAT = z.enum(["reels", "shorts", "tiktok", "youtube", "ig_post", "square"]);
+  const media = async (op: "edit" | "inspect", inputs: Record<string, string>, body: Record<string, unknown>, ctx: unknown, save_to?: string | null, label?: string) => {
+    const b = await import("./bench");
+    const model = await modelName(ctx as Ctx);
+    const files = await Promise.all(Object.entries(inputs).map(async ([key, ref]) => ({ key, ...(await b.inputFile(ref)) })));
+    const job = await b.submit({ op, files, ...body }, { model, folder: save_to === undefined ? undefined : save_to, label });
+    return text(await b.view(await b.wait(job.id, 45), { name: model }));
+  };
+
+  server.registerTool(
+    "edit_video",
+    {
+      title: "Edit a video (cut, shape, voice, music, captions, logo, text)",
+      description: [
+        "One call renders a finished video on the Colab worker (NVENC on the GPU) and checks it (inspect_media's qa runs after every render: shape, length, loudness, black or frozen frames, text in the safe zones), then saves it to Files (save_to, default Workbench).",
+        "inputs: names for your files, {\"a\": \"m:<Files id>\", \"vo\": \"g:<voiceover id>\", \"song\": \"https://…\"}. spec: platform (reels default, shorts, tiktok, youtube, ig_post, square: sets the shape, the safe zones, the length limit and -14 LUFS), shape (9:16, 16:9, 1:1, 4:5) and fit (crop default, pad, blur: the frame filled with a blurred copy), clips in order [{src, from, to, speed, mute} or a photo {src, seconds, zoom}] (default the whole first input), voice {src, at, volume_db}, music {src, volume_db -16, duck true: dips under speech}, original_volume_db (a number or \"mute\"), captions {style pop|bold|clean, position lower|middle|upper; from speech by Whisper, or srt: an input key, or words [{w,s,e}]}, logo {src, corner tr|tl|br|bl, size 0.12}, texts [{text, from, to, position top|middle|bottom, size}], fade {in, out}, max_seconds, name.",
+        "Example: {\"inputs\":{\"a\":\"m:abc123\"},\"spec\":{\"platform\":\"reels\",\"fit\":\"blur\",\"clips\":[{\"src\":\"a\",\"from\":12,\"to\":41}],\"captions\":{\"style\":\"pop\"},\"name\":\"tip-3\"}}. Waits up to 45 s; longer renders return a job id for get_job.",
+      ].join(" "),
+      inputSchema: z.object({
+        inputs: z.record(z.string().regex(/^[a-z0-9_]{1,20}$/), z.string().max(2000)).refine((o) => Object.keys(o).length >= 1 && Object.keys(o).length <= 30, "1 to 30 inputs"),
+        spec: z.object({
+          platform: PLAT.optional(), shape: z.enum(["9:16", "16:9", "1:1", "4:5"]).optional(), fit: z.enum(["crop", "pad", "blur"]).optional(),
+          fps: z.number().int().min(15).max(60).optional(), quality: z.enum(["fast", "high"]).optional(),
+          clips: z.array(z.object({ src: SRC, from: z.number().min(0).optional(), to: z.number().min(0).optional(), speed: z.number().min(0.25).max(4).optional(), mute: z.boolean().optional(),
+            seconds: z.number().min(0.5).max(60).optional(), zoom: z.boolean().optional() })).max(200).optional(),
+          voice: z.object({ src: SRC, at: z.number().min(0).optional(), volume_db: z.number().min(-30).max(12).optional() }).optional(),
+          music: z.object({ src: SRC, volume_db: z.number().min(-40).max(0).optional(), duck: z.boolean().optional(), fade_s: z.number().min(0).max(10).optional() }).optional(),
+          original_volume_db: z.union([z.number().min(-60).max(12), z.literal("mute")]).optional(),
+          captions: z.object({ style: z.enum(["pop", "bold", "clean"]).optional(), position: z.enum(["lower", "middle", "upper"]).optional(), srt: SRC.optional(), language: z.string().max(8).optional(),
+            words: z.array(z.object({ w: z.string().max(60), s: z.number().min(0), e: z.number().min(0) })).max(5000).optional() }).optional(),
+          logo: z.object({ src: SRC, corner: z.enum(["tr", "tl", "br", "bl"]).optional(), size: z.number().min(0.04).max(0.5).optional(), opacity: z.number().min(0.1).max(1).optional() }).optional(),
+          texts: z.array(z.object({ text: z.string().min(1).max(200), from: z.number().min(0).optional(), to: z.number().min(0).optional(), position: z.enum(["top", "middle", "bottom"]).optional(),
+            size: z.number().min(20).max(200).optional(), box: z.boolean().optional() })).max(20).optional(),
+          fade: z.object({ in: z.number().min(0).max(5).optional(), out: z.number().min(0).max(5).optional() }).optional(),
+          lufs: z.number().min(-30).max(-8).optional(), max_seconds: z.number().min(1).max(3600).optional(), name: z.string().max(80).optional(),
+        }),
+        save_to: z.string().max(200).nullable().optional(),
+      }),
+    },
+    async ({ inputs, spec, save_to }, ctx) => {
+      try { return await media("edit", inputs, { spec }, ctx, save_to, `edit ${spec.name ?? ""}`.trim()); } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "inspect_media",
+    {
+      title: "Inspect a video or audio file (probe, QA, scenes, words, contact sheet)",
+      description: [
+        "Look at a file without watching it. checks (default probe + qa): probe (length, size, fps, codecs, sound), qa (PASS / WARN / FAIL for where it's going: shape, resolution, length limit, loudness -14 LUFS and peaks, black, frozen or silent stretches; platform reels default), scenes (cut times), loudness, words (what's said, with word timings, by Whisper on the GPU), sheet (a contact sheet of 16 frames saved to Files: look at it instead of the video).",
+        "file: a Files id (m:…, g:…) or a link. Example: {\"file\":\"m:abc123\",\"checks\":[\"qa\",\"scenes\",\"sheet\"],\"platform\":\"shorts\"}.",
+      ].join(" "),
+      inputSchema: z.object({
+        file: z.string().max(2000),
+        checks: z.array(z.enum(["probe", "qa", "scenes", "loudness", "words", "sheet"])).max(6).optional(),
+        platform: PLAT.optional(), threshold: z.number().min(0.05).max(0.9).optional().describe("scenes: how big a change counts as a cut (0.3)"),
+        save_to: z.string().max(200).nullable().optional(),
+      }),
+    },
+    async ({ file, checks, platform, threshold, save_to }, ctx) => {
+      try { return await media("inspect", { f: file }, { checks: checks ?? ["probe", "qa"], platform, threshold }, ctx, save_to, "inspect"); } catch (e) { return fail(e); }
+    },
+  );
 }

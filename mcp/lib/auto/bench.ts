@@ -96,6 +96,22 @@ export async function view(job: BenchJob, actor: { name: string } = { name: "Wor
       next: job.status === "error" ? "Fix the input the error names and run again." : b.exit === 0 ? "Done." : b.killed ? `It was stopped (${b.killed}): give it a longer timeout_s or memory_mb, or do less per run.` : "It failed: read stderr, fix the code, run again (the workspace keeps its files).",
     };
   }
+  if (b.op === "edit" || b.op === "inspect") {
+    const qa = (b.op === "edit" ? b.qa : (b.report as { qa?: unknown } | undefined)?.qa) as { verdict: string; checks: { status: string; check: string; why: string }[] } | undefined;
+    const issues = qa?.checks.filter((c) => c.status !== "PASS").map((c) => `${c.status} ${c.check}: ${c.why}`);
+    const saved = files && "saved" in files ? files.saved : undefined;
+    if (b.op === "edit") {
+      return {
+        ...base, seconds: b.seconds_out, render_s: b.render_s, ...(b.captions ? { captions: b.captions } : {}),
+        qa: qa ? { verdict: qa.verdict, ...(issues?.length ? { issues } : {}) } : null,
+        file: saved?.[0] ?? (files && "error" in files ? files : b.outputs?.[0]?.name),
+        next: job.status === "error" ? "Fix what the error names and send the edit again." : qa?.verdict === "FAIL" ? "Fix the FAIL lines (change the spec) and render again before posting." : "Done: it's in Files. inspect_media with checks [\"sheet\"] shows its frames.",
+      };
+    }
+    const rep = { ...(b.report as Record<string, unknown> | undefined) };
+    if (qa) rep.qa = { verdict: qa.verdict, ...(issues?.length ? { issues } : {}) };
+    return { ...base, ...rep, ...(saved?.length ? { sheet_file: saved[0] } : {}), next: job.status === "error" ? "Fix what the error names and try again." : "Done." };
+  }
   return { ...base, ...b, ...(files ? { files } : {}) };
 }
 

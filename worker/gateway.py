@@ -1365,6 +1365,14 @@ def make_bench_job(body):
     return _enqueue(job)
 
 
+def _bench_transcribe(job, path, language=None):
+    _prepare(job, "whisper")
+    return ENG.transcribe([path], language)[0]
+
+
+bench.HOOKS["transcribe"] = _bench_transcribe
+
+
 def run_bench(job):
     try:
         bench.run(job, os.path.join(JOBS_DIR, job["id"]))
