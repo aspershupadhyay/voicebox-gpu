@@ -4,7 +4,7 @@
 // HMAC-SHA1 of this URL plus the body under a key only Vercel holds (hookKey). The same signature also lets the owner's
 // tooling ask for {"op": "copy"} (fill Postgres from Appwrite and compare), {"op": "check"}, {"op": "users"} (copy the
 // studio team into Postgres for sign-in, lib/users.ts) or {"op": "files-to-r2"} (move files still in Appwrite Storage
-// to R2; Appwrite's copy stays until Appwrite goes).
+// to R2; Appwrite's copy stays until Appwrite goes) or {"op": "backup"} (the nightly backup's turn, lib/backup.ts).
 import { createHmac } from "node:crypto";
 import { safeEqual } from "@/lib/worker";
 
@@ -29,6 +29,7 @@ export async function POST(req: Request) {
     }
     if (data.op === "check") return Response.json(await db.checkCopy());
     if (data.op === "users") return Response.json({ copied: await (await import("@/lib/users")).copyTeam(), users: await (await import("@/lib/users")).listUsers() });
+    if (data.op === "backup") return Response.json((await (await import("@/lib/backup")).nightly(100_000)) ?? { idle: true });
     if (data.op === "files-to-r2") return Response.json(await (await import("@/lib/appwrite")).filesToR2());
     if (leads) return Response.json({ ignored: "Postgres leads" });
     const table = data.$tableId;
