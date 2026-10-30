@@ -123,7 +123,8 @@ async function step(b: Batch, call: Call) {
   const toVoice = b.items.filter((i) => i.state === "voice");
   if (toVoice.length && !b.voice_job) {
     const lines = toVoice.flatMap((it) => it.spec.scenes.map((s, k) => ({ id: `v${b.items.indexOf(it)}s${k}`, text: s.line })));
-    const r = await call("voice_lines", { lines, ...b.voice, review: true, platform: "raw", wait_seconds: 0, label: `factory ${b.id} (${lines.length} lines)` });
+    // a draft skips Whisper's listen-back (the delivery run has it)
+    const r = await call("voice_lines", { lines, ...b.voice, review: !b.draft, platform: "raw", wait_seconds: 0, label: `factory ${b.id} (${lines.length} lines)` });
     const job = v<{ id?: string; job_id?: string }>(r.value)?.id ?? v<{ job_id?: string }>(r.value)?.job_id;
     if (!r.ok || !job) { for (const it of toVoice) { it.state = "error"; it.err = `voice: ${r.text.slice(0, 200)}`; } return; }
     b.voice_job = job; b.timing.voice_start = Date.now();
@@ -158,7 +159,7 @@ async function step(b: Batch, call: Call) {
       const hit = await getJson<{ file: string }>(CACHE(h)).catch(() => null);
       if (hit) { st.file = hit.file; st.cached = true; return; }
       const fields = { ...(sc.fields ?? {}), seconds: dur, ...(sc.template === "list" ? { per_item: Math.max(1, (dur - 2.5) / Math.max(2, (sc.fields?.items as unknown[] | undefined)?.length ?? 2)) } : {}) };
-      const r = await call("video_template", { template: sc.template, fields, shape: shapeOf(it.spec), quality: b.draft ? "draft" : "standard", name: `${it.name}-s${k + 1}`, ...(b.project ? { project: b.project } : { save_to: "Factory/scenes" }) });
+      const r = await call("video_template", { template: sc.template, fields, shape: shapeOf(it.spec), quality: b.draft ? "draft" : "standard", ...(b.draft ? { size: "half" } : {}), name: `${it.name}-s${k + 1}`, ...(b.project ? { project: b.project } : { save_to: "Factory/scenes" }) });
       const x = v<{ job_id?: string; status?: string; file?: { file_id?: string }; error?: string }>(r.value);
       if (!r.ok) { st.err = r.text.slice(0, 200); return; }
       if (x?.file?.file_id) { st.file = x.file.file_id; await putJson(CACHE(h), { file: st.file }); return; }
