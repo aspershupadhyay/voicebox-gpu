@@ -50,7 +50,8 @@ export function loosen(name: string, schema: z.ZodObject): { schema: z.ZodObject
     ext.url = z.string().max(2000).optional().describe("a link to the file, or a Files id (m:… / g:…)");
     ext.file_id = z.string().max(80).optional().describe("instead of url: the file's id from list_files (m:… / g:…)");
   }
-  return { schema: Object.keys(ext).length ? schema.extend(ext) : schema, urlRequired };
+  // safeExtend: a schema with a refinement (add_reference_voice) refuses extend() over its own keys
+  return { schema: Object.keys(ext).length ? schema.safeExtend(ext as never) : schema, urlRequired };
 }
 
 /** The arguments with every id in the shape the tool expects, and Files ids where a link goes turned into links. */
