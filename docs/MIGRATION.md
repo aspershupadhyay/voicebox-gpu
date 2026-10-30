@@ -103,6 +103,10 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    knock). R2 is only read. Settings → Usage (`lib/usage.ts`) shows R2, the database, compute hours (with
    `NEON_API_KEY`) and the backup bucket against their free tiers, amber at 70 % and red at 90 %, and the last backup;
    new uploads now stop at 9 GB (90 % of R2's 10 GB, `STORAGE_CAP_GB`).
+   **Found on the way**: `sweep.yml` has been skipping every run because the repository secret `WORKER_SECRET` is not
+   set (and GitHub runs the 10-minute schedule only every few hours on this plan), so neither the sweep, the publishing
+   autopilot nor the backup ran from it. Until the owner adds the secret, the signed `{"op":"backup"}` runs the backup's
+   turn by hand.
 
 2b. **Sign-in off Appwrite** (built 2026-10-30, behind `AUTH_BACKEND=neon`). Accounts in Postgres (`db/002_users.sql`,
    `lib/users.ts`): scrypt hashes, ids kept from Appwrite. Nobody resets a password: on someone's first sign-in here an
