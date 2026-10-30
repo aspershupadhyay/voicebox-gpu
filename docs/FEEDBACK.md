@@ -4,7 +4,15 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (Gemini's post-mortem, 2026-10-30)
+## Latest round (build the factory, 2026-10-30)
+
+- **"Build ALL of docs/FACTORY.md in one go, A → B → C+H → D → G → E, measuring F along the way; verify each part
+  yourself, ship each as its own PR, only stop for what truly needs me"**: done as asked (PRs #131-#143); the one
+  thing that needed the owner was the day's units cap (5.09 of 5 spent), approved in Settings → Automation. Each
+  part's notes and numbers are in docs/FACTORY.md; what still needs the GPU or the owner's accounts is under "Still to
+  check on Colab".
+
+## Earlier round (Gemini's post-mortem, 2026-10-30)
 
 - **"Check Gemini's audit and save it"**: checked claim by claim in `docs/FACTORY.md` (true: the asset round trip,
   mixed id shapes, Node's PATH, the delete gate; rejected: a shared mount and putting a key in the worker's

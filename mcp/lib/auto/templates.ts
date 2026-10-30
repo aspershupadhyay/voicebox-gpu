@@ -33,18 +33,19 @@ export const TEMPLATES: Record<string, { about: string; fields: string; build: (
   },
   list: {
     about: "A numbered list that builds point by point (\"3 tips\"): a heading, then each point in turn.",
-    fields: "title, items (2-6 strings), per_item? (2.5 s)",
+    fields: "title, items (2-6 strings), per_item? (2.5 s), lead? (1.5 s before the first point)",
     build: (f, b, w, h) => {
       const items = (Array.isArray(f.items) ? f.items : []).slice(0, 6).map(String);
       if (items.length < 2) throw new Error("list needs items: 2 to 6 points");
-      const per = Math.min(Math.max(Number(f.per_item) || 2.5, 1), 8);
-      const s = 1.5 + items.length * per + 1;
+      const per = Math.min(Math.max(Number(f.per_item) || 2.5, 0.4), 8);
+      const lead = Math.min(Math.max(Number(f.lead) || 1.5, 0.3), 5);
+      const s = Math.max(lead + items.length * per + 1, Number(f.seconds) || 0);
       const rows = items.map((it, i) => `<li id="i${i}"><b style="color:${b.accent}">${i + 1}</b><span>${esc(it)}</span></li>`).join("");
       return { seconds: s, media: [], html: scene(w, h, s, b, `
     <div class="clip pad" data-start="0" data-duration="${s}" data-track-index="1">
       <h1 id="t" style="font-size:${Math.round(w * 0.075)}px">${esc(f.title)}</h1>
       <ol style="font-size:${Math.round(w * 0.05)}px">${rows}</ol>
-    </div>`, `tl.from("#t", {y: 40, duration: 0.6}, 0);${items.map((_, i) => `tl.from("#i${i}", {x: -50, opacity: 0, duration: 0.5}, ${1.5 + i * per});tl.fromTo("#i${i} b", {scale: 1}, {scale: 1.25, duration: ${(per / 2).toFixed(2)}, yoyo: true, repeat: 1, ease: "sine.inOut"}, ${1.5 + i * per + 0.5});`).join("")}`) };
+    </div>`, `tl.from("#t", {y: 40, duration: 0.6}, 0);${items.map((_, i) => `tl.from("#i${i}", {x: -50, opacity: 0, duration: ${Math.min(0.5, per * 0.8).toFixed(2)}}, ${lead + i * per});tl.fromTo("#i${i} b", {scale: 1}, {scale: 1.25, duration: ${Math.max(0.2, per / 2).toFixed(2)}, yoyo: true, repeat: 1, ease: "sine.inOut"}, ${lead + i * per + Math.min(0.5, per * 0.8)});`).join("")}`) };
     },
   },
   quote: {
