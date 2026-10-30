@@ -10,7 +10,8 @@ const locked = (s: number) => Response.json({ error: `Too many tries from here. 
 const NO_SEAT = "We couldn't create a seat for that email. Ask the owner to add it in Settings → Security, then try again.";
 
 export async function POST(req: Request) {
-  const { token, jwt, signup } = (await req.json().catch(() => ({}))) as { token?: string; jwt?: string; signup?: { name?: string; email?: string; password?: string } };
+  const { token, jwt, signup, email: loginEmail, password: loginPassword } = (await req.json().catch(() => ({}))) as { token?: string; jwt?: string; email?: string; password?: string; signup?: { name?: string; email?: string; password?: string } };
+  const ownAuth = process.env.AUTH_BACKEND === "neon"; // accounts in Postgres (lib/users.ts), not Appwrite
   if ((process.env.MCP_TOKEN ?? "").length < 24) return Response.json({ error: "MCP_TOKEN is not set on the server (24+ characters)." }, { status: 500 });
   const wait = await lockedFor(clientIp(req));
   if (wait) return locked(wait);
@@ -28,6 +29,17 @@ export async function POST(req: Request) {
       await slow();
       return Response.json({ error: NO_SEAT }, { status: 403 });
     }
+    if (ownAuth) {
+      try {
+        const user = await (await import("@/lib/users")).createAccount(email, password, name);
+        await startSession("user", user.email, user);
+        await noteAttempt(req, true, user.email, "sign-up");
+        return Response.json({ ok: true, user, workspace: true });
+      } catch (e) {
+        const status = (e as { status?: number }).status === 409 ? 409 : 502;
+        return Response.json({ error: status === 409 ? (e as Error).message : "Couldn't create the account right now. Try again in a minute.", exists: status === 409 }, { status });
+      }
+    }
     if (!hasKey()) return Response.json({ ok: true, create: "client" }); // no server key: the browser creates it (already checked)
     try {
       await createUser(email, password, name || email.split("@")[0]);
@@ -36,6 +48,35 @@ export async function POST(req: Request) {
       if (e instanceof AppwriteError && e.status === 409) return Response.json({ error: "That email already has a seat. Sign in instead.", exists: true }, { status: 409 });
       await slow();
       return Response.json({ error: e instanceof AppwriteError && e.status < 500 ? e.message : "Couldn't create the account right now. Try again in a minute." }, { status: e instanceof AppwriteError && e.status < 500 ? 400 : 502 });
+    }
+  }
+
+  // email and password straight to us: accounts in Postgres. Without AUTH_BACKEND=neon the browser signs in with Appwrite
+  // and sends its JWT instead (below), so this answers "use Appwrite"
+  if (loginEmail !== undefined) {
+    if (!ownAuth) return Response.json({ use: "appwrite" }, { status: 409 });
+    const email = String(loginEmail).trim().toLowerCase();
+    try {
+      const { setMember, verify } = await import("@/lib/users");
+      const user = await verify(email, String(loginPassword ?? ""));
+      if (!user) {
+        await noteAttempt(req, false, email, "account");
+        await slow();
+        return Response.json({ error: "Wrong email or password." }, { status: 401 });
+      }
+      const ok = await emailAllowed(user.email);
+      if (!ok) {
+        await noteAttempt(req, false, user.email, "account (not on the list)");
+        await slow();
+        return Response.json({ error: `${user.email} isn't on this studio's list. Ask the owner to add you in Settings → Security.` }, { status: 403 });
+      }
+      await setMember(user.email, true);
+      await startSession("user", user.email, user);
+      await noteAttempt(req, true, user.email, ok === "founder" ? "account (founded the studio)" : "account");
+      return Response.json({ ok: true, user, workspace: true });
+    } catch (e) {
+      await noteAttempt(req, false, email, "account");
+      return Response.json({ error: `Couldn't sign in right now: ${(e as Error).message}` }, { status: 502 });
     }
   }
 

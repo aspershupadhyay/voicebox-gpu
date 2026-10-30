@@ -59,9 +59,9 @@ export async function thumbUrl(key: string, width: number, format: ThumbFormat, 
   return presign((await thumb(key, width, format, format === "jpg" ? 92 : 82)).key, "GET", ttlSec);
 }
 
-// ── the storage budget: R2's free tier is 10 GB, so new files stop before the bucket goes over (STORAGE_CAP_GB)
+// ── the storage budget: R2's free tier is 10 GB, so new files stop at 90 % of it (STORAGE_CAP_GB, Settings → Usage)
 
-const CAP = Number(process.env.STORAGE_CAP_GB || 9.5) * 1e9;
+const CAP = Number(process.env.STORAGE_CAP_GB || 9) * 1e9;
 let seen: { at: number; bytes: number; parts: Record<string, number> } | null = null;
 
 /** What the bucket holds, by top-level part (cache, models, workspace…), counted at most every 5 minutes. */

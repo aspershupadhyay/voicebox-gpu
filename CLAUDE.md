@@ -76,6 +76,9 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   With `DB_BACKEND=neon` the browser reads and writes rows through `/api/ws/rows` and watches them through sealed Neon
   Realtime queries from `/api/ws/live` (signed-in only; the query is built on the server from allowed columns, the
   Realtime secret never leaves it).
+  With `AUTH_BACKEND=neon`, `/api/login` checks email and password against Postgres (`lib/users.ts`: scrypt hashes,
+  the same lockout and invite list); the password is never stored, only its hash. `/api/cron/backup` takes
+  `WORKER_SECRET` like the sweep.
 - Never loosen the allow-list, the same-origin check or the session expiry.
 
 ## Checks before pushing

@@ -93,14 +93,30 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    **To switch**: run the signed check (must say `ok`), set `DB_BACKEND=neon` on Vercel (Production) and redeploy, then
    reload any open tabs (an old tab still writes to Appwrite, which no longer reaches Postgres). **To go back**: unset it
    and redeploy; Appwrite has every write, and the webhook carries on. Sign-in stays on Appwrite until its own step.
-   **Left in phase 2**: after a week on Neon, a nightly dump of the four tables and a copy of `models/` to Neon's object
-   storage, a Usage panel (R2, Neon compute hours, Appwrite) that warns at 70 % and stops new uploads at 90 %, and
-   pruning activity older than a year.
+   **Switched (2026-10-30)**: the owner set `DB_BACKEND=neon`. The check matched before (7 posts, 1 comment, 708
+   activity, 1 media); a post made through the MCP then landed in Postgres with a Postgres id and its copy-back reached
+   Appwrite (8 / 709 on both sides).
+   **Backups, Usage, pruning (2026-10-30)**: `lib/backup.ts`, knocked by `sweep.yml` at `/api/cron/backup` (its own
+   function, so the autopilot keeps its time): once a night after 02:00 UTC the four tables go to Neon's object storage
+   as `db/<day>.json.gz` (14 kept), activity older than a year is deleted (on Neon), and `models/` and `datasets/` are
+   copied over (only what's new or changed, 32 MB multipart parts; a copy that runs out of time carries on at the next
+   knock). R2 is only read. Settings → Usage (`lib/usage.ts`) shows R2, the database, compute hours (with
+   `NEON_API_KEY`) and the backup bucket against their free tiers, amber at 70 % and red at 90 %, and the last backup;
+   new uploads now stop at 9 GB (90 % of R2's 10 GB, `STORAGE_CAP_GB`).
+
+2b. **Sign-in off Appwrite** (built 2026-10-30, behind `AUTH_BACKEND=neon`). Accounts in Postgres (`db/002_users.sql`,
+   `lib/users.ts`): scrypt hashes, ids kept from Appwrite. Nobody resets a password: on someone's first sign-in here an
+   account still only in Appwrite is checked against Appwrite once and moved with the hash of the password that just
+   worked. The team is copied over first (signed `{"op":"users"}`), and until anyone is in Postgres the members list
+   falls back to Appwrite's team, so the invite list can never come up empty (an empty list lets anyone found the
+   studio). The browser posts the email and password to `/api/login`; without the setting that answers "use Appwrite"
+   and the old flow runs. Files still kept in Appwrite Storage move to R2 with signed `{"op":"files-to-r2"}` (Appwrite's
+   copy stays until Appwrite goes). Going back: unset it; Appwrite still has every account.
 3. **API and MCP to one Cloudflare Worker.** `/api/*` and the MCP run there, reaching CockroachDB through Hyperdrive.
    The long routes (starting the Colab GPU, copying downloads) become Queue jobs; a Cloudflare cron replaces
    `sweep.yml`. Vercel rewrites `/api/*` to the Worker so it stays one origin (cookies, the same-origin check and
    sign-in unchanged). MCP clients get the new address once.
-4. **Appwrite off** after a week with nothing wrong. Vercel serves only the pages.
+4. **Appwrite off** after a week with nothing wrong (and after 2b, sign-in). Vercel serves only the pages.
 5. **Extras.** Trained voices backed up to a private Hugging Face repo; Google Drive for nightly backups and
    import/export.
 

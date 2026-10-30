@@ -79,6 +79,24 @@ export const userFromJwt = (jwt: string) => aw<AwUser>("/account", { jwt });
 export const createUser = (email: string, password: string, name: string) =>
   aw<AwUser>("/users", { method: "POST", body: { userId: "unique()", email, password, name } });
 
+/** For moving sign-in off Appwrite (lib/users.ts): is this Appwrite's password for that email? Opens a session to find
+ *  out (no key needed) and closes it again; the account, or null when the password is wrong. */
+export async function checkAppwritePassword(email: string, password: string): Promise<AwUser | null> {
+  const r = await fetch(`${AW.endpoint}/account/sessions/email`, { method: "POST", headers: { "X-Appwrite-Project": AW.project, "Content-Type": "application/json" }, body: JSON.stringify({ email, password }), cache: "no-store" });
+  if (r.status === 401 || r.status === 400) return null;
+  if (!r.ok) throw new AppwriteError(`Appwrite ${r.status}`, r.status);
+  const s = (await r.json()) as { $id: string; userId: string };
+  const user = await aw<AwUser>(`/users/${encodeURIComponent(s.userId)}`);
+  await aw(`/users/${encodeURIComponent(s.userId)}/sessions/${encodeURIComponent(s.$id)}`, { method: "DELETE" }).catch(() => null);
+  return user;
+}
+
+/** The Appwrite account with this email, if there is one. */
+export async function findAppwriteUser(email: string) {
+  const r = await aw<{ users: AwUser[] }>(`/users?${q({ method: "equal", attribute: "email", values: [email] }, { method: "limit", values: [1] })}`);
+  return r.users[0] ?? null;
+}
+
 /** Put a signed-in user on the studio team. Idempotent. */
 export async function ensureMember(user: AwUser) {
   try {
@@ -90,6 +108,7 @@ export async function ensureMember(user: AwUser) {
 
 /** Take someone off the studio team (Settings → Security). Their next request is refused (lib/session.ts). */
 export async function removeMember(email: string) {
+  if (process.env.AUTH_BACKEND === "neon") return (await import("./users")).setMember(email, false);
   const r = await aw<{ memberships: { $id: string; userEmail: string }[] }>(`/teams/${AW.team}/memberships?${q({ method: "limit", values: [100] })}`);
   const m = r.memberships.find((x) => x.userEmail.toLowerCase() === email.toLowerCase());
   if (m) await aw(`/teams/${AW.team}/memberships/${m.$id}`, { method: "DELETE" });
@@ -97,6 +116,16 @@ export async function removeMember(email: string) {
 }
 
 export async function listMembers(): Promise<Member[]> {
+  if (process.env.AUTH_BACKEND === "neon") {
+    const users = await (await import("./users")).listUsers();
+    if (users.length || !hasKey()) return users;
+    // nobody moved yet: Appwrite's team still says who's in (an empty list would let anyone found the studio)
+  }
+  return appwriteMembers();
+}
+
+/** The studio team as Appwrite has it (also what lib/users.ts copies over). */
+export async function appwriteMembers(): Promise<Member[]> {
   const r = await aw<{ memberships: { userId: string; userName: string; userEmail: string }[] }>(`/teams/${AW.team}/memberships?${q({ method: "limit", values: [25] })}`);
   return r.memberships.map((m) => ({ id: m.userId, name: m.userName || m.userEmail.split("@")[0], email: m.userEmail }));
 }
@@ -209,6 +238,26 @@ export async function postsBetween(from: string, to: string) {
   return listOf<Post>("posts",
     { method: "greaterThanEqual", attribute: "due_at", values: [from] }, { method: "lessThan", attribute: "due_at", values: [to] },
     { method: "orderAsc", attribute: "due_at" }, { method: "limit", values: [200] });
+}
+
+/** Move every file still kept in Appwrite Storage to R2 (docs/MIGRATION.md 2b): its bytes to its Files key, its
+ *  row to an r2_ id with a token, so it's served by /api/m like any new upload. Appwrite's copy stays until Appwrite goes. */
+export async function filesToR2() {
+  const left = (await listOf<Media>("media", { method: "limit", values: [1000] })).filter((m) => !m.file_id.startsWith("r2_"));
+  const moved: string[] = [], skipped: string[] = [];
+  for (const m of left) {
+    if ((m.size ?? 0) > BACKUP_MAX) { skipped.push(`${m.name} (larger than ${BACKUP_MAX / 1e6} MB)`); continue; }
+    const r = await fetch(`${AW.endpoint}/storage/buckets/${AW.bucket}/files/${m.file_id}/download`, {
+      headers: { "X-Appwrite-Project": AW.project, "X-Appwrite-Key": process.env.APPWRITE_API_KEY ?? "" }, cache: "no-store",
+    });
+    if (!r.ok) { skipped.push(`${m.name} (download ${r.status})`); continue; }
+    const fileId = `r2_${m.file_id}`.slice(0, 36);
+    const key = mediaKey(fileId, m.name);
+    await putObj(key, await r.arrayBuffer(), m.mime || "application/octet-stream");
+    await patch<Media>("media", m.$id, { file_id: fileId, r2_key: key, token: fileSig(key) });
+    moved.push(m.name);
+  }
+  return { moved, skipped };
 }
 
 /** Delete a workspace file: the stored file and its row (an Appwrite file's R2 backup copy, if any, stays; a file kept

@@ -10,7 +10,7 @@ concurrency: { group: sweep, cancel-in-progress: true }
 jobs:
   sweep:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 7
     env:
       WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
     steps:
@@ -19,5 +19,14 @@ jobs:
           if [ -z "$WORKER_SECRET" ]; then echo "::warning::Add the WORKER_SECRET repository secret (see the top of this file)"; exit 0; fi
           code=$(curl -s -o out.json -w '%{http_code}' -m 60 -X POST -H "Authorization: Bearer $WORKER_SECRET" \
             https://voiceboxstudio.vercel.app/api/cron/sweep)
+          echo "$code $(cat out.json)"
+          [ "$code" = 200 ]
+      - name: Nightly backup
+        # once a day after 02:00 UTC (mcp/lib/backup.ts); the other knocks read one small file and stop
+        if: always()
+        run: |
+          if [ -z "$WORKER_SECRET" ]; then exit 0; fi
+          code=$(curl -s -o out.json -w '%{http_code}' -m 290 -X POST -H "Authorization: Bearer $WORKER_SECRET" \
+            https://voiceboxstudio.vercel.app/api/cron/backup)
           echo "$code $(cat out.json)"
           [ "$code" = 200 ]
