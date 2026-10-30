@@ -440,12 +440,24 @@ def plan_edit(spec, infos, nvenc, font_file):
     return args, layout, round(total, 2), files
 
 
-def has_nvenc():
+NVENC = {"ok": None}
+
+
+def has_nvenc(run=None):
+    """Whether NVENC really encodes here: a 0.2 s test encode, as the user who'll render (run: the sandbox's runner), once
+    per process. The encoder being listed isn't enough: the sandbox once lacked the GPU's libraries."""
+    if NVENC["ok"] is not None:
+        return NVENC["ok"]
     try:
-        enc = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=20).stdout
-        return "h264_nvenc" in enc and shutil.which("nvidia-smi") is not None and subprocess.run(["nvidia-smi"], capture_output=True, timeout=20).returncode == 0
+        if shutil.which("nvidia-smi") is None or subprocess.run(["nvidia-smi"], capture_output=True, timeout=20).returncode:
+            NVENC["ok"] = False
+            return False
+        argv = ["ffmpeg", "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x256:d=0.2", "-c:v", "h264_nvenc", "-f", "null", "-"]
+        code = run(argv, timeout=60)[0] if run else subprocess.run(argv, capture_output=True, timeout=60).returncode
+        NVENC["ok"] = code == 0
     except Exception:  # noqa: BLE001
-        return False
+        NVENC["ok"] = False
+    return NVENC["ok"]
 
 
 def font_file():
