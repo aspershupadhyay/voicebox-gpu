@@ -19,7 +19,7 @@ export async function allowedEmails(fresh = false) {
   if (!fresh && cache && Date.now() - cache.at < 60_000) return cache.emails;
   const { getSettings } = await import("./settings");
   const extra = await getSettings().then((s) => s.workspace_emails).catch(() => [] as string[]);
-  const members = await import("./appwrite").then(async (a) => (a.hasKey() ? (await a.listMembers()).map((m) => m.email.toLowerCase()) : []))
+  const members = await import("./appwrite").then(async (a) => (a.hasPeople() ? (await a.listMembers()).map((m) => m.email.toLowerCase()) : []))
     .catch(() => null);
   if (members === null) { // Appwrite unreachable: keep the last known list, else refuse (never fall open)
     if (cache) return cache.emails;

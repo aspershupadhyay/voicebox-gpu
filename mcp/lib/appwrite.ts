@@ -11,6 +11,9 @@ export class AppwriteError extends Error {
 }
 
 export const hasKey = () => !!process.env.APPWRITE_API_KEY;
+/** The shared workspace is there: Appwrite's key, or the rows in Postgres (DB_BACKEND=neon) / accounts there (AUTH_BACKEND=neon). */
+export const hasWorkspace = () => hasKey() || process.env.DB_BACKEND === "neon";
+export const hasPeople = () => hasKey() || process.env.AUTH_BACKEND === "neon";
 
 async function aw<T>(path: string, init: { method?: string; body?: unknown; jwt?: string } = {}): Promise<T> {
   const headers: Record<string, string> = { "X-Appwrite-Project": AW.project };
@@ -47,6 +50,7 @@ export const remove = async (table: Table, id: string) => { if (onNeon()) await 
 /** With DB_BACKEND=neon, each write to Postgres is copied back to Appwrite under the same id (lib/db.ts), so unsetting
  *  the switch loses nothing. Never fails the real write: a row Appwrite never had is skipped. */
 export async function awMirror(op: "create" | "update" | "delete", table: Table, id: string, data?: Record<string, unknown>) {
+  if (!hasKey()) return; // Appwrite already gone (the Cloudflare move): nothing to keep in step
   try {
     if (op === "create") await aw(rows(table), { method: "POST", body: { rowId: id, data } });
     else if (op === "update") await aw(at(table, id), { method: "PATCH", body: { data } });
