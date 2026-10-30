@@ -71,7 +71,12 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    `production`. `lib/db.ts` holds the driver, `copyFromAppwrite()` (upserts every row, safe to run again) and
    `checkCopy()`; signed in, `POST /api/ws/db-copy` runs both and `GET /api/ws/db-check` compares (Appwrite today: 7
    posts, 1 comment, 708 activity, 1 media).
-   **Next**: the owner adds `DATABASE_URL_POOLED`, `NEON_REALTIME_URL` and `NEON_REALTIME_SECRET` on Vercel; server
+   **Dual writes (2026-10-30)**: an Appwrite webhook on `tablesdb.studio.tables.*.rows.*` (create, update, upsert,
+   delete) posts every row change, from the browser or the server, to `/api/hooks/appwrite`, which mirrors it into
+   Postgres; an older delivery never overwrites a newer row. The webhook's signing key is derived from
+   `DATABASE_URL_POOLED` (`hookKey()` in lib/db.ts), so rotating the database password means setting the webhook's
+   secret again. The same signed route runs the full copy (`{"op":"copy"}`) and the check (`{"op":"check"}`).
+   **Next, before**: the owner adds `DATABASE_URL_POOLED`, `NEON_REALTIME_URL` and `NEON_REALTIME_SECRET` on Vercel; server
    writes go to both (Appwrite stays the source); the browser's `useLive` (components/aw.ts) moves to API routes plus
    sealed Realtime queries; run the copy, check it matches, then `DB_BACKEND=neon` switches reads. Sign-in stays on
    Appwrite until its own step.
