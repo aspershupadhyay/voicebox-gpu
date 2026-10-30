@@ -37,7 +37,9 @@ The MCP is a cloud workbench any model (Claude, Gemini…) can drive: approvals,
 (`lib/auto/control.ts`, `wrap.ts`: every tool call goes through them), a sandbox with code mode (`worker/bench.py`),
 repos, media recipes (`worker/media.py`), the browser, templates, workflows, roles, the audit and lessons, and a lean
 endpoint (`/api/mcp/lean`). All nine phases shipped; `docs/AUTOMATION.md` has the decisions, what's waiting on the
-owner and what still needs checking on Colab: read it before working on any of it. A new tool goes in
+owner and what still needs checking on Colab: read it before working on any of it. What's next is `docs/FACTORY.md`
+(the video factory: fixes from the audit, projects that own and clean their files, one adaptive endpoint, batches,
+many agents at once), in order. A new tool goes in
 `lib/auto/tools.ts` with an action enum and a worked example (`scripts/check_tools.py`); anything risky gets a gate in
 `wrap.ts`.
 
