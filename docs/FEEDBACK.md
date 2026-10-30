@@ -14,6 +14,9 @@ for. Read this before touching the dashboard. Newest first. When something here 
 - **"Be serious with storage: never go over, keep only what matters, the cache too"**: a hard budget
   (`STORAGE_CAP_GB`, 9.5 GB of the free 10) checked before every upload, the bucket's use on the Files page, bucket
   rules that expire caches, and no copy of public model weights in R2. Files are stored once (R2), not twice.
+- **"Neon instead of CockroachDB; decide it properly so we never get stuck again"**: Neon (Postgres, Object Storage as
+  the off-Cloudflare backup, Realtime for the live board; not Better Auth, Functions or the AI Gateway). The limit that
+  can bite is compute hours, not storage, so the design keeps the database asleep unless something is due.
 - **"No new repo"**: stay in this one (the deploy, the Colab bundle and the history live here).
 - **"Empty the Files page except Passwords.docx"**: done, deleted for good on the owner's word.
 

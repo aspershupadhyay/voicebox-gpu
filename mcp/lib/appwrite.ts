@@ -26,6 +26,17 @@ async function aw<T>(path: string, init: { method?: string; body?: unknown; jwt?
 const q = (...queries: object[]) => queries.map((x) => `queries[]=${encodeURIComponent(JSON.stringify(x))}`).join("&");
 const rows = (table: string) => `/tablesdb/${AW.db}/tables/${table}/rows`;
 
+/** Every row of a table, oldest first, 100 at a time (the copy into Postgres: lib/db.ts). */
+export async function allRows(table: "posts" | "comments" | "activity" | "media") {
+  const out: Record<string, unknown>[] = [];
+  for (let after: string | null = null; ;) {
+    const page: { rows: Record<string, unknown>[] } = await aw(`${rows(table)}?${q({ method: "orderAsc", attribute: "$sequence" }, { method: "limit", values: [100] }, ...(after ? [{ method: "cursorAfter", values: [after] }] : []))}`);
+    out.push(...page.rows);
+    if (page.rows.length < 100) return out;
+    after = String(page.rows[page.rows.length - 1].$id);
+  }
+}
+
 // ── people
 
 export type AwUser = { $id: string; name: string; email: string };
