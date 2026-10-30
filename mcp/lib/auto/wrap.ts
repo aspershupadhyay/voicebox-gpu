@@ -153,10 +153,34 @@ export async function preflight(tool: string, args: Args, model: string, roleNam
   return null;
 }
 
+/** Answers cost tokens: JSON goes out compact (no indentation), and for a model (not a script or a workflow, which
+ *  read every row) lists past 25 are cut with a note on how to get the rest. */
+const LIST_MAX = 25;
+export function brief(res: Result, how: "compact" | "brief", tool: string): Result {
+  if (!res.content?.length) return res;
+  return { ...res, content: res.content.map((c) => {
+    if (c.type !== "text" || !c.text || !/^\s*[[{]/.test(c.text)) return c;
+    let v: unknown;
+    try { v = JSON.parse(c.text); } catch { return c; }
+    let cut = 0;
+    const walk = (x: unknown, depth: number): unknown => {
+      if (Array.isArray(x)) {
+        const keep = how === "brief" && x.length > LIST_MAX ? (cut += x.length - LIST_MAX, x.slice(0, LIST_MAX)) : x;
+        return keep.map((y) => walk(y, depth + 1));
+      }
+      if (x && typeof x === "object") return Object.fromEntries(Object.entries(x).filter(([, y]) => how === "compact" || (y !== null && y !== undefined)).map(([k, y]) => [k, walk(y, depth + 1)]));
+      return x;
+    };
+    const out = walk(v, 0) as Record<string, unknown>;
+    const note = cut ? { _more: `${cut} more rows cut: pass detail "full", page with limit/offset where the tool has them, or read them in run with vb.${tool}(…)` } : {};
+    return { ...c, text: JSON.stringify(Array.isArray(out) || !cut ? (cut ? { rows: out, ...note } : out) : { ...out, ...note }) };
+  }) };
+}
+
 /** Tools that make files, and where a project puts them: save_to (a folder path), folder (an id), workspace. */
 const PROJECT_TOOLS: Record<string, ("save_to" | "folder" | "workspace")[]> = {
   run: ["save_to", "workspace"], edit_video: ["save_to"], video_template: ["save_to"], repurpose: ["save_to"], inspect_media: ["save_to"], browse: ["save_to"],
-  save_file: ["folder"], upload_media: ["folder"], add_media: ["folder"], voice_lines: [], imagine: [], transcribe: [], clean_audio: [], revoice: [], download: ["folder"],
+  save_file: ["folder"], upload_media: ["folder"], add_media: ["folder"], import_file: ["folder"], upload_link: [], voice_lines: [], imagine: [], transcribe: [], clean_audio: [], revoice: [], download: ["folder"],
 };
 
 /** A call with `project`: checked to be the caller's, its outputs sent to the project's folder and workspace unless
@@ -168,7 +192,7 @@ async function intoProject(tool: string, a: Args, model: string) {
     if (a[k] !== undefined) continue;
     a[k] = k === "save_to" ? p.path : k === "folder" ? p.folder : p.workspace;
   }
-  delete a.project;
+  if (tool !== "upload_link") delete a.project; // the link itself carries the project, for what's dropped later
   return p.id;
 }
 
@@ -196,6 +220,8 @@ export function guarded(server: ToolServer, via?: string): ToolServer {
     let schema = cfg.inputSchema as z.ZodObject | undefined;
     let urlRequired = false;
     if (schema && typeof schema.extend === "function") ({ schema, urlRequired } = loosen(name, schema)); // one id shape (ids.ts)
+    if (schema && !schema.shape.detail) // short answers by default; everything on request (docs/FACTORY.md C)
+      schema = schema.safeExtend({ detail: z.enum(["brief", "full"]).optional().describe("full: the whole answer (default brief: compact, long lists cut)") });
     if (schema && PROJECT_TOOLS[name] && !schema.shape.project)
       schema = schema.safeExtend({ project: z.string().regex(/^[a-f0-9]{6}$/).optional().describe("a project id (project start): what this makes lands in its folder and is yours to delete") });
     if (GATES[name] && schema && typeof schema.extend === "function")
@@ -219,8 +245,9 @@ export function guarded(server: ToolServer, via?: string): ToolServer {
         res = stop(`ERROR: ${(e as Error).message}`);
       }
       if (!res.isError && (proj || name === "get_job")) later(owned(name, proj, said(res), model));
-      const text = said(res);
       const from = via ?? (ctx?.http?.authInfo?.clientId?.startsWith("run:") ? "code" : undefined); // a sandbox script
+      res = brief(res, (args?.detail === "full" || from === "code" || from === "workflow" || (from && from !== "lean")) ? "compact" : "brief", name);
+      const text = said(res);
       const qa = text.match(/"(?:verdict|qa)":\s*"(PASS|WARN|FAIL)"/)?.[1] as "PASS" | "WARN" | "FAIL" | undefined;
       const qaFail = [...text.matchAll(/FAIL ([a-z][a-z "]{2,40}?):/g)].map((m) => m[1].replace(/"/g, "").trim()).slice(0, 6);
       later(logCall({ t, tool: name, model, client: ctx?.http?.authInfo?.clientId, args: trimArgs(args ?? {}), ok: !res.isError, ms: Date.now() - t,

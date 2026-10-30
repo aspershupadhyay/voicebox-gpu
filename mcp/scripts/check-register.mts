@@ -1,20 +1,24 @@
-// Every MCP tool registered the way app/api/mcp/route.ts does it (through guarded(), on a stub server), and each input
-// schema turned into the JSON clients get. A throw here is a broken MCP in production (#131 shipped one: zod refuses
-// extend() over a refined schema's keys). Run before every PR that touches tools: cd mcp && npx -y tsx scripts/check-register.mts
-import { z } from "zod";
+// Every MCP tool registered the way app/api/mcp/route.ts does it (lib/auto/endpoint.ts on a real McpServer), and the
+// tools/list a client gets: the core, everything (?full=1) and the strict schema subset for Gemini and ChatGPT. A
+// throw here is a broken MCP in production (#131 shipped one). Run before every PR that touches tools:
+//   cd mcp && npx -y tsx scripts/check-register.mts
+import { McpServer } from "@modelcontextprotocol/server";
+import { strictProblems } from "@/lib/auto/toolsets";
 
-const reg: [string, { inputSchema?: z.ZodType; description?: string }][] = [];
-const stub = { registerTool: (n: string, cfg: { inputSchema?: z.ZodType; description?: string }) => { reg.push([n, cfg]); } };
-const { guarded } = await import("@/lib/auto/wrap");
-const g = guarded(stub as never);
-(await import("@/lib/mcptools")).registerTools(g as never);
-(await import("@/lib/auto/tools")).registerAutoTools(g as never);
-let bad = 0, chars = 0;
-for (const [n, c] of reg) {
-  try {
-    const s = c.inputSchema ? z.toJSONSchema(c.inputSchema, { io: "input", unrepresentable: "any" }) : {};
-    chars += JSON.stringify({ name: n, description: c.description, inputSchema: s }).length;
-  } catch (e) { bad++; console.log("SCHEMA FAIL", n, (e as Error).message.slice(0, 200)); }
+const { buildServer } = await import("@/lib/auto/endpoint");
+const server = new McpServer({ name: "check", version: "0" }, {});
+await buildServer(server as never, "adaptive");
+const list = (server as unknown as { server: { _requestHandlers: Map<string, (r: unknown, c: unknown) => Promise<{ tools: { name: string; inputSchema: unknown }[] }>> } }).server._requestHandlers.get("tools/list")!;
+const ctx = (url: string, ua: string) => ({ http: { req: new Request(url, { headers: { "user-agent": ua } }), authInfo: {} } });
+const tok = (x: unknown) => Math.round(JSON.stringify(x).length / 4).toLocaleString();
+const core = await list({ method: "tools/list", params: {} }, ctx("https://x/api/mcp", "claude-code/2"));
+const full = await list({ method: "tools/list", params: {} }, ctx("https://x/api/mcp?full=1", "claude-code/2"));
+const strict = await list({ method: "tools/list", params: {} }, ctx("https://x/api/mcp?full=1", "gemini-cli/0.9"));
+let bad = 0;
+for (const t of strict.tools) {
+  const p = strictProblems(t.inputSchema);
+  if (p.length) { bad++; console.log("NOT STRICT", t.name, p.slice(0, 4).join(", ")); }
 }
-console.log(`${reg.length} tools registered, ${bad} bad schemas, ~${Math.round(chars / 4).toLocaleString()} tokens of definitions`);
+console.log(`core: ${core.tools.length} tools, ~${tok(core.tools)} tokens (${core.tools.map((t) => t.name).join(", ")})`);
+console.log(`full: ${full.tools.length} tools, ~${tok(full.tools)} tokens; strict for Gemini/ChatGPT: ~${tok(strict.tools)} tokens, ${bad} not strict`);
 process.exit(bad ? 1 : 0);

@@ -183,8 +183,9 @@ Settings → Claude & API → Other models: name the model, pick a role (optiona
   "headers": { "Authorization": "Bearer vbmk_…" } } } }
 ```
 
-`/api/mcp/lean` lists six tools and finds the rest with `find_tools` (for cheaper models and long sessions);
-`/api/mcp` lists all of them. The key names the model in the call log and the scorecards and holds it to its role
+`/api/mcp` lists a 9-tool core and loads toolsets on demand (`tools action=load set=video`, docs/FACTORY.md C);
+`?full=1` lists all of them; `/api/mcp/lean` is the same core. Clients that aren't Claude get schemas in a strict
+subset Gemini and ChatGPT accept. The key names the model in the call log and the scorecards and holds it to its role
 (`agents`). `MCP_TOKEN` still works, with `X-Model` and `X-Role` headers, but give each model its own key instead. Any MCP client that speaks streamable HTTP works the same way. claude.ai uses
 the OAuth connector (full endpoint).
 
