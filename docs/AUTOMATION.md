@@ -166,23 +166,26 @@ The owner's feedback still goes into `docs/FEEDBACK.md` in the same PR as the ch
   as `via: lean`, plus `run`, `get_job`, `playbook`, `approvals`), measured: 84 tools in ~30,100 tokens of
   definitions on the full endpoint, 6 tools in ~1,700 on the lean one (94% less, every session); `X-Model` and
   `X-Role` in the log and the scorecards; Settings → Claude & API → Other models writes a client's settings (lean or
-  full, its name, its role; the key stays a placeholder); `scripts/check_tools.py` checks every description (size, a
+  full, its name, its role) and makes a **model key** for it (`lib/auto/keys.ts`, `vbmk_…`: shown once, kept as a
+  SHA-256, names the model in the log over any `X-Model`, can be held to a role, also inside its code-mode scripts,
+  revoked at once, opens the MCP only; making one never touches `MCP_TOKEN`, so nobody is signed out); `scripts/check_tools.py` checks every description (size, a
   worked example, a fixed action list) and the context they cost. The check by a cheaper model is the owner's
   (paste a description into Gemini Flash, ask it to make a call; see the script's header).
 
 ## Connecting another model
 
-Settings → Claude & API → Other models writes this for you. Gemini CLI, `~/.gemini/settings.json`:
+Settings → Claude & API → Other models: name the model, pick a role (optional), **Make a key**, copy the settings
+(the key is in them). Gemini CLI, `~/.gemini/settings.json`, then `/mcp` in Gemini to check:
 
 ```json
 { "mcpServers": { "voicebox": {
   "httpUrl": "https://voiceboxstudio.vercel.app/api/mcp/lean",
-  "headers": { "Authorization": "Bearer <MCP_TOKEN>", "X-Model": "gemini-2.5-flash", "X-Role": "editor" } } } }
+  "headers": { "Authorization": "Bearer vbmk_…" } } } }
 ```
 
 `/api/mcp/lean` lists six tools and finds the rest with `find_tools` (for cheaper models and long sessions);
-`/api/mcp` lists all of them. `X-Model` names the model in the call log and the scorecards; `X-Role` (optional)
-holds it to a role's tools (`agents`). Any MCP client that speaks streamable HTTP works the same way. claude.ai uses
+`/api/mcp` lists all of them. The key names the model in the call log and the scorecards and holds it to its role
+(`agents`). `MCP_TOKEN` still works, with `X-Model` and `X-Role` headers, but give each model its own key instead. Any MCP client that speaks streamable HTTP works the same way. claude.ai uses
 the OAuth connector (full endpoint).
 
 ## Still to check on Colab (the build session had no GPU and couldn't run some packages)
@@ -283,6 +286,7 @@ read or write its own files (tested: a link to a worker file in `out/` is left o
    secret (`GITHUB_AGENT_TOKEN`), never pasted into a chat; then the repos on Settings → Automation → Repos. Until
    then `repo` and "Make it a rule" say so.
 2. The workbench repo created (`voicebox-workbench`), and `videos-post` added to the session. Needed for phases 3, 6.
-3. A search key (Brave or Tavily) as a Vercel secret (`SEARCH_API_KEY`); until then `browse action=search` says so.
+3. Optional: a search key (Brave or Tavily) as a Vercel secret (`SEARCH_API_KEY`), only for scheduled workflows and
+   sandbox scripts (chat models search the web themselves); until then `browse action=search` says so.
 4. The daily units cap to start with (Settings → Automation; until then there is no cap).
 5. A check of the approval list (Settings → Automation → Ask me first: all on to start).

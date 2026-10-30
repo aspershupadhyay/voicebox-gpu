@@ -122,7 +122,7 @@ export function registerAutoTools(server: ToolServer) {
         const inputs = await Promise.all((files ?? []).map((f) => b.inputFile(f)));
         const skillFiles = skills?.length ? await (await import("./memory")).skillCode(skills) : undefined;
         const job = await b.submit({ op: "run", code, lang, workspace, files: inputs, args, timeout_s: t, memory_mb, ...(skillFiles ? { skills: skillFiles } : {}),
-          ...(voicebox === false ? {} : { voicebox_url: `${origin}/api/mcp`, voicebox_key: b.runKey(model, t), voicebox_model: model }) },
+          ...(voicebox === false ? {} : { voicebox_url: `${origin}/api/mcp`, voicebox_key: b.runKey(model, t, (await import("./wrap")).roleOf(ctx as never)), voicebox_model: model }) },
           { model, folder: save_to === undefined ? undefined : save_to });
         return text(await b.view(await b.wait(job.id, 45), { name: model }));
       } catch (e) { return fail(e); }
