@@ -71,6 +71,8 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   claim that can only start and finish uploads into its one folder, up to its file cap; it reads and lists nothing.
   A Files upload kept in R2 is served by `/api/m/<token>/<key>` (lib/r2files.ts), public by design like an Appwrite file
   token: the token is an HMAC of the key kept only in team-only rows, and it serves `workspace/media/` and nothing else.
+  Appwrite's webhook `/api/hooks/appwrite` (lib/db.ts) takes only deliveries signed with a key derived from the database
+  URL (HMAC-SHA1 of the URL and body); it mirrors workspace rows into Postgres and, signed the same way, runs the copy.
 - Never loosen the allow-list, the same-origin check or the session expiry.
 
 ## Checks before pushing
