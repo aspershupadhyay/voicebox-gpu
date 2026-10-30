@@ -79,7 +79,7 @@ export async function GET(req: Request, ctx: Ctx) {
       const [control, units, approvals, log] = await Promise.all([ac.getControl(), ac.unitsToday(), ac.listApprovals(),
         ac.readLog({ limit: 150, model: q.get("model") || undefined, days: 2 })]);
       return Response.json({ control, units, approvals: approvals.slice(0, 60), log, ask_first: ac.ASK_FIRST,
-        github_key: !!process.env.GITHUB_AGENT_TOKEN, platform: (await import("@/lib/auto/repo")).PLATFORM,
+        keys: await (await import("@/lib/auto/secrets")).secretsStatus(), platform: (await import("@/lib/auto/repo")).PLATFORM,
         flows: await import("@/lib/auto/flows").then(async (f) => ({ list: await f.listFlows(), runs: (await f.listRuns()).slice(0, 15) })),
         lessons: (await (await import("@/lib/auto/memory")).lessons()).slice(0, 60),
         cards: (await import("@/lib/auto/agents")).scorecards(await ac.readLog({ limit: 1000, since: Date.now() - 7 * 86_400_000, days: 8 })).slice(0, 12) });
@@ -329,6 +329,14 @@ export async function POST(req: Request, ctx: Ctx) {
       if (b === "settings") return Response.json(await ac.setControl({ cap_units: body.cap_units, ask_first: body.ask_first, repos: body.repos }, by));
       if (b === "stop") return Response.json(await ac.stopAll(by, "stopped from the dashboard"));
       if (b === "resume") return Response.json(await ac.setControl({ paused: false }, by));
+      if (b === "secret") {
+        // a key a tool uses (GitHub, search), saved encrypted and never sent back (lib/auto/secrets.ts)
+        const sc = await import("@/lib/auto/secrets");
+        const name = String(body.name ?? "");
+        if (!(name in sc.SECRETS)) return Response.json({ error: "no such key" }, { status: 400 });
+        try { return Response.json(await sc.setSecret(name as never, typeof body.value === "string" ? body.value : null, by)); }
+        catch (e) { return Response.json({ error: (e as Error).message }, { status: 400 }); }
+      }
       if (b === "keys") {
         // a model key (lib/auto/keys.ts): made here, shown once; revoked here
         const mk = await import("@/lib/auto/keys");

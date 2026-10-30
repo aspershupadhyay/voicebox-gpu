@@ -128,7 +128,7 @@ The owner's feedback still goes into `docs/FEEDBACK.md` in the same PR as the ch
   press, wait, scroll, goto, screenshot; the main text, description and links; screenshots saved to Files),
   `lib/auto/search.ts` (Brave or Tavily by the key's shape), one tool `browse` (read, screenshot, search). Tested: a
   page read after a fill and a click, a 390 px screenshot of the login page at 2x, search answers from canned Brave and
-  Tavily responses; without `SEARCH_API_KEY` search says so and suggests browsing instead.
+  Tavily responses; without a search key search says so and suggests browsing instead.
 - [x] **6. Media II**: `video_template` (HyperFrames + brand kit from `videos-post`, cached on R2), `repurpose`
   recipes. Done when: `long_to_shorts` turns one long video into captioned 9:16 shorts in one call. **Shipped**:
   `repurpose` (long_to_shorts picks windows from what's said: sentence-aligned, dense with talk, opening on a hook,
@@ -282,11 +282,17 @@ read or write its own files (tested: a link to a worker file in `out/` is left o
 
 ## Waiting on the owner
 
-1. A fine-grained GitHub key (contents + pull requests + actions read, only the allowed repos), added as a Vercel
-   secret (`GITHUB_AGENT_TOKEN`), never pasted into a chat; then the repos on Settings → Automation → Repos. Until
-   then `repo` and "Make it a rule" say so.
-2. The workbench repo created (`voicebox-workbench`), and `videos-post` added to the session. Needed for phases 3, 6.
-3. Optional: a search key (Brave or Tavily) as a Vercel secret (`SEARCH_API_KEY`), only for scheduled workflows and
-   sandbox scripts (chat models search the web themselves); until then `browse action=search` says so.
+1. A fine-grained GitHub key (Contents, Pull requests, Issues read and write; Checks and Actions read; only the
+   allowed repos), pasted in Settings → Automation → Keys (or `GITHUB_AGENT_TOKEN` on Vercel), never into a chat;
+   then the repos on Settings → Automation → Repos. Until then `repo` and "Make it a rule" say so.
+2. The workbench repo created (`voicebox-workbench`) by the owner on github.com (the session's GitHub app can't
+   create repos), and `videos-post` added to the key. Needed for phases 3, 6.
+3. Optional: a search key (Brave or Tavily) in Settings → Automation → Keys (or `SEARCH_API_KEY` on Vercel), only for
+   scheduled workflows and sandbox scripts (chat models search the web themselves); until then `browse action=search`
+   says so.
+
+Keys pasted in the dashboard (`lib/auto/secrets.ts`) are kept in R2 encrypted with AES-256-GCM under a key derived
+from `MCP_TOKEN` (rotating it asks for them again), shown back only as their last 4 characters, saved and removed only
+by a signed-in person, and never given to a model: tools use them server side. They win over the Vercel variables.
 4. The daily units cap to start with (Settings → Automation; until then there is no cap).
 5. A check of the approval list (Settings → Automation → Ask me first: all on to start).

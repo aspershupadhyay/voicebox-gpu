@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (keys for other models, 2026-10-30)
 
+- **"Add the GitHub key in the website so it can be used through the MCP as well"**: Settings → Automation → Keys
+  takes the GitHub key and the search key: saved encrypted, checked with GitHub on save, never shown again (last 4
+  characters only) and never given to a model; models use them through `repo` and `browse`. No Vercel step needed.
+
 - **"Add a make-new-token button so I can add new models in their MCP settings"**: Settings → Claude & API → Other
   models makes a key per model (shown once, revocable, held to a role if picked), and the settings to paste already
   carry it. Never rotate `MCP_TOKEN` for a new model: that signs everyone out.

@@ -189,7 +189,7 @@ export function registerAutoTools(server: ToolServer) {
         const model = await modelName(ctx as Ctx);
         if (a.action === "list") {
           const c = await getControl();
-          return text({ repos: c.repos, platform: r.PLATFORM, key: process.env.GITHUB_AGENT_TOKEN ? "set" : "not set yet (the owner adds GITHUB_AGENT_TOKEN on Vercel)", rules: "branches and PRs only; merges and new repos wait for the owner" });
+          return text({ repos: c.repos, platform: r.PLATFORM, key: (await (await import("./secrets")).secret("github")) ? "set" : "not set yet (the owner pastes it in Settings → Automation → Keys)", rules: "branches and PRs only; merges and new repos wait for the owner" });
         }
         if (!a.repo) throw new Error(`${a.action} needs repo (owner/name)`);
         if (a.action === "allow") {

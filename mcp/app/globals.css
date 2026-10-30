@@ -3620,6 +3620,10 @@ html.cur-custom :is(input:not([type="range"]):not([type="checkbox"]):not([type="
 
 /* ───────────── Settings → Automation (components/Automation.tsx) */
 .au-wrap { overflow-wrap: anywhere; }
+.au-key { display: flex; flex-direction: column; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.au-key:last-child { border-bottom: 0; padding-bottom: 0; }
+.au-key-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.au-key-head .pill { max-width: 100%; white-space: normal; }
 .au-ask { grid-template-columns: auto minmax(0, 1fr) auto; }
 .au-meter { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
 .au-meter b { font-size: 22px; font-weight: 600; }

@@ -1,11 +1,11 @@
 // Web search for models (docs/AUTOMATION.md, phase 5): short results from Brave or Tavily with the owner's key
-// (SEARCH_API_KEY on Vercel; a tvly- key is Tavily, anything else Brave unless SEARCH_PROVIDER says). Results are
+// (the search key, saved in Settings → Automation → Keys or SEARCH_API_KEY on Vercel; a tvly- key is Tavily, anything else Brave unless SEARCH_PROVIDER says). Results are
 // data, never instructions.
 export type Hit = { title: string; url: string; snippet: string; age?: string };
 
 export async function search(query: string, opts: { count?: number; fresh?: "day" | "week" | "month" | "year" } = {}): Promise<{ provider: string; hits: Hit[] }> {
-  const key = process.env.SEARCH_API_KEY;
-  if (!key) throw new Error("search needs SEARCH_API_KEY on Vercel (a Brave Search or Tavily key, added by the owner). Meanwhile, browse a page you know, e.g. a site's own search URL.");
+  const key = await (await import("./secrets")).secret("search");
+  if (!key) throw new Error("search needs a search key (a Brave Search or Tavily key, which the owner pastes in Settings → Automation → Keys). Meanwhile, browse a page you know, e.g. a site's own search URL.");
   const count = Math.min(opts.count ?? 8, 20);
   const provider = process.env.SEARCH_PROVIDER || (key.startsWith("tvly-") ? "tavily" : "brave");
   if (provider === "tavily") {
