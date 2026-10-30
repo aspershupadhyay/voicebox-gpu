@@ -343,9 +343,18 @@ def plan_edit(spec, infos, nvenc, font_file):
     speech, mix = ["[orig]"], []
     if spec.get("voice"):
         v = spec["voice"]
-        n = add_input(v["src"])
         delay = int(num(v.get("at"), 0, 3600, 0) * 1000)
-        fg.append(f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,volume={num(v.get('volume_db'), -30, 12, 0):.1f}dB,adelay={delay}|{delay}[voice]")
+        srcs = v["src"] if isinstance(v["src"], list) else [v["src"]]
+        if len(srcs) == 1:
+            fg.append(f"[{add_input(srcs[0])}:a]aresample=48000,aformat=channel_layouts=stereo[vraw]")
+        else:  # the factory's lines, one file each, back to back with a short gap (gap_s) between them
+            gap = num(v.get("gap_s"), 0, 3, 0.25)
+            parts = []
+            for k, src in enumerate(srcs):
+                fg.append(f"[{add_input(src)}:a]aresample=48000,aformat=channel_layouts=stereo,apad=pad_dur={gap:.2f}[vl{k}]")
+                parts.append(f"[vl{k}]")
+            fg.append(f"{''.join(parts)}concat=n={len(parts)}:v=0:a=1[vraw]")
+        fg.append(f"[vraw]volume={num(v.get('volume_db'), -30, 12, 0):.1f}dB,adelay={delay}|{delay}[voice]")
         speech.append("[voice]")
     if len(speech) > 1:
         fg.append(f"{''.join(speech)}amix=inputs={len(speech)}:duration=first:normalize=0[speech]")

@@ -55,7 +55,7 @@ export const SPENDS: Record<string, (a: Args) => boolean> = {
   train_voice: () => true, benchmark_voices: () => true, download: () => true, post_pipeline: () => true,
   voice_dataset: (a) => !!a.action && a.action !== "list",
   gpu: (a) => a.action === "start" || a.action === "train_draft",
-  run: () => true, edit_video: () => true, inspect_media: () => true, browse: (a) => a.action !== "search", repurpose: () => true, video_template: (a) => a.action !== "list",
+  run: () => true, factory: (a) => a.action === "start", edit_video: () => true, inspect_media: () => true, browse: (a) => a.action !== "search", repurpose: () => true, video_template: (a) => a.action !== "list",
   repo: (a) => a.action === "checkout" || a.action === "push",
 };
 /** Changes that aren't GPU work but still stop while paused (the gated ones always do). */
@@ -180,7 +180,7 @@ export function brief(res: Result, how: "compact" | "brief", tool: string): Resu
 /** Tools that make files, and where a project puts them: save_to (a folder path), folder (an id), workspace. */
 const PROJECT_TOOLS: Record<string, ("save_to" | "folder" | "workspace")[]> = {
   run: ["save_to", "workspace"], edit_video: ["save_to"], video_template: ["save_to"], repurpose: ["save_to"], inspect_media: ["save_to"], browse: ["save_to"],
-  save_file: ["folder"], upload_media: ["folder"], add_media: ["folder"], import_file: ["folder"], upload_link: [], voice_lines: [], imagine: [], transcribe: [], clean_audio: [], revoice: [], download: ["folder"],
+  save_file: ["folder"], upload_media: ["folder"], add_media: ["folder"], import_file: ["folder"], upload_link: [], factory: [], voice_lines: [], imagine: [], transcribe: [], clean_audio: [], revoice: [], download: ["folder"],
 };
 
 /** A call with `project`: checked to be the caller's, its outputs sent to the project's folder and workspace unless
@@ -192,7 +192,7 @@ async function intoProject(tool: string, a: Args, model: string) {
     if (a[k] !== undefined) continue;
     a[k] = k === "save_to" ? p.path : k === "folder" ? p.folder : p.workspace;
   }
-  if (tool !== "upload_link") delete a.project; // the link itself carries the project, for what's dropped later
+  if (tool !== "upload_link" && tool !== "factory") delete a.project; // the link itself carries the project, for what's dropped later
   return p.id;
 }
 

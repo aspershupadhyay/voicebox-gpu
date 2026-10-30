@@ -440,8 +440,10 @@ def render_spec(job, ws, jdir, run, infos, spec, inputs, out_name):
     import media
     b = job["bench"]
     for k in ("voice", "music", "logo"):
-        if spec.get(k) and spec[k].get("src") not in infos:
-            raise ValueError(f"{k}.src: no input called {spec[k].get('src')!r} (inputs: {', '.join(infos)})")
+        srcs = spec.get(k) and spec[k].get("src")
+        for src in (srcs if isinstance(srcs, list) and k == "voice" else [srcs] if spec.get(k) else []):
+            if src not in infos:
+                raise ValueError(f"{k}.src: no input called {src!r} (inputs: {', '.join(infos)})")
     nv = media.has_nvenc()
     args, layout, seconds, extra = media.plan_edit(spec, {k: v for k, v in infos.items() if not v[0].lower().endswith(".srt")}, nv, media.font_file())
     for name, content in extra.items():
