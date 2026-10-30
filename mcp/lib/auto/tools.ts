@@ -448,7 +448,7 @@ export function registerAutoTools(server: ToolServer) {
           fps: z.number().int().min(15).max(60).optional(), quality: z.enum(["fast", "high"]).optional(),
           clips: z.array(z.object({ src: SRC, from: z.number().min(0).optional(), to: z.number().min(0).optional(), speed: z.number().min(0.25).max(4).optional(), mute: z.boolean().optional(),
             seconds: z.number().min(0.5).max(60).optional(), zoom: z.boolean().optional() })).max(200).optional(),
-          voice: z.object({ src: SRC, at: z.number().min(0).optional(), volume_db: z.number().min(-30).max(12).optional() }).optional(),
+          voice: z.object({ src: z.union([SRC, z.array(SRC).min(1).max(200)]).describe("an input's key, or several (lines joined back to back)"), at: z.number().min(0).optional(), volume_db: z.number().min(-30).max(12).optional(), gap_s: z.number().min(0).max(3).optional() }).optional(),
           music: z.object({ src: SRC, volume_db: z.number().min(-40).max(0).optional(), duck: z.boolean().optional(), fade_s: z.number().min(0).max(10).optional() }).optional(),
           original_volume_db: z.union([z.number().min(-60).max(12), z.literal("mute"), z.string().regex(/^-?\d{1,2}(\.\d+)?$/)]).optional(),
           captions: z.object({ style: z.enum(["pop", "bold", "clean"]).optional(), position: z.enum(["lower", "middle", "upper"]).optional(), srt: SRC.optional(), language: z.string().max(8).optional(),
