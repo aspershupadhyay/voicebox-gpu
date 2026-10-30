@@ -30,7 +30,8 @@ export async function call<T = unknown>(path: string, init: { method?: string; b
   if (path === "/jobs" && init.body && typeof init.body === "object") {
     // a job that uses a trained voice model (either person's) carries signed links to the models
     const { withModels } = await import("./voicemodel");
-    init = { ...init, body: await withModels(init.body as Record<string, unknown>) };
+    const who = (await import("./auto/caller")).caller.getStore()?.model; // the worker's lanes take turns by owner
+    init = { ...init, body: await withModels({ ...(who ? { owner: who } : {}), ...(init.body as Record<string, unknown>) }) };
   }
   const method = init.method ?? (init.body ? "POST" : "GET");
   // Cloudflare answers for the worker when it can't reach it (restarting, tunnel reconnecting) with an HTML page:

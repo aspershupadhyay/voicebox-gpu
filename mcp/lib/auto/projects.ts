@@ -139,3 +139,15 @@ export const summary = (p: Project) => ({
   id: p.id, name: p.name, owner: p.owner, status: p.status, folder: p.path, workspace: p.workspace, branch: p.branch,
   files: Object.keys(p.files).length, jobs: p.jobs.length, calls: p.calls, created: p.created, updated: p.updated,
 });
+
+/** The next number in a series (case-028…), from one server counter, so two sessions never take the same number
+ *  (docs/FACTORY.md E: the audit found two heading for case-027). at_least seeds it past numbers already used. */
+export async function nextNumber(series: string, atLeast = 1) {
+  const key = `auto/counters/${slug(series)}.json`;
+  for (let i = 0; i < 8; i++) {
+    const { value, etag } = await getJsonTagged<{ n: number }>(key);
+    const n = Math.max((value?.n ?? 0) + 1, atLeast);
+    if (await putJsonIf(key, { n, at: Date.now() }, etag)) return n;
+  }
+  throw new Error("the counter is busy: try again");
+}

@@ -262,7 +262,30 @@ that into an assembly line.
   the worker and on R2.
 - Target, to be measured in F: 5 videos in under 2× the time of one.
 
-## E. Many agents and many people at once
+## E. Many agents and many people at once ✅ shipped
+
+**Done (2026-10-30)**, worker 3.15.0. Checked locally against the S3 stand-in, the queue rule unit-tested:
+- [x] **Fair queues**: every job the dashboard sends carries its caller (`owner`, from `guarded()` through an
+  AsyncLocalStorage, `lib/auto/caller.ts`); each lane on the worker takes the owner with the fewest jobs running there,
+  then the one served least lately (a decaying count), then the oldest job. Measured: gemini queues 20 jobs, then the
+  owner queues 1: the owner's runs **2nd**, not 21st.
+- [x] **A daily cap per key** (Settings → Automation → Daily units cap → "Per model or person, calls a day"): spending
+  calls one key may make a UTC day, beside the global units cap; today's counts show under it. Measured: cap 2,
+  gemini's 3rd spending call → "OVER YOUR DAILY CAP", claude's still allowed. Colab bills the runtime, not a job, so
+  a per-key cap counts calls, not units.
+- [x] **Server-numbered cases**: `project action=number series=case at_least=28` and `project action=start
+  series=case` (named `case-028`, branch `agent/<model>/case-028-<id>`). Measured: 6 sessions at once got 28-33, no
+  repeats (an ETag counter).
+- [x] **The shared ledger**: `memory ledger_add file=LEARNINGS.md|TOPICS.md|SCOREBOARD.md|SPEC.md` (repo default
+  `videos-post`); the first sweep after 02:00 UTC folds every pending entry into its file, one PR per repo (branch
+  `ledger/<date>`), for the owner to merge. Needs the owner's GitHub key with write on `videos-post` (Waiting on the
+  owner).
+- [x] **Competing creatives**: `factory action=compete` takes 2-6 models' hooks on one spine; the judge (hook_score on
+  hook + spine, minus script_check's opener and hook-length penalties) ranks them; losers go to the ledger's SPEC.md
+  for A/B tests; `factory action=scores` is each model's tally (entries, wins, points). Measured: "The grader was wrong
+  on 41 of 200 answers." 70 > "Is AI grading fair?" 52 > "In this video we look at AI graders…" 20.
+- Not built: routing work to the model that wins most automatically (no model is called from the server; the tally
+  is what a router reads, and the orchestrating model decides).
 
 - **Fair queues**: each lane takes turns between keys and people, so one person's 20-video batch doesn't block
   another person's single voiceover. A daily units cap per key, alongside the global one.
@@ -342,6 +365,7 @@ Each with the exact test a model should run through the MCP (worker 3.12.0 or la
 - **D1, a 5-video batch**: `factory start` with 5 videos of 3 scenes (kokoro), poll `status` until done; write down the total seconds, `voice_s`, and the same for 1 video. Target: 5 in under 2× the time of 1.
 - **G1, the toolkit on the L4**: `run {"lang":"bash","tools":["auto-editor","scenedetect","rembg","manim"],"code":"auto-editor --version; scenedetect version; manim --version"}`; the notes say "installed in …"; then `gpu action=restart_worker` and run it again: the notes should say "from R2 in … s". Manim is the one to watch (it needs cairo, which Colab's Python 3.12 has wheels for); if it fails, take it out of `TOOLKIT` in `worker/bench.py` and the list in `docs/MOTION.md`.
 - **G2, Remotion**: `repo checkout` a Remotion project (e.g. a fresh `npx create-video` pushed to the workbench), then `video_template action=render project={…} composition=<id>`.
+- **E1, the ledger PR**: once the GitHub key reaches `videos-post`, `memory ledger_add file=LEARNINGS.md text="test entry"`, then wait for the 02:00 UTC sweep (or call `fold` from a script): one PR named "Ledger <date>".
 - **C1, toolsets in a real client**: in Claude Code connected to `/api/mcp`, call `tools action=load set=video`, then check `edit_video` appears without reconnecting (the list_changed notification). If it doesn't, the client ignores it: note which.
 - **H1, ChatGPT and Gemini** (the owner's accounts): connect each (see H), call `worker_status`, `tools action=load set=files`, `list_files`; in ChatGPT attach an image and ask it to `import_file` it.
 - ~~B1~~ **checked on the L4**: a code-mode script started a project, `run project=…` wrote `out/hello.txt` into its workspace `p-166ac7` and its folder (recorded as the project's), `delete_files` trashed it with no approval, `finish` answered `workspace: removed`, `folder: in the trash`. Found and fixed on the way: `video_template` already had a `project` (a repo folder), so it now takes either.

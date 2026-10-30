@@ -42,10 +42,13 @@ export type Control = {
   ask_first: AskKey[];
   /** repos models may work on (phase 3), owner/name */
   repos: string[];
+  /** calls that spend (GPU jobs, renders, runs) one key (one model, one person) may make a day (UTC); 0 = no cap. Beside
+   *  the global units cap, so one model's batch can't eat the day for everyone (docs/FACTORY.md E). */
+  key_cap: number;
   updated?: number;
 };
 
-export const CONTROL_DEFAULTS: Control = { paused: false, cap_units: 0, ask_first: [...ASK_KEYS], repos: [] };
+export const CONTROL_DEFAULTS: Control = { paused: false, cap_units: 0, ask_first: [...ASK_KEYS], repos: [], key_cap: 0 };
 
 export async function getControl(): Promise<Control> {
   const c = await getJson<Partial<Control>>(CONTROL).catch(() => null);
@@ -57,6 +60,7 @@ export async function setControl(patch: Record<string, unknown>, by: string): Pr
   return mutate<Control>(CONTROL, CONTROL_DEFAULTS, (raw) => {
     const c = { ...CONTROL_DEFAULTS, ...raw };
     if (typeof patch.cap_units === "number" && Number.isFinite(patch.cap_units)) c.cap_units = Math.max(0, Math.min(500, Math.round(patch.cap_units * 10) / 10));
+    if (typeof patch.key_cap === "number" && Number.isFinite(patch.key_cap)) c.key_cap = Math.max(0, Math.min(10_000, Math.round(patch.key_cap)));
     if (Array.isArray(patch.ask_first)) c.ask_first = [...new Set(patch.ask_first.map(String).filter((k): k is AskKey => k in ASK_FIRST))];
     if (Array.isArray(patch.repos)) c.repos = [...new Set(patch.repos.map((r) => String(r).trim().toLowerCase()).filter((r) => /^[a-z0-9_.-]{1,39}\/[a-z0-9_.-]{1,100}$/.test(r)))].slice(0, 20);
     if (patch.paused === false) { c.paused = false; delete c.paused_at; delete c.paused_by; delete c.pause_reason; }
@@ -237,3 +241,25 @@ export async function stopAll(by: string, reason = "stop_all") {
   return out;
 }
 
+
+// ── per key: spending calls a day ─────────────────────────────────────────────────────────────────────────────────
+
+const USAGE = (day: string) => `auto/usage/${day}.json`;
+const today = () => new Date().toISOString().slice(0, 10);
+
+/** Today's spending calls per key. */
+export async function keyUsage(): Promise<Record<string, number>> {
+  return (await getJson<Record<string, number>>(USAGE(today())).catch(() => null)) ?? {};
+}
+
+/** One more spending call for this key today (an ETag write, so two calls at once both count). */
+export async function countKey(model: string) {
+  const { getJsonTagged, putJsonIf } = await import("../store");
+  for (let i = 0; i < 5; i++) {
+    const { value, etag } = await getJsonTagged<Record<string, number>>(USAGE(today()));
+    const v = { ...(value ?? {}) };
+    v[model] = (v[model] ?? 0) + 1;
+    if (await putJsonIf(USAGE(today()), v, etag)) return v[model];
+  }
+  return null;
+}

@@ -83,6 +83,7 @@ export async function GET(req: Request, ctx: Ctx) {
         flows: await import("@/lib/auto/flows").then(async (f) => ({ list: await f.listFlows(), runs: (await f.listRuns()).slice(0, 15) })),
         lessons: (await (await import("@/lib/auto/memory")).lessons()).slice(0, 60),
         cards: (await import("@/lib/auto/agents")).scorecards(await ac.readLog({ limit: 1000, since: Date.now() - 7 * 86_400_000, days: 8 })).slice(0, 12),
+        key_usage: await ac.keyUsage().catch(() => ({})),
         projects: await import("@/lib/auto/projects").then(async (p) => (await p.listProjects().catch(() => [])).slice(0, 30).map(p.summary)) });
     }
     if (a === "live" && b === "pins") {
@@ -327,7 +328,7 @@ export async function POST(req: Request, ctx: Ctx) {
       const by = (await currentUser())?.name ?? person.who;
       if ((b === "approve" || b === "deny") && typeof body.id === "string")
         return Response.json(await ac.decideApproval(body.id, b === "approve", by, typeof body.note === "string" ? body.note : undefined));
-      if (b === "settings") return Response.json(await ac.setControl({ cap_units: body.cap_units, ask_first: body.ask_first, repos: body.repos }, by));
+      if (b === "settings") return Response.json(await ac.setControl({ cap_units: body.cap_units, ask_first: body.ask_first, repos: body.repos, key_cap: body.key_cap }, by));
       if (b === "stop") return Response.json(await ac.stopAll(by, "stopped from the dashboard"));
       if (b === "resume") return Response.json(await ac.setControl({ paused: false }, by));
       if (b === "secret") {

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { after } from "next/server";
 import { z } from "zod";
 import type { ToolServer } from "../mcptools";
+import { caller } from "./caller";
 import { loosen, normalize } from "./ids";
 import { ASK_FIRST, capApprovedToday, getControl, logCall, requestApproval, unitsToday, useApproval, type AskKey } from "./control";
 
@@ -63,7 +64,7 @@ const PAUSES: Record<string, (a: Args) => boolean> = {
   publish_post: (a) => !!a.go && a.go !== "save", auto_post: () => true,
   repo: (a) => ["branch", "commit", "push", "pr", "comment", "merge", "allow"].includes(String(a.action)),
   workflow: (a) => ["save", "run", "enable"].includes(String(a.action)),
-  agents: (a) => a.action === "save", project: (a) => a.action === "start" || a.action === "finish", memory: (a) => ["note_set", "lesson_add", "skill_save"].includes(String(a.action)),
+  agents: (a) => a.action === "save", project: (a) => a.action === "start" || a.action === "finish", memory: (a) => ["note_set", "lesson_add", "skill_save", "ledger_add"].includes(String(a.action)),
 };
 
 /** Which model made the call: the name on its model key (lib/auto/keys.ts), else the X-Model header (Gemini CLI and
@@ -130,6 +131,11 @@ export async function preflight(tool: string, args: Args, model: string, roleNam
   const c = await getControl();
   if (c.paused)
     return stop(`PAUSED: the owner stopped all automation${c.paused_at ? ` at ${new Date(c.paused_at).toISOString().slice(0, 16)}Z` : ""} (${c.pause_reason ?? "stop_all"}). Nothing that spends or changes things runs until they resume it in Settings → Automation. Reading still works.`);
+  if (spends && c.key_cap > 0 && model !== "owner token") {
+    const used = (await (await import("./control")).keyUsage())[model] ?? 0;
+    if (used >= c.key_cap)
+      return stop(`OVER YOUR DAILY CAP: ${model} made ${used} of the ${c.key_cap} spending calls one key may make a day (the owner set it in Settings → Automation, so one batch can't take the day from everyone). It resets at 00:00 UTC. Reading still works.`);
+  }
   if (spends && c.cap_units > 0) {
     const u = await unitsToday();
     if (u.spent != null && u.spent >= c.cap_units && !(await capApprovedToday())) {
@@ -239,7 +245,8 @@ export function guarded(server: ToolServer, via?: string): ToolServer {
         if (blocked) { res = blocked; gate = said(blocked).split(/[:(]/)[0].trim(); }
         else {
           proj = await intoProject(name, a, model);
-          res = await handler(a, ctx);
+          if (SPENDS[name]?.(a)) later((await import("./control")).countKey(model).catch(() => null)); // the per-key daily cap
+          res = await caller.run({ model }, () => handler(a, ctx)); // jobs it sends carry the caller (fair queues)
         }
       } catch (e) {
         res = stop(`ERROR: ${(e as Error).message}`);
