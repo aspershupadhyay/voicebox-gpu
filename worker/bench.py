@@ -221,8 +221,12 @@ def run_code(job, jdir):
     fname, cmd = LANGS[b["lang"]]
     rel = f".run/{job['id']}-{fname}"
     write_as_user(ws, rel, b["code"].encode())
+    for name, code in (b.get("skills") or {}).items():  # saved skills: from skills import <name>
+        write_as_user(ws, f"skills/{name}.py", code.encode())
+    if b.get("skills"):
+        write_as_user(ws, "skills/__init__.py", b"")
     before = snapshot(os.path.join(ws, "out"))
-    env = {**BASE_ENV, "HOME": ws, "PYTHONPATH": KIT, "PYTHONUNBUFFERED": "1", "MPLBACKEND": "Agg", "TMPDIR": os.path.join(ws, ".tmp"),
+    env = {**BASE_ENV, "HOME": ws, "PYTHONPATH": f"{KIT}:{ws}",  # the kit, and the workspace (skills/, the code's own modules) "PYTHONUNBUFFERED": "1", "MPLBACKEND": "Agg", "TMPDIR": os.path.join(ws, ".tmp"),
            "PIP_USER": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PYTHONUSERBASE": os.path.join(ws, ".local"), "VOICEBOX_WORKSPACE": ws}
     for k in ("VOICEBOX_URL", "VOICEBOX_KEY", "VOICEBOX_MODEL"):
         if b.get(k.lower()):
@@ -900,7 +904,8 @@ def prepare(job, body):
                  timeout_s=max(5, min(MAX_TIMEOUT, int(body.get("timeout_s") or 120))),
                  memory_mb=max(256, min(48_000, int(body.get("memory_mb") or 8000))),
                  voicebox_url=str(body.get("voicebox_url") or "")[:300], voicebox_key=str(body.get("voicebox_key") or "")[:2000],
-                 voicebox_model=str(body.get("voicebox_model") or "")[:60])
+                 voicebox_model=str(body.get("voicebox_model") or "")[:60],
+                 skills={str(k): str(v)[:100_000] for k, v in (body.get("skills") or {}).items() if re.match(r"^[a-z][a-z0-9_]{1,40}$", str(k))} if isinstance(body.get("skills"), dict) else {})
         if not WS_RE.match(b["workspace"]):
             raise ValueError("workspace: lowercase letters, digits and dashes, up to 40 (e.g. case-025)")
         job["est_total"] = float(min(b["timeout_s"], 60))
@@ -976,7 +981,7 @@ def run(job, jdir):
 def view(job, full=True):
     """What get_job shows: never a key, never the whole code; a diff's file contents only to a job's own read."""
     b = dict(job.get("bench") or {})
-    for k in ("voicebox_key", "code", "files", "header"):
+    for k in ("voicebox_key", "code", "files", "header", "skills"):
         b.pop(k, None)
     if not full:
         b.pop("changes", None)

@@ -40,6 +40,9 @@ export async function gh<T = unknown>(path: string, init: { method?: string; bod
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
+/** A branch or ref in a URL path: each part encoded, the slashes kept (GitHub reads lessons/x as lessons/x). */
+const refPath = (ref: string) => ref.split("/").map(encodeURIComponent).join("/");
+
 const REPO_RE = /^[a-z0-9_.-]{1,39}\/[a-z0-9_.-]{1,100}$/;
 
 /** The repo, checked against the owner's allow-list. */
@@ -60,13 +63,13 @@ export async function writable(r: string, branch: string) {
   if (!/^[A-Za-z0-9._/-]{1,100}$/.test(branch) || branch.includes("..")) throw new RepoError("branch: letters, digits, . _ - /");
   const info = await repoInfo(r);
   if (branch === info.default_branch || NEVER.has(branch.toLowerCase())) throw new RepoError(`${branch} is ${branch === info.default_branch ? "the default branch" : "a release branch"}: models never push there. Work on a branch and open a PR.`);
-  const b = await gh<{ protected: boolean }>(`/repos/${r}/branches/${encodeURIComponent(branch)}`).catch((e: Error) => (e.message.includes("404") ? null : Promise.reject(e)));
+  const b = await gh<{ protected: boolean }>(`/repos/${r}/branches/${refPath(branch)}`).catch((e: Error) => (e.message.includes("404") ? null : Promise.reject(e)));
   return { info, exists: !!b, protected: !!b?.protected };
 }
 
 export async function tree(r: string, ref?: string, path = "") {
   const info = await repoInfo(r);
-  const t = await gh<{ tree: { path: string; type: string; size?: number }[]; truncated: boolean }>(`/repos/${r}/git/trees/${encodeURIComponent(ref || info.default_branch)}?recursive=1`);
+  const t = await gh<{ tree: { path: string; type: string; size?: number }[]; truncated: boolean }>(`/repos/${r}/git/trees/${refPath(ref || info.default_branch)}?recursive=1`);
   const p = path.replace(/^\/+|\/+$/g, "");
   const files = t.tree.filter((e) => e.type === "blob" && (!p || e.path === p || e.path.startsWith(`${p}/`)));
   return { ref: ref || info.default_branch, count: files.length, files: files.slice(0, 400).map((f) => (f.size != null && f.size > 200_000 ? `${f.path} (${Math.round(f.size / 1000)} kB)` : f.path)),
@@ -83,7 +86,7 @@ export async function read(r: string, path: string, ref?: string, from?: number,
 export async function branch(r: string, name: string, from?: string) {
   const w = await writable(r, name);
   if (w.exists) return { branch: name, existed: true };
-  const base = await gh<{ object: { sha: string } }>(`/repos/${r}/git/ref/heads/${encodeURIComponent(from || w.info.default_branch)}`);
+  const base = await gh<{ object: { sha: string } }>(`/repos/${r}/git/ref/heads/${refPath(from || w.info.default_branch)}`);
   await gh(`/repos/${r}/git/refs`, { body: { ref: `refs/heads/${name}`, sha: base.object.sha } });
   return { branch: name, from: from || w.info.default_branch, sha: base.object.sha.slice(0, 7) };
 }
@@ -96,7 +99,7 @@ export async function commit(r: string, name: string, changes: Change[], message
   for (const c of changes) if (!c.path || c.path.startsWith("/") || c.path.split("/").includes("..") || c.path.startsWith(".git/")) throw new RepoError(`bad path: ${c.path}`);
   const w = await writable(r, name);
   if (!w.exists) await branch(r, name);
-  const ref = await gh<{ object: { sha: string } }>(`/repos/${r}/git/ref/heads/${encodeURIComponent(name)}`);
+  const ref = await gh<{ object: { sha: string } }>(`/repos/${r}/git/ref/heads/${refPath(name)}`);
   const head = await gh<{ tree: { sha: string } }>(`/repos/${r}/git/commits/${ref.object.sha}`);
   const entries = await Promise.all(changes.map(async (c) => {
     if (c.delete) return { path: c.path, mode: "100644", type: "blob", sha: null };
@@ -106,7 +109,7 @@ export async function commit(r: string, name: string, changes: Change[], message
   const t = await gh<{ sha: string }>(`/repos/${r}/git/trees`, { body: { base_tree: head.tree.sha, tree: entries } });
   const msg = `${message.trim().slice(0, 2000)}\n\nMade by ${model} through VoiceBox (the repo tool).`;
   const c = await gh<{ sha: string; html_url: string }>(`/repos/${r}/git/commits`, { body: { message: msg, tree: t.sha, parents: [ref.object.sha] } });
-  await gh(`/repos/${r}/git/refs/heads/${encodeURIComponent(name)}`, { method: "PATCH", body: { sha: c.sha, force: false } });
+  await gh(`/repos/${r}/git/refs/heads/${refPath(name)}`, { method: "PATCH", body: { sha: c.sha, force: false } });
   return { branch: name, commit: c.sha.slice(0, 7), url: c.html_url, files: changes.length, protected: w.protected };
 }
 

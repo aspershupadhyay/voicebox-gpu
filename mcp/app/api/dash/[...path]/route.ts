@@ -79,7 +79,9 @@ export async function GET(req: Request, ctx: Ctx) {
         ac.readLog({ limit: 150, model: q.get("model") || undefined, days: 2 })]);
       return Response.json({ control, units, approvals: approvals.slice(0, 60), log, ask_first: ac.ASK_FIRST,
         github_key: !!process.env.GITHUB_AGENT_TOKEN, platform: (await import("@/lib/auto/repo")).PLATFORM,
-        flows: await import("@/lib/auto/flows").then(async (f) => ({ list: await f.listFlows(), runs: (await f.listRuns()).slice(0, 15) })) });
+        flows: await import("@/lib/auto/flows").then(async (f) => ({ list: await f.listFlows(), runs: (await f.listRuns()).slice(0, 15) })),
+        lessons: (await (await import("@/lib/auto/memory")).lessons()).slice(0, 60),
+        cards: (await import("@/lib/auto/agents")).scorecards(await ac.readLog({ limit: 1000, since: Date.now() - 7 * 86_400_000, days: 8 })).slice(0, 12) });
     }
     if (a === "live" && b === "pins") {
       // Grow's sidebar: the rivals you pinned, with the name and picture YouTube gave
@@ -326,6 +328,14 @@ export async function POST(req: Request, ctx: Ctx) {
       if (b === "settings") return Response.json(await ac.setControl({ cap_units: body.cap_units, ask_first: body.ask_first, repos: body.repos }, by));
       if (b === "stop") return Response.json(await ac.stopAll(by, "stopped from the dashboard"));
       if (b === "resume") return Response.json(await ac.setControl({ paused: false }, by));
+      if (b === "lesson" && typeof body.id === "string") {
+        // the owner's call on a lesson: approve (every model gets it through playbook), reject, or promote into
+        // docs/FEEDBACK.md by a PR (lib/auto/memory.ts)
+        const mem = await import("@/lib/auto/memory");
+        if (body.decision === "promote") return Response.json(await mem.promote(body.id, by));
+        if (body.decision === "approve" || body.decision === "reject")
+          return Response.json(await mem.decideLesson(body.id, body.decision === "approve" ? "approved" : "rejected", by, { text: typeof body.text === "string" ? body.text : undefined }));
+      }
       if (b === "flow" && typeof body.id === "string") {
         // a workflow switched on or off, run now, deleted, or a run stopped (lib/auto/flows.ts)
         const fl = await import("@/lib/auto/flows");

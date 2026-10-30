@@ -177,7 +177,9 @@ export async function capApprovedToday() {
 
 export type LogEntry = {
   t: number; tool: string; model: string; client?: string; args?: string; ok: boolean; ms: number; err?: string;
-  job?: string; gate?: string; via?: string;
+  job?: string; gate?: string; via?: string; role?: string;
+  /** a render's QA verdict and the checks it failed (edit_video, repurpose, inspect_media), for the audit */
+  qa?: "PASS" | "WARN" | "FAIL"; qa_fail?: string[];
 };
 const logKey = (t: number) => { const d = new Date(t).toISOString(); return `auto/log/${d.slice(0, 10)}/${d.slice(11, 13)}.json`; };
 

@@ -110,16 +110,18 @@ export function registerAutoTools(server: ToolServer) {
         timeout_s: z.number().int().min(5).max(1800).optional(), memory_mb: z.number().int().min(256).max(48_000).optional(),
         voicebox: z.boolean().optional().describe("code mode: import voicebox (default true)"),
         save_to: z.string().max(200).nullable().optional().describe("folder for out/ files (default Workbench); null keeps them in the workspace"),
+        skills: z.array(z.string().max(41)).max(10).optional().describe("saved skills to import (memory skills lists them): from skills import <name>"),
       }),
     },
-    async ({ code, lang, workspace, files, args, timeout_s, memory_mb, voicebox, save_to }, ctx) => {
+    async ({ code, lang, workspace, files, args, timeout_s, memory_mb, voicebox, save_to, skills }, ctx) => {
       try {
         const b = await import("./bench");
         const model = await modelName(ctx as Ctx);
         const t = timeout_s ?? 120;
         const origin = (await import("../colab")).appOrigin(ctx && (ctx as Ctx)?.http?.req ? new URL((ctx as Ctx)!.http!.req!.url).origin : undefined);
         const inputs = await Promise.all((files ?? []).map((f) => b.inputFile(f)));
-        const job = await b.submit({ op: "run", code, lang, workspace, files: inputs, args, timeout_s: t, memory_mb,
+        const skillFiles = skills?.length ? await (await import("./memory")).skillCode(skills) : undefined;
+        const job = await b.submit({ op: "run", code, lang, workspace, files: inputs, args, timeout_s: t, memory_mb, ...(skillFiles ? { skills: skillFiles } : {}),
           ...(voicebox === false ? {} : { voicebox_url: `${origin}/api/mcp`, voicebox_key: b.runKey(model, t), voicebox_model: model }) },
           { model, folder: save_to === undefined ? undefined : save_to });
         return text(await b.view(await b.wait(job.id, 45), { name: model }));
@@ -146,11 +148,17 @@ export function registerAutoTools(server: ToolServer) {
       try {
         const pb = await import("./playbook");
         const act = action ?? (doc ? "read" : query ? "search" : "index");
-        if (act === "index") return text(pb.index());
+        if (act === "index") {
+          const m = await import("./memory");
+          return text({ docs: pb.index(), lessons: (await m.servedLessons(undefined, 100).catch(() => [])).length, skills: (await m.skills().catch(() => [])).map((x) => x.name) });
+        }
         if (act === "read") { if (!doc) throw new Error("read needs doc (index lists them)"); return text(pb.read(doc, section, part)); }
         if (!query) throw new Error("search needs query");
         const hits = pb.search(query);
-        return text(hits.length ? { hits, next: "read the best one: action read, doc, section" } : { hits, next: "nothing matched: try other words, or action index" });
+        const m = await import("./memory");
+        const [lessons, skills] = await Promise.all([m.servedLessons(query, 6).catch(() => []), m.findSkills(query).catch(() => [])]);
+        return text({ hits, ...(lessons.length ? { lessons: lessons.map((l) => l.text) } : {}), ...(skills.length ? { skills: skills.slice(0, 5).map((x) => `${x.name}: ${x.about}`) } : {}),
+          next: hits.length ? "read the best one: action read, doc, section. Lessons are rules learned from past work: follow them." : "nothing matched: try other words, or action index" });
       } catch (e) { return fail(e); }
     },
   );
@@ -452,6 +460,105 @@ export function registerAutoTools(server: ToolServer) {
             await fl.setEnabled(f.id, a.action === "enable");
             return text({ [a.action === "enable" ? "enabled" : "disabled"]: f.name });
           }
+        }
+        throw new Error("unknown action");
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "agents",
+    {
+      title: "Agents: roles and scorecards",
+      description: [
+        "Named roles (researcher, editor, publisher, auditor) with the model meant for each, the tools it uses and a brief. A client works as a role by sending the header X-Role: <name>; its calls are then held to that role's tools.",
+        "action list (default): the roles. brief (name): the role's brief, its tools, and the lessons and notes that matter for it: read it when you start as that role. save (name, model, purpose, tools, brief): change or add a role. scorecards (hours, by model or role): calls, how many worked, QA pass rate, redos, approvals hit; used to pick which model does which role.",
+      ].join(" "),
+      inputSchema: z.object({
+        action: z.enum(["list", "brief", "save", "scorecards"]).optional(), name: z.string().max(31).optional(),
+        model: z.string().max(60).optional(), purpose: z.string().max(300).optional(), tools: z.array(z.string().max(60)).max(120).optional(), brief: z.string().max(2000).optional(),
+        hours: z.number().min(1).max(24 * 31).optional(), by: z.enum(["model", "role"]).optional(),
+      }),
+    },
+    async ({ action = "list", name, model, purpose, tools, brief, hours, by }, ctx) => {
+      try {
+        const ag = await import("./agents");
+        if (action === "list") return text((await ag.roles()).map((r) => ({ name: r.name, model: r.model, purpose: r.purpose, tools: r.tools.length })));
+        if (action === "save") { if (!name) throw new Error("save needs name"); return text(await ag.saveRole({ name, model, purpose, tools, brief }, await modelName(ctx as Ctx))); }
+        if (action === "scorecards") {
+          const h = hours ?? 24 * 7;
+          const { readLog } = await import("./control");
+          return text({ period_h: h, cards: ag.scorecards(await readLog({ limit: 1000, since: Date.now() - h * 3600_000, days: Math.ceil(h / 24) + 1 }), by ?? "model") });
+        }
+        if (!name) throw new Error("brief needs name");
+        const r = await ag.role(name);
+        if (!r) throw new Error(`no role ${name}`);
+        const mem = await import("./memory");
+        const q = `${r.name} ${r.purpose} ${r.tools.join(" ")}`;
+        return text({ role: r.name, purpose: r.purpose, model: r.model, brief: r.brief, tools: r.tools, lessons: (await mem.servedLessons(q, 15)).map((l) => l.text),
+          notes: (await mem.findNotes(r.name)).slice(0, 8).map((n) => `${n.key}: ${n.text.slice(0, 200)}`), next: "Send X-Role: " + r.name + " with your calls; playbook search before each task." });
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "audit",
+    {
+      title: "Audit: what went wrong, as lessons",
+      description: [
+        "The learning loop's review. action run (default): reads the call log for the period (hours, 24), finds what keeps going wrong (the same error 3+ times, renders failing the same QA check, the owner saying no, the same work sent again) and writes each as a suggested lesson with its evidence, plus scorecards per model and role. Runs nightly as a workflow if saved (workflow examples).",
+        "action packet: the period's evidence for you, the auditor, to judge yourself (failures, QA verdicts, approvals, the lessons already known): then add yours with memory action=lesson_add. The owner approves lessons in Settings → Automation; approved ones reach every model through playbook.",
+      ].join(" "),
+      inputSchema: z.object({ action: z.enum(["run", "packet"]).optional(), hours: z.number().min(1).max(24 * 31).optional() }),
+    },
+    async ({ action = "run", hours }) => {
+      try {
+        const ag = await import("./agents");
+        if (action === "packet") return text(await ag.packet(hours ?? 24));
+        const r = await ag.audit(hours ?? 24);
+        return text({ ...r, scorecards: r.scorecards.slice(0, 10), by_role: r.by_role.slice(0, 6), findings: r.findings.map((f) => ({ kind: f.kind, topic: f.topic, count: f.count, lesson: f.lesson })),
+          next: r.lessons.length ? "Suggested lessons wait for the owner (Settings → Automation → Lessons)." : "Nothing new: the period went cleanly." });
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "memory",
+    {
+      title: "Memory: notes, lessons, skills",
+      description: [
+        "What carries across sessions and models. Notes: decisions and facts by key (note_set key text tags; note_get key; notes query). Lessons: one sentence a model can follow next time, with evidence (lesson_add text topic evidence; lessons query status); they start suggested and the owner approves them, then playbook hands them to every model.",
+        "Skills: scripts that worked, saved by name (skill_save name about code); run imports them with skills: [name] then `from skills import <name>` in the code; skills query lists them. Example: {\"action\":\"note_set\",\"key\":\"brand/colours\",\"text\":\"bg #0a0a0a, accent #ffb020\"}.",
+      ].join(" "),
+      inputSchema: z.object({
+        action: z.enum(["note_set", "note_get", "notes", "lesson_add", "lessons", "skill_save", "skill_get", "skills"]),
+        key: z.string().max(80).optional(), text: z.string().max(4000).optional(), tags: z.array(z.string().max(30)).max(8).optional(), query: z.string().max(200).optional(),
+        topic: z.string().max(40).optional(), evidence: z.array(z.object({ at: z.string().max(40).optional(), model: z.string().max(60).optional(), tool: z.string().max(60).optional(), what: z.string().max(300) })).max(12).optional(),
+        status: z.enum(["suggested", "approved", "rejected", "promoted"]).optional(),
+        name: z.string().max(41).optional(), about: z.string().max(300).optional(), code: z.string().max(100_000).optional(),
+      }),
+    },
+    async (a, ctx) => {
+      try {
+        const m = await import("./memory");
+        const who = await modelName(ctx as Ctx);
+        switch (a.action) {
+          case "note_set": { if (!a.key) throw new Error("note_set needs key"); const k = await m.setNote(a.key, a.text ?? "", a.tags ?? [], who); return text({ saved: k, ...(a.text ? {} : { deleted: true }) }); }
+          case "note_get": { if (!a.key) throw new Error("note_get needs key"); const n = (await m.notes()).find((x) => x.key === a.key!.toLowerCase()); return text(n ?? `no note ${a.key} (notes lists them)`); }
+          case "notes": return text((await m.findNotes(a.query)).map((n) => ({ key: n.key, text: n.text.slice(0, 400), tags: n.tags, by: n.by, at: new Date(n.at).toISOString().slice(0, 10) })));
+          case "lesson_add": {
+            if (!a.text) throw new Error("lesson_add needs text");
+            const l = await m.addLesson({ text: a.text, topic: a.topic, by: who, evidence: (a.evidence ?? []).map((e) => ({ at: e.at ? Date.parse(e.at) || Date.now() : Date.now(), model: e.model ?? "?", tool: e.tool ?? "?", what: e.what })) });
+            return text({ lesson: l.id, status: l.status, seen: l.seen, next: "It waits for the owner's approval." });
+          }
+          case "lessons": {
+            const all = await m.lessons();
+            const list = a.status ? all.filter((l) => l.status === a.status) : a.query ? await m.servedLessons(a.query, 30) : all;
+            return text(list.slice(0, 40).map((l) => ({ id: l.id, status: l.status, topic: l.topic, text: l.text, seen: l.seen, by: l.by })));
+          }
+          case "skill_save": { if (!a.name || !a.code) throw new Error("skill_save needs name and code"); return text({ saved: await m.saveSkill({ name: a.name, about: a.about ?? "", code: a.code, by: who }), use: `run with skills: ["${a.name}"], then: from skills import ${a.name}` }); }
+          case "skill_get": { if (!a.name) throw new Error("skill_get needs name"); return text({ name: a.name, code: (await m.skillCode([a.name]))[a.name] }); }
+          case "skills": return text(await m.findSkills(a.query));
         }
         throw new Error("unknown action");
       } catch (e) { return fail(e); }

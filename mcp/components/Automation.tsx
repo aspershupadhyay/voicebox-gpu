@@ -2,7 +2,7 @@
 // Settings → Automation (docs/AUTOMATION.md): what models and automations may do on their own. The approvals inbox
 // (risky actions wait here for a click), the kill switch, the day's Colab units cap, which actions ask first, and the
 // call log of every MCP call with the model that made it. Acts at once; server side lib/auto/control.ts.
-import { CheckCircle, FlowArrow, GitBranch, Hand, Pause, Play, Plus, Robot, Stop, WarningCircle, X } from "@phosphor-icons/react";
+import { CheckCircle, ChartBar, FlowArrow, Lightbulb, GitBranch, Hand, Pause, Play, Plus, Robot, Stop, WarningCircle, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
@@ -17,7 +17,10 @@ type Data = {
   units: { spent: number | null; balance: number | null };
   approvals: Approval[]; log: Log[]; ask_first: Record<string, string>; github_key: boolean; platform: string;
   flows: { list: Flow[]; runs: RunSum[] };
+  lessons: Lesson[]; cards: Card[];
 };
+type Lesson = { id: string; text: string; topic: string; status: string; seen: number; by: string; created: number; pr?: string; evidence: { at: number; model: string; tool: string; what: string }[] };
+type Card = { who: string; calls: number; ok_rate: number | null; qa_pass_rate: number | null; redos: number; gated: number; failed: number; last: number; tools: string[] };
 type Flow = { id: string; name: string; about?: string; enabled: boolean; steps: { tool: string }[]; schedule?: { every: string; at?: string; tz?: string; days?: number[] } | null;
   triggers?: { event: string; delay_h?: number }[]; next_run?: number | null; last?: { status: string; at: number } | null; by: string };
 type RunSum = { id: string; name: string; status: string; trigger: string; updated: number; error?: string };
@@ -196,6 +199,62 @@ export default function Automation() {
             </div>
           ))}
         </details>}
+      </section>
+
+      <section className="card b-3">
+        <div className="card-head"><div><h2><Lightbulb size={17} /> Lessons {d.lessons.filter((l) => l.status === "suggested").length ? <span className="pill warn">{d.lessons.filter((l) => l.status === "suggested").length}</span> : null}</h2>
+          <p className="sub">What the audit and the models learned. Approved ones reach every model.</p></div></div>
+        <div className="stack" style={{ gap: 0 }}>
+          {d.lessons.filter((l) => l.status === "suggested").slice(0, 8).map((l) => (
+            <div key={l.id} className="sec-row au-ask">
+              <Lightbulb size={18} color="var(--warn)" />
+              <div style={{ minWidth: 0 }}>
+                <div className="small au-wrap">{l.text}</div>
+                <details><summary className="tiny dim">{l.topic} · seen {l.seen}× · {l.by} · evidence</summary>
+                  {l.evidence.map((e, i) => <div key={i} className="tiny dim au-wrap">{new Date(e.at).toLocaleString()} · {e.model} · {e.tool}: {e.what}</div>)}</details>
+              </div>
+              <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                <button className="ghost sm" disabled={busy} onClick={() => act("lesson", { id: l.id, decision: "reject" }, "Rejected")} aria-label={`Reject lesson ${l.id}`}><X size={13} />No</button>
+                <button className="light sm" disabled={busy} onClick={() => act("lesson", { id: l.id, decision: "approve" }, "Every model gets it now")} aria-label={`Approve lesson ${l.id}`}><CheckCircle size={13} />Keep</button>
+              </div>
+            </div>
+          ))}
+          {!d.lessons.some((l) => l.status === "suggested") && <p className="tiny dim" style={{ margin: "4px 0 0" }}>Nothing new to review.</p>}
+        </div>
+        {d.lessons.some((l) => l.status === "approved" || l.status === "promoted") && <details style={{ marginTop: 12 }}>
+          <summary className="small">Kept ({d.lessons.filter((l) => l.status === "approved" || l.status === "promoted").length})</summary>
+          {d.lessons.filter((l) => l.status === "approved" || l.status === "promoted").map((l) => (
+            <div key={l.id} className="sec-log au-dec">
+              <span className={`pill ${l.status === "promoted" ? "violet" : "ok"}`}>{l.status === "promoted" ? "in the rules" : "kept"}</span>
+              <span className="small au-wrap">{l.text}</span>
+              <span className="dim tiny">{l.topic}</span>
+              {l.status === "approved"
+                ? <button className="ghost sm" disabled={busy || !d.github_key} title={d.github_key ? "Open a PR adding it to docs/FEEDBACK.md" : "Needs the GitHub key"} onClick={() => act("lesson", { id: l.id, decision: "promote" }, "PR opened")}>Make it a rule</button>
+                : l.pr ? <a className="tiny" href={l.pr} target="_blank" rel="noreferrer">PR</a> : <span />}
+            </div>
+          ))}
+        </details>}
+      </section>
+
+      <section className="card b-3">
+        <div className="card-head"><div><h2><ChartBar size={17} /> Scorecards</h2><p className="sub">Each model over the last 7 days. Use it to pick who does what.</p></div></div>
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th>Model</th><th className="au-num">Calls</th><th className="au-num">Worked</th><th className="au-num">QA pass</th><th className="au-num">Redos</th></tr></thead>
+            <tbody>
+              {d.cards.map((c) => (
+                <tr key={c.who} title={c.tools.join(", ")}>
+                  <td className="small">{c.who}</td>
+                  <td className="mono small au-num">{c.calls}</td>
+                  <td className="mono small au-num">{c.ok_rate == null ? "—" : `${c.ok_rate}%`}</td>
+                  <td className="mono small au-num">{c.qa_pass_rate == null ? "—" : `${c.qa_pass_rate}%`}</td>
+                  <td className="mono small au-num">{c.redos}</td>
+                </tr>
+              ))}
+              {!d.cards.length && <tr><td colSpan={5} className="dim small">No calls yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="card b-6">
