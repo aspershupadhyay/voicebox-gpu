@@ -307,6 +307,34 @@ WAN, LTX and animate each make one real shot; NVENC encode vs CPU; 1, 2 and 4 re
 CPU runtime; one video vs five end to end; tokens per video before and after C. Any engine that fails gets a fix or
 is hidden from the tool list, not left in it broken.
 
+**Measured on the L4, 2026-10-30** (worker 3.15.1; a batch = videos of 3 scenes, title_card + list + quote, ~9 s each,
+draft):
+
+| What | Result |
+|---|---|
+| One video vs five, Kokoro (warm) | 1 in **76 s** (voice 17 s), 5 in **215 s** (voice 61 s): **2.8×** one, against 5× for five singles in a row. Before the draft changes: 83 s / 244 s (2.9×) |
+| One video vs five, Qwen | 1 in 224 s, 5 in **365 s** (1.6×); the single's voice waited on another session swapping the owner's own voice model in and out (a shared GPU), so this ratio is flattered |
+| Target "5 in under 2× one" | **met with a GPU voice (1.6×), not with Kokoro (2.8×)**: Kokoro voices on the CPU, the same 12 cores Chromium renders on, so its batch can't overlap |
+| Renders at once (draft `list`, 1080×1920) | 1: **18 s**; 2: **25 s**; 4: **45.5 s** (3 ran at once; the 4th waited behind the measuring script's slot). Chromium fills the L4's 12 cores at ~3 renders |
+| Half-size draft scenes | 12.5 s vs 17.5 s full size (same template, same machine) |
+| NVENC vs x264, 30 s of 1080×1920 | **3.6 s vs 9.9 s** (2.75×), in the sandbox, after the fix below |
+| HyperFrames on Colab | first render ever: **15.3 s** (draft `list`), QA clean, title on frame 0 |
+| Toolkit installs (first time, then R2) | auto-editor 2.8 s, scenedetect 8.6 s, rembg 83.6 s, manim 58.3 s, all working |
+| Tokens (C) | the listing: **~2,700** (core) vs **~34,300** (all 90) every session; a 5-video batch's status answer ~400 tokens; a 60-row list 2,967 → 1,395 (compact) → 491 characters (brief) |
+
+**Found and fixed by measuring** (each its own PR): `edit_video`'s schema refused a list of voice files (#138); **NVENC
+never worked in the sandbox**: no `LD_LIBRARY_PATH`, so `libcuda.so.1` didn't load while the check (run as the
+worker) said yes; every `edit_video` on Colab was set to fail (#139); scenes now render while a GPU voice job runs
+(#141), but with Kokoro that starved the voice (61 → 184 s), so only beside GPU voices (#142); a render that finished
+without a saved file left a batch waiting forever (#142); a list scene showed only its first point because the scene
+is cut to its line (paced to land by 75% of the line now).
+
+**The CPU runtime as a render farm: not worth building.** A Colab CPU runtime has 2 cores; the L4 host has 12 and
+already renders 3 at once beside the GPU. More render speed comes from half-size drafts and the GPU voice overlap.
+
+**Not measured, needs the owner's go**: WAN, LTX and animate (1 shot each costs ~0.3-1.5 units and minutes of the
+GPU; listed under "Still to check on Colab").
+
 ## Order and owner decisions
 
 A, B and C+H can run at the same time in separate sessions (they touch different files); D, E and G follow once A
@@ -362,7 +390,10 @@ Each with the exact test a model should run through the MCP (worker 3.12.0 or la
 
 - ~~A1, Node in the sandbox~~ **checked on the L4 (worker 3.12.1)**: `/opt/vb-node/bin/node`, `v22.11.0`, `npx 10.9.0`, as `vbsandbox`.
 - **A2, the clean-up self-check**: `gpu action=selfcheck`, then `worker_status` → `selfcheck.steps` has `clean-up · Resemble Enhance` ok.
-- **D1, a 5-video batch**: `factory start` with 5 videos of 3 scenes (kokoro), poll `status` until done; write down the total seconds, `voice_s`, and the same for 1 video. Target: 5 in under 2× the time of 1.
+- ~~D1~~ **measured** (see F): Kokoro 76 s vs 215 s; Qwen 224 s vs 365 s.
+- **F1, the video engines**: `imagine`-style video jobs one shot each: WAN, LTX and animate with a 3 s prompt; record seconds and units (worker_status rates) here, and hide any that fails from the tool list.
+- **F2, a clean Qwen measurement**: the same 1-vs-5 factory script with `voice: {"engine": "qwen"}` when no one else is using the GPU (today's single was slowed by another session's engine swaps).
+- ~~G1 (installs)~~ **checked on the L4**: all four work (installs in F). Still to check: the R2 restore, which only shows on a fresh runtime:
 - **G1, the toolkit on the L4**: `run {"lang":"bash","tools":["auto-editor","scenedetect","rembg","manim"],"code":"auto-editor --version; scenedetect version; manim --version"}`; the notes say "installed in …"; then `gpu action=restart_worker` and run it again: the notes should say "from R2 in … s". Manim is the one to watch (it needs cairo, which Colab's Python 3.12 has wheels for); if it fails, take it out of `TOOLKIT` in `worker/bench.py` and the list in `docs/MOTION.md`.
 - **G2, Remotion**: `repo checkout` a Remotion project (e.g. a fresh `npx create-video` pushed to the workbench), then `video_template action=render project={…} composition=<id>`.
 - **E1, the ledger PR**: once the GitHub key reaches `videos-post`, `memory ledger_add file=LEARNINGS.md text="test entry"`, then wait for the 02:00 UTC sweep (or call `fold` from a script): one PR named "Ledger <date>".

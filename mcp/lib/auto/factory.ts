@@ -47,6 +47,9 @@ export type Scene = { line: string; template?: string; fields?: Record<string, u
 export type VideoSpec = { name: string; scenes: Scene[]; platform?: string; shape?: string; music?: string; captions?: boolean };
 type SceneState = { file?: string; job?: string; err?: string; dur?: number; voice?: string; cached?: boolean; len?: number; redone?: boolean };
 /** How long a line will take before it's voiced (165 wpm and a little), so scenes render while the voice job runs. */
+/** A list's points all land within its line (by 75% of it): the scene is cut to the line, so points paced for a
+ *  longer scene never showed (seen on the L4: only the first of three). */
+const listPace = (line: number, n: number) => ({ lead: 0.3, per_item: Math.max(0.4, (line * 0.75 - 0.3) / Math.max(2, n)) });
 const estimate = (line: string) => line.trim().split(/\s+/).length / 2.75 + 0.6;
 type Item = { name: string; spec: VideoSpec; check?: { verdict: string; issues: string[] }; scenes: SceneState[]; join?: string; file?: string; qa?: { verdict: string; issues?: string[] }; err?: string; state: "check" | "voice" | "scenes" | "join" | "done" | "error" };
 export type Batch = {
@@ -170,7 +173,7 @@ async function step(b: Batch, call: Call) {
     if (!st.job) {
       const hit = await getJson<{ file: string; len?: number }>(CACHE(h)).catch(() => null);
       if (hit) { st.file = hit.file; st.len = hit.len ?? len; st.cached = true; return; }
-      const fields = { ...(sc.fields ?? {}), seconds: len, ...(sc.template === "list" ? { per_item: Math.max(1, (len - 2.5) / Math.max(2, (sc.fields?.items as unknown[] | undefined)?.length ?? 2)) } : {}) };
+      const fields = { ...(sc.fields ?? {}), seconds: len, ...(sc.template === "list" ? listPace(st.dur ?? estimate(sc.line), (sc.fields?.items as unknown[] | undefined)?.length ?? 2) : {}) };
       const r = await call("video_template", { template: sc.template, fields, shape: shapeOf(it.spec), quality: b.draft ? "draft" : "standard", ...(b.draft ? { size: "half" } : {}), name: `${it.name}-s${k + 1}`, ...(b.project ? { project: b.project } : { save_to: "Factory/scenes" }) });
       const x = v<{ job_id?: string; status?: string; file?: { file_id?: string }; error?: string }>(r.value);
       if (!r.ok) { st.err = r.text.slice(0, 200); return; }

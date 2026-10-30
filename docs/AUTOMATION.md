@@ -192,12 +192,11 @@ the OAuth connector (full endpoint).
 ## Still to check on Colab (the build session had no GPU and couldn't run some packages)
 
 1. The sandbox's iptables rule and `vbsandbox` user on the real runtime: a `run` answer lists its isolation.
-2. NVENC renders and Whisper captions in `edit_video` and `repurpose` (they fell back to x264 and given words here).
-3. Playwright's `install --with-deps chromium` on Colab (here the pre-installed Chromium was used).
-4. HyperFrames: the first `video_template` render installs Node 22 and HyperFrames; if it fails, the whole error
-   comes back. Running the npm package wasn't allowed in the build session, so this is its first real test.
-5. Saving `out/` files, renders and screenshots into Files (the worker only pushes to https, i.e. R2; locally the
-   storage stand-in was http).
+2. ~~NVENC and Whisper captions~~ **checked 2026-10-30**: NVENC was broken in the sandbox (no `LD_LIBRARY_PATH`);
+   fixed in #139 and measured 3.6 s vs 9.9 s on x264; Whisper pop captions came out right in the factory's videos.
+3. ~~Playwright's Chromium on Colab~~ **checked**: HyperFrames renders with it.
+4. ~~HyperFrames~~ **checked**: first render 15.3 s, QA clean (docs/FACTORY.md A, F).
+5. ~~Saving `out/` files and renders into Files~~ **checked**: run outputs, renders and contact sheets all landed.
 6. `morning_ideas` against the real Radar and board (save it: `workflow action=save example=morning_ideas`).
 
 ## Decisions
