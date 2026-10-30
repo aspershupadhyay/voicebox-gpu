@@ -1,0 +1,12 @@
+// The studio on Cloudflare Workers (docs/MIGRATION.md step 3). Built by `npx opennextjs-cloudflare build`, deployed by
+// `npx opennextjs-cloudflare deploy`. Secrets are copied from Vercel by scripts/move_secrets (never written here).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "voicebox-studio",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  "limits": { "cpu_ms": 300000 },
+  "observability": { "enabled": true }
+}

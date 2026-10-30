@@ -1,48 +1,44 @@
-# Deploys the dashboard + MCP server (mcp/) to Vercel on every push that touches it, with the current worker bundle.
-# One-time setup: repo Settings → Secrets and variables → Actions → New repository secret VERCEL_TOKEN
-# (vercel.com/account/settings/tokens). Env vars stay as they are on Vercel; this only ships code.
-# This is the only deployer of main: Vercel's own Git deploys of main are off (mcp/vercel.json), because they ship
-# the committed mcp/lib/bundle.ts, which can be stale (a docs-only push once rolled the worker back to 3.0.1).
+# Deploys the dashboard + MCP server (mcp/) to Cloudflare Workers on every push that touches it, with the current
+# worker bundle (docs/MIGRATION.md step 3: the app moved off Vercel on 2026-10-30).
+# One-time setup: repo Settings → Secrets and variables → Actions → New repository secret CLOUDFLARE_API_TOKEN
+# (Cloudflare dashboard → My Profile → API Tokens → Create Token → "Edit Cloudflare Workers" template).
+# Settings and keys live on the Worker (wrangler secret); this only ships code.
 name: Deploy
 on:
   push:
-    branches: [main, claude/optimistic-heisenberg-ik2pah, claude/voicebox-mcp-config-edlw25]
-    paths: [mcp/**, worker/**, docs/**, CLAUDE.md, notebook/build_notebook.py, scripts/build_playbook.py, scripts/vercel_deploy.py, .github/workflows/deploy.yml]
+    branches: [main]
+    paths: [mcp/**, worker/**, docs/**, CLAUDE.md, notebook/build_notebook.py, scripts/build_playbook.py, .github/workflows/deploy.yml]
   workflow_dispatch:
 concurrency: { group: deploy, cancel-in-progress: false }
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_SCOPE: forchatgptuseho-9784
-      VERCEL_PROJECT: mcp
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 057fb7340dca399cea8eaf0071aa5760
+      SITE: https://voicebox-studio.elitemode-sparsh.workers.dev
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: mcp/package-lock.json }
       - name: Check the token
-        run: |
-          [ -n "$VERCEL_TOKEN" ] || { echo "::error::Add the VERCEL_TOKEN repository secret (see the top of this file)"; exit 1; }
-          t=$(printf %s "$VERCEL_TOKEN" | tr -d '[:space:]')
-          echo "token length: ${#t}"
-          for path in /v2/user "/v2/teams/$VERCEL_SCOPE" "/v9/projects/$VERCEL_PROJECT?slug=$VERCEL_SCOPE"; do
-            echo "$path -> $(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $t" "https://api.vercel.com$path")"
-          done
+        run: '[ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "::error::Add the CLOUDFLARE_API_TOKEN repository secret (see the top of this file)"; exit 1; }'
       - name: Worker bundle (what Colab pulls from /api/bundle)
         run: python3 notebook/build_notebook.py
       - name: Playbook (the docs the playbook MCP tool serves)
         run: python3 scripts/build_playbook.py
+      - name: Build for Workers
+        working-directory: mcp
+        env: { NEXT_PUBLIC_FILES_BACKEND: r2 }
+        run: npm ci && npx opennextjs-cloudflare build
       - name: Deploy
-        # REST API, not the Vercel CLI: project-scoped tokens can't load a user, which the CLI always does
-        run: python3 scripts/vercel_deploy.py --scope "$VERCEL_SCOPE" --project "$VERCEL_PROJECT"
+        working-directory: mcp
+        run: npx wrangler deploy
       - name: Smoke test
         run: |
-          sleep 10
-          ok=0
-          for site in https://voiceboxstudio.vercel.app https://mcp-eta-tawny.vercel.app; do
-            a=$(curl -s -o /dev/null -w '%{http_code}' "$site/login"); b=$(curl -s -o /dev/null -w '%{http_code}' "$site/api/register")
-            echo "$site: /login $a, /api/register $b"
-            if [ "$a" = 200 ] && [ "$b" = 405 ]; then ok=1; fi
-          done
-          [ "$ok" = 1 ]
+          sleep 5
+          a=$(curl -s -o /dev/null -w '%{http_code}' "$SITE/login"); b=$(curl -s -o /dev/null -w '%{http_code}' "$SITE/api/register")
+          echo "$SITE: /login $a, /api/register $b"
+          [ "$a" = 200 ] && [ "$b" = 405 ]

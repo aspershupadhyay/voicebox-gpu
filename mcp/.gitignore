@@ -1,2 +1,7 @@
 .vercel
 .env*
+
+# Cloudflare Workers build (docs/MIGRATION.md step 3)
+.open-next/
+.wrangler/
+.dev.vars*

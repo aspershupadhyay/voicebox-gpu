@@ -4,7 +4,7 @@
 // match its targets (platforms, stage, publish time).
 import { getJson, putJson } from "./store";
 import { cleanGoals, cleanTargets, postFromTargets, type Goals, type Target, type TargetMap } from "./spaces";
-import { getPost, hasKey, updatePost } from "./appwrite";
+import { getPost, hasWorkspace, updatePost } from "./appwrite";
 
 const KEY = "workspace/spaces.json";
 type Store = { posts: TargetMap; goals: Goals };
@@ -38,7 +38,7 @@ export async function setTargets(postId: string, given: unknown, actor: { id?: s
   const targets = cleanTargets(given).map((t) => (t.status === "posted" ? { ...t, posted_at: t.posted_at ?? before.find((b) => b.space === t.space)?.posted_at ?? now } : t));
   s.posts[postId] = targets;
   await putJson(KEY, s);
-  if (sync && hasKey()) {
+  if (sync && hasWorkspace()) {
     const p = await getPost(postId);
     const next = postFromTargets(targets);
     const patch: Record<string, unknown> = {};

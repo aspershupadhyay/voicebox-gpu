@@ -3,8 +3,10 @@
 ## Shipping (standing instruction from the owner)
 
 Always ship finished work: commit, push the branch, open a pull request to `main`, and merge it once checks pass.
-Merging to `main` makes it live: `.github/workflows/deploy.yml` deploys `mcp/` (dashboard + MCP server) to Vercel
-(https://voiceboxstudio.vercel.app) and rebuilds the worker bundle that Colab pulls. After merging, check the Deploy
+Merging to `main` makes it live: `.github/workflows/deploy.yml` builds `mcp/` (dashboard + MCP server) with OpenNext
+and deploys it to Cloudflare Workers (https://voicebox-studio.elitemode-sparsh.workers.dev; moved off Vercel on
+2026-10-30, docs/MIGRATION.md), with the worker bundle that Colab pulls. Settings and keys live on the Worker
+(`npx wrangler secret put`), never in git. After merging, check the Deploy
 run succeeded and say so. A restarted Colab worker picks up `worker/` changes.
 
 ## The owner's feedback (read first)
@@ -85,7 +87,8 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
 
 ## Checks before pushing
 
-- `cd mcp && npx tsc --noEmit` and `npx next build`
+- `cd mcp && npx tsc --noEmit` and `npx next build` (and `npx opennextjs-cloudflare build` for anything runtime-sensitive:
+  Workers forbid code generated at run time and native modules such as sharp)
 - `cd mcp && npx -y tsx scripts/check-register.mts` for any tool change: every tool registered and its schema
   converted as clients get it (a throw there is a dead MCP in production; #131 shipped one)
 - `python3 -m py_compile worker/*.py` for worker changes

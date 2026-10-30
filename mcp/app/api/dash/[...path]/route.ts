@@ -135,7 +135,7 @@ export async function GET(req: Request, ctx: Ctx) {
       const acc = await import("@/lib/access");
       const s = await getSettings();
       const env = (process.env.WORKSPACE_EMAILS ?? "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
-      const members = await import("@/lib/appwrite").then((m) => (m.hasKey() ? m.listMembers() : [])).catch(() => []);
+      const members = await import("@/lib/appwrite").then((m) => (m.hasPeople() ? m.listMembers() : [])).catch(() => []);
       const emails = [...new Set([...env, ...s.workspace_emails, ...members.map((m) => m.email.toLowerCase())])];
       const people = emails.map((email) => ({ email, name: members.find((m) => m.email.toLowerCase() === email)?.name ?? null,
         on_vercel: env.includes(email), invited: s.workspace_emails.includes(email), member: members.some((m) => m.email.toLowerCase() === email) }));
@@ -603,8 +603,8 @@ export async function POST(req: Request, ctx: Ctx) {
         if ((process.env.WORKSPACE_EMAILS ?? "").toLowerCase().split(",").map((x) => x.trim()).includes(email))
           return Response.json({ error: "this email is in WORKSPACE_EMAILS on Vercel: remove it there" }, { status: 400 });
         await updateSettings({ workspace_emails: s.workspace_emails.filter((x) => x !== email) });
-        const { hasKey, removeMember } = await import("@/lib/appwrite");
-        if (hasKey()) await removeMember(email);
+        const { hasPeople, removeMember } = await import("@/lib/appwrite");
+        if (hasPeople()) await removeMember(email);
         await acc.allowedEmails(true);
         return Response.json({ ok: true });
       }

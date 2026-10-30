@@ -126,6 +126,17 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    while someone is there (`components/watching.ts`: tab visible and touched in the last 5 minutes), so a tab left open
    stops waking Vercel. Moving routes themselves to Cloudflare needs sign-in checked there first (the session cookie's
    key), so it waits for the usage numbers. Next: measure again, then move the busiest routes left.
+   **Moved (2026-10-30)**: the owner took Workers Paid, and the whole app runs there as one Worker (`voicebox-studio`,
+   https://voicebox-studio.elitemode-sparsh.workers.dev), built from the same code with OpenNext (`open-next.config.ts`,
+   `wrangler.jsonc`, 5 MB gzip). Changes it needed: the MCP SDK's Cloudflare-safe schema checker everywhere (Ajv writes
+   code at run time, which Workers forbid; `next.config.ts`), photo thumbnails fall back to the original (no sharp),
+   and the workspace counts as connected on Neon without Appwrite's key (`hasWorkspace`, `hasPeople`). Vercel's
+   sensitive keys can't be read back, so the Worker got new ones: R2 keys limited to the `voicebox` bucket, a new
+   `MCP_TOKEN` (everyone signs in again; tool keys in Settings → Automation → Keys are pasted again), `WORKER_SECRET`
+   (Colab is connected again) and `PUBLISH_KEY` (the R2 file tokens were re-signed). The owner adds the YouTube,
+   Instagram and GitHub OAuth secrets and a Hugging Face token, with the new address as each redirect URL. The timer
+   points at the new address; deploy.yml deploys with `CLOUDFLARE_API_TOKEN`. Checked live: pages, sign-in, the MCP,
+   the board from Neon, a file from R2, the sweep, and the backup (the trained voices fully copied to Neon storage).
    The original plan: **API and MCP to one Cloudflare Worker.** `/api/*` and the MCP run there, reaching CockroachDB through Hyperdrive.
    The long routes (starting the Colab GPU, copying downloads) become Queue jobs; a Cloudflare cron replaces
    `sweep.yml`. Vercel rewrites `/api/*` to the Worker so it stays one origin (cookies, the same-origin check and

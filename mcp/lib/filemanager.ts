@@ -2,7 +2,7 @@
 // catalog of uploads (Appwrite) and generated items (R2 library) with their folders, stars and the trash; rename,
 // trash / restore / delete for good, import from a link, poster frames for uploaded videos and the sidebar's
 // favourites. The folder tree itself is lib/files.ts (rules in lib/filetree.ts).
-import { addMediaFromUrl, deleteMediaRow, getMedia, hasKey, listMedia, listPosts, renameMedia } from "./appwrite";
+import { addMediaFromUrl, deleteMediaRow, getMedia, hasKey, hasWorkspace, listMedia, listPosts, renameMedia } from "./appwrite";
 import { groupsOf, POST_GROUP_RE, type Group } from "./carouselrules";
 import { createCarousel, forgetInCarousels, getCarousels, updateCarousel } from "./carousels";
 import { expired, FilesError, findFolder, forget, forgetPlan, getTree, markPoster, moveItems, pathOf, restoreItems, trashItems, type FileTree } from "./files";
@@ -44,10 +44,10 @@ const fromJob = (j: LibSummary, t: FileTree): FileItem => {
 export async function catalog(opts: { trash?: boolean } = {}) {
   const [tree, media, jobs, made, posts] = await Promise.all([
     getTree(),
-    hasKey() ? listMedia(undefined, 1000).catch((e: Error) => e) : Promise.resolve(new Error("the shared workspace isn't connected (APPWRITE_API_KEY)")),
+    hasWorkspace() ? listMedia(undefined, 1000).catch((e: Error) => e) : Promise.resolve(new Error("the shared workspace isn't connected (APPWRITE_API_KEY)")),
     listSummaries(),
     getCarousels().catch(() => []),
-    hasKey() ? listPosts({ limit: 200 }).catch(() => []) : Promise.resolve([]),
+    hasWorkspace() ? listPosts({ limit: 200 }).catch(() => []) : Promise.resolve([]),
   ]);
   const all = [...(media instanceof Error ? [] : media.map((m) => fromMedia(m, tree))), ...jobs.map((j) => fromJob(j, tree))];
   const live = all.filter((i) => !isTrashed(tree, i.id));
@@ -207,7 +207,7 @@ export async function favourites() {
       const thumb = j.image ? await sign(j.id, j.image.thumb) : j.video?.poster ? await sign(j.id, "poster.jpg") : null;
       return { key: k, name: libName({ ...j, results: [{ text: j.text }] }), kind: libKind(j), color: null, thumb, href: `/files?file=g:${j.id}` };
     }
-    if (!hasKey()) return null;
+    if (!hasWorkspace()) return null;
     const m = await getMedia(k.slice(2)).catch(() => null);
     if (!m) return null;
     const thumb = m.token && m.kind === "image" ? fileUrl(m, "preview", 96) : t.posters[k] ? await posterUrl(k) : null;
@@ -228,7 +228,7 @@ export class LiveAlready extends FilesError {
 }
 
 export async function publishCarousel(id: string, actor: Actor, opts: { caption?: string; account?: string; go?: "draft" | "arm" | "now"; at?: string; again?: boolean } = {}) {
-  if (!hasKey()) throw new FilesError("the shared workspace isn't connected (APPWRITE_API_KEY)");
+  if (!hasWorkspace()) throw new FilesError("the shared workspace isn't connected (APPWRITE_API_KEY)");
   const [{ createPost, getPost, setMediaPost }, { targetsOf }, plansMod, { BUSY, LIMITS }, { getTargets, setTargets }, { captionFor }, { adaptCaption }, { listAccounts }, cat] = await Promise.all([
     import("./appwrite"), import("./spaces"), import("./publish/plans"), import("./publish/shared"), import("./spacestore"), import("./captions"), import("./writing"), import("./publish/accounts"), catalog(),
   ]);

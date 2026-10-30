@@ -11,7 +11,7 @@ import { describeProfile, profileFor, withProfile } from "@/lib/profiles";
 import { listDataset } from "@/lib/datasets";
 import { listModels } from "@/lib/voicemodel";
 import {
-  addComment, createPost, deletePost, getPost, hasKey, linkJob, listActivity, listComments, listMedia, listMembers, listPosts, postsBetween, updatePost, addMediaBytes, deleteMediaRow, mimeFor } from "@/lib/appwrite";
+  addComment, createPost, deletePost, getPost, hasKey, linkJob, listActivity, listComments, listMedia, listMembers, listPosts, postsBetween, updatePost, hasWorkspace, addMediaBytes, deleteMediaRow, mimeFor } from "@/lib/appwrite";
 import { SPACE_IDS, spaceName, targetsOf, type TargetMap } from "@/lib/spaces";
 import { dropTargets, getTargets, setTargets } from "@/lib/spacestore";
 import { fileUrl, PLATFORMS as POST_PLATFORMS, STATUSES, type Post } from "@/lib/workspace";
@@ -753,7 +753,7 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     link: `/posts?post=${p.$id}`,
   });
   const ws = async <T,>(fn: () => Promise<T>) => {
-    if (!hasKey()) return { ...text("ERROR: the shared workspace is not configured on the server (APPWRITE_API_KEY)."), isError: true };
+    if (!hasWorkspace()) return { ...text("ERROR: the shared workspace is not configured on the server (APPWRITE_API_KEY)."), isError: true };
     try { return text(await fn()); } catch (e) { return fail(e); }
   };
   const dlRow = (d: import("@/lib/downloads").Dl) => ({
