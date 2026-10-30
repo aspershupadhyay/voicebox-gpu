@@ -45,7 +45,9 @@ export function scriptCheck(lines: string[], platform = "reels") {
 
 export type Scene = { line: string; template?: string; fields?: Record<string, unknown>; clip?: string; from?: number };
 export type VideoSpec = { name: string; scenes: Scene[]; platform?: string; shape?: string; music?: string; captions?: boolean };
-type SceneState = { file?: string; job?: string; err?: string; dur?: number; voice?: string; cached?: boolean };
+type SceneState = { file?: string; job?: string; err?: string; dur?: number; voice?: string; cached?: boolean; len?: number; redone?: boolean };
+/** How long a line will take before it's voiced (165 wpm and a little), so scenes render while the voice job runs. */
+const estimate = (line: string) => line.trim().split(/\s+/).length / 2.75 + 0.6;
 type Item = { name: string; spec: VideoSpec; check?: { verdict: string; issues: string[] }; scenes: SceneState[]; join?: string; file?: string; qa?: { verdict: string; issues?: string[] }; err?: string; state: "check" | "voice" | "scenes" | "join" | "done" | "error" };
 export type Batch = {
   id: string; by: string; created: number; updated: number; status: "running" | "done" | "error" | "stopped";
@@ -128,53 +130,56 @@ async function step(b: Batch, call: Call) {
     const job = v<{ id?: string; job_id?: string }>(r.value)?.id ?? v<{ job_id?: string }>(r.value)?.job_id;
     if (!r.ok || !job) { for (const it of toVoice) { it.state = "error"; it.err = `voice: ${r.text.slice(0, 200)}`; } return; }
     b.voice_job = job; b.timing.voice_start = Date.now();
-    note(b, `voice job ${job}: ${lines.length} lines for ${toVoice.length} videos`);
-    return;
-  }
-  if (toVoice.length && b.voice_job) {
-    const r = await call("get_job", { job_id: b.voice_job, wait_seconds: 20 });
+    note(b, `voice job ${job}: ${lines.length} lines for ${toVoice.length} videos; scenes render meanwhile`);
+  } else if (toVoice.length && b.voice_job) {
+    const r = await call("get_job", { job_id: b.voice_job, wait_seconds: 0 });
     const j = v<{ status?: string; error?: string; results?: { id: string; url?: string; audio?: string; duration?: number }[] }>(r.value);
     if (j?.status === "error" || j?.status === "cancelled") { for (const it of toVoice) { it.state = "error"; it.err = `voice: ${j.error ?? j.status}`; } return; }
-    if (j?.status !== "done") return;
-    b.timing.voice_s = Math.round((Date.now() - (b.timing.voice_start ?? Date.now())) / 1000);
-    const by = new Map((j.results ?? []).map((x) => [x.id, x]));
-    for (const it of toVoice) {
-      const n = b.items.indexOf(it);
-      it.scenes = it.scenes.map((s, k) => { const x = by.get(`v${n}s${k}`); return { ...s, voice: x?.url ?? x?.audio, dur: x?.duration }; });
-      if (it.scenes.some((s) => !s.voice)) { it.state = "error"; it.err = "voice: some lines came back without audio"; continue; }
-      it.state = "scenes";
+    if (j?.status === "done") {
+      b.timing.voice_s = Math.round((Date.now() - (b.timing.voice_start ?? Date.now())) / 1000);
+      const by = new Map((j.results ?? []).map((x) => [x.id, x]));
+      for (const it of toVoice) {
+        const n = b.items.indexOf(it);
+        it.scenes = it.scenes.map((s, k) => { const x = by.get(`v${n}s${k}`); return { ...s, voice: x?.url ?? x?.audio, dur: x?.duration }; });
+        if (it.scenes.some((s) => !s.voice)) { it.state = "error"; it.err = "voice: some lines came back without audio"; continue; }
+        it.state = "scenes";
+      }
+      note(b, `voice done in ${b.timing.voice_s} s`);
     }
-    note(b, `voice done in ${b.timing.voice_s} s`);
-    b.timing.scenes_start = Date.now();
   }
-  // 3. scenes: cached by content, else rendered (all at once: the render lane takes 4, the rest queue)
-  const scened = b.items.filter((i) => i.state === "scenes");
+  // 3. scenes, overlapped with the voice: rendered to the estimated length (with slack) while the voice job runs,
+  // cached by content; a scene whose real line came out longer than it is renders again at the real length
+  const scened = b.items.filter((i) => i.state === "scenes" || i.state === "voice");
   await Promise.all(scened.flatMap((it) => it.spec.scenes.map(async (sc, k) => {
     const st = it.scenes[k];
-    if (st.file || st.err) return;
-    if (sc.clip) { st.file = sc.clip; return; }
-    const dur = (st.dur ?? 3) + 0.25;
-    const h = sceneKey(sc, shapeOf(it.spec), b.draft, dur);
+    if (st.err) return;
+    if (sc.clip) { st.file = sc.clip; st.len = 1e9; return; }
+    const need = (st.dur ?? estimate(sc.line)) + 0.25;
+    if (st.file && (st.len ?? 0) >= need) return;
+    if (st.file && st.dur != null) { st.file = undefined; st.job = undefined; st.redone = true; } // too short for the real line
+    if (st.file) return; // rendered to the estimate; the voice decides
+    const len = st.dur != null ? need + 0.5 : Math.ceil((estimate(sc.line) * 1.3 + 1) * 2) / 2;
+    const h = sceneKey(sc, shapeOf(it.spec), b.draft, len);
     if (!st.job) {
-      const hit = await getJson<{ file: string }>(CACHE(h)).catch(() => null);
-      if (hit) { st.file = hit.file; st.cached = true; return; }
-      const fields = { ...(sc.fields ?? {}), seconds: dur, ...(sc.template === "list" ? { per_item: Math.max(1, (dur - 2.5) / Math.max(2, (sc.fields?.items as unknown[] | undefined)?.length ?? 2)) } : {}) };
+      const hit = await getJson<{ file: string; len?: number }>(CACHE(h)).catch(() => null);
+      if (hit) { st.file = hit.file; st.len = hit.len ?? len; st.cached = true; return; }
+      const fields = { ...(sc.fields ?? {}), seconds: len, ...(sc.template === "list" ? { per_item: Math.max(1, (len - 2.5) / Math.max(2, (sc.fields?.items as unknown[] | undefined)?.length ?? 2)) } : {}) };
       const r = await call("video_template", { template: sc.template, fields, shape: shapeOf(it.spec), quality: b.draft ? "draft" : "standard", ...(b.draft ? { size: "half" } : {}), name: `${it.name}-s${k + 1}`, ...(b.project ? { project: b.project } : { save_to: "Factory/scenes" }) });
       const x = v<{ job_id?: string; status?: string; file?: { file_id?: string }; error?: string }>(r.value);
       if (!r.ok) { st.err = r.text.slice(0, 200); return; }
-      if (x?.file?.file_id) { st.file = x.file.file_id; await putJson(CACHE(h), { file: st.file }); return; }
-      st.job = x?.job_id;
+      if (x?.file?.file_id) { st.file = x.file.file_id; st.len = len; await putJson(CACHE(h), { file: st.file, len }); return; }
+      st.job = x?.job_id; st.len = len;
       return;
     }
     const r = await call("get_job", { job_id: st.job, wait_seconds: 0 });
     const x = v<{ status?: string; file?: { file_id?: string }; error?: string }>(r.value);
     if (x?.status === "error") st.err = x.error ?? "render failed";
-    else if (x?.file?.file_id) { st.file = x.file.file_id; await putJson(CACHE(h), { file: st.file }); }
+    else if (x?.file?.file_id) { st.file = x.file.file_id; await putJson(CACHE(h), { file: st.file, len: st.len }); }
   })));
   for (const it of scened) {
     const bad = it.scenes.find((s) => s.err);
     if (bad) { it.state = "error"; it.err = `scene: ${bad.err}`; continue; }
-    if (it.scenes.every((s) => s.file)) it.state = "join";
+    if (it.state === "scenes" && it.scenes.every((s, k) => s.file && (s.len ?? 0) >= (s.dur ?? estimate(it.spec.scenes[k].line)) + 0.25)) it.state = "join";
   }
   // 4. one join per video: scenes cut to their lines, the lines as one voice, music, captions; QA comes with it
   await Promise.all(b.items.filter((i) => i.state === "join").map(async (it) => {
