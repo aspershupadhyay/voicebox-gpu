@@ -103,6 +103,7 @@ async function finish(p: Plan, rules: Rules) {
   if (rules.notify) await notify(later ? `Scheduled on ${spaceName(p.space)}` : `Live on ${spaceName(p.space)}`, p.result?.url ?? "", "tada").catch(() => null);
   await logActivity({ post_id: p.post, verb: later ? "scheduled on" : "published to", text: `${spaceName(p.space)} ${p.result?.url ?? ""}` }, AUTOPILOT).catch(() => null);
   await crosspost(p, rules).catch((e) => line(p, `Cross-post rule: ${(e as Error).message}`, false));
+  if (!later) await import("../auto/flows").then((f) => f.emit("post.live", { post_id: p.post, space: p.space, url: p.result?.url ?? "" }));
 }
 
 /** The board follows: the target goes to Posted (or Scheduled while YouTube holds it) with its live link. */

@@ -2,7 +2,7 @@
 // Settings → Automation (docs/AUTOMATION.md): what models and automations may do on their own. The approvals inbox
 // (risky actions wait here for a click), the kill switch, the day's Colab units cap, which actions ask first, and the
 // call log of every MCP call with the model that made it. Acts at once; server side lib/auto/control.ts.
-import { CheckCircle, GitBranch, Hand, Pause, Play, Plus, Robot, Stop, WarningCircle, X } from "@phosphor-icons/react";
+import { CheckCircle, FlowArrow, GitBranch, Hand, Pause, Play, Plus, Robot, Stop, WarningCircle, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
@@ -16,7 +16,20 @@ type Data = {
   control: { paused: boolean; paused_at?: number; paused_by?: string; pause_reason?: string; cap_units: number; ask_first: string[]; repos: string[] };
   units: { spent: number | null; balance: number | null };
   approvals: Approval[]; log: Log[]; ask_first: Record<string, string>; github_key: boolean; platform: string;
+  flows: { list: Flow[]; runs: RunSum[] };
 };
+type Flow = { id: string; name: string; about?: string; enabled: boolean; steps: { tool: string }[]; schedule?: { every: string; at?: string; tz?: string; days?: number[] } | null;
+  triggers?: { event: string; delay_h?: number }[]; next_run?: number | null; last?: { status: string; at: number } | null; by: string };
+type RunSum = { id: string; name: string; status: string; trigger: string; updated: number; error?: string };
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const when = (f: Flow) => {
+  const s = f.schedule;
+  const parts: string[] = [];
+  if (s) parts.push(s.every === "hour" ? `Every hour at :${(s.at ?? "00:00").slice(3)}` : `${s.every === "week" ? (s.days?.length ? s.days : [1]).map((d) => DAYS[d]).join(", ") : "Every day"} at ${s.at ?? "09:00"}${s.tz ? ` (${s.tz.split("/").pop()?.replace(/_/g, " ")})` : " UTC"}`);
+  for (const t of f.triggers ?? []) parts.push(`When ${t.event === "download.done" ? "a download lands" : "a post goes live"}${t.delay_h ? `, after ${t.delay_h} h` : ""}`);
+  return parts.join(" · ") || "By hand";
+};
+const RUN_TONE: Record<string, string> = { done: "ok", running: "blue", waiting: "warn", error: "bad", stopped: "grey" };
 
 const ago = (t: number) => {
   const s = Math.round((Date.now() - t) / 1000);
@@ -148,6 +161,41 @@ export default function Automation() {
           <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/repo" aria-label="Repo to allow" style={{ flex: 1, minWidth: 0 }} />
           <button className="ghost" disabled={busy || !repo.trim()}><Plus size={14} />Add</button>
         </form>
+      </section>
+
+      <section className="card b-6">
+        <div className="card-head"><div><h2><FlowArrow size={17} /> Workflows</h2><p className="sub">Saved steps that run on a schedule, when something happens, or by hand. A model makes them with the workflow tool.</p></div></div>
+        <div className="stack" style={{ gap: 0 }}>
+          {d.flows.list.map((f) => (
+            <div key={f.id} className="sec-row au-flow">
+              <FlowArrow size={18} className="dim" />
+              <div style={{ minWidth: 0 }}>
+                <div className="small" style={{ fontWeight: 600 }}>{f.name} {f.last ? <span className={`pill ${RUN_TONE[f.last.status] ?? "grey"}`}>{f.last.status} {ago(f.last.at)}</span> : null}</div>
+                <div className="tiny dim au-wrap">{when(f)} · {f.steps.length} step{f.steps.length === 1 ? "" : "s"} ({[...new Set(f.steps.map((x) => x.tool))].slice(0, 4).join(", ")}){f.enabled && f.next_run ? ` · next ${new Date(f.next_run).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}` : ""}</div>
+                {f.about && <div className="tiny dim au-wrap">{f.about}</div>}
+              </div>
+              <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                <button className="ghost sm" disabled={busy} onClick={() => act("flow", { id: f.id, run: true }, `${f.name} started`)} aria-label={`Run ${f.name} now`}><Play size={13} />Run</button>
+                <button type="button" role="switch" aria-checked={f.enabled} aria-label={`${f.name} on`} className={`switch ${f.enabled ? "on" : ""}`} disabled={busy}
+                  onClick={() => act("flow", { id: f.id, enabled: !f.enabled }, f.enabled ? `${f.name} paused` : `${f.name} on`)} />
+              </div>
+            </div>
+          ))}
+          {!d.flows.list.length && <p className="tiny dim" style={{ margin: "4px 0 0" }}>None yet. Ask a model: &ldquo;save the morning_ideas workflow&rdquo;.</p>}
+        </div>
+        {d.flows.runs.length > 0 && <details style={{ marginTop: 12 }}>
+          <summary className="small">Recent runs</summary>
+          {d.flows.runs.map((r) => (
+            <div key={r.id} className="sec-log au-dec">
+              <span className={`pill ${RUN_TONE[r.status] ?? "grey"}`}>{r.status}</span>
+              <span className="small au-wrap">{r.name}{r.error ? <span className="dim"> · {r.error}</span> : null}</span>
+              <span className="dim tiny">{r.trigger}</span>
+              {r.status === "running" || r.status === "waiting"
+                ? <button className="ghost sm" disabled={busy} onClick={() => act("flow", { id: r.id, stop: true }, "Run stopped")}>Stop</button>
+                : <span className="dim tiny">{ago(r.updated)}</span>}
+            </div>
+          ))}
+        </details>}
       </section>
 
       <section className="card b-6">
