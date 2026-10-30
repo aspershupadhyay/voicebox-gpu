@@ -19,6 +19,8 @@ export async function GET(req: Request, ctx: Ctx) {
   try {
     if (a === "me") return Response.json({ user: await currentUser(), workspace: hasKey() });
     if (a === "members") return Response.json({ members: await listMembers() });
+    // the copy into Postgres (lib/db.ts, docs/MIGRATION.md phase 2): both sides' rows, and what only one side has
+    if (a === "db-check") return Response.json(await (await import("@/lib/db")).checkCopy());
     if (a === "storage") { const u = await storageUse(); return Response.json({ used: u.bytes, cap: u.cap, parts: u.parts }); }
     if (a === "backup" && b && ID.test(b)) {
       const url = await backupUrl(await getMedia(b));
@@ -34,6 +36,10 @@ export async function POST(req: Request, ctx: Ctx) {
   if (!(await isAuthed(req))) return Response.json({ error: "unauthorized" }, { status: 401 });
   const [a, b] = (await ctx.params).path;
   try {
+    if (a === "db-copy") {
+      const { copyFromAppwrite, checkCopy } = await import("@/lib/db");
+      return Response.json({ copied: await copyFromAppwrite(), check: await checkCopy() });
+    }
     if (a === "media" && b && ID.test(b)) {
       const body = (await req.json().catch(() => ({}))) as { backup?: boolean };
       const backup = body.backup ?? (await getSettings()).backup_media;

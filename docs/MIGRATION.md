@@ -57,12 +57,24 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    working as they are; only `Passwords.docx` is left there, and it moves when Appwrite goes.
    **The storage budget**: `STORAGE_CAP_GB` (default 9.5) is checked before every upload starts; one that would take
    the bucket past it is refused with what fills it. The Files page shows the bucket against it.
-2. **Data to Postgres: Neon is the pick** (real Postgres, an HTTP driver that works from Vercel and Workers without
-   Hyperdrive, a branch per preview; the data is under 1 MB, so its 0.5 GB free tier is plenty, and it sleeps after
-   5 idle minutes, costing one slow first query). CockroachDB stays the fallback (Basic tier, cluster `9f03fe46-842e-439e-ac3a-e33fce750382`, SQL user `catch`). Tables for
-   posts, files, folders, shares, publishing, analytics and access; one module in `lib/` replaces the ~17 files that
-   call Appwrite. Export, load, compare, then switch reads. The $400 trial credit covers test runs; the app must run
-   on the free tier without it.
+2. **Data to Postgres on Neon** (project `plain-unit-11439440`, Singapore, branch `production`; Postgres, Object
+   Storage and Realtime enabled; Better Auth, Functions and the AI Gateway left off: sign-in stays ours, code runs on
+   Vercel / Workers). Why Neon over CockroachDB: real Postgres, an HTTP driver that works from Vercel and Workers
+   without Hyperdrive, a branch per preview, and Realtime for the live board. The data is under 1 MB against 1 GB.
+   **The limit to respect is compute: 100 CU-hours a month** (about 400 awake hours at 0.25 CU; it sleeps after 5 idle
+   minutes and pauses until next month if the hours run out). So: compute capped at 0.25 CU, the sweep reads Postgres
+   only when something is due, polling never touches it, busy reads are cached. Neon's object storage (5 GB) is the
+   off-Cloudflare backup: nightly database dumps and a copy of `models/`.
+   **Done (2026-10-30)**: all three services checked end to end from here (Postgres 18 answers; storage PUT/GET/DELETE;
+   a Realtime subscription saw an insert 244 ms later, and a sealed query for a browser carries no secret). The schema
+   is `mcp/db/001_workspace.sql` (the same four tables and columns as Appwrite, ids kept) and is applied on
+   `production`. `lib/db.ts` holds the driver, `copyFromAppwrite()` (upserts every row, safe to run again) and
+   `checkCopy()`; signed in, `POST /api/ws/db-copy` runs both and `GET /api/ws/db-check` compares (Appwrite today: 7
+   posts, 1 comment, 708 activity, 1 media).
+   **Next**: the owner adds `DATABASE_URL_POOLED`, `NEON_REALTIME_URL` and `NEON_REALTIME_SECRET` on Vercel; server
+   writes go to both (Appwrite stays the source); the browser's `useLive` (components/aw.ts) moves to API routes plus
+   sealed Realtime queries; run the copy, check it matches, then `DB_BACKEND=neon` switches reads. Sign-in stays on
+   Appwrite until its own step.
 3. **API and MCP to one Cloudflare Worker.** `/api/*` and the MCP run there, reaching CockroachDB through Hyperdrive.
    The long routes (starting the Colab GPU, copying downloads) become Queue jobs; a Cloudflare cron replaces
    `sweep.yml`. Vercel rewrites `/api/*` to the Worker so it stays one origin (cookies, the same-origin check and

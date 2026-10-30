@@ -46,7 +46,7 @@ many agents at once), in order. A new tool goes in
 
 ## Moving off Appwrite
 
-`docs/MIGRATION.md` is the plan (R2 for files, CockroachDB for data, the API and MCP on a Cloudflare Worker, Vercel for
+`docs/MIGRATION.md` is the plan (R2 for files, Postgres on Neon for data (`lib/db.ts`), the API and MCP on a Cloudflare Worker, Vercel for
 the pages), with its rules: one phase per PR, every switch behind a setting, nothing deleted from Appwrite until a week
 on the new setup, and the trained voices in R2 (`models/`, `datasets/`) never touched. Read it before any of it.
 
