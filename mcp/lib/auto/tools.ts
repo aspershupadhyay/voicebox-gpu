@@ -127,9 +127,11 @@ export function registerAutoTools(server: ToolServer) {
         voicebox: z.boolean().optional().describe("code mode: import voicebox (default true)"),
         save_to: z.string().max(200).nullable().optional().describe("folder for out/ files (default Workbench); null keeps them in the workspace"),
         skills: z.array(z.string().max(41)).max(10).optional().describe("saved skills to import (memory skills lists them): from skills import <name>"),
+        tools: z.array(z.enum(["auto-editor", "scenedetect", "rembg", "manim", "remotion"])).max(6).optional()
+          .describe("the motion toolkit on PATH (docs/MOTION.md): auto-editor (cut silences), scenedetect (shot lists), rembg (cut-outs), manim (diagrams), remotion (Node + npx for a Remotion project); installed once, restored from R2 after"),
       }),
     },
-    async ({ code, lang, workspace, files, args, timeout_s, memory_mb, voicebox, save_to, skills }, ctx) => {
+    async ({ code, lang, workspace, files, args, timeout_s, memory_mb, voicebox, save_to, skills, tools }, ctx) => {
       try {
         const b = await import("./bench");
         const model = await modelName(ctx as Ctx);
@@ -137,7 +139,7 @@ export function registerAutoTools(server: ToolServer) {
         const origin = (await import("../colab")).appOrigin(ctx && (ctx as Ctx)?.http?.req ? new URL((ctx as Ctx)!.http!.req!.url).origin : undefined);
         const inputs = await Promise.all((files ?? []).map((f) => b.inputFile(f)));
         const skillFiles = skills?.length ? await (await import("./memory")).skillCode(skills) : undefined;
-        const job = await b.submit({ op: "run", code, lang, workspace, files: inputs, args, timeout_s: t, memory_mb, ...(skillFiles ? { skills: skillFiles } : {}),
+        const job = await b.submit({ op: "run", code, lang, workspace, files: inputs, args, timeout_s: t, memory_mb, ...(skillFiles ? { skills: skillFiles } : {}), ...(tools?.length ? { tools } : {}),
           ...(voicebox === false ? {} : { voicebox_url: `${origin}/api/mcp`, voicebox_key: b.runKey(model, t, (await import("./wrap")).roleOf(ctx as never)), voicebox_model: model }) },
           { model, folder: save_to === undefined ? undefined : save_to });
         return text(await b.view(await b.wait(job.id, 45), { name: model }));
@@ -501,7 +503,7 @@ export function registerAutoTools(server: ToolServer) {
       description: [
         "Branded motion pieces filled from a little JSON; you never write HTML. action render (default): template + fields (+ inputs for any photo or video it uses) + shape (9:16 default) + brand {bg, ink, accent: hex colours, font: a Google font}, rendered on the Colab worker with HyperFrames, checked, saved to Files. action list: the templates and their fields.",
         "Templates: title_card {title, sub?, media?, seconds?}; list {title, items: 2-6, per_item?} (\"3 tips\"); quote {quote, author?, media?}; lower_third {media: a video, name, role?, at?, hold?, seconds}. Every template moves from the first frame. music: an input's key for a bed under it (music_db, default -16; ducked under any voice in it).",
-        "A custom scene from a repo at a commit (the owner's videos-post cases): repo action checkout (ref = the commit), then {\"action\":\"render\",\"project\":{\"workspace\":\"default\",\"dir\":\"videos-post/cases/025\"}}. Example: {\"template\":\"list\",\"fields\":{\"title\":\"3 Reels mistakes\",\"items\":[\"No hook\",\"Too long\",\"No captions\"]}}.",
+        "A custom scene from a repo at a commit (the owner's videos-post cases; a HyperFrames project renders with the version its package.json pins, a Remotion project with Remotion): repo action checkout (ref = the commit), then {\"action\":\"render\",\"project\":{\"workspace\":\"default\",\"dir\":\"videos-post/cases/025\"}}. Example: {\"template\":\"list\",\"fields\":{\"title\":\"3 Reels mistakes\",\"items\":[\"No hook\",\"Too long\",\"No captions\"]}}.",
       ].join(" "),
       inputSchema: z.object({
         action: z.enum(["render", "list"]).optional(),

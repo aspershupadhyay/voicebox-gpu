@@ -237,8 +237,14 @@ def run_code(job, jdir):
     for k in ("CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES", "LD_LIBRARY_PATH"):  # the GPU, not the secrets
         if os.environ.get(k):
             env[k] = os.environ[k]
-    if b["lang"] == "node" or NODE_HINT.search(b["code"]):  # Node 22, npm, npx and the project's HyperFrames on PATH
+    if b["lang"] == "node" or NODE_HINT.search(b["code"]) or "remotion" in b.get("tools", []):  # Node 22, npm, npx and the project's HyperFrames on PATH
         env.update(node_env(b, ws))
+    py_tools = [t for t in b.get("tools", []) if t in TOOLKIT]
+    if py_tools:  # the motion toolkit: each tool once per runtime (or from R2), first on PATH
+        bins, libs = tools_env(b, py_tools)
+        env["PATH"] = ":".join([*bins, env["PATH"]])
+        env["PYTHONPATH"] = ":".join([env["PYTHONPATH"], *libs])
+        b["stage"] = "running"
     as_user(["mkdir", "-p", ".tmp"], ws, timeout=30)
     out_p, err_p = os.path.join(jdir, "stdout.txt"), os.path.join(jdir, "stderr.txt")
     b["stage"] = "running"
@@ -552,13 +558,14 @@ def ensure_node(b=None):
             if have and _node_ok(have) and os.environ.get("VOICEBOX_NODE_SYSTEM") == "1":  # local tests: the machine's own Node 22
                 _NODE["bin"] = os.path.dirname(os.path.realpath(have))
                 return _NODE["bin"]
-            if b is not None:
-                b["stage"] = "installing Node 22 (once per runtime, ~20 s)"
-            os.makedirs(NODE_DIR, exist_ok=True)
-            r = subprocess.run(f"curl -fsSL --retry 3 {NODE_URL} | tar -xJ -C {NODE_DIR} --strip-components=1", shell=True, capture_output=True, timeout=600)
-            if r.returncode or not _node_ok(node):
-                raise ValueError(f"couldn't install Node 22: {r.stderr.decode('utf-8', 'replace')[-300:]}")
-            subprocess.run(["chmod", "-R", "a+rX", NODE_DIR], check=False)
+            def install():
+                os.makedirs(NODE_DIR, exist_ok=True)
+                r = subprocess.run(f"curl -fsSL --retry 3 {NODE_URL} | tar -xJ -C {NODE_DIR} --strip-components=1", shell=True, capture_output=True, timeout=600)
+                if r.returncode or not _node_ok(node):
+                    raise ValueError(f"couldn't install Node 22: {r.stderr.decode('utf-8', 'replace')[-300:]}")
+            if os.path.isdir(NODE_DIR) and not _node_ok(node):
+                shutil.rmtree(NODE_DIR, ignore_errors=True)
+            cached_install("node-22.11.0", NODE_DIR, install, b)
         _NODE["bin"] = os.path.join(NODE_DIR, "bin")
         return _NODE["bin"]
 
@@ -589,14 +596,105 @@ def hf_cli(b, version=HF_VERSION):
     cli = os.path.join(home, "node_modules", "hyperframes", "bin", "hyperframes.mjs")
     with _HF["lock"]:
         if not os.path.exists(cli):
-            b["stage"] = f"installing HyperFrames {version} (once per runtime, ~1 min)"
-            os.makedirs(home, exist_ok=True)
-            r = subprocess.run([os.path.join(bin_dir, "npm"), "install", "--prefix", home, "--no-audit", "--no-fund", f"hyperframes@{version}", f"gsap@{GSAP_VERSION}"],
-                               capture_output=True, timeout=900, env={**os.environ, "PATH": f"{bin_dir}:{BASE_ENV['PATH']}"})
-            if r.returncode or not os.path.exists(cli):
-                raise ValueError(f"couldn't install HyperFrames {version}: {r.stderr.decode('utf-8', 'replace')[-400:]}")
-            subprocess.run(["chmod", "-R", "a+rX", HF_DIR], check=False)
+            def install():
+                os.makedirs(home, exist_ok=True)
+                r = subprocess.run([os.path.join(bin_dir, "npm"), "install", "--prefix", home, "--no-audit", "--no-fund", f"hyperframes@{version}", f"gsap@{GSAP_VERSION}"],
+                                   capture_output=True, timeout=900, env={**os.environ, "PATH": f"{bin_dir}:{BASE_ENV['PATH']}"})
+                if r.returncode or not os.path.exists(cli):
+                    raise ValueError(f"couldn't install HyperFrames {version}: {r.stderr.decode('utf-8', 'replace')[-400:]}")
+            shutil.rmtree(home, ignore_errors=True)
+            cached_install(f"hyperframes-{version}-gsap-{GSAP_VERSION}", home, install, b)
     return cli
+
+
+# ── the motion toolkit (docs/FACTORY.md G, docs/MOTION.md): tools installed once per runtime, kept in R2 so the next
+# runtime restores them in seconds instead of installing again ────────────────────────────────────────────────────
+
+PY_DIR = "/opt/vb-py"
+# name: (pip packages, apt packages, the test that proves it works)
+TOOLKIT = {
+    "auto-editor": (["auto-editor"], [], ["auto-editor", "--version"]),
+    "scenedetect": (["scenedetect[opencv-headless]"], [], ["scenedetect", "version"]),
+    "rembg": (["rembg[cpu]", "onnxruntime"], [], ["python3", "-c", "import rembg; print('rembg', rembg.__name__)"]),
+    "manim": (["manim"], ["libcairo2-dev", "libpango1.0-dev", "pkg-config"], ["manim", "--version"]),
+}
+# left out, per docs/FACTORY.md G's rule (a tool that doesn't work isn't listed): realesrgan (its basicsr dependency
+# doesn't build), RIFE and SAM 2 (weights from Google Drive / several GB; ffmpeg's minterpolate does slow motion, rembg
+# does cut-outs)
+TOOLS_STATE = {"lock": threading.Lock(), "events": {}}
+
+
+def cached_install(name, dest, install, b=None):
+    """dest ready: already here, else pulled from R2 (cache/toolchain/<name>), else installed and pushed for the next
+    runtime in the background. The answer says which (and how long)."""
+    if os.path.isdir(dest) and os.listdir(dest):
+        return "here"
+    t = time.time()
+    import r2cache
+    prefix = f"cache/toolchain/{re.sub(r'[^A-Za-z0-9._-]', '_', name)}"
+    if r2cache.enabled():
+        try:
+            got = r2cache.pull(prefix, dest)
+            if got:
+                subprocess.run(["chmod", "-R", "a+rX", dest], check=False)
+                TOOLS_STATE["events"][name] = f"from R2 in {got['secs']} s"
+                return TOOLS_STATE["events"][name]
+        except Exception as e:  # noqa: BLE001
+            log("toolchain pull", name, e)
+    if b is not None:
+        b["stage"] = f"installing {name} (once; the next runtime restores it from R2)"
+    install()
+    subprocess.run(["chmod", "-R", "a+rX", dest], check=False)
+    took = f"installed in {round(time.time() - t, 1)} s"
+    if r2cache.enabled():
+        threading.Thread(target=lambda: _push_quiet(r2cache, prefix, dest, name), daemon=True).start()
+    TOOLS_STATE["events"][name] = took
+    return took
+
+
+def _push_quiet(r2cache, prefix, dest, name):
+    try:
+        r2cache.push(prefix, dest)
+    except Exception as e:  # noqa: BLE001
+        log("toolchain push", name, e)
+
+
+def ensure_tool(name, b=None):
+    """One toolkit tool in /opt/vb-py/<name> (pip --target), proved by its own test. Returns (bin dir, lib dir, note)."""
+    if name not in TOOLKIT:
+        raise ValueError(f"tools: one of {', '.join(TOOLKIT)}")
+    pips, apts, _ = TOOLKIT[name]
+    dest = os.path.join(PY_DIR, name)
+
+    def install():
+        if apts and shutil.which("apt-get"):
+            subprocess.run(["apt-get", "install", "-y", "-q", *apts], capture_output=True, timeout=900, env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"})
+        r = subprocess.run([sys.executable if os.path.basename(sys.executable).startswith("python3") else "python3", "-m", "pip", "install", "-q",
+                            "--target", dest, *pips], capture_output=True, timeout=1800)
+        if r.returncode:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise ValueError(f"couldn't install {name}: {r.stderr.decode('utf-8', 'replace')[-400:]}")
+        # its test, once as root: proves it works and lets a tool fetch what it fetches on first use (auto-editor's
+        # binary) into its own folder, which the sandbox user can't write
+        t = subprocess.run(TOOLKIT[name][2], capture_output=True, timeout=600,
+                           env={**BASE_ENV, "HOME": "/root", "PATH": f"{dest}/bin:{BASE_ENV['PATH']}", "PYTHONPATH": dest})
+        if t.returncode:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise ValueError(f"{name} installed but its test failed: {(t.stderr or t.stdout).decode('utf-8', 'replace')[-400:]}")
+    with TOOLS_STATE["lock"]:
+        note = cached_install(f"py-{name}", dest, install, b)
+    return os.path.join(dest, "bin"), dest, note
+
+
+def tools_env(b, names):
+    """PATH and PYTHONPATH for the toolkit tools a run asked for, each tested once; notes say how each got here."""
+    bins, libs = [], []
+    for n in names:
+        bin_dir, lib, note = ensure_tool(n, b)
+        bins.append(bin_dir)
+        libs.append(lib)
+        b.setdefault("notes", []).append(f"{n}: {note}")
+    return bins, libs
 
 
 def node_env(b, ws):
@@ -740,6 +838,8 @@ def render_template(job, jdir):
             proj = b["project"]["dir"]
             _, pkg, _ = as_user(["sh", "-c", 'd="$1"; while [ -n "$d" ] && [ "$d" != "." ]; do [ -f "$d/package.json" ] && { cat "$d/package.json"; exit 0; }; d=$(dirname "$d"); done; cat package.json 2>/dev/null', "sh", proj], ws, timeout=30)
             pin = re.search(r'"hyperframes"\s*:\s*"[\^~=v ]*(\d+\.\d+\.\d+)"', pkg.decode("utf-8", "replace"))
+            if not pin and re.search(r'"(@remotion/cli|remotion)"\s*:', pkg.decode("utf-8", "replace")):
+                return render_remotion(job, jdir, ws, run, proj)
             version = pin.group(1) if pin else HF_VERSION
             node, cli, env = ensure_hyperframes(b, version)
         else:
@@ -777,6 +877,32 @@ def render_template(job, jdir):
     finally:
         if not b.get("project"):
             _done_ws(ws)
+
+
+def render_remotion(job, jdir, ws, run, proj):
+    """A Remotion project from a repo checkout (its package.json names remotion): its own dependencies installed as
+    the sandbox user, then `npx remotion render` with the worker's Chromium. Remotion is free for individuals and
+    companies of up to 3 people; past that it needs a company licence (the owner confirms)."""
+    import media
+    b = job["bench"]
+    bin_dir = ensure_node(b)
+    ensure_browser(b)
+    env = {"PATH": f"{bin_dir}:{BASE_ENV['PATH']}", "HOME": ws, "npm_config_update_notifier": "false"}
+    b["stage"] = "installing the project's packages (npm ci)"
+    code, out, err = as_user(["sh", "-c", "[ -f package-lock.json ] && npm ci --no-audit --no-fund || npm install --no-audit --no-fund"], os.path.join(ws, proj), timeout=1200, env=env, err_tail=2000)
+    if code:
+        raise ValueError(f"npm couldn't install the project: {err.strip()[-500:]}")
+    b["stage"] = "rendering with Remotion"
+    t0 = time.time()
+    args = ["npx", "remotion", "render", *([b["composition"]] if b.get("composition") else []), os.path.join(ws, "tpl.mp4"), f"--browser-executable={chrome_path()}", "--concurrency=4"]
+    if b.get("composition"):  # remotion render <entry?> <id> <out>: with an id, the entry comes from remotion.config
+        args = ["npx", "remotion", "render", b["composition"], os.path.join(ws, "tpl.mp4"), f"--browser-executable={chrome_path()}", "--concurrency=4"]
+    code, out, err = as_user(args, os.path.join(ws, proj), timeout=1800, env=env, err_tail=4000)
+    if code or not os.path.exists(os.path.join(ws, "tpl.mp4")):
+        raise ValueError(f"Remotion couldn't render it: {(err or out.decode('utf-8', 'replace')).strip()[-900:]}")
+    q = media.qa(run, "tpl.mp4", b.get("platform") or "reels", None, stills=False)
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(b.get("name") or "remotion"))[:80].removesuffix(".mp4") + ".mp4"
+    b.update(qa=q, render_s=round(time.time() - t0, 1), outputs=[keep_result(ws, jdir, "tpl.mp4", name)], renderer="remotion", stage="done")
 
 
 RECIPES = ("long_to_shorts", "carousel_to_reel", "reel_to_carousel", "podcast_to_audiogram", "add_voiceover")
@@ -1081,6 +1207,7 @@ def prepare(job, body):
                  memory_mb=max(256, min(48_000, int(body.get("memory_mb") or 8000))),
                  voicebox_url=str(body.get("voicebox_url") or "")[:300], voicebox_key=str(body.get("voicebox_key") or "")[:2000],
                  voicebox_model=str(body.get("voicebox_model") or "")[:60],
+                 tools=[t for t in (body.get("tools") or []) if t in TOOLKIT or t == "remotion"][:8],
                  skills={str(k): str(v)[:100_000] for k, v in (body.get("skills") or {}).items() if re.match(r"^[a-z][a-z0-9_]{1,40}$", str(k))} if isinstance(body.get("skills"), dict) else {})
         if not WS_RE.match(b["workspace"]):
             raise ValueError("workspace: lowercase letters, digits and dashes, up to 40 (e.g. case-025)")

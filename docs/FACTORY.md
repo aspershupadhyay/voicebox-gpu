@@ -40,7 +40,23 @@ Gemini made Case 027 end to end through the MCP and wrote a "10× speedup" post-
 | Ban "Seen a clip like this? Send it our way" and end on an identity line ("The industry sells you the score. We check the grader.") | **The owner's call** | that ending is the owner's own rule 13 in `videos-post/CLAUDE.md`; Gemini wants to replace it | A/B both endings on the next two posts, then keep the winner (owner decides) |
 | 45 min → 4–5 min per video | **Too optimistic** | one HyperFrames render already took ~125 s on the L4; voice, QA and the owner's checkpoints add up | measure in F; our target is a single video in ~10–12 min and a batch of 5 in under 2× that |
 
-## G. The motion toolkit (Apple-level editing)
+## G. The motion toolkit (Apple-level editing) ✅ shipped
+
+**Done (2026-10-30)**, worker 3.14.0; the guide is `docs/MOTION.md` (served by `playbook`, doc `motion`):
+- [x] **The cached toolchain**: Node 22, each HyperFrames version (with GSAP) and each toolkit tool install once, then
+  go to R2 (`cache/toolchain/<name>`, through the worker's existing presigned-link cache); a fresh runtime pulls them
+  instead of installing. The answer's notes say which happened ("from R2 in 2.1 s" / "installed in 9.0 s").
+- [x] `run tools: [...]`: **auto-editor** (a 4 s clip with 2 s of silence came out 2.2 s), **scenedetect**, **rembg**
+  (installs in ~90 s once), **manim**, **remotion** (Node + npx). Each is tested as root right after install (that
+  also lets auto-editor fetch its binary into its own folder, which the sandbox user can't write: found testing).
+- [x] **Renderers by package.json**: a repo project that pins HyperFrames renders with that version; one that names
+  Remotion renders with `npx remotion render` and the worker's Chromium (licence: the owner confirms past 3 people).
+  Revideo, Lottie and Three.js are npm packages a project installs itself in `run`.
+- [x] Left out, per this section's rule: **Real-ESRGAN** (`basicsr` doesn't build), **RIFE** and **SAM 2** (weights
+  from Google Drive / several GB; ffmpeg `minterpolate` and rembg cover slow motion and cut-outs).
+- Not done: indexing `videos-post/.claude/skills` and Remotion's skills into `playbook`: this session can't reach
+  `videos-post` (only this repo is in its scope). Next step: `repo read` them through the owner's GitHub key and save
+  each as a `memory` skill, or add them to `scripts/build_playbook.py` with a checkout in the Deploy workflow.
 
 Everything a top motion editor reaches for, installed once, cached, and loaded into a model's context only when it
 needs it (the skill is fetched from `playbook`, not pasted into every session).
@@ -324,6 +340,8 @@ Each with the exact test a model should run through the MCP (worker 3.12.0 or la
 - ~~A1, Node in the sandbox~~ **checked on the L4 (worker 3.12.1)**: `/opt/vb-node/bin/node`, `v22.11.0`, `npx 10.9.0`, as `vbsandbox`.
 - **A2, the clean-up self-check**: `gpu action=selfcheck`, then `worker_status` → `selfcheck.steps` has `clean-up · Resemble Enhance` ok.
 - **D1, a 5-video batch**: `factory start` with 5 videos of 3 scenes (kokoro), poll `status` until done; write down the total seconds, `voice_s`, and the same for 1 video. Target: 5 in under 2× the time of 1.
+- **G1, the toolkit on the L4**: `run {"lang":"bash","tools":["auto-editor","scenedetect","rembg","manim"],"code":"auto-editor --version; scenedetect version; manim --version"}`; the notes say "installed in …"; then `gpu action=restart_worker` and run it again: the notes should say "from R2 in … s". Manim is the one to watch (it needs cairo, which Colab's Python 3.12 has wheels for); if it fails, take it out of `TOOLKIT` in `worker/bench.py` and the list in `docs/MOTION.md`.
+- **G2, Remotion**: `repo checkout` a Remotion project (e.g. a fresh `npx create-video` pushed to the workbench), then `video_template action=render project={…} composition=<id>`.
 - **C1, toolsets in a real client**: in Claude Code connected to `/api/mcp`, call `tools action=load set=video`, then check `edit_video` appears without reconnecting (the list_changed notification). If it doesn't, the client ignores it: note which.
 - **H1, ChatGPT and Gemini** (the owner's accounts): connect each (see H), call `worker_status`, `tools action=load set=files`, `list_files`; in ChatGPT attach an image and ask it to `import_file` it.
 - ~~B1~~ **checked on the L4**: a code-mode script started a project, `run project=…` wrote `out/hello.txt` into its workspace `p-166ac7` and its folder (recorded as the project's), `delete_files` trashed it with no approval, `finish` answered `workspace: removed`, `folder: in the trash`. Found and fixed on the way: `video_template` already had a `project` (a repo folder), so it now takes either.
