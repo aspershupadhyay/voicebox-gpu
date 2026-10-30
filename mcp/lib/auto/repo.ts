@@ -159,5 +159,11 @@ export async function merge(r: string, pr: number, method: "merge" | "squash" | 
 /** For a clone on the worker: an https URL and the header that carries the key (never written into the clone). */
 export async function cloneSpec(r: string, ref?: string) {
   const info = await repoInfo(r);
+  // a commit (short or full sha) is resolved to its full sha, which the worker fetches by itself; a branch named
+  // like a sha still wins
+  if (ref && /^[0-9a-f]{7,40}$/i.test(ref)) {
+    const isBranch = await gh(`/repos/${r}/branches/${refPath(ref)}`).then(() => true, () => false);
+    if (!isBranch) ref = (await gh<{ sha: string }>(`/repos/${r}/commits/${ref}`)).sha;
+  }
   return { url: `https://github.com/${r}.git`, ref: ref || info.default_branch, header: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${await token()}`).toString("base64")}` };
 }

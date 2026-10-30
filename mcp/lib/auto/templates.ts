@@ -1,6 +1,8 @@
 // Video templates (docs/AUTOMATION.md, phase 6): HyperFrames compositions filled from a little JSON, so a model never
 // writes HTML. Each template is a function of its fields and the brand (colours, font) that returns index.html; the
-// worker renders it (bench op "template", `hyperframes render`). Custom scenes come from a repo (videos-post) at a
+// worker renders it (bench op "template", `hyperframes render`). Fonts and GSAP come from the worker's cache
+// (assets/, written by bench.py), never a CDN at render time, so the first frame isn't black while they load; a
+// music bed (an input key) is mixed under the piece's own sound by the worker. Custom scenes come from a repo (videos-post) at a
 // commit: repo checkout, then video_template action render with that workspace folder.
 export type Brand = { bg: string; ink: string; accent: string; font: string };
 export const BRAND: Brand = { bg: "#0a0a0a", ink: "#ffffff", accent: "#ffb020", font: "Inter" };
@@ -26,7 +28,7 @@ export const TEMPLATES: Record<string, { about: string; fields: string; build: (
     <div class="clip pad" data-start="0" data-duration="${s}" data-track-index="2" style="justify-content:center">
       <h1 id="t" style="font-size:${Math.round(w * 0.09)}px">${esc(f.title)}</h1>
       ${f.sub ? `<p id="s" style="font-size:${Math.round(w * 0.042)}px;color:${b.accent}">${esc(f.sub)}</p>` : ""}
-    </div>`, `tl.from("#t", {y: 60, opacity: 0, duration: 0.7, ease: "power3.out"}, 0.2);${f.sub ? `tl.from("#s", {y: 30, opacity: 0, duration: 0.6}, 0.6);` : ""}tl.to(".pad", {opacity: 0, duration: 0.4}, ${s - 0.4});`) };
+    </div>`, `tl.from("#t", {y: 60, duration: 0.7, ease: "power3.out"}, 0);${f.sub ? `tl.from("#s", {y: 30, opacity: 0, duration: 0.6}, 0.4);` : ""}tl.to(".pad", {opacity: 0, duration: 0.4}, ${s - 0.4});`) };
     },
   },
   list: {
@@ -42,7 +44,7 @@ export const TEMPLATES: Record<string, { about: string; fields: string; build: (
     <div class="clip pad" data-start="0" data-duration="${s}" data-track-index="1">
       <h1 id="t" style="font-size:${Math.round(w * 0.075)}px">${esc(f.title)}</h1>
       <ol style="font-size:${Math.round(w * 0.05)}px">${rows}</ol>
-    </div>`, `tl.from("#t", {y: 40, opacity: 0, duration: 0.6}, 0.1);${items.map((_, i) => `tl.from("#i${i}", {x: -50, opacity: 0, duration: 0.5}, ${1.5 + i * per});`).join("")}`) };
+    </div>`, `tl.from("#t", {y: 40, duration: 0.6}, 0);${items.map((_, i) => `tl.from("#i${i}", {x: -50, opacity: 0, duration: 0.5}, ${1.5 + i * per});tl.fromTo("#i${i} b", {scale: 1}, {scale: 1.25, duration: ${(per / 2).toFixed(2)}, yoyo: true, repeat: 1, ease: "sine.inOut"}, ${1.5 + i * per + 0.5});`).join("")}`) };
     },
   },
   quote: {
@@ -55,7 +57,7 @@ export const TEMPLATES: Record<string, { about: string; fields: string; build: (
     <div class="clip pad" data-start="0" data-duration="${s}" data-track-index="2" style="justify-content:center">
       <p id="q" style="font-size:${Math.round(w * 0.065)}px;line-height:1.25">“${esc(f.quote)}”</p>
       ${f.author ? `<p id="a" style="font-size:${Math.round(w * 0.04)}px;color:${b.accent}">— ${esc(f.author)}</p>` : ""}
-    </div>`, `tl.from("#q", {opacity: 0, y: 30, duration: 0.9}, 0.2);${f.author ? `tl.from("#a", {opacity: 0, duration: 0.6}, 1.2);` : ""}`) };
+    </div>`, `tl.from("#q", {y: 30, duration: 0.9}, 0);${f.author ? `tl.from("#a", {opacity: 0, duration: 0.6}, 1.2);` : ""}`) };
     },
   },
   lower_third: {
@@ -86,7 +88,7 @@ function mediaTag(key: string, seconds: number, start: number, fit: string, styl
 function scene(w: number, h: number, s: number, b: Brand, body: string, tl: string) {
   return `<!doctype html>
 <html><head><meta charset="utf-8">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=${encodeURIComponent(b.font)}:wght@400;600;700;800&display=block">
+<link rel="stylesheet" href="assets/fonts.css">
 <style>
   html, body { margin: 0; background: ${b.bg}; }
   #stage { position: relative; width: ${w}px; height: ${h}px; overflow: hidden; background: ${b.bg}; color: ${b.ink}; font-family: "${b.font}", "DejaVu Sans", sans-serif; }
@@ -95,13 +97,22 @@ function scene(w: number, h: number, s: number, b: Brand, body: string, tl: stri
   p { margin: 0; }
   ol { list-style: none; padding: 0; margin: ${Math.round(h * 0.04)}px 0 0; display: flex; flex-direction: column; gap: ${Math.round(h * 0.03)}px; }
   li { display: flex; gap: ${Math.round(w * 0.04)}px; align-items: baseline; font-weight: 600; }
+  li b { display: inline-block; transform-origin: 50% 60%; }
 </style></head>
 <body>
   <div id="stage" data-composition-id="vb" data-start="0" data-duration="${s}" data-width="${w}" data-height="${h}">
     ${body}
-    <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+    <div class="clip" data-start="0" data-duration="${s}" data-track-index="5" style="position:absolute;inset:0;pointer-events:none">
+      <div id="drift" style="position:absolute;width:${Math.round(w * 0.9)}px;height:${Math.round(w * 0.9)}px;border-radius:50%;background:${b.accent};opacity:.16;left:${Math.round(w * 0.45)}px;top:${Math.round(h * -0.12)}px"></div>
+      <div id="bar" style="position:absolute;left:0;bottom:0;height:${Math.max(6, Math.round(h * 0.006))}px;width:${w}px;background:${b.accent};transform-origin:0 50%;transform:scaleX(0)"></div>
+    </div>
+    <script src="assets/gsap.min.js"></script>
     <script>
       const tl = gsap.timeline({ paused: true });
+      // something moves on every frame from frame 0 (docs/FACTORY.md A): the stage breathes, a shape drifts, the bar fills
+      tl.fromTo("#stage > .pad, #stage > img, #stage > video", {scale: 1}, {scale: 1.04, duration: ${s}, ease: "none"}, 0);
+      tl.fromTo("#drift", {x: 0, y: 0}, {x: ${-Math.round(w * 0.5)}, y: ${Math.round(h * 0.55)}, duration: ${s}, ease: "sine.inOut"}, 0);
+      tl.to("#bar", {scaleX: 1, duration: ${s}, ease: "none"}, 0);
       ${tl}
       window.__timelines = window.__timelines || {};
       window.__timelines.vb = tl;
@@ -116,5 +127,5 @@ export function build(template: string, fields: Fields, shape: Shape = "9:16", b
   if (!t) throw new Error(`template: one of ${Object.keys(TEMPLATES).join(", ")}`);
   const [w, h] = SIZES[shape] ?? SIZES["9:16"];
   const b: Brand = { bg: color(brand.bg, BRAND.bg), ink: color(brand.ink, BRAND.ink), accent: color(brand.accent, BRAND.accent), font: font(brand.font, BRAND.font) };
-  return { ...t.build(fields, b, w, h), width: w, height: h };
+  return { ...t.build(fields, b, w, h), width: w, height: h, font: b.font };
 }

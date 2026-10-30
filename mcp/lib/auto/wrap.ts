@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { after } from "next/server";
 import { z } from "zod";
 import type { ToolServer } from "../mcptools";
+import { loosen, normalize } from "./ids";
 import { ASK_FIRST, capApprovedToday, getControl, logCall, requestApproval, unitsToday, useApproval, type AskKey } from "./control";
 
 type Args = Record<string, unknown>;
@@ -155,6 +156,8 @@ export function guarded(server: ToolServer, via?: string): ToolServer {
   const orig = server.registerTool.bind(server) as (name: string, cfg: Record<string, unknown>, h: (a: Args, ctx: Ctx) => Promise<Result>) => unknown;
   const registerTool = (name: string, cfg: Record<string, unknown>, handler: (a: Args, ctx: Ctx) => Promise<Result>) => {
     let schema = cfg.inputSchema as z.ZodObject | undefined;
+    let urlRequired = false;
+    if (schema && typeof schema.extend === "function") ({ schema, urlRequired } = loosen(name, schema)); // one id shape (ids.ts)
     if (GATES[name] && schema && typeof schema.extend === "function")
       schema = schema.extend({ approval_id: z.string().regex(/^[a-f0-9]{10}$/).optional().describe("the id from approvals, once the owner approved this exact call") });
     return orig(name, { ...cfg, ...(schema ? { inputSchema: schema } : {}) }, async (args: Args, ctx: Ctx) => {
@@ -166,7 +169,7 @@ export function guarded(server: ToolServer, via?: string): ToolServer {
       try {
         const blocked = await preflight(name, args ?? {}, model, roleName);
         if (blocked) { res = blocked; gate = said(blocked).split(/[:(]/)[0].trim(); }
-        else res = await handler(args, ctx);
+        else res = await handler(await normalize(name, args ?? {}, urlRequired), ctx);
       } catch (e) {
         res = stop(`ERROR: ${(e as Error).message}`);
       }

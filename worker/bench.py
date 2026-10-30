@@ -7,7 +7,7 @@ limit, a memory watchdog and trimmed output. A workspace lives as long as the ru
 are saved to Files by the dashboard. Code mode: `import voicebox` calls any VoiceBox tool from the script with a key
 that lasts as long as the run (it still goes through the owner's approvals, the units cap and the call log), so a
 script can filter a thousand rows and print five instead of passing them through the model."""
-import ipaddress, json, os, pwd, re, shutil, signal, socket, stat, subprocess, sys, threading, time, urllib.parse
+import ipaddress, json, os, pwd, re, shutil, signal, socket, stat, subprocess, sys, threading, time, urllib.parse, urllib.request
 
 import config as C
 
@@ -15,6 +15,7 @@ ROOT = os.environ.get("VOICEBOX_SANDBOX", "/content/sandbox")
 USER = "vbsandbox"
 KIT = os.path.join(ROOT, ".kit")
 WS_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 LANGS = {"python": ("main.py", ["python3", "-u"]), "node": ("main.mjs", ["node"]), "bash": ("main.sh", ["bash", "-e"])}
 MAX_TIMEOUT = 1800
 MAX_OUT_FILES, MAX_OUT_BYTES = 40, 2_000_000_000
@@ -73,11 +74,13 @@ def setup():
 
 def write_kit():
     os.makedirs(KIT, exist_ok=True)
-    for name, body in (("voicebox.py", KIT_PY), ("browse.py", BROWSE_PY)):
+    os.makedirs(os.path.join(KIT, "bin"), exist_ok=True)
+    for name, body, mode in (("voicebox.py", KIT_PY, 0o644), ("browse.py", BROWSE_PY, 0o644), ("bin/hyperframes", HF_SH, 0o755)):
         with open(os.path.join(KIT, name), "w") as f:
             f.write(body)
-        os.chmod(os.path.join(KIT, name), 0o644)
+        os.chmod(os.path.join(KIT, name), mode)
     os.chmod(KIT, 0o755)
+    os.chmod(os.path.join(KIT, "bin"), 0o755)
 
 
 def _ids():
@@ -234,6 +237,8 @@ def run_code(job, jdir):
     for k in ("CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES", "LD_LIBRARY_PATH"):  # the GPU, not the secrets
         if os.environ.get(k):
             env[k] = os.environ[k]
+    if b["lang"] == "node" or NODE_HINT.search(b["code"]):  # Node 22, npm, npx and the project's HyperFrames on PATH
+        env.update(node_env(b, ws))
     as_user(["mkdir", "-p", ".tmp"], ws, timeout=30)
     out_p, err_p = os.path.join(jdir, "stdout.txt"), os.path.join(jdir, "stderr.txt")
     b["stage"] = "running"
@@ -330,8 +335,18 @@ def clone_repo(job, jdir):
     os.chmod(os.path.dirname(stage), 0o711)
     b["stage"] = "cloning"
     key = b.pop("header", "")
-    r = subprocess.run(["git", "-c", f"http.extraHeader={key}", "-c", "core.hooksPath=/dev/null", "clone", "--depth", str(b["depth"]),
-                        "--branch", b["ref"], "--", b["url"], stage], capture_output=True, timeout=900, env={**BASE_ENV, "HOME": jdir, "GIT_TERMINAL_PROMPT": "0"})
+    genv = {**BASE_ENV, "HOME": jdir, "GIT_TERMINAL_PROMPT": "0"}
+    git = ["git", "-c", f"http.extraHeader={key}", "-c", "core.hooksPath=/dev/null"]
+    if SHA_RE.match(b["ref"]):  # a commit (lib/auto/repo.ts resolves a short sha): fetch just it, checked out detached
+        os.makedirs(stage)
+        r = subprocess.run(["git", "init", "-q", stage], capture_output=True, timeout=60, env=genv)
+        for argv in ([*git, "-C", stage, "fetch", "--depth", str(b["depth"]), "--", b["url"], b["ref"]], ["git", "-C", stage, "checkout", "-q", "--detach", "FETCH_HEAD"],
+                     ["git", "-C", stage, "remote", "add", "origin", b["url"]]):
+            if r.returncode:
+                break
+            r = subprocess.run(argv, capture_output=True, timeout=900, env=genv)
+    else:
+        r = subprocess.run([*git, "clone", "--depth", str(b["depth"]), "--branch", b["ref"], "--", b["url"], stage], capture_output=True, timeout=900, env=genv)
     if r.returncode:
         shutil.rmtree(stage, ignore_errors=True)
         raise ValueError(f"clone failed: {r.stderr.decode('utf-8', 'replace').replace(key, '***')[-600:]}")
@@ -507,7 +522,7 @@ def edit_media(job, jdir):
 
 # ── templates: HyperFrames compositions (lib/auto/templates.ts writes them; custom ones come from a repo) ────────────
 
-HF_VERSION = "0.8.217"
+HF_VERSION, GSAP_VERSION = "0.8.217", "3.12.5"
 NODE_DIR, HF_DIR = "/opt/vb-node", "/opt/vb-hyperframes"
 _HF = {"ready": None, "lock": threading.Lock()}
 
@@ -520,34 +535,111 @@ def _node_ok(node):
         return False
 
 
-def ensure_hyperframes(b):
-    """Node 22 and HyperFrames, once per runtime, readable by the sandbox user. Returns (node, hyperframes cli, env)."""
-    with _HF["lock"]:
-        if _HF["ready"]:
-            return _HF["ready"]
-        b["stage"] = "installing HyperFrames (once per runtime, ~1 min)"
-        node = shutil.which("node") if shutil.which("node") and _node_ok(shutil.which("node")) else os.path.join(NODE_DIR, "bin", "node")
+_NODE = {"bin": None, "lock": threading.Lock()}
+NODE_URL = "https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.xz"
+
+
+def ensure_node(b=None):
+    """Node 22 (node, npm, npx) once per runtime in /opt/vb-node, readable by the sandbox user. Returns its bin dir."""
+    with _NODE["lock"]:
+        if _NODE["bin"]:
+            return _NODE["bin"]
+        node = os.path.join(NODE_DIR, "bin", "node")
         if not _node_ok(node):
+            have = shutil.which("node")
+            if have and _node_ok(have) and os.environ.get("VOICEBOX_NODE_SYSTEM") == "1":  # local tests: the machine's own Node 22
+                _NODE["bin"] = os.path.dirname(os.path.realpath(have))
+                return _NODE["bin"]
+            if b is not None:
+                b["stage"] = "installing Node 22 (once per runtime, ~20 s)"
             os.makedirs(NODE_DIR, exist_ok=True)
-            url = "https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.xz"
-            r = subprocess.run(f"curl -fsSL {url} | tar -xJ -C {NODE_DIR} --strip-components=1", shell=True, capture_output=True, timeout=600)
+            r = subprocess.run(f"curl -fsSL --retry 3 {NODE_URL} | tar -xJ -C {NODE_DIR} --strip-components=1", shell=True, capture_output=True, timeout=600)
             if r.returncode or not _node_ok(node):
                 raise ValueError(f"couldn't install Node 22: {r.stderr.decode('utf-8', 'replace')[-300:]}")
-        npm = os.path.join(os.path.dirname(node), "npm")
-        cli = os.path.join(HF_DIR, "node_modules", "hyperframes", "bin", "hyperframes.mjs")
-        path = f"{os.path.dirname(node)}:{BASE_ENV['PATH']}"
+            subprocess.run(["chmod", "-R", "a+rX", NODE_DIR], check=False)
+        _NODE["bin"] = os.path.join(NODE_DIR, "bin")
+        return _NODE["bin"]
+
+
+def hf_version(project_dir=None):
+    """The HyperFrames version a project pins in its package.json (videos-post pins its own), else ours."""
+    d = project_dir
+    while d and d != "/":
+        try:
+            with open(os.path.join(d, "package.json")) as f:
+                pkg = json.load(f)
+            for sect in ("dependencies", "devDependencies"):
+                v = str((pkg.get(sect) or {}).get("hyperframes") or "").lstrip("^~=v ")
+                if re.match(r"^\d+\.\d+\.\d+$", v):
+                    return v
+        except (OSError, ValueError):
+            pass
+        d = os.path.dirname(d)
+    return HF_VERSION
+
+
+def hf_cli(b, version=HF_VERSION):
+    """One HyperFrames version installed once per runtime (/opt/vb-hyperframes/<version>). Returns its cli."""
+    if not re.match(r"^\d+\.\d+\.\d+$", version):
+        raise ValueError(f"hyperframes version {version!r} isn't x.y.z")
+    bin_dir = ensure_node(b)
+    home = os.path.join(HF_DIR, version)
+    cli = os.path.join(home, "node_modules", "hyperframes", "bin", "hyperframes.mjs")
+    with _HF["lock"]:
         if not os.path.exists(cli):
-            os.makedirs(HF_DIR, exist_ok=True)
-            r = subprocess.run([npm, "install", "--prefix", HF_DIR, "--no-audit", "--no-fund", f"hyperframes@{HF_VERSION}"], capture_output=True, timeout=900,
-                               env={**os.environ, "PATH": path})
+            b["stage"] = f"installing HyperFrames {version} (once per runtime, ~1 min)"
+            os.makedirs(home, exist_ok=True)
+            r = subprocess.run([os.path.join(bin_dir, "npm"), "install", "--prefix", home, "--no-audit", "--no-fund", f"hyperframes@{version}", f"gsap@{GSAP_VERSION}"],
+                               capture_output=True, timeout=900, env={**os.environ, "PATH": f"{bin_dir}:{BASE_ENV['PATH']}"})
             if r.returncode or not os.path.exists(cli):
-                raise ValueError(f"couldn't install HyperFrames: {r.stderr.decode('utf-8', 'replace')[-400:]}")
-        ensure_browser(b)  # one Chromium for the browser and the renderer
-        chrome = os.environ.get("VOICEBOX_CHROMIUM") or next(iter(sorted(__import__("glob").glob(f"{BROWSERS}/chromium-*/chrome-linux*/chrome"))), "")
-        subprocess.run(["chmod", "-R", "a+rX", NODE_DIR, HF_DIR], check=False)
-        env = {"PATH": path, "HYPERFRAMES_BROWSER_PATH": chrome, "PUPPETEER_EXECUTABLE_PATH": chrome, "PRODUCER_LOW_MEMORY_MODE": "0"}
-        _HF["ready"] = (node, cli, env)
-        return _HF["ready"]
+                raise ValueError(f"couldn't install HyperFrames {version}: {r.stderr.decode('utf-8', 'replace')[-400:]}")
+            subprocess.run(["chmod", "-R", "a+rX", HF_DIR], check=False)
+    return cli
+
+
+def node_env(b, ws):
+    """What a run that uses Node gets: Node 22 first on PATH, `hyperframes` at the version each project in the
+    workspace pins (installed here, as root, from the version string alone), Chromium for its renders."""
+    bin_dir = ensure_node(b)
+    env = {"PATH": f"{KIT}/bin:{bin_dir}:{BASE_ENV['PATH']}", "VB_HF_DEFAULT": HF_VERSION, "npm_config_update_notifier": "false"}
+    if "hyperframes" in b["code"]:
+        # package.json files read as the sandbox user (never followed by root), versions checked as x.y.z
+        code, out, _ = as_user(["sh", "-c", "find . -maxdepth 5 -name package.json -not -path '*/node_modules/*' -type f -exec cat {} + 2>/dev/null"], ws, timeout=60)
+        pins = set(re.findall(r'"hyperframes"\s*:\s*"[\^~=v ]*(\d+\.\d+\.\d+)"', out.decode("utf-8", "replace"))) or {HF_VERSION}
+        for v in sorted(pins)[:3]:
+            hf_cli(b, v)
+        ensure_browser(b)
+        chrome = chrome_path()
+        env.update(HYPERFRAMES_BROWSER_PATH=chrome, PUPPETEER_EXECUTABLE_PATH=chrome, PRODUCER_LOW_MEMORY_MODE="0")
+        b.setdefault("notes", []).append(f"hyperframes {', '.join(sorted(pins))} ready (the version each package.json pins)")
+    b["stage"] = "running"
+    return env
+
+
+def chrome_path():
+    return os.environ.get("VOICEBOX_CHROMIUM") or next(iter(sorted(__import__("glob").glob(f"{BROWSERS}/chromium-*/chrome-linux*/chrome"))), "")
+
+
+def ensure_hyperframes(b, version=HF_VERSION):
+    """Node 22 and HyperFrames, once per runtime, readable by the sandbox user. Returns (node, hyperframes cli, env)."""
+    cli = hf_cli(b, version)
+    bin_dir = ensure_node(b)
+    ensure_browser(b)  # one Chromium for the browser and the renderer
+    chrome = chrome_path()
+    env = {"PATH": f"{bin_dir}:{BASE_ENV['PATH']}", "HYPERFRAMES_BROWSER_PATH": chrome, "PUPPETEER_EXECUTABLE_PATH": chrome, "PRODUCER_LOW_MEMORY_MODE": "0"}
+    return os.path.join(bin_dir, "node"), cli, env
+
+
+# `hyperframes` on the sandbox's PATH: the version the project's package.json pins (installed for it on the spot when
+# the worker has it, else fetched by npx into the workspace's own cache), so `hyperframes check | snapshot | render`
+# run as the project expects
+HF_SH = r"""#!/bin/sh
+v=$(node -e 'let d=process.cwd();for(;;){try{const p=require(d+"/package.json");const v=String((p.dependencies||{}).hyperframes||(p.devDependencies||{}).hyperframes||"").replace(/^[\^~=v ]+/,"");if(/^\d+\.\d+\.\d+$/.test(v)){console.log(v);break}}catch(e){}const u=require("path").dirname(d);if(u===d){console.log(process.env.VB_HF_DEFAULT);break}d=u}')
+cli="/opt/vb-hyperframes/$v/node_modules/hyperframes/bin/hyperframes.mjs"
+[ -f "$cli" ] && exec node "$cli" "$@"
+exec npx -y "hyperframes@$v" "$@"
+"""
+NODE_HINT = re.compile(r"\b(npx|npm|node|hyperframes|pnpm|yarn)\b")
 
 
 VIDEO_EXT = (".mp4", ".mov", ".webm", ".mkv", ".m4v")
@@ -573,25 +665,94 @@ def with_media(html, inputs):
     return html
 
 
+FONTS_DIR = "/opt/vb-fonts"
+CHROME_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+
+
+def font_css(family):
+    """A Google font as local files (fonts.css + woff2), fetched once per runtime and cached, so a render never waits
+    on the network. {} when it can't be had: the template falls back to DejaVu Sans instead of a black wait."""
+    if not re.match(r"^[A-Za-z0-9 ]{2,40}$", family or ""):
+        return {}
+    d = os.path.join(FONTS_DIR, family.replace(" ", "_"))
+    if not os.path.exists(os.path.join(d, "fonts.css")):
+        try:
+            q = urllib.parse.quote(family)
+            req = urllib.request.Request(f"https://fonts.googleapis.com/css2?family={q}:wght@400;600;700;800&display=block", headers={"User-Agent": CHROME_UA})
+            css = urllib.request.urlopen(req, timeout=30).read().decode()
+            os.makedirs(d, exist_ok=True)
+            for i, u in enumerate(dict.fromkeys(re.findall(r"url\((https://fonts\.gstatic\.com/[^)]+)\)", css))):
+                with urllib.request.urlopen(u, timeout=30) as r, open(os.path.join(d, f"f{i}.woff2"), "wb") as f:
+                    f.write(r.read())
+                css = css.replace(u, f"f{i}.woff2")
+            with open(os.path.join(d, "fonts.css"), "w") as f:
+                f.write(css)
+        except Exception as e:  # noqa: BLE001
+            log("font", family, e)
+            return {}
+    return {n: open(os.path.join(d, n), "rb").read() for n in os.listdir(d)}
+
+
+def template_assets(ws, proj, b, version):
+    """GSAP and the brand font into the project's assets/, from the worker's cache."""
+    gsap = os.path.join(HF_DIR, version, "node_modules", "gsap", "dist", "gsap.min.js")
+    if not os.path.exists(gsap):
+        raise ValueError("GSAP isn't in the worker's cache: run the template again (it's installed with HyperFrames)")
+    write_as_user(ws, f"{proj}/assets/gsap.min.js", open(gsap, "rb").read())
+    files = font_css(b.get("font") or "Inter")
+    if not files:
+        b.setdefault("notes", []).append(f"the font {b.get('font') or 'Inter'} couldn't be fetched: DejaVu Sans stood in")
+    for n, data in (files or {"fonts.css": b""}).items():
+        write_as_user(ws, f"{proj}/assets/{n}", data)
+
+
+def music_bed(run, src, music, out, volume_db=-16):
+    """A music bed under the render: ducked under the render's own sound (a voice in it), faded out at the end."""
+    import media
+    info = media.probe(run, src)
+    dur = float(info.get("duration") or 0)
+    fade = max(0.0, dur - 1.5)
+    bed = f"[1:a]aloop=loop=-1:size=2e9,atrim=0:{dur:.3f},volume={volume_db}dB,afade=t=out:st={fade:.3f}:d=1.5[m]"
+    if info.get("has_audio"):
+        fc = f"{bed};[0:a]asplit=2[v][sc];[m][sc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=400[d];[v][d]amix=inputs=2:normalize=0:duration=first[a]"
+    else:
+        fc = f"{bed};[m]anull[a]"
+    code, _, err = run(["ffmpeg", "-hide_banner", "-y", "-nostats", "-i", src, "-i", music, "-filter_complex", fc, "-map", "0:v", "-map", "[a]",
+                        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", out], timeout=900)
+    if code:
+        raise ValueError(f"the music bed failed: {err.strip()[-400:]}")
+    return out
+
+
 def render_template(job, jdir):
     import media
     b = job["bench"]
     b["isolation"] = setup()
-    node, cli, env = ensure_hyperframes(b)
     ws = _media_ws(job) if not b.get("project") else workspace(b["project"]["workspace"])
     run = _media_run(ws)
     try:
         b["stage"] = "fetching"
         b["inputs"] = fetch_inputs(job, ws)
-        if b.get("project"):  # a project from a repo checkout, rendered as it is at that commit
+        music = next((i["name"] for i in b["inputs"] if b.get("music") and i.get("key") == b["music"]["key"]), None)
+        if b.get("project"):  # a project from a repo checkout, rendered as it is at that commit, by the HyperFrames it pins
             proj = b["project"]["dir"]
+            _, pkg, _ = as_user(["sh", "-c", 'd="$1"; while [ -n "$d" ] && [ "$d" != "." ]; do [ -f "$d/package.json" ] && { cat "$d/package.json"; exit 0; }; d=$(dirname "$d"); done; cat package.json 2>/dev/null', "sh", proj], ws, timeout=30)
+            pin = re.search(r'"hyperframes"\s*:\s*"[\^~=v ]*(\d+\.\d+\.\d+)"', pkg.decode("utf-8", "replace"))
+            version = pin.group(1) if pin else HF_VERSION
+            node, cli, env = ensure_hyperframes(b, version)
         else:
+            version = HF_VERSION
+            node, cli, env = ensure_hyperframes(b, version)
             proj = "project"
             as_user(["mkdir", "-p", f"{proj}/media"], ws, timeout=30)
             for i in b["inputs"]:
+                if i["name"] == music:
+                    continue
                 ext = os.path.splitext(i["name"])[1].lower()
                 as_user(["mv", "-f", "--", i["name"], f"{proj}/media/{i['key']}{ext}"], ws, timeout=60)
-            write_as_user(ws, f"{proj}/index.html", with_media(b["html"], b["inputs"]).encode())
+            template_assets(ws, proj, b, version)
+            write_as_user(ws, f"{proj}/index.html", with_media(b["html"], [i for i in b["inputs"] if i["name"] != music]).encode())
+        b["hyperframes"] = version
         b["stage"] = "rendering the template"
         t0 = time.time()
         args = [node, cli, "render", "-o", os.path.join(ws, "tpl.mp4"), "--quality", b.get("quality") or "standard"]
@@ -601,10 +762,13 @@ def render_template(job, jdir):
         if code or not os.path.exists(os.path.join(ws, "tpl.mp4")):
             raise ValueError(f"HyperFrames couldn't render it: {(err or out.decode('utf-8', 'replace')).strip()[-900:]}")
         final = "tpl.mp4"
+        if music:
+            b["stage"] = "mixing the music bed"
+            final = music_bed(run, final, music, "bed.mp4", b["music"].get("volume_db", -16))
         target = (media.PLATFORMS.get(b.get("platform") or "reels") or media.PLATFORMS["reels"])["lufs"]
         if media.probe(run, final).get("has_audio") and media.fix_loudness(run, final, "level.mp4", target) is not None:
             final = "level.mp4"
-        q = media.qa(run, final, b.get("platform") or "reels", None, stills=True)
+        q = media.qa(run, final, b.get("platform") or "reels", None, stills=False)  # templates move every frame now: a freeze is a fault
         name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(b.get("name") or "template"))[:80].removesuffix(".mp4") + ".mp4"
         out_f = keep_result(ws, jdir, final, name)
         b.update(qa=q, render_s=round(time.time() - t0, 1), outputs=[out_f], stage="done")
@@ -925,7 +1089,9 @@ def prepare(job, body):
             b["project"] = {"workspace": proj["workspace"], "dir": proj["dir"]}
             if body.get("composition"):
                 b["composition"] = re.sub(r"[^A-Za-z0-9._/-]", "", str(body["composition"]))[:200]
-        b.update(platform=str(body.get("platform") or "reels"), name=str(body.get("name") or "template")[:80],
+        if isinstance(body.get("music"), dict) and re.match(r"^[a-z0-9_]{1,20}$", str(body["music"].get("key") or "")):
+            b["music"] = {"key": body["music"]["key"], "volume_db": max(-40.0, min(0.0, float(body["music"].get("volume_db") or -16)))}
+        b.update(platform=str(body.get("platform") or "reels"), name=str(body.get("name") or "template")[:80], font=re.sub(r"[^A-Za-z0-9 ]", "", str(body.get("font") or "Inter"))[:40],
                  quality=body.get("quality") if body.get("quality") in ("draft", "standard", "high", "delivery") else "standard")
         body = {**body, "files": body.get("files") or []}
     if op in ("edit", "inspect", "repurpose") or (op == "template" and body.get("files")):
@@ -967,7 +1133,7 @@ def prepare(job, body):
         if not re.match(r"^https://[A-Za-z0-9.-]+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(\.git)?$", url) and not (os.environ.get("VOICEBOX_BENCH_ALLOW_LOCAL") == "1" and url.startswith("/")):
             raise ValueError("url: https://github.com/<owner>/<repo>.git")
         if not re.match(r"^[A-Za-z0-9._/-]{1,100}$", ref):
-            raise ValueError("ref: a branch or tag")
+            raise ValueError("ref: a branch, a tag or a commit sha")
         b.update(url=url, ref=ref, header=str(body.get("header") or "")[:500], fresh=bool(body.get("fresh")), depth=max(1, min(500, int(body.get("depth") or 50))))
     job["bench"] = b
     job["engine"], job["voice"] = op, ""

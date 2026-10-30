@@ -170,7 +170,7 @@ export function registerAutoTools(server: ToolServer) {
       description: [
         "Work on the GitHub repos the owner allowed (list shows them), through VoiceBox's key, which you never see. Work on a branch and open a PR: the default branch (main) is never written by a model; a protected branch, a merge and adding a repo wait for the owner's approval (a merge on the studio's own repo always does).",
         "Actions: list; tree (files, path to narrow); read (path, from/to lines); branch (branch, from); commit (branch, files [{path, content} or {path, delete: true}], message: one commit, the branch made if new); pr (branch, title, body); status (pr: state, mergeable, every check, the end of a failed check's log); comment (pr, body); merge (pr, green only); allow (ask the owner to add a repo).",
-        "To run tests: checkout clones it into a run workspace (workspace, dir default the repo name); then run code there (cd <dir>; pytest...), edit files there, and push commits the workspace's changes to branch. Example: {\"action\":\"commit\",\"repo\":\"aspershupadhyay/voicebox-workbench\",\"branch\":\"reel-cutter\",\"files\":[{\"path\":\"cut.py\",\"content\":\"...\"}],\"message\":\"Add the reel cutter\"}.",
+        "To run tests: checkout clones it into a run workspace (workspace, dir default the repo name; ref a branch, a tag or a commit sha, short or full); then run code there (cd <dir>; pytest...), edit files there, and push commits the workspace's changes to branch. Example: {\"action\":\"commit\",\"repo\":\"aspershupadhyay/voicebox-workbench\",\"branch\":\"reel-cutter\",\"files\":[{\"path\":\"cut.py\",\"content\":\"...\"}],\"message\":\"Add the reel cutter\"}.",
       ].join(" "),
       inputSchema: z.object({
         action: z.enum(["list", "tree", "read", "branch", "commit", "pr", "status", "comment", "merge", "allow", "checkout", "push"]),
@@ -343,7 +343,7 @@ export function registerAutoTools(server: ToolServer) {
       title: "Video from a template (HyperFrames)",
       description: [
         "Branded motion pieces filled from a little JSON; you never write HTML. action render (default): template + fields (+ inputs for any photo or video it uses) + shape (9:16 default) + brand {bg, ink, accent: hex colours, font: a Google font}, rendered on the Colab worker with HyperFrames, checked, saved to Files. action list: the templates and their fields.",
-        "Templates: title_card {title, sub?, media?, seconds?}; list {title, items: 2-6, per_item?} (\"3 tips\"); quote {quote, author?, media?}; lower_third {media: a video, name, role?, at?, hold?, seconds}.",
+        "Templates: title_card {title, sub?, media?, seconds?}; list {title, items: 2-6, per_item?} (\"3 tips\"); quote {quote, author?, media?}; lower_third {media: a video, name, role?, at?, hold?, seconds}. Every template moves from the first frame. music: an input's key for a bed under it (music_db, default -16; ducked under any voice in it).",
         "A custom scene from a repo at a commit (the owner's videos-post cases): repo action checkout (ref = the commit), then {\"action\":\"render\",\"project\":{\"workspace\":\"default\",\"dir\":\"videos-post/cases/025\"}}. Example: {\"template\":\"list\",\"fields\":{\"title\":\"3 Reels mistakes\",\"items\":[\"No hook\",\"Too long\",\"No captions\"]}}.",
       ].join(" "),
       inputSchema: z.object({
@@ -353,19 +353,22 @@ export function registerAutoTools(server: ToolServer) {
         shape: z.enum(["9:16", "16:9", "1:1", "4:5"]).optional(), brand: z.object({ bg: z.string().max(9).optional(), ink: z.string().max(9).optional(), accent: z.string().max(9).optional(), font: z.string().max(40).optional() }).optional(),
         project: z.object({ workspace: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/), dir: z.string().max(200) }).optional(), composition: z.string().max(200).optional(),
         platform: PLAT.optional(), quality: z.enum(["draft", "standard", "high", "delivery"]).optional(), name: z.string().max(80).optional(),
+        music: SRC.optional().describe("an input's key: a music bed under the piece"), music_db: z.number().min(-40).max(0).optional(),
         save_to: z.string().max(200).nullable().optional(),
       }),
     },
-    async ({ action = "render", template, fields, inputs, shape, brand, project, composition, platform, quality, name, save_to }, ctx) => {
+    async ({ action = "render", template, fields, inputs, shape, brand, project, composition, platform, quality, name, music, music_db, save_to }, ctx) => {
       try {
         const t = await import("./templates");
         if (action === "list") return text(Object.entries(t.TEMPLATES).map(([id, x]) => ({ template: id, about: x.about, fields: x.fields })));
-        if (project) return await media("template" as never, inputs ?? {}, { project, composition, platform, quality, name }, ctx, save_to, `template ${project.dir}`);
+        if (music && !(inputs ?? {})[music]) throw new Error(`music: no input called ${music}`);
+        const bed = music ? { music: { key: music, volume_db: music_db ?? -16 } } : {};
+        if (project) return await media("template" as never, inputs ?? {}, { project, composition, platform, quality, name, ...bed }, ctx, save_to, `template ${project.dir}`);
         if (!template) throw new Error("render needs template (action list shows them) or project");
         const built = t.build(template, fields ?? {}, shape ?? "9:16", brand ?? {});
         const missing = built.media.filter((k) => !(inputs ?? {})[k]);
         if (missing.length) throw new Error(`fields name media that isn't in inputs: ${missing.join(", ")}`);
-        return await media("template" as never, inputs ?? {}, { html: built.html, platform: platform ?? (shape === "16:9" ? "youtube" : "reels"), quality, name: name ?? template }, ctx, save_to, `template ${template}`);
+        return await media("template" as never, inputs ?? {}, { html: built.html, font: built.font, platform: platform ?? (shape === "16:9" ? "youtube" : "reels"), quality, name: name ?? template, ...bed }, ctx, save_to, `template ${template}`);
       } catch (e) { return fail(e); }
     },
   );
