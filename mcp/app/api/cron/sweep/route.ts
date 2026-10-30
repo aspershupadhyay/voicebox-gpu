@@ -20,6 +20,7 @@ export async function POST(req: Request) {
     await (await import("@/lib/pipeline")).advancePipelines(40_000).catch((e) => console.error("pipelines", e)); // post pipelines carry on
     await (await import("@/lib/publish/run")).sweep(170_000).catch((e) => console.error("autopilot", e));
     await (await import("@/lib/auto/flows")).sweep(55_000).catch((e) => console.error("workflows", e)); // schedules due, runs carried on
+    await (await import("@/lib/auto/tools")).sweepFactory(30_000).catch((e) => console.error("factory", e)); // batches nobody is polling
   });
   try {
     return Response.json(await sweep());

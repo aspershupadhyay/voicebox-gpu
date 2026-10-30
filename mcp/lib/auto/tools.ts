@@ -11,6 +11,22 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const iso = (t?: number) => (t ? new Date(t).toISOString().slice(0, 16) + "Z" : undefined);
 type Ctx = { http?: { req?: Request } } | undefined;
 const modelName = async (ctx: Ctx) => (await import("./wrap")).modelOf(ctx as never);
+const PLATFORM = z.enum(["reels", "shorts", "tiktok", "youtube", "ig_post", "square"]);
+const fileKeySync = (x: string) => (/^[mgf]:|^https?:/.test(x) ? x : /^[a-f0-9]{12}$/.test(x) ? `g:${x}` : `m:${x}`);
+
+/** The factory's calls, made in-process through the guarded path as the batch's own caller (lib/auto/factory.ts). */
+const factoryCall = (by: string) => async (tool: string, args: Record<string, unknown>) =>
+  (await import("./flows")).callTool(tool, args, by, "factory", { http: { req: new Request("https://factory.local/", { headers: { "x-model": by } }), authInfo: { clientId: "factory" } } });
+
+/** Batches nobody is polling, carried on by the 10-minute sweep. */
+export async function sweepFactory(ms: number) {
+  const f = await import("./factory");
+  const until = Date.now() + ms;
+  for (const b of await f.runningBatches()) {
+    if (Date.now() > until) break;
+    await f.advance(b.id, factoryCall(b.by), Math.min(20_000, until - Date.now())).catch(() => null);
+  }
+}
 
 export function registerAutoTools(server: ToolServer) {
   server.registerTool(
@@ -163,6 +179,65 @@ export function registerAutoTools(server: ToolServer) {
         }
         const { fileKey } = await import("./ids");
         return text(await pr.finishProject(id, me, { keep: (keep ?? []).map(fileKey), keep_to: keep_to ?? null, by: me }));
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "script_check",
+    {
+      title: "Check a script before voicing it",
+      description: "The taste rules a script has to pass before any voice job (the factory runs it on every video): the opener (no \"in this video\", \"hey guys\", \"did you know\"…), the hook's length (12 words or fewer), a bare-question hook, the length for the platform at 165 wpm, the spine (3+ beats), long lines, numbers to put on screen, the ending. PASS / WARN / FAIL per check, worst first. Example: {\"lines\":[\"The grader is wrong 40% of the time.\",\"Here's how we know.\",\"…\"],\"platform\":\"reels\"}.",
+      inputSchema: z.object({ lines: z.array(z.string().max(2000)).min(1).max(300), platform: PLATFORM.optional() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ lines, platform }) => {
+      try { return text((await import("./factory")).scriptCheck(lines, platform ?? "reels")); } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "factory",
+    {
+      title: "The factory: several videos at once",
+      description: [
+        "Make N videos (1-20) in about the time of one. Each video is scenes [{line: what's said, template + fields (video_template's) or clip: a Files id, from?}]. The factory checks every script (script_check; a FAIL stops that video unless force), voices every line of every video in ONE job (voice: engine, voice, style), renders each scene once (cached by its content: run a fixed batch again and only changed scenes render), then joins each video: scenes cut to their line, the lines as one voice, music (a Files id) ducked, pop captions, and QA.",
+        "draft (default true): 15 fps, fast encode, for checking; draft false for delivery. project: everything lands in that project's folder.",
+        "action start (videos, voice?, draft?, project?, force?) → batch id; status (batch): moves it on for up to 40 s and answers only each video's state, file and QA, and failures (the 10-minute sweep carries on batches nobody polls); list; stop (batch).",
+        "Example: {\"action\":\"start\",\"videos\":[{\"name\":\"tip-1\",\"scenes\":[{\"line\":\"Your hook is too slow.\",\"template\":\"title_card\",\"fields\":{\"title\":\"Too slow\"}},{\"line\":\"Three fixes.\",\"template\":\"list\",\"fields\":{\"title\":\"Fix it\",\"items\":[\"Cut\",\"Show\",\"Say it\"]}}]}],\"voice\":{\"engine\":\"kokoro\"}}.",
+      ].join(" "),
+      inputSchema: z.object({
+        action: z.enum(["start", "status", "list", "stop"]),
+        batch: z.string().regex(/^fb[a-f0-9]{8}$/).optional(),
+        videos: z.array(z.object({
+          name: z.string().min(1).max(60), platform: PLATFORM.optional(), shape: z.enum(["9:16", "16:9", "1:1", "4:5"]).optional(),
+          music: z.string().max(80).optional(), captions: z.boolean().optional(),
+          scenes: z.array(z.object({ line: z.string().min(1).max(2000), template: z.string().max(40).optional(), fields: z.record(z.string(), z.unknown()).optional(), clip: z.string().max(80).optional(), from: z.number().min(0).optional() })).min(1).max(30),
+        })).max(20).optional(),
+        voice: z.object({ engine: z.string().max(20).optional(), voice: z.string().max(60).optional(), style: z.enum(["tech", "hype", "narrator", "neutral"]).optional() }).optional(),
+        draft: z.boolean().optional(), force: z.boolean().optional(),
+      }),
+    },
+    async ({ action, batch, videos, voice, draft, force, ...rest }, ctx) => {
+      try {
+        const f = await import("./factory");
+        const me = await modelName(ctx as Ctx);
+        const project = (rest as { project?: string }).project;
+        if (action === "list") return text((await f.listBatches(me)).map((b) => ({ batch: b.id, status: b.status, videos: b.items.length, done: b.items.filter((i) => i.state === "done").length, created: iso(b.created) })));
+        if (action === "start") {
+          if (!videos?.length) throw new Error("start needs videos");
+          if (project) await (await import("./projects")).usable(project, me);
+          const b = await f.startBatch(videos.map((x) => ({ ...x, music: x.music ? fileKeySync(x.music) : undefined, scenes: x.scenes.map((s) => ({ ...s, clip: s.clip ? (fileKeySync(s.clip)) : undefined })) })), { by: me, voice, draft, project, force });
+          return text(f.view(await f.advance(b.id, factoryCall(me), 35_000)));
+        }
+        if (!batch) throw new Error(`${action} needs batch`);
+        if (action === "stop") {
+          const b = await f.getBatch(batch);
+          b.status = "stopped";
+          await (await import("../store")).putJson(`auto/factory/${b.id}.json`, b);
+          return text({ batch: b.id, status: "stopped" });
+        }
+        return text(f.view(await f.advance(batch, factoryCall(me), 40_000)));
       } catch (e) { return fail(e); }
     },
   );

@@ -1277,7 +1277,7 @@ CPU_QUEUE = []   # the CPU lane: jobs that need no GPU, run alongside
 FETCH_QUEUE = []  # the download lane: links download side by side (FETCH_WORKERS at once), never behind a voiceover
 FETCH_WORKERS = int(os.environ.get("VOICEBOX_FETCH_WORKERS", "4"))
 BENCH_QUEUE = []  # the workbench lane (bench.py: a model's code, media edits, the browser), beside the others
-BENCH_WORKERS = int(os.environ.get("VOICEBOX_BENCH_WORKERS", "2"))
+BENCH_WORKERS = int(os.environ.get("VOICEBOX_BENCH_WORKERS", "4"))  # renders side by side on the L4's 12 cores (docs/FACTORY.md D)
 QCOND = threading.Condition()
 MAX_LINES, MAX_TEXT = 1000, 100_000
 

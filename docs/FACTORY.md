@@ -206,7 +206,26 @@ The owner's idea is right: one URL, and the model decides how much it needs.
   keeps a stable order and wording, so the client's prompt cache keeps hitting.
 - `/api/mcp/lean` stays as an alias; `/api/mcp?full=1` lists all 84 for clients that want them.
 
-## D. The factory: N videos in about the time of one
+## D. The factory: N videos in about the time of one ✅ shipped
+
+**Done (2026-10-30)**: `lib/auto/factory.ts`, tools `factory` and `script_check`, worker 3.13.0.
+- [x] `script_check`: opener (banned list), hook length, bare-question hook, length per platform at 165 wpm, spine,
+  long lines, numbers to show, the ending; PASS / WARN / FAIL worst first. The factory runs it on every video and stops
+  a FAIL unless `force`.
+- [x] `factory start` (1-20 videos of scenes `{line, template + fields | clip}`): one `voice_lines` job for every line
+  of every video, each scene rendered by `video_template` and cached by its content (R2 `auto/factory/cache/`), one
+  `edit_video` join per video (scenes cut to their line, the lines joined as one voice with 0.25 s gaps: `voice.src`
+  takes a list now, music ducked, pop captions), QA with it. `status` moves it on for up to 40 s and answers only each
+  video's state, file and QA; the 10-minute sweep carries on batches nobody polls; `list`, `stop`. Every step runs
+  through the guarded path as the caller (approvals, cap, log; `project` puts everything in its folder).
+- [x] Measured locally with stubbed jobs: 5 videos × 3 scenes = **1 voice job, 15 scene renders, 5 joins**; the same
+  batch again with one scene changed rendered **1 of 15**.
+- [x] Renders: the worker's render lane (bench) now takes **4 at once** (was 2) on the L4's 12 cores, beside the GPU
+  lane, so the GPU voices the next batch while Chromium renders this one. Drafts: 15 fps and a fast encode, delivery
+  with `draft: false`.
+- **Not built, on purpose**: a second Colab CPU runtime as a render farm. The dashboard knows one worker at a time
+  (`lib/registry.ts`), so a farm means a multi-worker registry and job routing; the L4's own CPUs already keep the GPU
+  from waiting. F decides whether it's needed: if 4 parallel renders on the L4 are the bottleneck, build it.
 
 Today one video runs its steps one after another, and the GPU sits idle while Chromium renders. The factory turns
 that into an assembly line.
@@ -304,6 +323,7 @@ Each with the exact test a model should run through the MCP (worker 3.12.0 or la
 
 - ~~A1, Node in the sandbox~~ **checked on the L4 (worker 3.12.1)**: `/opt/vb-node/bin/node`, `v22.11.0`, `npx 10.9.0`, as `vbsandbox`.
 - **A2, the clean-up self-check**: `gpu action=selfcheck`, then `worker_status` → `selfcheck.steps` has `clean-up · Resemble Enhance` ok.
+- **D1, a 5-video batch**: `factory start` with 5 videos of 3 scenes (kokoro), poll `status` until done; write down the total seconds, `voice_s`, and the same for 1 video. Target: 5 in under 2× the time of 1.
 - **C1, toolsets in a real client**: in Claude Code connected to `/api/mcp`, call `tools action=load set=video`, then check `edit_video` appears without reconnecting (the list_changed notification). If it doesn't, the client ignores it: note which.
 - **H1, ChatGPT and Gemini** (the owner's accounts): connect each (see H), call `worker_status`, `tools action=load set=files`, `list_files`; in ChatGPT attach an image and ask it to `import_file` it.
 - ~~B1~~ **checked on the L4**: a code-mode script started a project, `run project=…` wrote `out/hello.txt` into its workspace `p-166ac7` and its folder (recorded as the project's), `delete_files` trashed it with no approval, `finish` answered `workspace: removed`, `folder: in the trash`. Found and fixed on the way: `video_template` already had a `project` (a repo folder), so it now takes either.
