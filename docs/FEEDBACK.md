@@ -4,7 +4,21 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (keys for other models, 2026-10-30)
+## Latest round (the video factory, 2026-10-30)
+
+- **"Make the MCP faster and leaner; 5 videos shouldn't take 5× the time; don't waste resources"**: the plan is
+  `docs/FACTORY.md` (an assembly line: one batched voice job, renders on the CPU runtime, per-scene re-renders).
+- **"One endpoint instead of lean or code; the AI switches by use case"**: adopted. One endpoint lists a small core,
+  and models load toolsets on demand (FACTORY.md, C).
+- **"Deleting shouldn't ask me; an agent deletes only what it works on, in its own folder, and cleans up when done"**:
+  adopted. Projects own their files and clean up at finish (FACTORY.md, B).
+- **"Me, Gemini, Claude, OpenCode and another user at once: creativity, repos, speed"**: fair queues, server-numbered
+  cases, a branch per video, a shared ledger instead of editing shared files, and competing creatives with a judge
+  (FACTORY.md, E).
+- **ChatGPT's audit** (Node missing in the sandbox, a template's black opening, a renderer PASS hiding frozen frames,
+  the clean-up DNS error, checkout by sha): checked against the code, and the fixes are phase A.
+
+## Earlier round (keys for other models, 2026-10-30)
 
 - **"Add the GitHub key in the website so it can be used through the MCP as well"**: Settings → Automation → Keys
   takes the GitHub key and the search key: saved encrypted, checked with GitHub on save, never shown again (last 4

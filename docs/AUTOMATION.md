@@ -220,7 +220,7 @@ the OAuth connector (full endpoint).
   consumption"): tool definitions and big intermediate results are what cost a model tokens. So (1) the sandbox
   (`run`, phase 2) has a ready `voicebox` Python module that calls any VoiceBox tool from code, with a short-lived
   key scoped to that run that still goes through the gates, the cap and the log, so a script filters 1,000 rows and
-  prints 5; (2) a lean MCP mode (`/api/mcp?lean=1`) lists only `find_tools` (search the catalogue by name, then
+  prints 5; (2) a lean MCP mode (`/api/mcp/lean`) lists only `find_tools` (search the catalogue by name, then
   description, then full schema), `call_tool`, `run`, `get_job`, `playbook` and `approvals`, for cheaper models;
   (3) scripts that work are saved as skills and served by `playbook` (phase 8).
 
