@@ -19,7 +19,11 @@ export async function registerLean(server: ToolServer) {
   const only = new Proxy(g, { get: (o, k) => (k === "registerTool" ? (name: string, ...rest: unknown[]) => (LEAN_DIRECT.includes(name) ? (o.registerTool as (...a: unknown[]) => unknown)(name, ...rest) : undefined) : Reflect.get(o, k)) }) as ToolServer;
   (await import("../mcptools")).registerTools(only);
   (await import("./tools")).registerAutoTools(only);
+  registerFinders(server);
+}
 
+/** find_tools and call_tool, on the lean endpoint and the adaptive one (lib/auto/endpoint.ts). */
+export function registerFinders(server: ToolServer) {
   // find_tools and call_tool themselves aren't logged: the call they make is, under its own name
   server.registerTool(
     "find_tools",

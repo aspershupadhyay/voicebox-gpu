@@ -58,7 +58,26 @@ needs it (the skill is fetched from `playbook`, not pasted into every session).
 - **Proof**: one short test shot per tool on the L4, with its time and a frame in this doc. A tool that doesn't
   work is left out of the list instead of left broken.
 
-## H. Works with every AI tool, including ChatGPT (and image uploads from there)
+## H. Works with every AI tool, including ChatGPT (and image uploads from there) ✅ shipped (with C)
+
+**Done (2026-10-30)**:
+- [x] Schemas every client accepts: clients that aren't Claude (by user agent or X-Model), or `?schema=strict`, get a
+  strict subset: no `$schema`, `anyOf`, `oneOf`, `const`, `propertyNames`, empty `additionalProperties`; one type per
+  field (a number-or-text union becomes text, and the tools take a number written as text). All 90 tools pass the
+  subset check in `scripts/check-register.mts`. Claude keeps the full schemas.
+- [x] `readOnlyHint` / `destructiveHint` / `openWorldHint` on every tool (reads, the five deletes, the web).
+- [x] `upload_link`: a page at `/u/<token>` (a signed claim: one folder, usually a project's, 1-72 h, a file cap) where
+  the user drops images from any phone or app; files go straight to R2 and land in the folder, recorded as the
+  project's. Public by design like a share link, and it can only upload into that one folder. Checked: a bad token
+  and a used-up link are refused; screenshots at 1280 and 390 px.
+- [x] `import_file` with `_meta["openai/fileParams"] = ["file"]`: ChatGPT hands an attachment as
+  `{download_url, file_id}`; any client can pass a `download_url`.
+- Test matrix (what's proven): **Claude Code** against the live MCP (this session); core, load, full, lean, strict,
+  hints and the notification over HTTP on a local build. **Needs the owner** (a client signed in as them): claude.ai
+  (OAuth connector), Gemini CLI (`httpUrl` + a model key), ChatGPT developer mode (Settings → Connectors → Advanced;
+  OAuth through `/api/oauth`; whether chat attachments reach `import_file` is the open question), OpenCode and Cursor
+  (`npx mcp-remote https://voiceboxstudio.vercel.app/api/mcp --header "Authorization: Bearer vbmk_…"` for clients
+  without remote MCP).
 
 - **Schemas every client accepts**: our tool schemas include `$schema`, `anyOf` (e.g. `from` is an integer or a
   string) and `propertyNames`. Gemini rejects these (third-party reports; it follows an OpenAPI 3.0 subset), and other
@@ -156,7 +175,23 @@ folder, and clean up when it's done."
   removed.
 - Settings → Automation shows live projects (who, what, files, units spent) with a Stop button.
 
-## C. One endpoint that adapts (instead of choosing lean or full)
+## C. One endpoint that adapts (instead of choosing lean or full) ✅ shipped (with H)
+
+**Done (2026-10-30)**: `lib/auto/endpoint.ts`, `lib/auto/toolsets.ts`, both routes. Measured with
+`scripts/check-register.mts` (the real McpServer, its own tools/list):
+- [x] `/api/mcp` lists the core: `tools`, `find_tools`, `call_tool`, `run`, `get_job`, `project`, `playbook`,
+  `approvals`, `worker_status`: **9 tools, ~2,700 tokens**, against **~34,300** for all 90 (`?full=1`), **−92%** every
+  session. `/api/mcp/lean` is the same core.
+- [x] `tools action=load set=video|voice|files|posts|analytics|repo` adds a set (9 → 20 with video) and sends
+  `notifications/tools/list_changed` on the call's own stream (checked over HTTP: the event comes before the answer).
+  Sets are kept per key (a hash of the bearer token) for 12 h, since every request is a fresh server. Every tool is
+  callable by name or through `call_tool` whether listed or not.
+- [x] `vb.gather((tool, args), …)` in the code-mode kit runs calls side by side (8 threads); `vb.tools("word")`
+  searches every tool through `find_tools` (the listing is only the core now).
+- [x] Short answers: every answer's JSON goes out compact (no indentation), and for a model (not a script or a
+  workflow, which read every row) lists past 25 rows are cut with a note; `detail: "full"` on any tool gets everything.
+  Measured on a 60-row file list: 2,967 characters pretty → 1,395 compact → 491 brief.
+- The tool list keeps its order and wording, so prompt caches keep hitting.
 
 The owner's idea is right: one URL, and the model decides how much it needs.
 
@@ -267,7 +302,11 @@ YOUR PART: <one line from below>
 
 Each with the exact test a model should run through the MCP (worker 3.12.0 or later: `gpu action=update_worker`).
 
-- **A1, Node in the sandbox**: `run {"lang":"bash","code":"which node npx && node -v && npx --version"}` → `/opt/vb-node/bin/node`, `v22.11.0`.
+- ~~A1, Node in the sandbox~~ **checked on the L4 (worker 3.12.1)**: `/opt/vb-node/bin/node`, `v22.11.0`, `npx 10.9.0`, as `vbsandbox`.
 - **A2, the clean-up self-check**: `gpu action=selfcheck`, then `worker_status` → `selfcheck.steps` has `clean-up · Resemble Enhance` ok.
-- **B1, a project end to end**: `project start name="colab check"`, then `run {"project":"<id>","code":"open('out/a.txt','w').write('x')"}`, `project status` lists the saved file, `delete_files` on it runs with no approval, `project finish` answers `workspace: removed`.
-- **A3, a template on the L4**: `video_template {"template":"list","fields":{"title":"3 Reels mistakes","items":["No hook","Too long","No captions"]}}` → qa PASS, then `inspect_media checks ["sheet"]` on it: the title is on the first frame.
+- **C1, toolsets in a real client**: in Claude Code connected to `/api/mcp`, call `tools action=load set=video`, then check `edit_video` appears without reconnecting (the list_changed notification). If it doesn't, the client ignores it: note which.
+- **H1, ChatGPT and Gemini** (the owner's accounts): connect each (see H), call `worker_status`, `tools action=load set=files`, `list_files`; in ChatGPT attach an image and ask it to `import_file` it.
+- ~~B1~~ **checked on the L4**: a code-mode script started a project, `run project=…` wrote `out/hello.txt` into its workspace `p-166ac7` and its folder (recorded as the project's), `delete_files` trashed it with no approval, `finish` answered `workspace: removed`, `folder: in the trash`. Found and fixed on the way: `video_template` already had a `project` (a repo folder), so it now takes either.
+- **B1 (as first written)**: `project start name="colab check"`, then `run {"project":"<id>","code":"open('out/a.txt','w').write('x')"}`, `project status` lists the saved file, `delete_files` on it runs with no approval, `project finish` answers `workspace: removed`.
+- ~~A3~~ **checked on the L4**: `list` rendered by HyperFrames 0.8.217 in **15.3 s** (draft), QA no black and no frozen stretch (only "no sound", as expected without `music`); its contact sheet shows the title on frame 0 in Inter and steady motion. The first HyperFrames render on Colab ever.
+- **A3 (as first written), a template on the L4**: `video_template {"template":"list","fields":{"title":"3 Reels mistakes","items":["No hook","Too long","No captions"]}}` → qa PASS, then `inspect_media checks ["sheet"]` on it: the title is on the first frame.

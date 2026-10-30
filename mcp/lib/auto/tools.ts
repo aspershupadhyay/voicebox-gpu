@@ -168,6 +168,50 @@ export function registerAutoTools(server: ToolServer) {
   );
 
   server.registerTool(
+    "upload_link",
+    {
+      title: "A link for someone to send you files (phone or computer)",
+      description: "When the user has images or videos in a chat app or on their phone that you can't receive as a file: make a link, give it to them, they open it and drop the files, and the files land in a folder (the project's when you pass project; else folder, default Inbox). Good for hours (default 24, up to 72) and up to max files (30). Then list_files on that folder. Example: {\"project\":\"3fa9c1\"}.",
+      inputSchema: z.object({ folder: z.string().max(200).optional(), hours: z.number().min(1).max(72).optional(), max: z.number().int().min(1).max(100).optional() }),
+    },
+    async ({ folder, hours, max, ...rest }, ctx) => {
+      try {
+        const model = await modelName(ctx as Ctx);
+        const project = (rest as { project?: string }).project;
+        const b = await import("./bench");
+        let id: string | null, name: string, proj: string | undefined;
+        if (project) { const p = await (await import("./projects")).usable(project, model); id = p.folder; name = p.path; proj = p.id; }
+        else { name = folder ?? "Inbox"; id = await b.ensureFolder(name, { name: model }); }
+        const origin = (await import("../colab")).appOrigin((ctx as Ctx)?.http?.req ? new URL((ctx as Ctx)!.http!.req!.url).origin : undefined);
+        const l = (await import("./uplinks")).makeLink({ folder: id, folderName: name, project: proj, by: model, hours, max }, origin);
+        return text({ ...l, next: `Give the user this link. Once they've sent the files: list_files folder "${name}".` });
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "import_file",
+    {
+      title: "Import a file the chat app attached (ChatGPT)",
+      description: "Save a file the user attached in the chat into Files. In ChatGPT the attachment arrives as file {download_url, file_id}; any client can pass {download_url} (a public or signed link). Lands in folder (or the project's folder). Example: {\"file\":{\"download_url\":\"https://…\"},\"name\":\"ref.png\"}.",
+      inputSchema: z.object({
+        file: z.object({ download_url: z.string().max(4000), file_id: z.string().max(200).optional() }),
+        name: z.string().max(200).optional(), folder: z.string().max(300).optional(),
+      }),
+      _meta: { "openai/fileParams": ["file"] },
+    },
+    async ({ file, name, folder }) => {
+      try {
+        if (!/^https:\/\//.test(file.download_url)) throw new Error("file.download_url: an https link");
+        const { importUrl } = await import("../filemanager");
+        const { getSettings } = await import("../settings");
+        const { media, folder: placed } = await importUrl(file.download_url, { name, folder: folder ?? null, backup: (await getSettings()).backup_media }, { name: "Claude (MCP)" });
+        return text({ file_id: `m:${media.$id}`, name: media.name, kind: media.kind, folder: placed });
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
     "playbook",
     {
       title: "The playbook: the studio's rules and know-how",
@@ -242,7 +286,7 @@ export function registerAutoTools(server: ToolServer) {
         const need = (k: keyof typeof a) => { if (a[k] == null || a[k] === "") throw new Error(`${a.action} needs ${String(k)}`); return a[k]; };
         switch (a.action) {
           case "tree": return text(await r.tree(repo, a.ref, a.path));
-          case "read": return text(await r.read(repo, need("path") as string, a.ref, typeof a.from === "number" ? a.from : undefined, a.to));
+          case "read": return text(await r.read(repo, need("path") as string, a.ref, typeof a.from === "number" ? a.from : /^\d+$/.test(String(a.from ?? "")) ? Number(a.from) : undefined, a.to)); // a strict client sends the line as text
           case "branch": return text(await r.branch(repo, need("branch") as string, typeof a.from === "string" ? a.from : undefined));
           case "commit": return text({ ...(await r.commit(repo, need("branch") as string, need("files") as Change[], (a.message ?? "Update from VoiceBox") as string, model)), next: "open a PR with action pr when it's ready" });
           case "pr": return text({ ...(await r.openPr(repo, need("branch") as string, need("title") as string, a.body ?? "", model)), next: "follow its CI with action status" });
@@ -302,7 +346,7 @@ export function registerAutoTools(server: ToolServer) {
             seconds: z.number().min(0.5).max(60).optional(), zoom: z.boolean().optional() })).max(200).optional(),
           voice: z.object({ src: SRC, at: z.number().min(0).optional(), volume_db: z.number().min(-30).max(12).optional() }).optional(),
           music: z.object({ src: SRC, volume_db: z.number().min(-40).max(0).optional(), duck: z.boolean().optional(), fade_s: z.number().min(0).max(10).optional() }).optional(),
-          original_volume_db: z.union([z.number().min(-60).max(12), z.literal("mute")]).optional(),
+          original_volume_db: z.union([z.number().min(-60).max(12), z.literal("mute"), z.string().regex(/^-?\d{1,2}(\.\d+)?$/)]).optional(),
           captions: z.object({ style: z.enum(["pop", "bold", "clean"]).optional(), position: z.enum(["lower", "middle", "upper"]).optional(), srt: SRC.optional(), language: z.string().max(8).optional(),
             words: z.array(z.object({ w: z.string().max(60), s: z.number().min(0), e: z.number().min(0) })).max(5000).optional() }).optional(),
           logo: z.object({ src: SRC, corner: z.enum(["tr", "tl", "br", "bl"]).optional(), size: z.number().min(0.04).max(0.5).optional(), opacity: z.number().min(0.1).max(1).optional() }).optional(),
@@ -389,7 +433,8 @@ export function registerAutoTools(server: ToolServer) {
         template: z.string().max(40).optional(), fields: z.record(z.string(), z.unknown()).optional(),
         inputs: z.record(z.string().regex(/^[a-z0-9_]{1,20}$/), z.string().max(2000)).optional(),
         shape: z.enum(["9:16", "16:9", "1:1", "4:5"]).optional(), brand: z.object({ bg: z.string().max(9).optional(), ink: z.string().max(9).optional(), accent: z.string().max(9).optional(), font: z.string().max(40).optional() }).optional(),
-        project: z.object({ workspace: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/), dir: z.string().max(200) }).optional(), composition: z.string().max(200).optional(),
+        project: z.union([z.object({ workspace: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/), dir: z.string().max(200) }), z.string().regex(/^[a-f0-9]{6}$/)]).optional()
+          .describe("{workspace, dir}: a repo checkout to render; or a project id (project start): the render lands in its folder"), composition: z.string().max(200).optional(),
         platform: PLAT.optional(), quality: z.enum(["draft", "standard", "high", "delivery"]).optional(), name: z.string().max(80).optional(),
         music: SRC.optional().describe("an input's key: a music bed under the piece"), music_db: z.number().min(-40).max(0).optional(),
         save_to: z.string().max(200).nullable().optional(),
@@ -401,7 +446,7 @@ export function registerAutoTools(server: ToolServer) {
         if (action === "list") return text(Object.entries(t.TEMPLATES).map(([id, x]) => ({ template: id, about: x.about, fields: x.fields })));
         if (music && !(inputs ?? {})[music]) throw new Error(`music: no input called ${music}`);
         const bed = music ? { music: { key: music, volume_db: music_db ?? -16 } } : {};
-        if (project) return await media("template" as never, inputs ?? {}, { project, composition, platform, quality, name, ...bed }, ctx, save_to, `template ${project.dir}`);
+        if (project && typeof project === "object") return await media("template" as never, inputs ?? {}, { project, composition, platform, quality, name, ...bed }, ctx, save_to, `template ${project.dir}`);
         if (!template) throw new Error("render needs template (action list shows them) or project");
         const built = t.build(template, fields ?? {}, shape ?? "9:16", brand ?? {});
         const missing = built.media.filter((k) => !(inputs ?? {})[k]);
@@ -430,7 +475,7 @@ export function registerAutoTools(server: ToolServer) {
           captions: z.enum(["pop", "bold", "clean"]).nullable().optional(), platform: PLAT.optional(), fit: z.enum(["crop", "pad", "blur"]).optional(),
           seconds: z.number().min(0.5).max(20).optional(), zoom: z.boolean().optional(), from: z.number().min(0).optional(), to: z.number().min(0).optional(),
           title: z.string().max(120).optional(), shape: z.enum(["9:16", "16:9", "1:1", "4:5"]).optional(), voice: SRC.optional(), music: SRC.optional(),
-          at: z.number().min(0).optional(), original_volume_db: z.union([z.number().min(-60).max(12), z.literal("mute")]).optional(), name: z.string().max(60).optional(),
+          at: z.number().min(0).optional(), original_volume_db: z.union([z.number().min(-60).max(12), z.literal("mute"), z.string().regex(/^-?\d{1,2}(\.\d+)?$/)]).optional(), name: z.string().max(60).optional(),
         }).optional(),
         save_to: z.string().max(200).nullable().optional(),
       }),

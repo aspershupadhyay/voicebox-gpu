@@ -3266,6 +3266,18 @@ html.cur-custom :is(input:not([type="range"]):not([type="checkbox"]):not([type="
 .sh-other { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--dim); }
 .sh-gone { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; padding: 24px; }
 .sh-gone h1 { font-size: 22px; margin: 16px 0 0; }
+/* an upload link (app/u/[token]): one drop zone and the files going up */
+.ul .sh-head { max-width: 640px; }
+.ul-drop { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 592px; margin: 16px auto 0; padding: 40px 16px; border: 1px dashed var(--line3); border-radius: var(--r); background: var(--surface); cursor: pointer; text-align: center; transition: border-color .15s, background .15s; }
+.ul-drop.on, .ul-drop:hover { border-color: var(--ink); background: var(--fill); }
+.ul-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.ul-drop:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
+.ul-list { list-style: none; max-width: 592px; margin: 16px auto; padding: 0; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.ul-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line); }
+.ul-list li:first-child { border-top: 0; }
+.ul-bar { width: 96px; height: 4px; border-radius: 2px; background: var(--line2); overflow: hidden; }
+.ul-bar i { display: block; height: 100%; background: var(--ink); transition: width .2s; }
+@media (max-width: 640px) { .ul-drop, .ul-list { margin-left: 16px; margin-right: 16px; } }
 @media (max-width: 600px) {
   .sh-head, .sh-grid { padding-left: 16px; padding-right: 16px; }
   .sh-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

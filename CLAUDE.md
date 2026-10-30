@@ -35,8 +35,9 @@ Check dark (the only theme) and 390px width before you ship.
 
 The MCP is a cloud workbench any model (Claude, Gemini…) can drive: approvals, units cap, call log and kill switch
 (`lib/auto/control.ts`, `wrap.ts`: every tool call goes through them), a sandbox with code mode (`worker/bench.py`),
-repos, media recipes (`worker/media.py`), the browser, templates, workflows, roles, the audit and lessons, and a lean
-endpoint (`/api/mcp/lean`). All nine phases shipped; `docs/AUTOMATION.md` has the decisions, what's waiting on the
+repos, media recipes (`worker/media.py`), the browser, templates, workflows, roles, the audit and lessons, projects
+(`lib/auto/projects.ts`), and one adaptive endpoint (`lib/auto/endpoint.ts`: a 9-tool core, toolsets on demand,
+strict schemas for non-Claude clients; `/api/mcp/lean` is its alias). All nine phases shipped; `docs/AUTOMATION.md` has the decisions, what's waiting on the
 owner and what still needs checking on Colab: read it before working on any of it. What's next is `docs/FACTORY.md`
 (the video factory: fixes from the audit, projects that own and clean their files, one adaptive endpoint, batches,
 many agents at once), in order. A new tool goes in
@@ -60,6 +61,8 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   upload key, which can save files and arrange carousels and nothing else: no reading other files, no deleting). The
   share page `/s/<token>` is public by design (lib/shares.ts): it shows only what one unexpired, unrevoked link names,
   read-only; the token is kept only as a SHA-256 and uploads are served by Appwrite tokens that expire with the link.
+  An upload link `/u/<token>` (and `/api/u/<token>`, lib/auto/uplinks.ts) is public by design too: a signed, expiring
+  claim that can only start and finish uploads into its one folder, up to its file cap; it reads and lists nothing.
 - Never loosen the allow-list, the same-origin check or the session expiry.
 
 ## Checks before pushing

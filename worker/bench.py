@@ -1174,6 +1174,7 @@ matters. Each call goes through the owner's approvals, the units cap and the cal
     import voicebox as vb
     files = vb.list_files(folder="Downloads/Instagram")      # any tool: vb.<tool_name>(**args)
     vb.tools("video")                                        # find tools by keyword: name and first line
+    a, b = vb.gather(("list_files", {}), ("workspace_board", {}))  # several calls at once
     job = vb.voice_lines(lines=[{"text": "Hello"}]); vb.wait(job["id"])
     vb.save("out/cut.mp4", folder="Renders")                 # or just write to out/: it's saved after the run
 """
@@ -1216,13 +1217,23 @@ def call(tool, **args):
 
 
 def tools(query=""):
-    q = query.lower()
-    out = []
-    for t in _rpc("tools/list", {})["tools"]:
-        d = (t.get("description") or "").split(". ")[0][:160]
-        if q in t["name"].lower() or q in d.lower():
-            out.append(f"{t['name']}: {d}")
-    return out
+    """Every tool matching a keyword, a line each (the server lists only a core; this searches them all)."""
+    return call("find_tools", query=query, detail="summary") if query else call("find_tools", detail="names")
+
+
+def gather(*calls, workers=8):
+    """Many tool calls at once, results in order; a failed one comes back as a ToolError (not raised):
+        posts, files = vb.gather(("workspace_board", {}), ("list_files", {"search": "reel"}))"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(c):
+        tool, args = (c, {}) if isinstance(c, str) else (c[0], c[1] if len(c) > 1 else {})
+        try:
+            return call(tool, **args)
+        except Exception as e:  # noqa: BLE001
+            return ToolError(str(e))
+    with ThreadPoolExecutor(max(1, min(workers, len(calls)))) as ex:
+        return list(ex.map(one, calls))
 
 
 def wait(job_id, every=40):
