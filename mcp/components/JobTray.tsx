@@ -27,7 +27,7 @@ export default function JobTray() {
       if (["queued", "running"].includes(j.status) && !isTracked(j.id)) trackJob(j, j.kind ?? "job", j.label, pageFor(j.kind ?? ""));
     })).catch(() => {});
     look();
-    const t = setInterval(look, 20_000);
+    const t = setInterval(() => { if (document.visibilityState === "visible") look(); }, 20_000);
     return () => clearInterval(t);
   }, []);
 
@@ -51,7 +51,7 @@ export default function JobTray() {
       }
     };
     tick();
-    const iv = setInterval(tick, 4000);
+    const iv = setInterval(() => { if (document.visibilityState === "visible") tick(); }, 5000);
     return () => { stop = true; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live.map((t) => t.id).join(",")]);
