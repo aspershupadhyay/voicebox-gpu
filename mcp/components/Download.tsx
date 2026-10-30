@@ -15,6 +15,7 @@ import { api } from "./api";
 import { useDialog } from "./Dialog";
 import { Select } from "./pop";
 import { PageHeader } from "./ui";
+import { watching } from "./watching";
 
 type Source = "instagram" | "youtube" | "tiktok" | "x" | "pinterest" | "cosmos" | "facebook" | "threads" | "reddit" | "vimeo" | "web";
 type Item = { media: string; name: string; kind: string; size: number; preview: string | null };
@@ -147,7 +148,7 @@ export default function Download() {
   // live while something is moving, calm otherwise
   const busy = !!data?.list.some(active);
   useEffect(() => {
-    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, busy ? 1500 : 15000);
+    const t = setInterval(() => { if (watching()) load(); }, busy ? 1500 : 15000);
     return () => clearInterval(t);
   }, [busy, load]);
 

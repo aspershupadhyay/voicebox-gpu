@@ -11,6 +11,7 @@ import GpuCard from "./GpuCard";
 import Health from "./Health";
 import { fmtUptime, useStatus } from "./Shell";
 import { PageHeader, StatCard } from "./ui";
+import { watching } from "./watching";
 
 const ENGINES: Record<string, { role: string; lang: string; mem: string }> = {
   orpheus: { role: "The most human voice. Laughs, sighs, breath.", lang: "English", mem: "≈10 GB" },
@@ -38,7 +39,7 @@ export default function Gpu({ embedded }: { embedded?: boolean }) {
     if (!st?.online) return;
     const load = () => api<{ jobs: Job[] }>("jobs").then((j) => setJobs(j.jobs)).catch(() => {});
     load();
-    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 5000);
+    const t = setInterval(() => { if (watching()) load(); }, 5000);
     return () => clearInterval(t);
   }, [st?.online]);
   useEffect(() => {

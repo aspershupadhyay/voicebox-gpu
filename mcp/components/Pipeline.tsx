@@ -7,6 +7,7 @@ import { ArrowClockwise, CalendarCheck, Check, ClosedCaptioning, Hash, ImageSqua
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
+import { watching } from "./watching";
 
 type StepId = "script" | "hook" | "voice" | "subtitles" | "thumbnail" | "package" | "schedule";
 type Step = { id: StepId; label: string; state: "done" | "todo" | "running" | "blocked" | "warn" | "failed"; detail: string };
@@ -29,7 +30,7 @@ export function Pipeline({ postId, script, onWrite }: { postId: string; script: 
   const moving = !!s && (s.running || s.steps.some((x) => x.state === "running"));
   useEffect(() => {
     if (!moving) return;
-    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 5000);
+    const t = setInterval(() => { if (watching()) load(); }, 5000);
     return () => clearInterval(t);
   }, [moving, load]);
 

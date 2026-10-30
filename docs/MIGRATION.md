@@ -121,7 +121,11 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    page's "seen" marker straight from R2 and only knocks `/api/cron/live` while someone is watching (it used to wake
    Vercel 1,440 times a day to answer "idle"), runs the sweep every 10 minutes on time (GitHub's schedule ran every few
    hours, and is now only for running it by hand) and the backup only when it's due. All three routes take the timer's
-   secret, kept on Vercel only as a SHA-256 (`lib/cronauth.ts`). Next: measure again, then move the busiest routes left.
+   secret, kept on Vercel only as a SHA-256 (`lib/cronauth.ts`). **Second**: the dashboard's
+   regular checks (status 15 s, GPU 5 s, Home 8 s, the job tray, Files, Download, pipelines, Automation) now run only
+   while someone is there (`components/watching.ts`: tab visible and touched in the last 5 minutes), so a tab left open
+   stops waking Vercel. Moving routes themselves to Cloudflare needs sign-in checked there first (the session cookie's
+   key), so it waits for the usage numbers. Next: measure again, then move the busiest routes left.
    The original plan: **API and MCP to one Cloudflare Worker.** `/api/*` and the MCP run there, reaching CockroachDB through Hyperdrive.
    The long routes (starting the Colab GPU, copying downloads) become Queue jobs; a Cloudflare cron replaces
    `sweep.yml`. Vercel rewrites `/api/*` to the Worker so it stays one origin (cookies, the same-origin check and

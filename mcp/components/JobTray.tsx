@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
 import { forgetTracked, isLive, isTracked, pageFor, trackJob, updateTracked, useTracked, type Tracked } from "./jobs";
+import { watching } from "./watching";
 
 type Polled = { id: string; status: string; error?: string; label?: string; kind?: string; progress?: { fraction?: number; stage?: string; detail?: string };
   library?: unknown; part?: unknown; model?: unknown; myvoice?: unknown; kvoice_saved?: unknown };
@@ -27,7 +28,7 @@ export default function JobTray() {
       if (["queued", "running"].includes(j.status) && !isTracked(j.id)) trackJob(j, j.kind ?? "job", j.label, pageFor(j.kind ?? ""));
     })).catch(() => {});
     look();
-    const t = setInterval(() => { if (document.visibilityState === "visible") look(); }, 20_000);
+    const t = setInterval(() => { if (watching()) look(); }, 20_000);
     return () => clearInterval(t);
   }, []);
 
@@ -51,7 +52,7 @@ export default function JobTray() {
       }
     };
     tick();
-    const iv = setInterval(() => { if (document.visibilityState === "visible") tick(); }, 5000);
+    const iv = setInterval(() => { if (watching()) tick(); }, 5000);
     return () => { stop = true; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live.map((t) => t.id).join(",")]);

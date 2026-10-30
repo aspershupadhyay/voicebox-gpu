@@ -38,6 +38,7 @@ import { useUploader } from "./wsparts";
 import { FileViewer, type ViewFile } from "./Viewer";
 import { ShareDialog } from "./filetools";
 import { useSmartSearch } from "./smartsearch";
+import { watching } from "./watching";
 
 type Sort = "new" | "old" | "name" | "size";
 type Tree = FileTree & { poster_urls?: Record<string, string>; carousels?: Carousel[] };
@@ -197,7 +198,7 @@ export default function Files() {
     loadJobs(); loadTree();
     try { const v = localStorage.getItem("vb-files-view"); if (v === "list" || v === "grid") setView(v); } catch {}
     // folders aren't on the live socket: check now and then, and whenever the tab comes back
-    const t = setInterval(() => { if (document.visibilityState === "visible") loadTree(); }, 20_000);
+    const t = setInterval(() => { if (watching()) loadTree(); }, 20_000);
     const onVis = () => { if (document.visibilityState === "visible") { loadTree(); loadJobs(); } };
     document.addEventListener("visibilitychange", onVis);
     return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
