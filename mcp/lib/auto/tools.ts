@@ -473,6 +473,7 @@ export function registerAutoTools(server: ToolServer) {
       description: [
         "Named roles (researcher, editor, publisher, auditor) with the model meant for each, the tools it uses and a brief. A client works as a role by sending the header X-Role: <name>; its calls are then held to that role's tools.",
         "action list (default): the roles. brief (name): the role's brief, its tools, and the lessons and notes that matter for it: read it when you start as that role. save (name, model, purpose, tools, brief): change or add a role. scorecards (hours, by model or role): calls, how many worked, QA pass rate, redos, approvals hit; used to pick which model does which role.",
+        "Example: {\"action\":\"brief\",\"name\":\"editor\"}.",
       ].join(" "),
       inputSchema: z.object({
         action: z.enum(["list", "brief", "save", "scorecards"]).optional(), name: z.string().max(31).optional(),
@@ -508,6 +509,7 @@ export function registerAutoTools(server: ToolServer) {
       description: [
         "The learning loop's review. action run (default): reads the call log for the period (hours, 24), finds what keeps going wrong (the same error 3+ times, renders failing the same QA check, the owner saying no, the same work sent again) and writes each as a suggested lesson with its evidence, plus scorecards per model and role. Runs nightly as a workflow if saved (workflow examples).",
         "action packet: the period's evidence for you, the auditor, to judge yourself (failures, QA verdicts, approvals, the lessons already known): then add yours with memory action=lesson_add. The owner approves lessons in Settings → Automation; approved ones reach every model through playbook.",
+        "Example: {\"action\":\"packet\",\"hours\":24}.",
       ].join(" "),
       inputSchema: z.object({ action: z.enum(["run", "packet"]).optional(), hours: z.number().min(1).max(24 * 31).optional() }),
     },

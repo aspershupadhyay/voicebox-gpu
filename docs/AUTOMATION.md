@@ -6,9 +6,10 @@ on repos, browse and search the web, make and edit media, plan and publish, on a
 runs on the Colab L4 worker. Every model's work is logged, checked and audited, and what is learned is saved so every
 model gets better. Cost is the L4's (~1.94 units an hour, only while it's on).
 
-**Next session: start here.** Read this file, then `CLAUDE.md` and `docs/FEEDBACK.md`. Work the phases in order, one
-pull request each, shipped as `CLAUDE.md` says. Tick the phase's box below in the same PR. Keep the "Decisions" and
-"Waiting on the owner" sections current.
+**Next session: start here.** All nine phases shipped on 2026-10-29/30 (PRs #118-#126). What's left is checking the
+parts that need the L4 or the owner's keys on the real thing (see "Still to check on Colab" and "Waiting on the
+owner"), fixing what that turns up, and the owner's next ideas. Read `CLAUDE.md` and `docs/FEEDBACK.md` first; keep
+"Decisions" and "Waiting on the owner" current.
 
 ## What already exists (don't rebuild it)
 
@@ -159,20 +160,41 @@ The owner's feedback still goes into `docs/FEEDBACK.md` in the same PR as the ch
   "Make it a rule", a PR adding it to `docs/FEEDBACK.md`; skills: saved scripts `run` imports), tools `agents`,
   `audit`, `memory`; `playbook` search serves kept lessons and skills; the call log keeps each call's role and QA
   verdict; a `nightly_audit` example workflow; Settings → Automation → Lessons and Scorecards.
-- [ ] **9. Any model**: setup guide for Gemini CLI and other MCP clients (below), model name sent in a header
-  (`X-Model`) for the log; tool descriptions checked with a cheaper model.
+- [x] **9. Any model**: setup guide for Gemini CLI and other MCP clients (below), model name sent in a header
+  (`X-Model`) for the log; tool descriptions checked with a cheaper model. **Shipped**: the lean endpoint
+  `/api/mcp/lean` (`lib/auto/lean.ts`: `find_tools` names → summary → JSON schema, `call_tool` guarded and logged
+  as `via: lean`, plus `run`, `get_job`, `playbook`, `approvals`), measured: 84 tools in ~30,100 tokens of
+  definitions on the full endpoint, 6 tools in ~1,700 on the lean one (94% less, every session); `X-Model` and
+  `X-Role` in the log and the scorecards; Settings → Claude & API → Other models writes a client's settings (lean or
+  full, its name, its role; the key stays a placeholder); `scripts/check_tools.py` checks every description (size, a
+  worked example, a fixed action list) and the context they cost. The check by a cheaper model is the owner's
+  (paste a description into Gemini Flash, ask it to make a call; see the script's header).
 
 ## Connecting another model
 
-Gemini CLI, `~/.gemini/settings.json`:
+Settings → Claude & API → Other models writes this for you. Gemini CLI, `~/.gemini/settings.json`:
 
 ```json
 { "mcpServers": { "voicebox": {
-  "httpUrl": "https://voiceboxstudio.vercel.app/api/mcp",
-  "headers": { "Authorization": "Bearer <MCP_TOKEN>", "X-Model": "gemini" } } } }
+  "httpUrl": "https://voiceboxstudio.vercel.app/api/mcp/lean",
+  "headers": { "Authorization": "Bearer <MCP_TOKEN>", "X-Model": "gemini-2.5-flash", "X-Role": "editor" } } } }
 ```
 
-Any MCP client that speaks streamable HTTP works the same way. claude.ai uses the OAuth connector.
+`/api/mcp/lean` lists six tools and finds the rest with `find_tools` (for cheaper models and long sessions);
+`/api/mcp` lists all of them. `X-Model` names the model in the call log and the scorecards; `X-Role` (optional)
+holds it to a role's tools (`agents`). Any MCP client that speaks streamable HTTP works the same way. claude.ai uses
+the OAuth connector (full endpoint).
+
+## Still to check on Colab (the build session had no GPU and couldn't run some packages)
+
+1. The sandbox's iptables rule and `vbsandbox` user on the real runtime: a `run` answer lists its isolation.
+2. NVENC renders and Whisper captions in `edit_video` and `repurpose` (they fell back to x264 and given words here).
+3. Playwright's `install --with-deps chromium` on Colab (here the pre-installed Chromium was used).
+4. HyperFrames: the first `video_template` render installs Node 22 and HyperFrames; if it fails, the whole error
+   comes back. Running the npm package wasn't allowed in the build session, so this is its first real test.
+5. Saving `out/` files, renders and screenshots into Files (the worker only pushes to https, i.e. R2; locally the
+   storage stand-in was http).
+6. `morning_ideas` against the real Radar and board (save it: `workflow action=save example=morning_ideas`).
 
 ## Decisions
 
@@ -257,9 +279,10 @@ read or write its own files (tested: a link to a worker file in `out/` is left o
 
 ## Waiting on the owner
 
-1. A fine-grained GitHub key (contents + pull requests, only the allowed repos), added as a Vercel secret
-   (`GITHUB_AGENT_TOKEN`), never pasted into a chat. Needed for phase 3.
+1. A fine-grained GitHub key (contents + pull requests + actions read, only the allowed repos), added as a Vercel
+   secret (`GITHUB_AGENT_TOKEN`), never pasted into a chat; then the repos on Settings → Automation → Repos. Until
+   then `repo` and "Make it a rule" say so.
 2. The workbench repo created (`voicebox-workbench`), and `videos-post` added to the session. Needed for phases 3, 6.
-3. A search key (Brave or Tavily) as a Vercel secret (`SEARCH_API_KEY`), or search skipped. Phase 5.
+3. A search key (Brave or Tavily) as a Vercel secret (`SEARCH_API_KEY`); until then `browse action=search` says so.
 4. The daily units cap to start with (Settings → Automation; until then there is no cap).
 5. A check of the approval list (Settings → Automation → Ask me first: all on to start).

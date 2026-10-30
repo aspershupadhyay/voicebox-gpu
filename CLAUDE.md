@@ -31,12 +31,15 @@ Every dashboard change follows `docs/DESIGN.md`. In short:
 
 Check dark (the only theme) and 390px width before you ship.
 
-## The automation suite (in progress)
+## The automation suite
 
-The owner's next big goal: the MCP as a full cloud workbench any model (Claude, Gemini…) can drive, with a sandbox,
-repos, browser, media recipes, schedules, an auditor and a learning loop, all on the Colab L4. The plan, the phases,
-the decisions and what's waiting on the owner are in `docs/AUTOMATION.md`: read it before working on it, and tick its
-phases as they ship.
+The MCP is a cloud workbench any model (Claude, Gemini…) can drive: approvals, units cap, call log and kill switch
+(`lib/auto/control.ts`, `wrap.ts`: every tool call goes through them), a sandbox with code mode (`worker/bench.py`),
+repos, media recipes (`worker/media.py`), the browser, templates, workflows, roles, the audit and lessons, and a lean
+endpoint (`/api/mcp/lean`). All nine phases shipped; `docs/AUTOMATION.md` has the decisions, what's waiting on the
+owner and what still needs checking on Colab: read it before working on any of it. A new tool goes in
+`lib/auto/tools.ts` with an action enum and a worked example (`scripts/check_tools.py`); anything risky gets a gate in
+`wrap.ts`.
 
 ## Inference work
 

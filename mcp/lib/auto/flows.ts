@@ -199,28 +199,31 @@ const truthy = (v: unknown) => !(v == null || v === false || v === 0 || v === ""
 // ── running tools in-process, guarded like a model's call ───────────────────────────────────────────────────────
 
 type Entry = { schema?: { safeParse: (x: unknown) => { success: boolean; data?: unknown; error?: { issues: { path: PropertyKey[]; message: string }[] } } }; handler: (a: unknown, ctx: unknown) => Promise<{ content: { text?: string }[]; isError?: boolean }> };
-let REG: Map<string, Entry> | null = null;
+const REGS = new Map<string, Map<string, Entry>>();
 
-async function registry() {
-  if (REG) return REG;
-  const reg = new Map<string, Entry>();
-  const stub = { registerTool: (name: string, cfg: { inputSchema?: Entry["schema"] }, handler: Entry["handler"]) => { reg.set(name, { schema: cfg.inputSchema, handler }); } };
+/** Every tool, guarded and logged as coming `via` this path (a workflow, the lean endpoint). */
+export async function registry(via = "workflow") {
+  const have = REGS.get(via);
+  if (have) return have;
+  const reg = new Map<string, Entry & { description?: string; title?: string }>();
+  const stub = { registerTool: (name: string, cfg: { inputSchema?: Entry["schema"]; description?: string; title?: string }, handler: Entry["handler"]) => { reg.set(name, { schema: cfg.inputSchema, handler, description: cfg.description, title: cfg.title }); } };
   const { guarded } = await import("./wrap");
-  const g = guarded(stub as never, "workflow");
-  (await import("../mcptools")).registerTools(g, { name: "Workflow" });
+  const g = guarded(stub as never, via);
+  (await import("../mcptools")).registerTools(g, { name: via === "workflow" ? "Workflow" : "Claude (MCP)" });
   (await import("./tools")).registerAutoTools(g);
-  REG = reg;
+  REGS.set(via, reg);
   return reg;
 }
 
-export async function callTool(tool: string, args: unknown, model: string): Promise<{ ok: boolean; value: unknown; text: string }> {
-  const e = (await registry()).get(tool);
+/** Call a tool in-process. ctx carries the caller's headers (X-Model, X-Role) when there is a caller. */
+export async function callTool(tool: string, args: unknown, model: string, via = "workflow", ctx?: unknown): Promise<{ ok: boolean; value: unknown; text: string }> {
+  const e = (await registry(via)).get(tool);
   if (!e) return { ok: false, value: null, text: `no tool called ${tool}` };
   const parsed = e.schema ? e.schema.safeParse(args ?? {}) : { success: true, data: args };
   if (!parsed.success) return { ok: false, value: null, text: `bad arguments for ${tool}: ${parsed.error!.issues.map((i) => `${i.path.join(".") || "(args)"} ${i.message}`).join("; ")}` };
-  const ctx = { http: { req: new Request("https://workflow.local/", { headers: { "x-model": model } }), authInfo: { clientId: "workflow" } } };
-  const res = await e.handler(parsed.data, ctx);
-  const text = res.content.map((c) => c.text ?? "").join("\n");
+  const c = ctx ?? { http: { req: new Request("https://workflow.local/", { headers: { "x-model": model } }), authInfo: { clientId: via } } };
+  const res = await e.handler(parsed.data, c);
+  const text = res.content.map((x) => x.text ?? "").join("\n");
   let value: unknown = text;
   try { value = JSON.parse(text); } catch { /* plain text */ }
   return { ok: !res.isError, value, text };
