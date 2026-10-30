@@ -2,7 +2,7 @@
 // Settings → Automation (docs/AUTOMATION.md): what models and automations may do on their own. The approvals inbox
 // (risky actions wait here for a click), the kill switch, the day's Colab units cap, which actions ask first, and the
 // call log of every MCP call with the model that made it. Acts at once; server side lib/auto/control.ts.
-import { CheckCircle, ChartBar, FlowArrow, Lightbulb, GitBranch, Hand, Pause, Play, Plus, Robot, Stop, WarningCircle, X } from "@phosphor-icons/react";
+import { CheckCircle, ChartBar, FolderSimple, FlowArrow, Lightbulb, GitBranch, Hand, Pause, Play, Plus, Robot, Stop, WarningCircle, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
@@ -18,8 +18,9 @@ type Data = {
   units: { spent: number | null; balance: number | null };
   approvals: Approval[]; log: Log[]; ask_first: Record<string, string>; keys: Record<string, KeyStatus>; platform: string;
   flows: { list: Flow[]; runs: RunSum[] };
-  lessons: Lesson[]; cards: Card[];
+  lessons: Lesson[]; cards: Card[]; projects?: Proj[];
 };
+type Proj = { id: string; name: string; owner: string; status: string; folder: string; files: number; jobs: number; calls: number; updated: number };
 type Lesson = { id: string; text: string; topic: string; status: string; seen: number; by: string; created: number; pr?: string; evidence: { at: number; model: string; tool: string; what: string }[] };
 type Card = { who: string; calls: number; ok_rate: number | null; qa_pass_rate: number | null; redos: number; gated: number; failed: number; last: number; tools: string[] };
 type Flow = { id: string; name: string; about?: string; enabled: boolean; steps: { tool: string }[]; schedule?: { every: string; at?: string; tz?: string; days?: number[] } | null;
@@ -34,6 +35,7 @@ const when = (f: Flow) => {
   return parts.join(" · ") || "By hand";
 };
 const RUN_TONE: Record<string, string> = { done: "ok", running: "blue", waiting: "warn", error: "bad", stopped: "grey" };
+const PROJ_TONE: Record<string, string> = { live: "blue", finished: "ok", stopped: "grey" };
 
 const ago = (t: number) => {
   const s = Math.round((Date.now() - t) / 1000);
@@ -169,6 +171,31 @@ export default function Automation() {
       </section>
 
       <ToolKeys keys={d.keys} reload={load} />
+
+      <section className="card b-6">
+        <div className="card-head"><div><h2><FolderSimple size={17} /> Projects {(d.projects ?? []).filter((p) => p.status === "live").length ? <span className="pill blue">{(d.projects ?? []).filter((p) => p.status === "live").length} live</span> : null}</h2>
+          <p className="sub">Each model works in its own folder and deletes only what it made there. Finishing keeps the deliverables and clears the rest.</p></div></div>
+        <div className="stack" style={{ gap: 0 }}>
+          {(d.projects ?? []).slice(0, 12).map((p) => (
+            <div key={p.id} className="sec-row au-flow">
+              <FolderSimple size={18} className="dim" />
+              <div style={{ minWidth: 0 }}>
+                <div className="small" style={{ fontWeight: 600 }}>{p.name} <span className={`pill ${PROJ_TONE[p.status] ?? "grey"}`}>{p.status}</span></div>
+                <div className="tiny dim au-wrap">{p.owner} · {p.files} file{p.files === 1 ? "" : "s"} · {p.jobs} job{p.jobs === 1 ? "" : "s"} · {p.calls} call{p.calls === 1 ? "" : "s"} · <span className="mono">{p.folder}</span> · {ago(p.updated)}</div>
+              </div>
+              <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                {p.status === "live"
+                  ? <button className="ghost sm danger-h" disabled={busy} aria-label={`Stop project ${p.name}`} onClick={async () => {
+                    if (await confirm({ title: `Stop ${p.name}?`, body: `${p.owner} can't add to it any more and its running jobs are cancelled. Its files stay where they are.`, confirm: "Stop it", danger: true }))
+                      act("project", { id: p.id, stop: true }, `${p.name} stopped`);
+                  }}><Stop size={13} />Stop</button>
+                  : <span className="dim tiny mono">{p.id}</span>}
+              </div>
+            </div>
+          ))}
+          {!(d.projects ?? []).length && <p className="tiny dim" style={{ margin: "4px 0 0" }}>None yet. A model starts one with the project tool.</p>}
+        </div>
+      </section>
 
       <section className="card b-6">
         <div className="card-head"><div><h2><FlowArrow size={17} /> Workflows</h2><p className="sub">Saved steps that run on a schedule, when something happens, or by hand. A model makes them with the workflow tool.</p></div></div>

@@ -63,7 +63,7 @@ const PAUSES: Record<string, (a: Args) => boolean> = {
   publish_post: (a) => !!a.go && a.go !== "save", auto_post: () => true,
   repo: (a) => ["branch", "commit", "push", "pr", "comment", "merge", "allow"].includes(String(a.action)),
   workflow: (a) => ["save", "run", "enable"].includes(String(a.action)),
-  agents: (a) => a.action === "save", memory: (a) => ["note_set", "lesson_add", "skill_save"].includes(String(a.action)),
+  agents: (a) => a.action === "save", project: (a) => a.action === "start" || a.action === "finish", memory: (a) => ["note_set", "lesson_add", "skill_save"].includes(String(a.action)),
 };
 
 /** Which model made the call: the name on its model key (lib/auto/keys.ts), else the X-Model header (Gemini CLI and
@@ -114,12 +114,15 @@ function describe(tool: string, a: Args) {
 
 /** The checks one call has to pass before it runs. null = go; else the answer to give instead. */
 export async function preflight(tool: string, args: Args, model: string, roleName?: string): Promise<Result | null> {
+  // a model deletes its own project's files (to the trash) without asking; anything else still waits (projects.ts)
+  const own = tool === "delete_files" && !args.forever && Array.isArray(args.items)
+    && await (await import("./projects")).ownsAll(model, args.items as string[]).catch(() => false);
   if (roleName) {
     const r = await (await import("./agents")).role(roleName);
     if (!r) return stop(`NO SUCH ROLE: ${roleName}. agents action=list shows the roles; or connect without X-Role.`);
     if (r.tools.length && !r.tools.includes(tool)) return stop(`NOT YOUR ROLE: the ${r.name} role doesn't use ${tool} (it uses ${r.tools.slice(0, 12).join(", ")}…). Hand it to the right role, or ask the owner to change the role (agents).`);
   }
-  const g = (await GATES[tool]?.(args)) ?? null;
+  const g = own ? null : (await GATES[tool]?.(args)) ?? null;
   const gate = typeof g === "string" ? g : g?.key ?? null;
   const always = typeof g === "object" && !!g?.always;
   const spends = SPENDS[tool]?.(args) ?? false;
@@ -150,6 +153,41 @@ export async function preflight(tool: string, args: Args, model: string, roleNam
   return null;
 }
 
+/** Tools that make files, and where a project puts them: save_to (a folder path), folder (an id), workspace. */
+const PROJECT_TOOLS: Record<string, ("save_to" | "folder" | "workspace")[]> = {
+  run: ["save_to", "workspace"], edit_video: ["save_to"], video_template: ["save_to"], repurpose: ["save_to"], inspect_media: ["save_to"], browse: ["save_to"],
+  save_file: ["folder"], upload_media: ["folder"], add_media: ["folder"], voice_lines: [], imagine: [], transcribe: [], clean_audio: [], revoice: [], download: ["folder"],
+};
+
+/** A call with `project`: checked to be the caller's, its outputs sent to the project's folder and workspace unless
+ *  the call names others. Returns the project id. */
+async function intoProject(tool: string, a: Args, model: string) {
+  if (typeof a.project !== "string" || !PROJECT_TOOLS[tool]) return null;
+  const p = await (await import("./projects")).usable(a.project, model);
+  for (const k of PROJECT_TOOLS[tool]) {
+    if (a[k] !== undefined) continue;
+    a[k] = k === "save_to" ? p.path : k === "folder" ? p.folder : p.workspace;
+  }
+  delete a.project;
+  return p.id;
+}
+
+/** What a call made is the project's: files now, and the files a job saves when get_job sees it finish. */
+async function owned(tool: string, proj: string | null, text: string, model: string) {
+  const pr = await import("./projects");
+  const made = pr.madeIn(text);
+  const GEN = ["voice_lines", "imagine", "transcribe", "clean_audio", "revoice"]; // their job is the Files item g:<job>
+  if (GEN.includes(tool) && /"status":\s*"done"/.test(text)) made.files.push(...made.jobs.map((j) => `g:${j}`));
+  if (tool === "get_job") {
+    const id = text.match(/"(?:job_id|id)":\s*"([a-f0-9]{12})"/)?.[1];
+    proj = id ? await pr.projectOfJob(id) : null;
+    if (!proj) return;
+    made.jobs = [];
+    if (/"status":\s*"done"/.test(text) && id && !/"op":\s*"/.test(text)) made.files.push(`g:${id}`); // a voice or image job (not a bench job) is its own item
+  }
+  await pr.record(proj!, made, tool, model).catch(() => {});
+}
+
 /** The server, with every tool registered on it guarded and logged. `via` marks calls that didn't come straight from
  *  a model (a workflow, a sandbox script). */
 export function guarded(server: ToolServer, via?: string): ToolServer {
@@ -158,21 +196,29 @@ export function guarded(server: ToolServer, via?: string): ToolServer {
     let schema = cfg.inputSchema as z.ZodObject | undefined;
     let urlRequired = false;
     if (schema && typeof schema.extend === "function") ({ schema, urlRequired } = loosen(name, schema)); // one id shape (ids.ts)
+    if (schema && PROJECT_TOOLS[name] && !schema.shape.project)
+      schema = schema.safeExtend({ project: z.string().regex(/^[a-f0-9]{6}$/).optional().describe("a project id (project start): what this makes lands in its folder and is yours to delete") });
     if (GATES[name] && schema && typeof schema.extend === "function")
-      schema = schema.extend({ approval_id: z.string().regex(/^[a-f0-9]{10}$/).optional().describe("the id from approvals, once the owner approved this exact call") });
+      schema = schema.safeExtend({ approval_id: z.string().regex(/^[a-f0-9]{10}$/).optional().describe("the id from approvals, once the owner approved this exact call") });
     return orig(name, { ...cfg, ...(schema ? { inputSchema: schema } : {}) }, async (args: Args, ctx: Ctx) => {
       const t = Date.now();
       const model = modelOf(ctx);
       const roleName = roleOf(ctx);
       let res: Result;
       let gate: string | undefined;
+      let proj: string | null = null;
       try {
-        const blocked = await preflight(name, args ?? {}, model, roleName);
+        const a = await normalize(name, args ?? {}, urlRequired);
+        const blocked = await preflight(name, a, model, roleName);
         if (blocked) { res = blocked; gate = said(blocked).split(/[:(]/)[0].trim(); }
-        else res = await handler(await normalize(name, args ?? {}, urlRequired), ctx);
+        else {
+          proj = await intoProject(name, a, model);
+          res = await handler(a, ctx);
+        }
       } catch (e) {
         res = stop(`ERROR: ${(e as Error).message}`);
       }
+      if (!res.isError && (proj || name === "get_job")) later(owned(name, proj, said(res), model));
       const text = said(res);
       const from = via ?? (ctx?.http?.authInfo?.clientId?.startsWith("run:") ? "code" : undefined); // a sandbox script
       const qa = text.match(/"(?:verdict|qa)":\s*"(PASS|WARN|FAIL)"/)?.[1] as "PASS" | "WARN" | "FAIL" | undefined;

@@ -130,6 +130,44 @@ export function registerAutoTools(server: ToolServer) {
   );
 
   server.registerTool(
+    "project",
+    {
+      title: "Projects: your own space for one piece of work, cleaned up at the end",
+      description: [
+        "Start one before making files: you get a Files folder (Projects/<name>-<id>), a sandbox workspace (p-<id>) and a branch name for repo work. Pass project: \"<id>\" to run, edit_video, video_template, repurpose, voice_lines, imagine, save_file, upload_media, add_media and the rest: what they make lands in the folder and is yours.",
+        "Your project's files you may delete (delete_files, to the trash) without asking; anything else still waits for the owner.",
+        "action start (name); status (id: its files, jobs, folder); list (your live projects; all: everyone's); finish (id, keep: the file ids to keep, keep_to: a folder path, default each file's kind folder such as Videos): everything else, the folder and the workspace are cleaned up.",
+        "Example: {\"action\":\"start\",\"name\":\"case 028\"} … {\"action\":\"finish\",\"id\":\"3fa9c1\",\"keep\":[\"m:6721…\"]}.",
+      ].join(" "),
+      inputSchema: z.object({
+        action: z.enum(["start", "status", "list", "finish"]),
+        name: z.string().min(1).max(80).optional(), id: z.string().regex(/^[a-f0-9]{6}$/).optional(),
+        keep: z.array(z.string().max(80)).max(100).optional().describe("finish: file ids to keep"), keep_to: z.string().max(200).optional(),
+        all: z.boolean().optional().describe("list: everyone's live projects, not just yours"),
+      }),
+    },
+    async ({ action, name, id, keep, keep_to, all }, ctx) => {
+      try {
+        const pr = await import("./projects");
+        const me = await modelName(ctx as Ctx);
+        if (action === "start") {
+          if (!name) throw new Error("start needs name");
+          const p = await pr.startProject(name, me);
+          return text({ project: p.id, folder: p.path, workspace: p.workspace, branch: p.branch, next: `pass project "${p.id}" to the tools that make files; finish it with keep when done` });
+        }
+        if (action === "list") return text((await pr.listProjects({ owner: all ? undefined : me, live: true })).map(pr.summary).map(({ created: _c, updated, ...x }) => ({ ...x, updated: iso(updated) })));
+        if (!id) throw new Error(`${action} needs id`);
+        if (action === "status") {
+          const p = await pr.getProject(id);
+          return text({ ...pr.summary(p), created: iso(p.created), updated: iso(p.updated), files: Object.entries(p.files).slice(-60).map(([f, o]) => `${f} (${o.tool})`), jobs: p.jobs.slice(-20), ...(p.finished ? { finished: { ...p.finished, at: iso(p.finished.at) } } : {}) });
+        }
+        const { fileKey } = await import("./ids");
+        return text(await pr.finishProject(id, me, { keep: (keep ?? []).map(fileKey), keep_to: keep_to ?? null, by: me }));
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
     "playbook",
     {
       title: "The playbook: the studio's rules and know-how",
