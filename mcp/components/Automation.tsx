@@ -8,6 +8,7 @@ import { api } from "./api";
 import { useDialog } from "./Dialog";
 import { Info } from "./Info";
 import { Select } from "./pop";
+import ToolKeys, { type KeyStatus } from "./ToolKeys";
 import { Field, Toggle } from "./ui";
 
 type Approval = { id: string; action: string; summary: string; by: string; status: string; created: number; decided?: number; decided_by?: string; note?: string };
@@ -15,7 +16,7 @@ type Log = { t: number; tool: string; model: string; ok: boolean; ms: number; er
 type Data = {
   control: { paused: boolean; paused_at?: number; paused_by?: string; pause_reason?: string; cap_units: number; ask_first: string[]; repos: string[] };
   units: { spent: number | null; balance: number | null };
-  approvals: Approval[]; log: Log[]; ask_first: Record<string, string>; github_key: boolean; platform: string;
+  approvals: Approval[]; log: Log[]; ask_first: Record<string, string>; keys: Record<string, KeyStatus>; platform: string;
   flows: { list: Flow[]; runs: RunSum[] };
   lessons: Lesson[]; cards: Card[];
 };
@@ -69,6 +70,7 @@ export default function Automation() {
   const pending = d.approvals.filter((a) => a.status === "pending");
   const decided = d.approvals.filter((a) => a.status !== "pending").slice(0, 8);
   const models = [...new Set(d.log.map((l) => l.model))];
+  const ghKey = d.keys.github?.from === "dashboard" || d.keys.github?.from === "vercel";
   const over = c.cap_units > 0 && d.units.spent != null && d.units.spent >= c.cap_units;
 
   return (
@@ -147,8 +149,8 @@ export default function Automation() {
 
       <section className="card b-3">
         <div className="card-head"><div><h2><GitBranch size={17} /> Repos</h2><p className="sub">Where models may branch, commit and open PRs. Never main.</p></div>
-          <span className={`pill ${d.github_key ? "ok" : "warn"}`}>{d.github_key ? "Key set" : "No key yet"}</span></div>
-        {!d.github_key && <p className="tiny dim" style={{ marginTop: 0 }}>Add GITHUB_AGENT_TOKEN on Vercel: a fine-grained key with contents and pull requests, for these repos only.</p>}
+          <span className={`pill ${ghKey ? "ok" : "warn"}`}>{ghKey ? "Key set" : "No key yet"}</span></div>
+        {!ghKey && <p className="tiny dim" style={{ marginTop: 0 }}>Paste a GitHub key under Keys below: a fine-grained key for these repos only.</p>}
         <div className="stack" style={{ gap: 0 }}>
           {c.repos.map((r) => (
             <div key={r} className="sec-row">
@@ -165,6 +167,8 @@ export default function Automation() {
           <button className="ghost" disabled={busy || !repo.trim()}><Plus size={14} />Add</button>
         </form>
       </section>
+
+      <ToolKeys keys={d.keys} reload={load} />
 
       <section className="card b-6">
         <div className="card-head"><div><h2><FlowArrow size={17} /> Workflows</h2><p className="sub">Saved steps that run on a schedule, when something happens, or by hand. A model makes them with the workflow tool.</p></div></div>
@@ -229,7 +233,7 @@ export default function Automation() {
               <span className="small au-wrap">{l.text}</span>
               <span className="dim tiny">{l.topic}</span>
               {l.status === "approved"
-                ? <button className="ghost sm" disabled={busy || !d.github_key} title={d.github_key ? "Open a PR adding it to docs/FEEDBACK.md" : "Needs the GitHub key"} onClick={() => act("lesson", { id: l.id, decision: "promote" }, "PR opened")}>Make it a rule</button>
+                ? <button className="ghost sm" disabled={busy || !ghKey} title={ghKey ? "Open a PR adding it to docs/FEEDBACK.md" : "Needs the GitHub key"} onClick={() => act("lesson", { id: l.id, decision: "promote" }, "PR opened")}>Make it a rule</button>
                 : l.pr ? <a className="tiny" href={l.pr} target="_blank" rel="noreferrer">PR</a> : <span />}
             </div>
           ))}

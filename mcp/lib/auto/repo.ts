@@ -1,6 +1,6 @@
 // Repos for models (docs/AUTOMATION.md, phase 3): read, branch, commit, open a PR, read its CI, comment, merge, on
 // the repos the owner allowed (Settings → Automation), through GitHub's REST API with a fine-grained key that only
-// reaches those repos (GITHUB_AGENT_TOKEN, a Vercel secret never shown to a model). Work happens on branches: the
+// reaches those repos (the GitHub key, saved in Settings → Automation → Keys or GITHUB_AGENT_TOKEN on Vercel, never shown to a model; lib/auto/secrets.ts). Work happens on branches: the
 // default branch and protected branches are never written by a model; a merge waits for the owner (always, on the
 // platform repo). A workspace on the worker gets a clone for tests (bench op clone); its changes come back as a commit
 // made here (bench op diff), so the key never sits where the sandbox could read it.
@@ -13,16 +13,17 @@ const NEVER = new Set(["main", "master", "production", "release"]);
 
 export class RepoError extends Error {}
 
-function token() {
-  const t = process.env.GITHUB_AGENT_TOKEN;
-  if (!t) throw new RepoError("GITHUB_AGENT_TOKEN isn't set on Vercel yet: the owner adds a fine-grained key (contents and pull requests, only the allowed repos). See docs/AUTOMATION.md, Waiting on the owner.");
+async function token() {
+  const t = await (await import("./secrets")).secret("github");
+  if (!t) throw new RepoError("No GitHub key yet: the owner pastes a fine-grained key (contents and pull requests, only the allowed repos) in Settings → Automation → Keys. See docs/AUTOMATION.md, Waiting on the owner.");
   return t;
 }
 
 export async function gh<T = unknown>(path: string, init: { method?: string; body?: unknown; raw?: boolean } = {}): Promise<T> {
+  const key = await token();
   const r = await fetch(`${API()}${path}`, {
     method: init.method ?? (init.body ? "POST" : "GET"),
-    headers: { Authorization: `Bearer ${token()}`, Accept: init.raw ? "application/vnd.github.raw+json" : "application/vnd.github+json",
+    headers: { Authorization: `Bearer ${key}`, Accept: init.raw ? "application/vnd.github.raw+json" : "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "voicebox-workbench", ...(init.body ? { "Content-Type": "application/json" } : {}) },
     body: init.body ? JSON.stringify(init.body) : undefined,
     cache: "no-store",
@@ -158,5 +159,5 @@ export async function merge(r: string, pr: number, method: "merge" | "squash" | 
 /** For a clone on the worker: an https URL and the header that carries the key (never written into the clone). */
 export async function cloneSpec(r: string, ref?: string) {
   const info = await repoInfo(r);
-  return { url: `https://github.com/${r}.git`, ref: ref || info.default_branch, header: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token()}`).toString("base64")}` };
+  return { url: `https://github.com/${r}.git`, ref: ref || info.default_branch, header: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${await token()}`).toString("base64")}` };
 }

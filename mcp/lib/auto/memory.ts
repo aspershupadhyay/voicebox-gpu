@@ -82,7 +82,7 @@ export async function promote(id: string, by: string) {
   if (!l) throw new Error("no such lesson");
   if (l.status === "suggested") throw new Error("approve it first");
   const r = await import("./repo");
-  const repo = await r.allowed(r.PLATFORM).catch(() => { throw new Error(`promoting needs ${r.PLATFORM} on the repo allow-list and GITHUB_AGENT_TOKEN; it's served to every model already`); });
+  const repo = await r.allowed(r.PLATFORM).catch(() => { throw new Error(`promoting needs ${r.PLATFORM} on the repo allow-list and the GitHub key; it's served to every model already`); });
   const cur = await r.read(repo, "docs/FEEDBACK.md", undefined, 1, 100_000);
   const text = cur.text.split("\n").map((x) => x.replace(/^\d+\t/, "")).join("\n");
   const head = "## Lessons from the models";
