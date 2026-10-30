@@ -86,7 +86,9 @@ PRELOAD = [n.strip() for n in os.environ.get("VOICEBOX_PRELOAD", "myvoice").spli
 # Measured on the L4, 37 lines (564 s of audio): AP-BWE 5.4 s and 37/37 kept vs Resemble 89.4 s and 11/37 kept.
 POLISH = os.environ.get("VOICEBOX_POLISH", "apbwe")
 POLISH_ENGINE = {"resemble": "enhance", "apbwe": "apbwe"}
-R2_WEIGHTS = os.environ.get("VOICEBOX_R2_WEIGHTS", "1") == "1"
+# R2_WEIGHTS is off by default (docs/MIGRATION.md): the public repos came to 13.7 GB of a 10 GB free bucket, and Colab
+# pulls them from Hugging Face in a minute or two. Trained voices (models/ in R2) don't go through this.
+R2_WEIGHTS = os.environ.get("VOICEBOX_R2_WEIGHTS", "0") == "1"
 R2_COMPILE = os.environ.get("VOICEBOX_R2_COMPILE", "1") == "1"
 VIDEO_ASPECTS = ("16:9", "9:16", "1:1")
 

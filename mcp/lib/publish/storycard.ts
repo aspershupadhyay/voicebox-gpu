@@ -41,7 +41,7 @@ export async function headerPng(handle: string, avatar: string | null, width = C
 /** A photo story, built: 1080×1920 JPEG bytes. */
 export async function photoStory(src: Source, style: StoryStyle, who: { handle: string; avatar: string | null }) {
   const sharp = (await import("sharp")).default;
-  const url = src.m ? jpegUrl(src.m, 1440) : src.url;
+  const url = src.m ? await jpegUrl(src.m, 1440) : src.url;
   const r = await fetch(url!, { cache: "no-store" });
   if (!r.ok) throw new Error(`Couldn't read ${src.name} for the story (${r.status})`);
   const img = Buffer.from(await r.arrayBuffer());

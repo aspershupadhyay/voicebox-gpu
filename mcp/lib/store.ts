@@ -8,6 +8,10 @@ const ENDPOINT = `${process.env.R2_ENDPOINT || `https://${process.env.R2_ACCOUNT
 const TYPES: Record<string, string> = {
   wav: "audio/wav", mp3: "audio/mpeg", m4a: "audio/mp4", webm: "audio/webm", ogg: "audio/ogg", srt: "application/x-subrip",
   vtt: "text/vtt", json: "application/json", mp4: "video/mp4", jpg: "image/jpeg", png: "image/png", webp: "image/webp", zip: "application/zip",
+  // Files uploads live here too (docs/MIGRATION.md): a GET carries the type the key's extension names
+  jpeg: "image/jpeg", gif: "image/gif", avif: "image/avif", heic: "image/heic", svg: "image/svg+xml", mov: "video/quicktime", m4v: "video/mp4",
+  mkv: "video/x-matroska", aac: "audio/aac", flac: "audio/flac", opus: "audio/ogg", pdf: "application/pdf", txt: "text/plain", md: "text/markdown",
+  csv: "text/csv", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
 export const typeOf = (name: string) => TYPES[name.split(".").pop()?.toLowerCase() ?? ""] ?? "application/octet-stream";
 
@@ -127,6 +131,13 @@ export async function delObjs(keys: string[]) {
       if (!r.ok && r.status !== 404) throw new Error(`storage DELETE ${k}: ${r.status}`);
     }));
   }
+}
+
+/** Copy an object inside the bucket (no bytes pass through here; up to 5 GB). */
+export async function copyObj(from: string, to: string) {
+  const signed = await aws().sign(url(to), { method: "PUT", headers: { "x-amz-copy-source": `/${BUCKET}/${from.split("/").map(encodeURIComponent).join("/")}`, "X-Amz-Content-Sha256": "UNSIGNED-PAYLOAD" } });
+  const r = await fetch(signed.url, { method: "PUT", headers: signed.headers });
+  if (!r.ok) throw new Error(`storage COPY ${from} → ${to}: ${r.status} ${(await r.text()).slice(0, 200)}`);
 }
 
 export const delPrefix = async (prefix: string) => delObjs((await listObjs(prefix)).map((o) => o.key));

@@ -1,6 +1,7 @@
 // Server half of the shared workspace. The browser reads and writes posts/comments/media straight to Appwrite (that is
 // what makes it live); these routes do the parts that need the project's API key.
-import { AppwriteError, backupUrl, finalizeMedia, getMedia, hasKey, listMembers } from "@/lib/appwrite";
+import { AppwriteError, backupUrl, deleteMediaRow, finalizeMedia, getMedia, hasKey, listMembers } from "@/lib/appwrite";
+import { storageUse } from "@/lib/r2files";
 import { after } from "next/server";
 import { currentUser, isAuthed } from "@/lib/session";
 import { getSettings } from "@/lib/settings";
@@ -18,6 +19,7 @@ export async function GET(req: Request, ctx: Ctx) {
   try {
     if (a === "me") return Response.json({ user: await currentUser(), workspace: hasKey() });
     if (a === "members") return Response.json({ members: await listMembers() });
+    if (a === "storage") { const u = await storageUse(); return Response.json({ used: u.bytes, cap: u.cap, parts: u.parts }); }
     if (a === "backup" && b && ID.test(b)) {
       const url = await backupUrl(await getMedia(b));
       return url ? Response.json({ url }) : Response.json({ error: "no R2 copy yet" }, { status: 404 });
@@ -39,6 +41,22 @@ export async function POST(req: Request, ctx: Ctx) {
       const out = await finalizeMedia(b, { backup: false });
       if (backup) after(() => finalizeMedia(b, { backup: true }).catch(() => null));
       return Response.json(out);
+    }
+    return Response.json({ error: "not found" }, { status: 404 });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** A file kept in R2 is deleted here: the browser can't reach the bucket (an Appwrite file goes from the browser). */
+export async function DELETE(req: Request, ctx: Ctx) {
+  if (!(await isAuthed(req))) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const [a, b] = (await ctx.params).path;
+  try {
+    if (a === "media" && b && ID.test(b)) {
+      const who = await currentUser().catch(() => null);
+      const m = await deleteMediaRow(b, who ? { id: who.id, name: who.name } : { name: "Dashboard" });
+      return Response.json({ deleted: b, name: m.name });
     }
     return Response.json({ error: "not found" }, { status: 404 });
   } catch (e) {

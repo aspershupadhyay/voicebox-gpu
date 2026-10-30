@@ -2,7 +2,7 @@
 // Building blocks shared by Posts and Files: the sign-in gate, avatars, uploads and media tiles.
 import { FileAudio, FileText, FilmStrip, Paperclip, Play, UsersThree } from "@phosphor-icons/react";
 import { useCallback, useState } from "react";
-import { AW, fileUrl, initials, kindOf, screenPreview, type Media, type MediaKind } from "@/lib/workspace";
+import { AW, fileUrl, initials, kindOf, onR2, screenPreview, type Media, type MediaKind } from "@/lib/workspace";
 import { aw, getMe, ID, logActivity, signOut, useMe } from "./aw";
 import { Empty, PageHeader } from "./ui";
 import { FileViewer } from "./Viewer";
@@ -36,8 +36,36 @@ export type Upload = { key: string; name: string; size: number; kind: MediaKind;
 // files going up at once: many small ones fill the line in parallel; big ones go two or three at a time so each finishes soon
 const lanesFor = (files: File[]) => (files.every((f) => f.size < 8e6) ? 6 : files.some((f) => f.size > 200e6) ? 2 : 3);
 
+const FILES_ON_R2 = process.env.NEXT_PUBLIC_FILES_BACKEND === "r2";
+
+/** PUT a file to a presigned R2 address, reporting progress (fetch can't). */
+function putWithProgress(url: string, file: File, type: string, onProgress: (f: number) => void) {
+  return new Promise<void>((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("PUT", url);
+    x.setRequestHeader("Content-Type", type);
+    x.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    x.onload = () => (x.status < 300 ? resolve() : reject(new Error(`Upload failed (${x.status})`)));
+    x.onerror = () => reject(new Error("Upload failed: the connection dropped"));
+    x.send(file);
+  });
+}
+
+/** Into R2 the way scripts do it (lib/inbox.ts): an address, the bytes straight to the bucket, then the ticket in. */
+async function uploadToR2(file: File, postId: string | null | undefined, onProgress: (f: number) => void) {
+  const post = (path: string, body: unknown) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `${r.status}`); return j; });
+  const ext = /\.[A-Za-z0-9]{1,8}$/.test(file.name) ? "" : `.${(file.type.split("/")[1] || "bin").replace(/[^a-z0-9]/gi, "").slice(0, 8) || "bin"}`;
+  const type = file.type || "application/octet-stream";
+  const start = await post("/api/files/upload", { name: `${file.name}${ext}`, size: file.size, type, post_id: postId ?? undefined });
+  await putWithProgress(start.upload_url, file, type, onProgress);
+  const done = await post("/api/files/complete", { ticket: start.ticket });
+  return aw().tables.getRow<Media>({ databaseId: AW.db, tableId: "media", rowId: done.media });
+}
+
 /** Upload to Appwrite Storage (chunked, resumable), record it in the media table, then mint a view token (the R2 backup
- *  copy follows on the server). `onRow` hears about each file as soon as its row exists; `onStart` as it's queued. */
+ *  copy follows on the server); with NEXT_PUBLIC_FILES_BACKEND=r2, into R2 instead (uploadToR2). `onRow` hears about
+ *  each file as soon as its row exists; `onStart` as it's queued. */
 export function useUploader(postId?: string | null) {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const upload = useCallback(async (files: FileList | File[], onRow?: (m: Media, file: File, key: string) => void, onStart?: (key: string, file: File) => void) => {
@@ -49,6 +77,16 @@ export function useUploader(postId?: string | null) {
     const finishing: Promise<void>[] = [];
     const one = async ({ file, key }: { file: File; key: string }) => {
       const set = (p: Partial<Upload>) => setUploads((u) => u.map((x) => (x.key === key ? { ...x, ...p } : x)));
+      if (FILES_ON_R2) {
+        try {
+          const row = await uploadToR2(file, postId, (p) => set({ progress: Math.min(0.99, p) }));
+          set({ mediaId: row.$id, progress: 1, done: true });
+          onRow?.(row, file, key);
+        } catch (e) {
+          set({ error: (e as Error).message || "Upload failed" });
+        }
+        return;
+      }
       try {
         const f = await aw().storage.createFile({ bucketId: AW.bucket, fileId: ID.unique(), file, onProgress: (p) => set({ progress: Math.min(0.99, p.progress / 100) }) });
         set({ progress: 0.99 });
@@ -133,6 +171,11 @@ export function MediaViewer({ m, onClose, onDelete }: { m: Media; onClose: () =>
 }
 
 export async function deleteMedia(m: Media) {
+  if (onR2(m)) {
+    const r = await fetch(`/api/ws/media/${m.$id}`, { method: "DELETE" });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't delete it");
+    return;
+  }
   await aw().storage.deleteFile({ bucketId: AW.bucket, fileId: m.file_id }).catch(() => {});
   await aw().tables.deleteRow({ databaseId: AW.db, tableId: "media", rowId: m.$id });
   logActivity(m.post_id, "deleted file", m.name);

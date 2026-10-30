@@ -103,7 +103,7 @@ export async function publishPost(path: string[], body: Record<string, unknown>)
     if (cur.cover) {
       const { jpegUrl, resolve } = await import("./sources");
       const c = await resolve(cur.cover);
-      const bytes = new Uint8Array(await (await fetch((c.m ? jpegUrl(c.m, 1280) : c.url)!, { cache: "no-store" })).arrayBuffer());
+      const bytes = new Uint8Array(await (await fetch((c.m ? await jpegUrl(c.m, 1280) : c.url)!, { cache: "no-store" })).arrayBuffer());
       await YT.setThumbnail(token, cur.result.id, bytes, "image/jpeg").then(() => { thumb = " and thumbnail"; }).catch((e) => { thumb = ` (thumbnail not changed: ${(e as Error).message})`; });
     }
     cur.log.push({ at: Date.now(), text: `Updated on YouTube: details${thumb}, by ${await who()}`, ok: true });

@@ -127,6 +127,9 @@ export default function Files() {
   const router = useRouter();
   const cwd = params.get("folder");
   const trashView = params.get("view") === "trash";
+  // the R2 bucket against its budget (lib/r2files.ts): new files stop before it goes over the free 10 GB
+  const [store, setStore] = useState<{ used: number; cap: number } | null>(null);
+  useEffect(() => { fetch("/api/ws/storage").then((r) => (r.ok ? r.json() : null)).then((j) => j && setStore(j)).catch(() => {}); }, []);
   const { status } = useStatus();
   const { confirm, toast } = useDialog();
   const me = useMe();
@@ -1015,7 +1018,7 @@ export default function Files() {
       onDragOver={(e) => { if (!trashView && e.dataTransfer.types.includes("Files") && !e.dataTransfer.types.includes(DT)) { e.preventDefault(); setOsDrag(true); const n = [...e.dataTransfer.items].filter((x) => x.kind === "file").length; if (n !== dragN) setDragN(n); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) { setOsDrag(false); setOver(null); } }}
       onDrop={(e) => { if (!trashView && e.dataTransfer.files.length && !e.dataTransfer.types.includes(DT)) { e.preventDefault(); setOsDrag(false); sendFiles([...e.dataTransfer.files]); } }}>
-      <PageHeader title={trashView ? "Trash" : "Files"} sub={trashView ? "Deleted things wait here for 30 days, then they're gone for good." : "Every upload and everything the GPU made, sorted by kind. Drop, paste or drag files anywhere."}
+      <PageHeader title={trashView ? "Trash" : "Files"} sub={trashView ? "Deleted things wait here for 30 days, then they're gone for good." : <>Every upload and everything the GPU made, sorted by kind. Drop, paste or drag files anywhere.{store && <> <span className="mono" style={{ color: store.used > store.cap * 0.85 ? "var(--warn)" : undefined }}>{(store.used / 1e9).toFixed(1)} of {(store.cap / 1e9).toFixed(1)} GB</span> used.</>}</>}
         actions={trashView ? <>
           <button className="ghost" onClick={() => go(null)}><FolderSimple size={15} weight="duotone" />Back to files</button>
           <button className="danger" onClick={emptyTrash} disabled={!trashCount}><TrashSimple size={15} weight="bold" />Empty trash</button>

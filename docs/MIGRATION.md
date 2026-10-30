@@ -37,14 +37,29 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
 
 ## Phases
 
-0. **Stop the waste** (this PR). Hidden tabs no longer poll: the shell's status every 15 s (was 6 s, in every tab),
+0. **Stop the waste** (shipped, #144). Hidden tabs no longer poll: the shell's status every 15 s (was 6 s, in every tab),
    GPU jobs 5 s (3 s), Home 8 s (4 s), the job tray 5 s (4 s), all paused while the tab is hidden. The sweep stays every
-   10 min because it also runs the publishing autopilot (slots must not slip). Still to do: clearing the R2 copies
-   and cache above (needs the owner's go-ahead for each delete) and lifecycle rules on `cache/` and the trash.
-1. **All files to R2.** Prefixes `media/`, `models/`, `cache/` (expires), `trash/` (30 days). Uploads go straight to
-   R2 in parts, up to 2 GB. Share links become presigned R2 URLs that expire with the link. A script copies every
-   Appwrite file and checks counts and checksums; Appwrite stays the fallback until they match.
-2. **Data to CockroachDB** (Basic tier, cluster `9f03fe46-842e-439e-ac3a-e33fce750382`, SQL user `catch`). Tables for
+   10 min because it also runs the publishing autopilot (slots must not slip).
+   **Clean-up (2026-10-30)**: the Files backups and download staging deleted (2.6 GB), two orphans in Appwrite
+   Storage deleted (a stalled 900 MB download and a 9 MB recording with no row), the worker no longer mirrors Hugging
+   Face weights by default (`VOICEBOX_R2_WEIGHTS=0`), and bucket rules expire `cache/hf/` after 7 days (the 13.7 GB
+   left goes by itself around 2026-11-03), `cache/toolchain/` and `cache/compile/` after 30 (they're rebuilt on the
+   next runtime that needs them) and `cache/thumbs/` after 30. That leaves about 4 GB: the trained voices, their data,
+   the tool and kernel caches, and new files.
+1. **All files to R2** (this PR, behind `NEXT_PUBLIC_FILES_BACKEND=r2`). A row whose `file_id` starts with `r2_` has
+   its bytes at `r2_key` and a token that is an HMAC of that key; `fileUrl` sends it through `/api/m/<token>/<key>`,
+   which redirects to a presigned R2 link the CDN keeps for an hour (the bytes never pass through Vercel). Photos get
+   resized copies made once with sharp under `cache/thumbs/`; Instagram and YouTube get a real JPEG from the same
+   place, presigned with no redirect. Uploads from the browser, the MCP, upload links and scripts all go straight to
+   R2 (the browser with a progress bar) and are never copied into Appwrite; a download's file is copied inside R2 to
+   its Files key and its staging slot deleted. Deleting an R2 file deletes its bytes. Share links hand out hour-long
+   presigned links on each visit, so they still stop working when the link does. Rows already in Appwrite keep
+   working as they are; only `Passwords.docx` is left there, and it moves when Appwrite goes.
+   **The storage budget**: `STORAGE_CAP_GB` (default 9.5) is checked before every upload starts; one that would take
+   the bucket past it is refused with what fills it. The Files page shows the bucket against it.
+2. **Data to Postgres: Neon is the pick** (real Postgres, an HTTP driver that works from Vercel and Workers without
+   Hyperdrive, a branch per preview; the data is under 1 MB, so its 0.5 GB free tier is plenty, and it sleeps after
+   5 idle minutes, costing one slow first query). CockroachDB stays the fallback (Basic tier, cluster `9f03fe46-842e-439e-ac3a-e33fce750382`, SQL user `catch`). Tables for
    posts, files, folders, shares, publishing, analytics and access; one module in `lib/` replaces the ~17 files that
    call Appwrite. Export, load, compare, then switch reads. The $400 trial credit covers test runs; the app must run
    on the free tier without it.

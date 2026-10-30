@@ -2,7 +2,8 @@
 // editor). The link is /s/<token>: 32 random bytes, shown once when it's made and never stored (R2 keeps only its
 // SHA-256, like the upload keys). Opening it shows only what that one share names, read-only: the carousel's photos in
 // order, or the folder's files (and its subfolders'), live. Uploads are served by Appwrite tokens made for this share
-// that stop working when it expires (and are deleted when it's revoked); generated files by R2 links good for an hour.
+// that stop working when it expires (and are deleted when it's revoked); uploads kept in R2 (lib/r2files.ts) and
+// generated files by R2 links good for an hour, made on each visit.
 // Nothing else is reachable from it: no other files, no names of folders around it, no way to change anything.
 // Kept in R2: workspace/shares.json.
 import { createHash, randomBytes } from "node:crypto";
@@ -12,7 +13,8 @@ import { catalog, carouselDetail } from "./filemanager";
 import { FilesError } from "./files";
 import { FOLDER_RE, subtree } from "./filetree";
 import { listSummaries, signer } from "./library";
-import { getJsonTagged, putJson, putJsonIf } from "./store";
+import { resizable, thumbUrl } from "./r2files";
+import { getJsonTagged, presign, putJson, putJsonIf } from "./store";
 import { AW } from "./workspace";
 
 export type Share = {
@@ -113,7 +115,7 @@ export async function openShare(token: string): Promise<{ share: ReturnType<type
   for (let i = 0; i < need.length; i += 8) {
     await Promise.all(need.slice(i, i + 8).map(async (k) => {
       const m = await getMedia(k.slice(2)).catch(() => null);
-      if (!m) return;
+      if (!m || m.file_id.startsWith("r2_")) return; // an R2 file gets hour-long links on each visit instead
       const t = await createFileToken(m.file_id, expire).catch(() => null);
       if (t) made[m.$id] = { id: t.$id, secret: t.secret };
     }));
@@ -133,6 +135,14 @@ export async function openShare(token: string): Promise<{ share: ReturnType<type
     if (!it) continue;
     if (k.startsWith("m:")) {
       const m = await getMedia(k.slice(2)).catch(() => null);
+      if (m?.r2_key && m.file_id.startsWith("r2_")) {
+        const key = m.r2_key;
+        const img = m.kind === "image" && resizable(key);
+        files.push({ id: k, name: m.name, kind: m.kind, thumb: img ? await thumbUrl(key, 480, "webp", 3600).catch(() => null) : null,
+          view: img ? await thumbUrl(key, 1920, "webp", 3600) : await presign(key, "GET", 3600),
+          download: s.downloads ? await presign(key, "GET", 3600, m.name) : null, mb: it.mb });
+        continue;
+      }
       const t = m && tokens[m.$id];
       if (!m || !t) continue;
       const u = (mode: string, w?: number) => {

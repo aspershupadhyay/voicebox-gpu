@@ -11,6 +11,9 @@ for. Read this before touching the dashboard. Newest first. When something here 
 - **"Make sure nothing breaks, each functionality must work; take care of the data, especially the model"**: every
   switch sits behind a setting with the old path kept, Appwrite stays until a week on the new setup, and the trained
   voices (`models/`, `datasets/`) are never touched by a migration step.
+- **"Be serious with storage: never go over, keep only what matters, the cache too"**: a hard budget
+  (`STORAGE_CAP_GB`, 9.5 GB of the free 10) checked before every upload, the bucket's use on the Files page, bucket
+  rules that expire caches, and no copy of public model weights in R2. Files are stored once (R2), not twice.
 - **"No new repo"**: stay in this one (the deploy, the Colab bundle and the history live here).
 - **"Empty the Files page except Passwords.docx"**: done, deleted for good on the owner's word.
 
