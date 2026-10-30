@@ -135,12 +135,15 @@ def _drop(ids, fsize=4 << 30):
 
 
 BASE_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
+# the GPU's libraries, not the secrets: without LD_LIBRARY_PATH (Colab's /usr/lib64-nvidia) ffmpeg in the sandbox can't
+# load libcuda.so.1 and NVENC fails (found on the L4 by the factory's first run)
+GPU_ENV = {k: os.environ[k] for k in ("LD_LIBRARY_PATH", "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES", "NVIDIA_DRIVER_CAPABILITIES") if os.environ.get(k)}
 
 
 def as_user(argv, cwd, stdin=None, timeout=600, env=None, err_tail=2000):
     """Run a helper as the sandbox user (never as root inside the workspace: the code there could have left symlinks
     pointing at the worker's files). Returns (exit code, stdout bytes, stderr text)."""
-    r = subprocess.run(argv, cwd=cwd, input=stdin, capture_output=True, timeout=timeout, env={**BASE_ENV, "HOME": cwd, **(env or {})},
+    r = subprocess.run(argv, cwd=cwd, input=stdin, capture_output=True, timeout=timeout, env={**BASE_ENV, **GPU_ENV, "HOME": cwd, **(env or {})},
                        preexec_fn=_drop(_ids()))
     err = r.stderr.decode("utf-8", "replace")
     return r.returncode, r.stdout, err[-err_tail:] if err_tail else err
@@ -450,13 +453,20 @@ def render_spec(job, ws, jdir, run, infos, spec, inputs, out_name):
         for src in (srcs if isinstance(srcs, list) and k == "voice" else [srcs] if spec.get(k) else []):
             if src not in infos:
                 raise ValueError(f"{k}.src: no input called {src!r} (inputs: {', '.join(infos)})")
-    nv = media.has_nvenc()
-    args, layout, seconds, extra = media.plan_edit(spec, {k: v for k, v in infos.items() if not v[0].lower().endswith(".srt")}, nv, media.font_file())
+    nv = media.has_nvenc(run)
+    vids = {k: v for k, v in infos.items() if not v[0].lower().endswith(".srt")}
+    args, layout, seconds, extra = media.plan_edit(spec, vids, nv, media.font_file())
     for name, content in extra.items():
         write_as_user(ws, name, content.encode())
     b["stage"] = f"rendering {out_name}: {seconds:.0f} s ({'NVENC on the GPU' if nv else 'x264 on the CPU'})"
     t0 = time.time()
     code, _, err = run(args, timeout=3600)
+    if code and nv and "nvenc" in err.lower():  # NVENC refused (a busy or missing encoder): the CPU does it instead
+        media.NVENC["ok"] = nv = False
+        args, layout, seconds, extra = media.plan_edit(spec, vids, nv, media.font_file())
+        b.setdefault("notes", []).append(f"NVENC failed ({err.strip().splitlines()[-1][:120] if err.strip() else '?'}), rendered on the CPU")
+        code, _, err = run(args, timeout=3600)
+    b["encoder"] = "h264_nvenc" if nv else "libx264"
     if code:
         raise ValueError(f"ffmpeg failed: {err.strip()[-900:]}")
     final, caps = "out.mp4", None
