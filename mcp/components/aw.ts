@@ -17,17 +17,24 @@ export function aw() {
 }
 export { ID, Query };
 
-/** Sign in to Appwrite, then trade a short-lived JWT for the dashboard's own cookie (who you are, for attribution).
+/** Sign in: with accounts in Postgres (AUTH_BACKEND=neon) the server checks the password itself; otherwise Appwrite
+ *  signs in and its short-lived JWT is traded for the dashboard's own cookie (who you are, for attribution).
  *  With a name it's a sign-up: the server checks the invite list first and creates the account (api/login). */
 export async function signIn(email: string, password: string, name?: string) {
+  // accounts in Postgres (AUTH_BACKEND=neon): straight to the server, no Appwrite session
+  const own = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(name !== undefined ? { signup: { name, email, password } } : { email, password }) });
+  const res = await own.json().catch(() => ({}));
+  if (own.ok && res.user) return res as { user: { id: string; name: string; email: string }; workspace: boolean };
+  if (!(own.status === 409 && res.use === "appwrite") && !(name !== undefined && own.ok)) throw new Error(res.error || "Sign-in failed");
+  if (name !== undefined) return signInAppwrite(email, password, name, res);
+  return signInAppwrite(email, password);
+}
+
+async function signInAppwrite(email: string, password: string, name?: string, signedUp?: { create?: string }) {
   const { account } = aw();
   await account.deleteSession({ sessionId: "current" }).catch(() => {});
-  if (name !== undefined) {
-    const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ signup: { name, email, password } }) });
-    const out = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(out.error || "Sign-up failed");
-    if (out.create === "client") await account.create({ userId: ID.unique(), email, password, name: name || email.split("@")[0] });
-  }
+  if (name !== undefined && signedUp?.create === "client") await account.create({ userId: ID.unique(), email, password, name: name || email.split("@")[0] });
   await account.createEmailPasswordSession({ email, password });
   const { jwt } = await account.createJWT();
   const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jwt }) });
@@ -43,16 +50,15 @@ export async function signOut() {
 }
 
 type Me = { id: string; name: string; email: string };
-type MeState = { user: Me | null; workspace: boolean; session: boolean; db: "appwrite" | "neon" };
+type MeState = { user: Me | null; workspace: boolean; session: boolean; db: "appwrite" | "neon"; auth: "appwrite" | "neon" };
 let meCache: Promise<MeState> | null = null;
 
 export function getMe() {
   meCache ??= (async () => {
-    const [r, session] = await Promise.all([
-      fetch("/api/ws/me").then((x) => x.json()).catch(() => ({ user: null, workspace: false })),
-      aw().account.get().then(() => true).catch(() => false),
-    ]);
-    return { user: r.user ?? null, workspace: !!r.workspace, session, db: r.db === "neon" ? "neon" : "appwrite" } as MeState;
+    const r = await fetch("/api/ws/me").then((x) => x.json()).catch(() => ({ user: null, workspace: false }));
+    // signed in with an account in Postgres, the dashboard's cookie is the whole session; else Appwrite's is needed too
+    const session = r.auth === "neon" ? !!r.user : await aw().account.get().then(() => true).catch(() => false);
+    return { user: r.user ?? null, workspace: !!r.workspace, session, db: r.db === "neon" ? "neon" : "appwrite", auth: r.auth === "neon" ? "neon" : "appwrite" } as MeState;
   })();
   return meCache;
 }

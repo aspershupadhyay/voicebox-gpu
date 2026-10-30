@@ -2,7 +2,9 @@
 // from the browser or the server, lands here and is mirrored into Postgres (lib/db.ts), so Neon keeps up with Appwrite
 // until reads switch. Public by design, like a worker route: each delivery must carry Appwrite's signature, an
 // HMAC-SHA1 of this URL plus the body under a key only Vercel holds (hookKey). The same signature also lets the owner's
-// tooling ask for {"op": "copy"} (fill Postgres from Appwrite and compare) or {"op": "check"}.
+// tooling ask for {"op": "copy"} (fill Postgres from Appwrite and compare), {"op": "check"}, {"op": "users"} (copy the
+// studio team into Postgres for sign-in, lib/users.ts) or {"op": "files-to-r2"} (move files still in Appwrite Storage
+// to R2; Appwrite's copy stays until Appwrite goes).
 import { createHmac } from "node:crypto";
 import { safeEqual } from "@/lib/worker";
 
@@ -26,6 +28,8 @@ export async function POST(req: Request) {
       return Response.json({ copied: await db.copyFromAppwrite(), check: await db.checkCopy() });
     }
     if (data.op === "check") return Response.json(await db.checkCopy());
+    if (data.op === "users") return Response.json({ copied: await (await import("@/lib/users")).copyTeam(), users: await (await import("@/lib/users")).listUsers() });
+    if (data.op === "files-to-r2") return Response.json(await (await import("@/lib/appwrite")).filesToR2());
     if (leads) return Response.json({ ignored: "Postgres leads" });
     const table = data.$tableId;
     if (data.$databaseId !== "studio" || !db.isTable(table) || typeof data.$id !== "string") return Response.json({ ignored: true });

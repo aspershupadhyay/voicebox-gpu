@@ -24,7 +24,7 @@ export async function GET(req: Request, ctx: Ctx) {
   if (!(await isAuthed(req))) return Response.json({ error: "unauthorized" }, { status: 401 });
   const [a, b] = (await ctx.params).path;
   try {
-    if (a === "me") return Response.json({ user: await currentUser(), workspace: hasKey(), db: process.env.DB_BACKEND === "neon" ? "neon" : "appwrite" });
+    if (a === "me") return Response.json({ user: await currentUser(), workspace: hasKey() || process.env.DB_BACKEND === "neon", db: process.env.DB_BACKEND === "neon" ? "neon" : "appwrite", auth: process.env.AUTH_BACKEND === "neon" ? "neon" : "appwrite" });
     if (a === "rows" && isTable(b)) {
       const id = (await ctx.params).path[2];
       if (id) return ID.test(id) ? Response.json(await rowOf(b, id)) : Response.json({ error: "bad id" }, { status: 400 });
@@ -33,6 +33,7 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "members") return Response.json({ members: await listMembers() });
     // the copy into Postgres (lib/db.ts, docs/MIGRATION.md phase 2): both sides' rows, and what only one side has
     if (a === "db-check") return Response.json(await (await import("@/lib/db")).checkCopy());
+    if (a === "usage") return Response.json(await (await import("@/lib/usage")).usage());
     if (a === "storage") { const u = await storageUse(); return Response.json({ used: u.bytes, cap: u.cap, parts: u.parts }); }
     if (a === "backup" && b && ID.test(b)) {
       const url = await backupUrl(await getMedia(b));

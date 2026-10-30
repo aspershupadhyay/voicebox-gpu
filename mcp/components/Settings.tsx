@@ -1,9 +1,9 @@
 "use client";
 // Settings, as tabs along the top with their own addresses (?tab=): Profile, Voice & sound, Publishing, GPU & engines,
-// Security, Automation, Claude & API. Each tab is a bento of cards. Studio-wide defaults are stored with the library so the dashboard
+// Security, Automation, Claude & API, Usage. Each tab is a bento of cards. Studio-wide defaults are stored with the library so the dashboard
 // and every MCP client share them; changes collect until you press Save (a bar appears while anything is unsaved, on any
 // tab, and leaving asks first). Security, upload keys and the GPU act at once.
-import { ChartLineUp, CheckCircle, Code, Robot, Copy, Cpu, Megaphone, RocketLaunch, ShieldCheck, SignOut, SlidersHorizontal, UserCircle, Waveform } from "@phosphor-icons/react";
+import { ChartLineUp, CheckCircle, Gauge, Code, Robot, Copy, Cpu, Megaphone, RocketLaunch, ShieldCheck, SignOut, SlidersHorizontal, UserCircle, Waveform } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -15,6 +15,7 @@ import { LookCard, useLook } from "./look";
 import { api, useSeed, type MyVoice } from "./api";
 import { useDialog } from "./Dialog";
 import SecurityCard from "./SecurityCard";
+import Usage from "./Usage";
 import OtherModels from "./OtherModels";
 import UploadKeys from "./UploadKeys";
 import { Field, Toggle } from "./ui";
@@ -34,6 +35,7 @@ const TABS = [
   { id: "security", name: "Security", icon: ShieldCheck, mv: "trophy" },
   { id: "automation", name: "Automation", icon: Robot, mv: "chip" },
   { id: "api", name: "Claude & API", icon: Code, mv: "rows" },
+  { id: "usage", name: "Usage", icon: Gauge, mv: "chart" },
 ] as const;
 type Tab = (typeof TABS)[number]["id"];
 
@@ -238,6 +240,8 @@ export default function Settings() {
         )}
 
         {tab === "automation" && <Automation />}
+
+        {tab === "usage" && <Usage />}
 
         {tab === "api" && (
           <div className="bento">
