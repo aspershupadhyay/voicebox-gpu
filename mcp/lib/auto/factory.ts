@@ -149,7 +149,14 @@ async function step(b: Batch, call: Call) {
   }
   // 3. scenes, overlapped with the voice: rendered to the estimated length (with slack) while the voice job runs,
   // cached by content; a scene whose real line came out longer than it is renders again at the real length
-  const scened = b.items.filter((i) => i.state === "scenes" || i.state === "voice");
+  // only beside a GPU voice: Kokoro voices on the CPU, and 15 Chromium renders starve it (measured: 61 s → 184 s)
+  const overlap = (b.voice.engine ?? "qwen") !== "kokoro";
+  const scened = b.items.filter((i) => i.state === "scenes" || (overlap && i.state === "voice"));
+  if (scened.length && !b.project && !b.timing.folders) { // made once, before 15 renders race to make it
+    const bench = await import("./bench");
+    await bench.ensureFolder("Factory/scenes", { name: b.by });
+    b.timing.folders = 1;
+  }
   await Promise.all(scened.flatMap((it) => it.spec.scenes.map(async (sc, k) => {
     const st = it.scenes[k];
     if (st.err) return;
@@ -172,9 +179,12 @@ async function step(b: Batch, call: Call) {
       return;
     }
     const r = await call("get_job", { job_id: st.job, wait_seconds: 0 });
-    const x = v<{ status?: string; file?: { file_id?: string }; error?: string }>(r.value);
-    if (x?.status === "error") st.err = x.error ?? "render failed";
-    else if (x?.file?.file_id) { st.file = x.file.file_id; await putJson(CACHE(h), { file: st.file, len: st.len }); }
+    const x = v<{ status?: string; file?: { file_id?: string; error?: string } | string; error?: string }>(r.value);
+    const fid = typeof x?.file === "object" ? x.file?.file_id : undefined;
+    if (fid) { st.file = fid; await putJson(CACHE(h), { file: st.file, len: st.len }); }
+    else if (x?.status === "error" || x?.status === "cancelled") st.err = x.error ?? `render ${x.status}`;
+    else if (x?.status === "done") st.err = `the render finished but its file wasn't saved (${JSON.stringify(x.file ?? null).slice(0, 120)})`; // never wait on it forever
+    else if (!r.ok) st.err = r.text.slice(0, 200);
   })));
   for (const it of scened) {
     const bad = it.scenes.find((s) => s.err);
@@ -202,9 +212,11 @@ async function step(b: Batch, call: Call) {
       return;
     }
     const r = await call("get_job", { job_id: it.join, wait_seconds: 0 });
-    const x = v<{ status?: string; file?: { file_id?: string }; qa?: Item["qa"]; error?: string }>(r.value);
-    if (x?.status === "error") { it.state = "error"; it.err = `join: ${x.error}`; }
-    else if (x?.file?.file_id) { it.file = x.file.file_id; it.qa = x.qa; it.state = "done"; }
+    const x = v<{ status?: string; file?: { file_id?: string } | string; qa?: Item["qa"]; error?: string }>(r.value);
+    const fid = typeof x?.file === "object" ? x.file?.file_id : undefined;
+    if (fid) { it.file = fid; it.qa = x!.qa; it.state = "done"; }
+    else if (x?.status === "error" || x?.status === "cancelled") { it.state = "error"; it.err = `join: ${x.error ?? x.status}`; }
+    else if (x?.status === "done") { it.state = "error"; it.err = `join: finished but its file wasn't saved (${JSON.stringify(x.file ?? null).slice(0, 120)})`; }
   }));
   if (b.items.every((i) => i.state === "done" || i.state === "error")) {
     b.status = b.items.some((i) => i.state === "done") ? "done" : "error";
