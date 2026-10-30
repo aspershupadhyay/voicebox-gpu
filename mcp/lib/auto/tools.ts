@@ -154,22 +154,29 @@ export function registerAutoTools(server: ToolServer) {
       description: [
         "Start one before making files: you get a Files folder (Projects/<name>-<id>), a sandbox workspace (p-<id>) and a branch name for repo work. Pass project: \"<id>\" to run, edit_video, video_template, repurpose, voice_lines, imagine, save_file, upload_media, add_media and the rest: what they make lands in the folder and is yours.",
         "Your project's files you may delete (delete_files, to the trash) without asking; anything else still waits for the owner.",
-        "action start (name); status (id: its files, jobs, folder); list (your live projects; all: everyone's); finish (id, keep: the file ids to keep, keep_to: a folder path, default each file's kind folder such as Videos): everything else, the folder and the workspace are cleaned up.",
+        "action number (series, e.g. case; at_least to start past numbers already used): the next number from the server's counter, never handed out twice, so two sessions don't both make case-027; start with series instead of name names it <series>-<number> (its branch agent/<model>/<series>-<number>). start (name); status (id: its files, jobs, folder); list (your live projects; all: everyone's); finish (id, keep: the file ids to keep, keep_to: a folder path, default each file's kind folder such as Videos): everything else, the folder and the workspace are cleaned up.",
         "Example: {\"action\":\"start\",\"name\":\"case 028\"} … {\"action\":\"finish\",\"id\":\"3fa9c1\",\"keep\":[\"m:6721…\"]}.",
       ].join(" "),
       inputSchema: z.object({
-        action: z.enum(["start", "status", "list", "finish"]),
+        action: z.enum(["start", "status", "list", "finish", "number"]),
         name: z.string().min(1).max(80).optional(), id: z.string().regex(/^[a-f0-9]{6}$/).optional(),
+        series: z.string().regex(/^[a-z][a-z0-9-]{1,30}$/).optional().describe("number / start: a numbered series such as case"), at_least: z.number().int().min(1).max(100_000).optional(),
         keep: z.array(z.string().max(80)).max(100).optional().describe("finish: file ids to keep"), keep_to: z.string().max(200).optional(),
         all: z.boolean().optional().describe("list: everyone's live projects, not just yours"),
       }),
     },
-    async ({ action, name, id, keep, keep_to, all }, ctx) => {
+    async ({ action, name, id, keep, keep_to, all, series, at_least }, ctx) => {
       try {
         const pr = await import("./projects");
         const me = await modelName(ctx as Ctx);
+        if (action === "number") {
+          if (!series) throw new Error("number needs series");
+          const n = await pr.nextNumber(series, at_least);
+          return text({ series, number: n, name: `${series}-${String(n).padStart(3, "0")}` });
+        }
         if (action === "start") {
-          if (!name) throw new Error("start needs name");
+          if (series) name = `${series}-${String(await pr.nextNumber(series, at_least)).padStart(3, "0")}`;
+          if (!name) throw new Error("start needs name (or series for a numbered one)");
           const p = await pr.startProject(name, me);
           return text({ project: p.id, folder: p.path, workspace: p.workspace, branch: p.branch, next: `pass project "${p.id}" to the tools that make files; finish it with keep when done` });
         }
@@ -205,12 +212,15 @@ export function registerAutoTools(server: ToolServer) {
       description: [
         "Make N videos (1-20) in about the time of one. Each video is scenes [{line: what's said, template + fields (video_template's) or clip: a Files id, from?}]. The factory checks every script (script_check; a FAIL stops that video unless force), voices every line of every video in ONE job (voice: engine, voice, style), renders each scene once (cached by its content: run a fixed batch again and only changed scenes render), then joins each video: scenes cut to their line, the lines as one voice, music (a Files id) ducked, pop captions, and QA.",
         "draft (default true): 15 fps, fast encode, for checking; draft false for delivery. project: everything lands in that project's folder.",
-        "action start (videos, voice?, draft?, project?, force?) → batch id; status (batch): moves it on for up to 40 s and answers only each video's state, file and QA, and failures (the 10-minute sweep carries on batches nobody polls); list; stop (batch).",
+        "action compete (spine, candidates [{by: the model, hook}], platform): a judge (hook_score + script_check on each hook with the spine) picks a winner; the others go to the ledger's SPEC.md for A/B tests, and each model's tally builds up (scores lists it: which model writes the best hooks). start (videos, voice?, draft?, project?, force?) → batch id; status (batch): moves it on for up to 40 s and answers only each video's state, file and QA, and failures (the 10-minute sweep carries on batches nobody polls); list; stop (batch).",
         "Example: {\"action\":\"start\",\"videos\":[{\"name\":\"tip-1\",\"scenes\":[{\"line\":\"Your hook is too slow.\",\"template\":\"title_card\",\"fields\":{\"title\":\"Too slow\"}},{\"line\":\"Three fixes.\",\"template\":\"list\",\"fields\":{\"title\":\"Fix it\",\"items\":[\"Cut\",\"Show\",\"Say it\"]}}]}],\"voice\":{\"engine\":\"kokoro\"}}.",
       ].join(" "),
       inputSchema: z.object({
-        action: z.enum(["start", "status", "list", "stop"]),
+        action: z.enum(["start", "status", "list", "stop", "compete", "scores"]),
         batch: z.string().regex(/^fb[a-f0-9]{8}$/).optional(),
+        spine: z.string().max(2000).optional().describe("compete: what the video says, beat by beat"),
+        candidates: z.array(z.object({ by: z.string().min(1).max(60), hook: z.string().min(1).max(600) })).min(2).max(6).optional().describe("compete: each model's opening for the same spine"),
+        platform: PLATFORM.optional(),
         videos: z.array(z.object({
           name: z.string().min(1).max(60), platform: PLATFORM.optional(), shape: z.enum(["9:16", "16:9", "1:1", "4:5"]).optional(),
           music: z.string().max(80).optional(), captions: z.boolean().optional(),
@@ -220,10 +230,27 @@ export function registerAutoTools(server: ToolServer) {
         draft: z.boolean().optional(), force: z.boolean().optional(),
       }),
     },
-    async ({ action, batch, videos, voice, draft, force, ...rest }, ctx) => {
+    async ({ action, batch, videos, voice, draft, force, spine, candidates, platform, ...rest }, ctx) => {
       try {
         const f = await import("./factory");
         const me = await modelName(ctx as Ctx);
+        if (action === "scores") return text({ hooks: await (await import("./ledger")).getTally("hook") });
+        if (action === "compete") {
+          if (!candidates?.length || candidates.length < 2) throw new Error("compete needs 2-6 candidates");
+          const { hookScore } = await import("../writing");
+          const lines = (spine ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+          const fmt = platform === "shorts" ? "yt_short" : platform === "youtube" ? "yt_video" : "ig_reel";
+          const judged = candidates.map((c) => {
+            const h = hookScore([c.hook, ...lines].join("\n"), { fmt: fmt as never });
+            const sc = f.scriptCheck([c.hook, ...lines], platform ?? "reels");
+            const penalty = sc.checks.filter((x) => ["opener", "hook length", "hook"].includes(x.check)).reduce((n, x) => n + (x.status === "FAIL" ? 25 : x.status === "WARN" ? 8 : 0), 0);
+            return { by: c.by, hook: c.hook, score: Math.max(0, h.score - penalty), hook_score: h.score, grade: h.grade, issues: [...h.checks.filter((x) => !x.ok).map((x) => `${x.label}: ${x.why}`), ...sc.checks.filter((x) => x.status !== "PASS" && ["opener", "hook length", "hook"].includes(x.check)).map((x) => `${x.check}: ${x.why}`)].slice(0, 5) };
+          }).sort((a, b) => b.score - a.score);
+          const lg = await import("./ledger");
+          await lg.tally(judged.map((j, i) => ({ by: j.by, score: j.score, won: i === 0 })), "hook");
+          for (const j of judged.slice(1)) await lg.addEntry("SPEC.md", `A/B candidate hook (${j.score}) by ${j.by}: "${j.hook}" (lost to ${judged[0].by}'s "${judged[0].hook}")`, me);
+          return text({ winner: judged[0], ranked: judged, next: "Use the winner's hook; the others are in the ledger (SPEC.md) for A/B tests." });
+        }
         const project = (rest as { project?: string }).project;
         if (action === "list") return text((await f.listBatches(me)).map((b) => ({ batch: b.id, status: b.status, videos: b.items.length, done: b.items.filter((i) => i.state === "done").length, created: iso(b.created) })));
         if (action === "start") {
@@ -693,10 +720,12 @@ export function registerAutoTools(server: ToolServer) {
       title: "Memory: notes, lessons, skills",
       description: [
         "What carries across sessions and models. Notes: decisions and facts by key (note_set key text tags; note_get key; notes query). Lessons: one sentence a model can follow next time, with evidence (lesson_add text topic evidence; lessons query status); they start suggested and the owner approves them, then playbook hands them to every model.",
-        "Skills: scripts that worked, saved by name (skill_save name about code); run imports them with skills: [name] then `from skills import <name>` in the code; skills query lists them. Example: {\"action\":\"note_set\",\"key\":\"brand/colours\",\"text\":\"bg #0a0a0a, accent #ffb020\"}.",
+        "Skills: scripts that worked, saved by name (skill_save name about code); run imports them with skills: [name] then `from skills import <name>` in the code; skills query lists them.",
+        "The shared ledger: never edit LEARNINGS.md, TOPICS.md, SCOREBOARD.md or SPEC.md in a repo yourself (several agents at once = merge conflicts): ledger_add (file, text, repo default the owner's videos-post) and one nightly PR folds every agent's entries in; ledger lists what's waiting. Example: {\"action\":\"ledger_add\",\"file\":\"LEARNINGS.md\",\"text\":\"Hooks under 8 words held 30% better on case 027.\"}.",
       ].join(" "),
       inputSchema: z.object({
-        action: z.enum(["note_set", "note_get", "notes", "lesson_add", "lessons", "skill_save", "skill_get", "skills"]),
+        action: z.enum(["note_set", "note_get", "notes", "lesson_add", "lessons", "skill_save", "skill_get", "skills", "ledger_add", "ledger"]),
+        file: z.enum(["LEARNINGS.md", "TOPICS.md", "SCOREBOARD.md", "SPEC.md"]).optional(), repo: z.string().max(140).optional(),
         key: z.string().max(80).optional(), text: z.string().max(4000).optional(), tags: z.array(z.string().max(30)).max(8).optional(), query: z.string().max(200).optional(),
         topic: z.string().max(40).optional(), evidence: z.array(z.object({ at: z.string().max(40).optional(), model: z.string().max(60).optional(), tool: z.string().max(60).optional(), what: z.string().max(300) })).max(12).optional(),
         status: z.enum(["suggested", "approved", "rejected", "promoted"]).optional(),
@@ -724,6 +753,12 @@ export function registerAutoTools(server: ToolServer) {
           case "skill_save": { if (!a.name || !a.code) throw new Error("skill_save needs name and code"); return text({ saved: await m.saveSkill({ name: a.name, about: a.about ?? "", code: a.code, by: who }), use: `run with skills: ["${a.name}"], then: from skills import ${a.name}` }); }
           case "skill_get": { if (!a.name) throw new Error("skill_get needs name"); return text({ name: a.name, code: (await m.skillCode([a.name]))[a.name] }); }
           case "skills": return text(await m.findSkills(a.query));
+          case "ledger_add": {
+            if (!a.file || !a.text) throw new Error("ledger_add needs file and text");
+            const e = await (await import("./ledger")).addEntry(a.file, a.text, who, a.repo);
+            return text({ added: e.id, file: e.file, repo: e.repo, next: "It goes into tonight's ledger PR (after 02:00 UTC) for the owner to merge." });
+          }
+          case "ledger": return text((await (await import("./ledger")).pending()).map((e) => ({ file: e.file, repo: e.repo, by: e.by, text: e.text.slice(0, 200) })));
         }
         throw new Error("unknown action");
       } catch (e) { return fail(e); }

@@ -14,7 +14,8 @@ import { Field, Toggle } from "./ui";
 type Approval = { id: string; action: string; summary: string; by: string; status: string; created: number; decided?: number; decided_by?: string; note?: string };
 type Log = { t: number; tool: string; model: string; ok: boolean; ms: number; err?: string; job?: string; gate?: string; via?: string; args?: string };
 type Data = {
-  control: { paused: boolean; paused_at?: number; paused_by?: string; pause_reason?: string; cap_units: number; ask_first: string[]; repos: string[] };
+  control: { paused: boolean; paused_at?: number; paused_by?: string; pause_reason?: string; cap_units: number; ask_first: string[]; repos: string[]; key_cap?: number };
+  key_usage?: Record<string, number>;
   units: { spent: number | null; balance: number | null };
   approvals: Approval[]; log: Log[]; ask_first: Record<string, string>; keys: Record<string, KeyStatus>; platform: string;
   flows: { list: Flow[]; runs: RunSum[] };
@@ -50,9 +51,10 @@ export default function Automation() {
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState("");
   const [cap, setCap] = useState("");
+  const [keyCap, setKeyCap] = useState("");
   const [repo, setRepo] = useState("");
   const load = useCallback(() => {
-    api<Data>(`automation${model ? `?model=${encodeURIComponent(model)}` : ""}`).then((r) => { setD(r); setErr(null); setCap((c) => c || String(r.control.cap_units || "")); }).catch((e) => setErr((e as Error).message));
+    api<Data>(`automation${model ? `?model=${encodeURIComponent(model)}` : ""}`).then((r) => { setD(r); setErr(null); setCap((c) => c || String(r.control.cap_units || "")); setKeyCap((c) => c || String(r.control.key_cap || "")); }).catch((e) => setErr((e as Error).message));
   }, [model]);
   useEffect(() => {
     load();
@@ -138,6 +140,13 @@ export default function Automation() {
             </Field>
             <button className="ghost" disabled={busy}>Save</button>
           </form>
+          <form className="row" style={{ gap: 8, marginTop: 12, alignItems: "flex-end" }} onSubmit={(e) => { e.preventDefault(); act("settings", { key_cap: Number(keyCap) || 0 }, Number(keyCap) ? `Each key: ${Number(keyCap)} spending calls a day` : "No cap per key"); }}>
+            <Field label="Per model or person, calls a day" style={{ flex: 1, margin: 0 }}>
+              <input type="number" min={0} max={10000} step={1} inputMode="numeric" placeholder="No cap" value={keyCap} onChange={(e) => setKeyCap(e.target.value)} />
+            </Field>
+            <button className="ghost" disabled={busy}>Save</button>
+          </form>
+          {Object.keys(d.key_usage ?? {}).length > 0 && <p className="tiny dim au-wrap" style={{ margin: "8px 0 0" }}>Today: {Object.entries(d.key_usage ?? {}).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, n]) => `${k} ${n}${c.key_cap ? `/${c.key_cap}` : ""}`).join(" · ")}</p>}
         </section>
       </div>
 

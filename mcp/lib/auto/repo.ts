@@ -84,6 +84,11 @@ export async function read(r: string, path: string, ref?: string, from?: number,
   return { path, lines: `${a}-${b} of ${lines.length}`, text: lines.slice(a - 1, b).map((l, i) => `${a + i}\t${l}`).join("\n") };
 }
 
+/** A whole file as it is (no line numbers, no window), or "" when it doesn't exist yet: for writing it back. */
+export async function readRaw(r: string, path: string) {
+  return gh<string>(`/repos/${r}/contents/${path.split("/").map(encodeURIComponent).join("/")}`, { raw: true }).catch((e: Error) => (e.message.includes("404") ? "" : Promise.reject(e)));
+}
+
 export async function branch(r: string, name: string, from?: string) {
   const w = await writable(r, name);
   if (w.exists) return { branch: name, existed: true };

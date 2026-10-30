@@ -1355,7 +1355,8 @@ def _enqueue(job):
 def _base_job(kind, body):
     return {"id": uuid.uuid4().hex[:12], "kind": kind, "status": "queued", "created": time.time(), "results": [],
             "error": None, "cancel": False, "label": str(body.get("label") or "")[:120], "stage": "queued",
-            "est_total": 0.0, "est_done": 0.0, "cur": None, "language": body.get("language") or None, "warnings": [], "lines": []}
+            "est_total": 0.0, "est_done": 0.0, "cur": None, "language": body.get("language") or None, "warnings": [], "lines": [],
+            "owner": re.sub(r"[^\w .:/@+-]", "", str(body.get("owner") or ""))[:60] or None}
 
 
 def make_bench_job(body):
@@ -4410,13 +4411,39 @@ def push_files(job_id, targets, headers):
     return {"pushed": [n for n, e in results if not e], "failed": {n: e for n, e in results if e}}
 
 
+SERVED = defaultdict(float)  # (lane, owner) -> recent jobs taken, decaying: the fair queue's memory
+
+
+def fair_pop(q):
+    """The next job in a lane, taking turns between owners (each model key or person: docs/FACTORY.md E): the owner
+    with the fewest jobs running in this lane goes first, then the one served least lately, then the oldest job. One
+    person's 20-video batch doesn't hold up another's single voiceover. Called with QCOND held."""
+    lane = id(q)
+    running = defaultdict(int)
+    for j in JOBS.values():
+        if j["status"] == "running" and _queue_of(j) is q:
+            running[j.get("owner") or "-"] += 1
+    best, best_key = 0, None
+    for i, jid in enumerate(q):
+        o = (JOBS.get(jid) or {}).get("owner") or "-"
+        key = (running[o], SERVED[(lane, o)], i)
+        if best_key is None or key < best_key:
+            best, best_key = i, key
+    jid = q.pop(best)
+    o = (JOBS.get(jid) or {}).get("owner") or "-"
+    for k in [k for k in SERVED if k[0] == lane]:
+        SERVED[k] *= 0.8
+    SERVED[(lane, o)] += 1
+    return jid
+
+
 def worker_loop(q=None):
     q = QUEUE if q is None else q
     while True:
         with QCOND:
             while not q:
                 QCOND.wait()
-            jid = q.pop(0)
+            jid = fair_pop(q)
         job = JOBS.get(jid)
         if not job or job["cancel"]:
             continue
