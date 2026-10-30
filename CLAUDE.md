@@ -44,6 +44,12 @@ many agents at once), in order. A new tool goes in
 `lib/auto/tools.ts` with an action enum and a worked example (`scripts/check_tools.py`); anything risky gets a gate in
 `wrap.ts`.
 
+## Moving off Appwrite
+
+`docs/MIGRATION.md` is the plan (R2 for files, CockroachDB for data, the API and MCP on a Cloudflare Worker, Vercel for
+the pages), with its rules: one phase per PR, every switch behind a setting, nothing deleted from Appwrite until a week
+on the new setup, and the trained voices in R2 (`models/`, `datasets/`) never touched. Read it before any of it.
+
 ## Inference work
 
 Speed-ups for the voice engines follow `docs/INFERENCE.md` (the plan, in order, with its rules: behind a flag, works

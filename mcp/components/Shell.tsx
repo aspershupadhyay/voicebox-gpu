@@ -368,8 +368,11 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   }, []);
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 6000);
-    return () => clearInterval(t);
+    // a hidden tab doesn't poll (every call counts against the hosting quota); coming back refreshes at once
+    const t = setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 15_000);
+    const back = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", back);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", back); };
   }, [refresh]);
 
   return (

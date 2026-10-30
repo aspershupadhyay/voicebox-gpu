@@ -38,7 +38,7 @@ export default function Gpu({ embedded }: { embedded?: boolean }) {
     if (!st?.online) return;
     const load = () => api<{ jobs: Job[] }>("jobs").then((j) => setJobs(j.jobs)).catch(() => {});
     load();
-    const t = setInterval(load, 3000);
+    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 5000);
     return () => clearInterval(t);
   }, [st?.online]);
   useEffect(() => {

@@ -4,7 +4,17 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (build the factory, 2026-10-30)
+## Latest round (off Appwrite and most of Vercel, 2026-10-30)
+
+- **"Stay free without the hectic: R2 for every file, CockroachDB for data, the API and MCP on a Cloudflare Worker,
+  Vercel only for the pages"**: the plan is `docs/MIGRATION.md`, one phase per PR.
+- **"Make sure nothing breaks, each functionality must work; take care of the data, especially the model"**: every
+  switch sits behind a setting with the old path kept, Appwrite stays until a week on the new setup, and the trained
+  voices (`models/`, `datasets/`) are never touched by a migration step.
+- **"No new repo"**: stay in this one (the deploy, the Colab bundle and the history live here).
+- **"Empty the Files page except Passwords.docx"**: done, deleted for good on the owner's word.
+
+## Earlier round (build the factory, 2026-10-30)
 
 - **"Build ALL of docs/FACTORY.md in one go, A → B → C+H → D → G → E, measuring F along the way; verify each part
   yourself, ship each as its own PR, only stop for what truly needs me"**: done as asked (PRs #131-#143); the one

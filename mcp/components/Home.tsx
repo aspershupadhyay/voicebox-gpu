@@ -155,7 +155,7 @@ export default function Home() {
     if (!st?.online) return;
     const load = () => api<{ jobs: Job[] }>("jobs").then((j) => setJobs(j.jobs)).catch(() => {});
     load();
-    const t = setInterval(load, 4000);
+    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 8000);
     return () => clearInterval(t);
   }, [st?.online]);
 
