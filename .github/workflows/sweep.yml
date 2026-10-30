@@ -3,7 +3,8 @@
 # No setup: the run proves itself with GitHub's OIDC token (mcp/lib/cronauth.ts), so no secret is copied into GitHub. (Vercel cron would do, but Hobby allows only daily.)
 name: Sweep dead GPUs
 on:
-  schedule: [{ cron: "*/10 * * * *" }]
+  # the Cloudflare timer (workers/live-timer.js) runs the sweep and the backup every 10 minutes now, on time; this stays
+  # for running them by hand (Actions → Sweep dead GPUs → Run workflow)
   workflow_dispatch:
 concurrency: { group: sweep, cancel-in-progress: true }
 permissions:

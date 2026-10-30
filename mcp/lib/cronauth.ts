@@ -1,8 +1,9 @@
-// Who may knock on the scheduled routes (/api/cron/sweep, /api/cron/backup): the Colab worker's WORKER_SECRET, a
-// CRON_SECRET, or, with no secret to set anywhere, GitHub itself. sweep.yml asks GitHub for a short-lived OIDC token
+// Who may knock on the scheduled routes (/api/cron/sweep, /api/cron/backup, /api/cron/live): the Colab worker's
+// WORKER_SECRET, a CRON_SECRET, the Cloudflare timer's own secret (workers/live-timer.js; only its SHA-256 is kept here,
+// LIVE_TIMER_HASH on Vercel overrides it), or, with no secret to set anywhere, GitHub itself. sweep.yml asks GitHub for a short-lived OIDC token
 // (id-token: write) and sends it; it's accepted only when GitHub signed it, for this app, from this repository's
 // sweep.yml on main. So the schedule works without copying a secret into GitHub.
-import { createPublicKey, verify } from "node:crypto";
+import { createHash, createPublicKey, verify } from "node:crypto";
 
 type Jwk = { kty: string; kid?: string; n?: string; e?: string };
 import { safeEqual } from "./worker";
@@ -44,10 +45,13 @@ export async function githubCron(token: string) {
   }
 }
 
-/** A scheduled knock: either secret, or GitHub's token for sweep.yml. */
+export const TIMER_HASH = process.env.LIVE_TIMER_HASH || "541b2cb0083a8d393b100b7fd63cc230cdf6b4fb27a5ed79e1fdc03b987060e4";
+
+/** A scheduled knock: a secret, the Cloudflare timer, or GitHub's token for sweep.yml. */
 export async function cronAuthed(req: Request) {
   const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
-  if (!token) return false;
+  if (token.length < 24) return false;
   if ([process.env.WORKER_SECRET, process.env.CRON_SECRET].some((s) => (s ?? "").length >= 24 && safeEqual(token, s!))) return true;
+  if (safeEqual(createHash("sha256").update(token).digest("hex"), TIMER_HASH)) return true;
   return !!(await githubCron(token));
 }
