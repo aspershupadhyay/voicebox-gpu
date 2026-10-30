@@ -3,17 +3,13 @@
 // after the response (downloads due to try again, then post pipelines, lib/pipeline.ts, then workflows, lib/auto/flows.ts), so the knock returns at once and uploads get the function's full time. Same secret as the heartbeat.
 import { after } from "next/server";
 import { sweep } from "@/lib/colab";
-import { safeEqual } from "@/lib/worker";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST(req: Request) {
-  // WORKER_SECRET (shared with the Colab worker) or CRON_SECRET (only the scheduled knocks: GitHub's copy can be
-  // replaced without touching the worker)
-  const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
-  const ok = [process.env.WORKER_SECRET, process.env.CRON_SECRET].some((s) => (s ?? "").length >= 24 && safeEqual(token, s!));
-  if (!ok) return Response.json({ error: "unauthorized" }, { status: 401 });
+  // WORKER_SECRET, CRON_SECRET, or GitHub's OIDC token for sweep.yml (lib/cronauth.ts: no secret to copy into GitHub)
+  if (!(await (await import("@/lib/cronauth")).cronAuthed(req))) return Response.json({ error: "unauthorized" }, { status: 401 });
   after(async () => {
     // downloads waiting to try again (a site's rate limit that has had time to lift) go now, worker on or off
     const dl: Promise<unknown>[] = [];
