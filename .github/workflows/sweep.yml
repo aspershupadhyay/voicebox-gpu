@@ -1,24 +1,27 @@
 # Every 10 min: stop a GPU the app started whose worker died (no heartbeat for 20 min), so a crashed Colab kernel
 # doesn't bill until Google reclaims the VM. The logic lives in mcp/lib/colab.ts (sweep); this only knocks.
-# One-time setup: make up a long random string (32+ characters) and add it as CRON_SECRET in both places: repo Settings →
-# Secrets and variables → Actions → New repository secret, and Vercel → Settings → Environment Variables (then redeploy). Without it the run skips with a warning. (Vercel cron would do, but Hobby allows only daily.)
+# No setup: the run proves itself with GitHub's OIDC token (mcp/lib/cronauth.ts), so no secret is copied into GitHub. (Vercel cron would do, but Hobby allows only daily.)
 name: Sweep dead GPUs
 on:
   schedule: [{ cron: "*/10 * * * *" }]
   workflow_dispatch:
 concurrency: { group: sweep, cancel-in-progress: true }
+permissions:
+  id-token: write # GitHub's OIDC token proves the knock comes from this workflow (mcp/lib/cronauth.ts)
+  contents: read
 jobs:
   sweep:
     runs-on: ubuntu-latest
     timeout-minutes: 7
     env:
-      # CRON_SECRET: any long random string, the same in GitHub (Actions secrets) and on Vercel; WORKER_SECRET also works
-      WORKER_SECRET: ${{ secrets.CRON_SECRET || secrets.WORKER_SECRET }}
+      # optional: a CRON_SECRET (or WORKER_SECRET) repository secret is used instead of GitHub's token when set
+      SECRET: ${{ secrets.CRON_SECRET || secrets.WORKER_SECRET }}
     steps:
       - name: Sweep
         run: |
-          if [ -z "$WORKER_SECRET" ]; then echo "::warning::Add the CRON_SECRET repository secret (see the top of this file)"; exit 0; fi
-          code=$(curl -s -o out.json -w '%{http_code}' -m 60 -X POST -H "Authorization: Bearer $WORKER_SECRET" \
+          token="$SECRET"
+          [ -n "$token" ] || token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=voicebox-cron" | jq -r .value)
+          code=$(curl -s -o out.json -w '%{http_code}' -m 60 -X POST -H "Authorization: Bearer $token" \
             https://voiceboxstudio.vercel.app/api/cron/sweep)
           echo "$code $(cat out.json)"
           [ "$code" = 200 ]
@@ -26,8 +29,9 @@ jobs:
         # once a day after 02:00 UTC (mcp/lib/backup.ts); the other knocks read one small file and stop
         if: always()
         run: |
-          if [ -z "$WORKER_SECRET" ]; then exit 0; fi
-          code=$(curl -s -o out.json -w '%{http_code}' -m 290 -X POST -H "Authorization: Bearer $WORKER_SECRET" \
+          token="$SECRET"
+          [ -n "$token" ] || token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=voicebox-cron" | jq -r .value)
+          code=$(curl -s -o out.json -w '%{http_code}' -m 290 -X POST -H "Authorization: Bearer $token" \
             https://voiceboxstudio.vercel.app/api/cron/backup)
           echo "$code $(cat out.json)"
           [ "$code" = 200 ]
