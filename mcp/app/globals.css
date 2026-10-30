@@ -3628,6 +3628,8 @@ html.cur-custom :is(input:not([type="range"]):not([type="checkbox"]):not([type="
 .au-bar i.bad { background: var(--bad); }
 .au-dec { grid-template-columns: auto minmax(0, 1fr) auto auto; }
 .au-num { text-align: right; white-space: nowrap; }
+.au-flow { grid-template-columns: auto minmax(0, 1fr) auto; }
+@media (max-width: 700px) { .au-flow { grid-template-columns: auto minmax(0, 1fr); } .au-flow > .row { grid-column: 2; } }
 .au-log { max-height: 460px; overflow-y: auto; }
 .au-log td { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { .au-ask { grid-template-columns: auto minmax(0, 1fr); } .au-ask > .row { grid-column: 2; } }

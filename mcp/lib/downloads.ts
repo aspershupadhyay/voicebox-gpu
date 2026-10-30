@@ -331,6 +331,8 @@ async function finish(id: string, items: DlItem[], actor: Actor) {
     carousel = await (await import("./carousels")).createCarousel({ name, items: keys, post: d?.post ?? null }, actor.name).then((c) => c.id).catch(() => null);
   }
   await patch(id, { status: "done", items, pct: 1, stage: null, error: null, saving_at: undefined, carousel });
+  // workflows listening for downloads (lib/auto/flows.ts) start
+  await import("./auto/flows").then((f) => f.emit("download.done", { download: id, url: d?.url ?? "", source: d?.source ?? "", files: keys, folder: d?.folder ?? null, carousel, post: d?.post ?? null }));
 }
 
 /** Hand the link to the worker's yt-dlp; with the worker off it starts the GPU and waits, and goes as soon as the

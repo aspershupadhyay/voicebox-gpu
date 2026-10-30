@@ -19,6 +19,16 @@ export const GATES: Record<string, (a: Args) => Gate | Promise<Gate>> = {
   auto_post: (a) => (a.go === "now" ? "publish_now" : null),
   automation_rules: (a) => (a.set && Object.keys(a.set as object).length ? "publishing_rules" : null),
   delete_post: () => "delete", delete_media: () => "delete", delete_folder: () => "delete", delete_files: () => "delete", empty_trash: () => "delete",
+  workflow: async (a) => {
+    // a schedule or a trigger on steps that publish: the owner says yes once, when it's saved or switched on
+    if (a.action !== "save" && a.action !== "enable") return null;
+    const fl = await import("./flows");
+    const have = typeof a.id === "string" ? await fl.getFlow(a.id) : null;
+    const base = typeof a.example === "string" ? fl.EXAMPLES[a.example] : undefined;
+    const steps = (a.steps ?? have?.steps ?? base?.steps ?? []) as import("./flows").Step[];
+    const auto = a.schedule ?? a.triggers ?? (a.action === "enable" ? have?.schedule ?? have?.triggers?.length : have?.schedule ?? base?.schedule ?? base?.triggers);
+    return auto && fl.publishes(steps) ? "publishing_rules" : null;
+  },
   repo: async (a) => {
     if (a.action === "allow") return "add_repo";
     if (a.action === "merge") {
@@ -50,6 +60,7 @@ export const SPENDS: Record<string, (a: Args) => boolean> = {
 const PAUSES: Record<string, (a: Args) => boolean> = {
   publish_post: (a) => !!a.go && a.go !== "save", auto_post: () => true,
   repo: (a) => ["branch", "commit", "push", "pr", "comment", "merge", "allow"].includes(String(a.action)),
+  workflow: (a) => ["save", "run", "enable"].includes(String(a.action)),
 };
 
 /** Which model made the call: the X-Model header (Gemini CLI and others set it, docs/AUTOMATION.md), else the client

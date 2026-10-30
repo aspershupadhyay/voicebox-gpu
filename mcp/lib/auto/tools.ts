@@ -390,4 +390,71 @@ export function registerAutoTools(server: ToolServer) {
       try { return await media("repurpose" as never, inputs, { recipe, options: options ?? {} }, ctx, save_to, recipe.replace(/_/g, " ")); } catch (e) { return fail(e); }
     },
   );
+
+  const STEP = z.object({
+    tool: z.string().max(60), args: z.record(z.string(), z.unknown()).optional(), as: z.string().max(31).optional(), wait: z.boolean().optional(),
+    if: z.string().max(200).optional(), foreach: z.string().max(200).optional(), limit: z.number().int().min(1).max(20).optional(), continue_on_error: z.boolean().optional(),
+  });
+  server.registerTool(
+    "workflow",
+    {
+      title: "Workflows: saved steps, on a schedule or on events",
+      description: [
+        "Save a job as steps over any tools, then run it by hand, on a schedule (checked every 10 minutes) or when something happens (a download lands: download.done; a post goes live: post.live, with delay_h), with nobody there. Each step goes through the same checks as you: the call log, the units cap, the kill switch, and approvals (the run waits for the owner).",
+        "A step: {tool, args, as}. Later steps use earlier results: \"{{steps.<as>.<path>}}\" (a list index: blips.0.topic), {{input.x}}, {{event.x}}, {{today}}; foreach: \"{{steps.radar.blips}}\" with limit runs the step per item ({{item}}, {{index}}); if: \"{{steps.x.y}}\" (\"!{{…}}\" for not); a step that starts a job waits for it (wait: false not to). For logic beyond that, a step can be run with code mode.",
+        "Actions: list (workflows and recent runs), examples (ready ones: morning_ideas, check_downloads, check_after_48h, translate_and_dub), save (name, steps, schedule {every: hour|day|week, at: \"HH:MM\", days: [0-6], tz}, triggers [{event, delay_h, match}], input, enabled; a schedule or trigger on steps that publish needs the owner's approval), run (id or name, input; runs up to ~40 s here, then the sweep carries on), runs / run_id (a run's steps and log), stop (run_id), enable / disable, delete.",
+        "Example: {\"action\":\"save\",\"example\":\"morning_ideas\"} saves the morning Radar → 3 drafts workflow.",
+      ].join(" "),
+      inputSchema: z.object({
+        action: z.enum(["list", "examples", "save", "run", "runs", "stop", "enable", "disable", "delete"]),
+        id: z.string().max(80).optional().describe("a workflow's id or name"), example: z.string().max(40).optional(),
+        name: z.string().max(80).optional(), about: z.string().max(300).optional(), steps: z.array(STEP).max(40).optional(),
+        schedule: z.object({ every: z.enum(["hour", "day", "week"]), at: z.string().max(5).optional(), days: z.array(z.number().int().min(0).max(6)).max(7).optional(), tz: z.string().max(60).optional() }).nullable().optional(),
+        triggers: z.array(z.object({ event: z.enum(["download.done", "post.live"]), delay_h: z.number().min(0).max(24 * 30).optional(), match: z.record(z.string(), z.string()).optional() })).max(5).optional(),
+        input: z.record(z.string(), z.unknown()).optional(), enabled: z.boolean().optional(), run_id: z.string().regex(/^[a-f0-9]{12}$/).optional(),
+      }),
+    },
+    async (a, ctx) => {
+      try {
+        const fl = await import("./flows");
+        const who = await modelName(ctx as Ctx);
+        const view = (f: Awaited<ReturnType<typeof fl.getFlow>>) => f && ({ id: f.id, name: f.name, about: f.about, enabled: f.enabled, steps: f.steps.length, schedule: f.schedule ?? undefined,
+          triggers: f.triggers?.length ? f.triggers : undefined, next_run: f.next_run ? new Date(f.next_run).toISOString() : undefined, last: f.last ? { ...f.last, at: new Date(f.last.at).toISOString() } : undefined });
+        const runView = (r: Awaited<ReturnType<typeof fl.getRun>>) => r && ({ run_id: r.id, workflow: r.name, status: r.status, step: `${Math.min(r.i + 1, r.steps.length)} of ${r.steps.length}`,
+          ...(r.wait ? { waiting_for: r.wait.job ? `job ${r.wait.job}` : r.wait.approval ? `the owner's approval ${r.wait.approval}` : r.wait.why } : {}), ...(r.error ? { error: r.error } : {}),
+          ...(r.not_before && r.not_before > Date.now() ? { starts: new Date(r.not_before).toISOString() } : {}),
+          log: r.log.slice(-12).map((l) => `${l.ok ? "ok" : "FAIL"} step ${l.step}${l.tool ? ` ${l.tool}` : ""}: ${l.note}`), results: Object.keys(r.results) });
+        switch (a.action) {
+          case "list": return text({ workflows: (await fl.listFlows()).map(view), recent_runs: (await fl.listRuns()).slice(0, 10).map((r) => ({ run_id: r.id, workflow: r.name, status: r.status, trigger: r.trigger, at: new Date(r.updated).toISOString(), ...(r.error ? { error: r.error } : {}) })) });
+          case "examples": return text(Object.entries(fl.EXAMPLES).map(([k, x]) => ({ example: k, ...x })));
+          case "save": {
+            const base = a.example ? fl.EXAMPLES[a.example] : undefined;
+            if (a.example && !base) throw new Error(`no example ${a.example}: ${Object.keys(fl.EXAMPLES).join(", ")}`);
+            const have = a.id ? await fl.getFlow(a.id) : null;
+            const f = await fl.saveFlow({ ...(base ?? {}), ...(have ? { id: have.id } : {}), ...Object.fromEntries(Object.entries({ name: a.name, about: a.about, steps: a.steps, schedule: a.schedule, triggers: a.triggers, input: a.input, enabled: a.enabled }).filter(([, v]) => v !== undefined)) }, who);
+            return text({ saved: view(f), next: f.schedule ? `It runs ${f.schedule.every === "hour" ? "every hour" : `at ${f.schedule.at ?? "09:00"} ${f.schedule.tz ?? "UTC"}`}; workflow action=run to try it now.` : "workflow action=run to try it." });
+          }
+          case "run": {
+            const f = a.id ? await fl.getFlow(a.id) : null;
+            if (!f) throw new Error("run needs id (a workflow's id or name)");
+            const r = await fl.startRun(f, { trigger: "by hand", by: who, input: a.input });
+            return text({ ...runView(await fl.advance(r, Date.now() + 40_000)), next: "workflow action=runs run_id=… to follow it; the sweep carries it on every 10 minutes" });
+          }
+          case "runs": {
+            if (a.run_id) return text(runView(await fl.getRun(a.run_id)) ?? "no such run");
+            return text((await fl.listRuns()).slice(0, 25).map((r) => ({ run_id: r.id, workflow: r.name, status: r.status, trigger: r.trigger, started: new Date(r.started).toISOString(), ...(r.error ? { error: r.error } : {}) })));
+          }
+          case "stop": { if (!a.run_id) throw new Error("stop needs run_id"); return text(runView(await fl.stopRun(a.run_id, who))); }
+          case "enable": case "disable": case "delete": {
+            const f = a.id ? await fl.getFlow(a.id) : null;
+            if (!f) throw new Error(`${a.action} needs id (a workflow's id or name)`);
+            if (a.action === "delete") { await fl.deleteFlow(f.id); return text({ deleted: f.name }); }
+            await fl.setEnabled(f.id, a.action === "enable");
+            return text({ [a.action === "enable" ? "enabled" : "disabled"]: f.name });
+          }
+        }
+        throw new Error("unknown action");
+      } catch (e) { return fail(e); }
+    },
+  );
 }

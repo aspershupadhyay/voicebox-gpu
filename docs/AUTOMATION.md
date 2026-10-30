@@ -139,8 +139,17 @@ The owner's feedback still goes into `docs/FEEDBACK.md` in the same PR as the ch
   compositions load in Chromium with their GSAP timelines registered and lay out right. **Not tested here**: the
   HyperFrames render itself (running the npm package wasn't allowed in the build session): the first run on Colab is
   the check, and its error comes back whole if it fails. The brand kit from `videos-post` waits on that repo.
-- [ ] **7. Automations**: `workflow`, `schedule` (on the 10-minute sweep), `triggers` (on job and post events).
-  Done when: "every morning, Radar → 3 ideas → drafts" runs with nobody there.
+- [x] **7. Automations**: `workflow`, `schedule` (on the 10-minute sweep), `triggers` (on job and post events).
+  Done when: "every morning, Radar → 3 ideas → drafts" runs with nobody there. **Shipped**: `lib/auto/flows.ts` and
+  one tool, `workflow` (save, run, runs, stop, enable, disable, delete, examples). Steps call tools in-process through
+  the same guarded path as a model (logged as `workflow:<name>`, via workflow; capped; paused by the kill switch;
+  gated steps park the run until the owner decides). `{{steps.<as>.<path>}}`, `{{input}}`, `{{event}}`, `{{today}}`;
+  `foreach` with `limit`; `if`; a step that starts a job parks the run until it's done. Schedules (hour, day, week,
+  a time zone) start on the 10-minute sweep, which also carries every open run on; triggers `download.done`
+  (lib/downloads.ts) and `post.live` (lib/publish/run.ts) with `delay_h` and `match`. Examples: `morning_ideas`
+  (Radar → 3 idea drafts, 07:30 Kolkata), `check_downloads`, `check_after_48h`, `translate_and_dub`. A schedule or
+  trigger on steps that publish needs the owner's approval to save or switch on; a workflow can't start workflows.
+  Settings → Automation → Workflows: each one, when it runs, its last run, Run and on/off, recent runs with Stop.
 - [ ] **8. Agents, audit, memory**: roles, the auditor, lessons, scorecards, the promote step. Done when: an audit run
   writes lessons with evidence and the owner can approve one into the playbook.
 - [ ] **9. Any model**: setup guide for Gemini CLI and other MCP clients (below), model name sent in a header
@@ -200,6 +209,16 @@ a too-long headline was caught by QA, then wrapped and shrunk by the server inst
 failed shape and loudness as it should. Found and fixed while testing: inputs failed to fetch (the size was read
 after the file closed), captions ignored the spec, and drawtext dropped text with commas, colons or line breaks (now
 from a file). Not checked here: NVENC and Whisper captions (they need the L4).
+
+## How workflows are checked
+
+Locally, with nobody at the keyboard after the first call: a 6-step run carried a search's result into code by
+template, probed two files in a foreach, parked on a 50 s job, was carried on by the sweep, skipped a step on `if`,
+then parked on a gated step until the owner approved it and finished. Schedules: 07:30 Kolkata came out 02:00Z,
+Friday 18:45 New York 22:45Z (summer time), hourly at :20; one forced due fired on the sweep. A trigger with
+`match {source: instagram}` started for an Instagram download and not for a YouTube one. A scheduled workflow that
+publishes asked for approval; one that calls `workflow` was refused; the dashboard's Run / on-off refused a bearer
+token. Found and fixed: a run out of time mid-job said "running" instead of "waiting".
 
 ## How repos are checked
 

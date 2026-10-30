@@ -78,7 +78,8 @@ export async function GET(req: Request, ctx: Ctx) {
       const [control, units, approvals, log] = await Promise.all([ac.getControl(), ac.unitsToday(), ac.listApprovals(),
         ac.readLog({ limit: 150, model: q.get("model") || undefined, days: 2 })]);
       return Response.json({ control, units, approvals: approvals.slice(0, 60), log, ask_first: ac.ASK_FIRST,
-        github_key: !!process.env.GITHUB_AGENT_TOKEN, platform: (await import("@/lib/auto/repo")).PLATFORM });
+        github_key: !!process.env.GITHUB_AGENT_TOKEN, platform: (await import("@/lib/auto/repo")).PLATFORM,
+        flows: await import("@/lib/auto/flows").then(async (f) => ({ list: await f.listFlows(), runs: (await f.listRuns()).slice(0, 15) })) });
     }
     if (a === "live" && b === "pins") {
       // Grow's sidebar: the rivals you pinned, with the name and picture YouTube gave
@@ -325,6 +326,20 @@ export async function POST(req: Request, ctx: Ctx) {
       if (b === "settings") return Response.json(await ac.setControl({ cap_units: body.cap_units, ask_first: body.ask_first, repos: body.repos }, by));
       if (b === "stop") return Response.json(await ac.stopAll(by, "stopped from the dashboard"));
       if (b === "resume") return Response.json(await ac.setControl({ paused: false }, by));
+      if (b === "flow" && typeof body.id === "string") {
+        // a workflow switched on or off, run now, deleted, or a run stopped (lib/auto/flows.ts)
+        const fl = await import("@/lib/auto/flows");
+        if (typeof body.enabled === "boolean") { await fl.setEnabled(body.id, body.enabled); return Response.json({ ok: true }); }
+        if (body.delete === true) { await fl.deleteFlow(body.id); return Response.json({ ok: true }); }
+        if (body.stop === true) return Response.json(await fl.stopRun(body.id, by));
+        if (body.run === true) {
+          const f = await fl.getFlow(body.id);
+          if (!f) return Response.json({ error: "no such workflow" }, { status: 404 });
+          const r = await fl.startRun(f, { trigger: "by hand", by });
+          after(() => fl.advance(r, Date.now() + 240_000).then(() => {}, () => {}));
+          return Response.json({ run: r.id });
+        }
+      }
     }
     if (a === "upload-keys") {
       const inbox = await import("@/lib/inbox");
