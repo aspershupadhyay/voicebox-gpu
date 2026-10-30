@@ -76,10 +76,26 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    Postgres; an older delivery never overwrites a newer row. The webhook's signing key is derived from
    `DATABASE_URL_POOLED` (`hookKey()` in lib/db.ts), so rotating the database password means setting the webhook's
    secret again. The same signed route runs the full copy (`{"op":"copy"}`) and the check (`{"op":"check"}`).
-   **Next, before**: the owner adds `DATABASE_URL_POOLED`, `NEON_REALTIME_URL` and `NEON_REALTIME_SECRET` on Vercel; server
-   writes go to both (Appwrite stays the source); the browser's `useLive` (components/aw.ts) moves to API routes plus
-   sealed Realtime queries; run the copy, check it matches, then `DB_BACKEND=neon` switches reads. Sign-in stays on
-   Appwrite until its own step.
+   The webhook (`neon-mirror`) was created and checked on 2026-10-30: a row created in Appwrite reached Postgres on the
+   first look, its delete followed, and the check matched on every table.
+   **The switch, built (2026-10-30)**: `DB_BACKEND=neon` makes Postgres lead. Every server read and write in
+   `lib/appwrite.ts` goes through five helpers (`listOf`, `rowOf`, `insert`, `patch`, `remove`) that pick the database,
+   so the MCP tools, publishing and the Files page need no change. Each Postgres write is copied back to Appwrite under
+   the same id (`awMirror`), so unsetting the switch loses nothing, and the webhook ignores Appwrite's echoes and refuses
+   the copy while Postgres leads. The browser asks `/api/ws/me` which database leads: on Neon it reads and writes
+   through `/api/ws/rows/<table>[/<id>]` and keeps the board live with a sealed Neon Realtime query
+   (`/api/ws/live/<table>`: the server turns the page's `Query.*` into SQL on allowed columns only and seals it, so the
+   browser can watch exactly those rows and never holds a secret). A live query is closed 30 s after the tab hides or
+   after 10 idle minutes (an open one keeps the compute awake) and opened fresh on the next look; if Realtime can't be
+   had, the rows are fetched instead. Checked against the real database with the built app: the board loaded from
+   Postgres, a row inserted in Postgres showed on it 259 ms later and its delete as fast, and writes through the routes
+   kept only real columns. Compute is capped at 0.25 CU (min and max) on `production`.
+   **To switch**: run the signed check (must say `ok`), set `DB_BACKEND=neon` on Vercel (Production) and redeploy, then
+   reload any open tabs (an old tab still writes to Appwrite, which no longer reaches Postgres). **To go back**: unset it
+   and redeploy; Appwrite has every write, and the webhook carries on. Sign-in stays on Appwrite until its own step.
+   **Left in phase 2**: after a week on Neon, a nightly dump of the four tables and a copy of `models/` to Neon's object
+   storage, a Usage panel (R2, Neon compute hours, Appwrite) that warns at 70 % and stops new uploads at 90 %, and
+   pruning activity older than a year.
 3. **API and MCP to one Cloudflare Worker.** `/api/*` and the MCP run there, reaching CockroachDB through Hyperdrive.
    The long routes (starting the Colab GPU, copying downloads) become Queue jobs; a Cloudflare cron replaces
    `sweep.yml`. Vercel rewrites `/api/*` to the Worker so it stays one origin (cookies, the same-origin check and
