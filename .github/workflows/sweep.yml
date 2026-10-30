@@ -13,14 +13,10 @@ jobs:
   sweep:
     runs-on: ubuntu-latest
     timeout-minutes: 7
-    env:
-      # optional: a CRON_SECRET (or WORKER_SECRET) repository secret is used instead of GitHub's token when set
-      SECRET: ${{ secrets.CRON_SECRET || secrets.WORKER_SECRET }}
     steps:
       - name: Sweep
         run: |
-          token="$SECRET"
-          [ -n "$token" ] || token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=voicebox-cron" | jq -r .value)
+          token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=voicebox-cron" | jq -r .value)
           code=$(curl -s -o out.json -w '%{http_code}' -m 60 -X POST -H "Authorization: Bearer $token" \
             https://voiceboxstudio.vercel.app/api/cron/sweep)
           echo "$code $(cat out.json)"
@@ -29,8 +25,7 @@ jobs:
         # once a day after 02:00 UTC (mcp/lib/backup.ts); the other knocks read one small file and stop
         if: always()
         run: |
-          token="$SECRET"
-          [ -n "$token" ] || token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=voicebox-cron" | jq -r .value)
+          token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=voicebox-cron" | jq -r .value)
           code=$(curl -s -o out.json -w '%{http_code}' -m 290 -X POST -H "Authorization: Bearer $token" \
             https://voiceboxstudio.vercel.app/api/cron/backup)
           echo "$code $(cat out.json)"
