@@ -4,7 +4,17 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (the video factory, 2026-10-30)
+## Latest round (Gemini's post-mortem, 2026-10-30)
+
+- **"Check Gemini's audit and save it"**: checked claim by claim in `docs/FACTORY.md` (true: the asset round trip,
+  mixed id shapes, Node's PATH, the delete gate; rejected: a shared mount and putting a key in the worker's
+  environment; the owner's call: replacing the "Send it our way" ending, A/B it first).
+- **"Load every tool for video, not just HyperFrames: Remotion, motion skills, Apple-level editing"**: FACTORY.md G.
+- **"Work from ChatGPT (Go) too, with image uploads; the MCP must work with any AI tool, on fewer tokens"**:
+  FACTORY.md H.
+- **"Give me a prompt for new sessions so several agents work at once"**: FACTORY.md, Session prompts.
+
+## Earlier round (the video factory, 2026-10-30)
 
 - **"Make the MCP faster and leaner; 5 videos shouldn't take 5× the time; don't waste resources"**: the plan is
   `docs/FACTORY.md` (an assembly line: one batched voice job, renders on the CPU runtime, per-scene re-renders).
