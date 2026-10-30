@@ -541,10 +541,11 @@ export function registerAutoTools(server: ToolServer) {
           .describe("{workspace, dir}: a repo checkout to render; or a project id (project start): the render lands in its folder"), composition: z.string().max(200).optional(),
         platform: PLAT.optional(), quality: z.enum(["draft", "standard", "high", "delivery"]).optional(), name: z.string().max(80).optional(),
         music: SRC.optional().describe("an input's key: a music bed under the piece"), music_db: z.number().min(-40).max(0).optional(),
+        size: z.enum(["full", "half"]).optional().describe("half: a draft at half the size (540x960), about 3x faster"),
         save_to: z.string().max(200).nullable().optional(),
       }),
     },
-    async ({ action = "render", template, fields, inputs, shape, brand, project, composition, platform, quality, name, music, music_db, save_to }, ctx) => {
+    async ({ action = "render", template, fields, inputs, shape, brand, project, composition, platform, quality, name, music, music_db, size, save_to }, ctx) => {
       try {
         const t = await import("./templates");
         if (action === "list") return text(Object.entries(t.TEMPLATES).map(([id, x]) => ({ template: id, about: x.about, fields: x.fields })));
@@ -552,7 +553,7 @@ export function registerAutoTools(server: ToolServer) {
         const bed = music ? { music: { key: music, volume_db: music_db ?? -16 } } : {};
         if (project && typeof project === "object") return await media("template" as never, inputs ?? {}, { project, composition, platform, quality, name, ...bed }, ctx, save_to, `template ${project.dir}`);
         if (!template) throw new Error("render needs template (action list shows them) or project");
-        const built = t.build(template, fields ?? {}, shape ?? "9:16", brand ?? {});
+        const built = t.build(template, fields ?? {}, shape ?? "9:16", brand ?? {}, size === "half");
         const missing = built.media.filter((k) => !(inputs ?? {})[k]);
         if (missing.length) throw new Error(`fields name media that isn't in inputs: ${missing.join(", ")}`);
         return await media("template" as never, inputs ?? {}, { html: built.html, font: built.font, platform: platform ?? (shape === "16:9" ? "youtube" : "reels"), quality, name: name ?? template, ...bed }, ctx, save_to, `template ${template}`);

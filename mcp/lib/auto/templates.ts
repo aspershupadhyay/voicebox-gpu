@@ -122,10 +122,12 @@ function scene(w: number, h: number, s: number, b: Brand, body: string, tl: stri
 `;
 }
 
-export function build(template: string, fields: Fields, shape: Shape = "9:16", brand: Partial<Brand> = {}) {
+export function build(template: string, fields: Fields, shape: Shape = "9:16", brand: Partial<Brand> = {}, half = false) {
   const t = TEMPLATES[template];
   if (!t) throw new Error(`template: one of ${Object.keys(TEMPLATES).join(", ")}`);
-  const [w, h] = SIZES[shape] ?? SIZES["9:16"];
+  // half: a draft at half the size (540x960 for 9:16): everything is laid out in proportion, and Chromium paints a
+  // quarter of the pixels (docs/FACTORY.md D)
+  const [w, h] = (SIZES[shape] ?? SIZES["9:16"]).map((x) => (half ? x / 2 : x));
   const b: Brand = { bg: color(brand.bg, BRAND.bg), ink: color(brand.ink, BRAND.ink), accent: color(brand.accent, BRAND.accent), font: font(brand.font, BRAND.font) };
   return { ...t.build(fields, b, w, h), width: w, height: h, font: b.font };
 }
