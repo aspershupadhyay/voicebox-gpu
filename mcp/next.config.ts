@@ -14,6 +14,10 @@ const SECURITY_HEADERS = [
 
 const config: NextConfig = {
   poweredByHeader: false,
+  // The MCP SDK picks its schema checker by runtime: Ajv on Node (it writes code at run time, which Cloudflare Workers
+  // forbid), @cfworker/json-schema on workerd. Use the Workers one everywhere, so the same build runs on both
+  // (docs/MIGRATION.md step 3).
+  turbopack: { resolveAlias: { "@modelcontextprotocol/server/_shims": "./node_modules/@modelcontextprotocol/server/dist/shimsWorkerd.mjs" } },
   async headers() {
     return [{ source: "/:path*", headers: SECURITY_HEADERS }];
   },

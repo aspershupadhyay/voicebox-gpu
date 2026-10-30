@@ -46,7 +46,9 @@ export async function thumb(key: string, width: number, format: ThumbFormat, qua
   if (await headObj(k)) return { key: k, type: THUMB_TYPE[format] };
   const src = await getObj(key);
   if (!src) throw new Error("file not found");
-  const sharp = (await import("sharp")).default;
+  // sharp is a native module: on Cloudflare Workers it isn't there, so the photo goes as it is (still cached by the CDN)
+  const sharp = await import("sharp").then((m) => m.default).catch(() => null);
+  if (!sharp) return { key, type: src.headers.get("content-type") || "image/jpeg" };
   const img = sharp(Buffer.from(await src.arrayBuffer())).rotate().resize({ width: w, withoutEnlargement: true });
   const out = await (format === "jpg" ? img.flatten({ background: "#ffffff" }).jpeg({ quality, mozjpeg: true }) : format === "png" ? img.png() : img.webp({ quality })).toBuffer();
   await putObj(k, new Uint8Array(out), THUMB_TYPE[format]);
