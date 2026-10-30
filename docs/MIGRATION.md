@@ -116,7 +116,13 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    studio). The browser posts the email and password to `/api/login`; without the setting that answers "use Appwrite"
    and the old flow runs. Files still kept in Appwrite Storage move to R2 with signed `{"op":"files-to-r2"}` (Appwrite's
    copy stays until Appwrite goes). Going back: unset it; Appwrite still has every account.
-3. **API and MCP to one Cloudflare Worker.** `/api/*` and the MCP run there, reaching CockroachDB through Hyperdrive.
+3. **Vercel's work to Cloudflare, biggest first** (Vercel's function usage was at 75 % on 2026-10-30). **First
+   (2026-10-30)**: the Cloudflare timer (`workers/live-timer.js`) decides when Vercel is needed. It reads the Live
+   page's "seen" marker straight from R2 and only knocks `/api/cron/live` while someone is watching (it used to wake
+   Vercel 1,440 times a day to answer "idle"), runs the sweep every 10 minutes on time (GitHub's schedule ran every few
+   hours, and is now only for running it by hand) and the backup only when it's due. All three routes take the timer's
+   secret, kept on Vercel only as a SHA-256 (`lib/cronauth.ts`). Next: measure again, then move the busiest routes left.
+   The original plan: **API and MCP to one Cloudflare Worker.** `/api/*` and the MCP run there, reaching CockroachDB through Hyperdrive.
    The long routes (starting the Colab GPU, copying downloads) become Queue jobs; a Cloudflare cron replaces
    `sweep.yml`. Vercel rewrites `/api/*` to the Worker so it stays one origin (cookies, the same-origin check and
    sign-in unchanged). MCP clients get the new address once.

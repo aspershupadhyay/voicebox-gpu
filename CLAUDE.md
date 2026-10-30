@@ -77,8 +77,9 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   Realtime queries from `/api/ws/live` (signed-in only; the query is built on the server from allowed columns, the
   Realtime secret never leaves it).
   With `AUTH_BACKEND=neon`, `/api/login` checks email and password against Postgres (`lib/users.ts`: scrypt hashes,
-  the same lockout and invite list); the password is never stored, only its hash. `/api/cron/sweep` and
-  `/api/cron/backup` take `WORKER_SECRET`, `CRON_SECRET`, or GitHub's OIDC token for `sweep.yml` on main
+  the same lockout and invite list); the password is never stored, only its hash. `/api/cron/sweep`,
+  `/api/cron/backup` and `/api/cron/live` take `WORKER_SECRET`, `CRON_SECRET`, the Cloudflare timer's secret (kept as a
+  SHA-256), or GitHub's OIDC token for `sweep.yml` on main
   (`lib/cronauth.ts`: signed by GitHub, audience `voicebox-cron`, this repository's workflow only).
 - Never loosen the allow-list, the same-origin check or the session expiry.
 
