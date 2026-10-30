@@ -22,6 +22,7 @@ import { PlatformBadge } from "./platform";
 import { PostDrawer } from "./AnalyticsPlatform";
 import { fmtUnit, TrendBoard } from "./anparts";
 import { useReport, type Report } from "./useReport";
+import { watching } from "./watching";
 
 type Lib = {
   id: string; kind?: string; engine: string; voice: string; label?: string; created: number; match?: number | null;
@@ -155,7 +156,7 @@ export default function Home() {
     if (!st?.online) return;
     const load = () => api<{ jobs: Job[] }>("jobs").then((j) => setJobs(j.jobs)).catch(() => {});
     load();
-    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 8000);
+    const t = setInterval(() => { if (watching()) load(); }, 8000);
     return () => clearInterval(t);
   }, [st?.online]);
 

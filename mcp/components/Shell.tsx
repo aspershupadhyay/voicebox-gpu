@@ -20,6 +20,7 @@ import { DialogProvider, useDialog } from "./Dialog";
 import JobTray from "./JobTray";
 import { PopMenu } from "./ui";
 import { initials } from "@/lib/workspace";
+import { watching } from "./watching";
 
 const StatusCtx = createContext<{ status: Status | null; refresh: () => Promise<void> }>({ status: null, refresh: async () => {} });
 export const useStatus = () => useContext(StatusCtx);
@@ -369,7 +370,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     refresh();
     // a hidden tab doesn't poll (every call counts against the hosting quota); coming back refreshes at once
-    const t = setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 15_000);
+    const t = setInterval(() => { if (watching()) refresh(); }, 15_000);
     const back = () => { if (document.visibilityState === "visible") refresh(); };
     document.addEventListener("visibilitychange", back);
     return () => { clearInterval(t); document.removeEventListener("visibilitychange", back); };

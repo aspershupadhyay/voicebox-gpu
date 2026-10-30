@@ -10,6 +10,7 @@ import { Info } from "./Info";
 import { Select } from "./pop";
 import ToolKeys, { type KeyStatus } from "./ToolKeys";
 import { Field, Toggle } from "./ui";
+import { watching } from "./watching";
 
 type Approval = { id: string; action: string; summary: string; by: string; status: string; created: number; decided?: number; decided_by?: string; note?: string };
 type Log = { t: number; tool: string; model: string; ok: boolean; ms: number; err?: string; job?: string; gate?: string; via?: string; args?: string };
@@ -59,7 +60,7 @@ export default function Automation() {
   useEffect(() => {
     load();
     // the inbox is live while the tab is open and visible: an approval waits on the owner
-    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 8000);
+    const t = setInterval(() => { if (watching()) load(); }, 8000);
     return () => clearInterval(t);
   }, [load]);
 
