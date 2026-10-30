@@ -9,9 +9,11 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST(req: Request) {
-  const secret = process.env.WORKER_SECRET ?? "";
+  // WORKER_SECRET (shared with the Colab worker) or CRON_SECRET (only the scheduled knocks: GitHub's copy can be
+  // replaced without touching the worker)
   const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
-  if (secret.length < 24 || !safeEqual(token, secret)) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const ok = [process.env.WORKER_SECRET, process.env.CRON_SECRET].some((s) => (s ?? "").length >= 24 && safeEqual(token, s!));
+  if (!ok) return Response.json({ error: "unauthorized" }, { status: 401 });
   after(async () => {
     // downloads waiting to try again (a site's rate limit that has had time to lift) go now, worker on or off
     const dl: Promise<unknown>[] = [];

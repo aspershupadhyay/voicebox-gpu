@@ -1,7 +1,7 @@
 # Every 10 min: stop a GPU the app started whose worker died (no heartbeat for 20 min), so a crashed Colab kernel
 # doesn't bill until Google reclaims the VM. The logic lives in mcp/lib/colab.ts (sweep); this only knocks.
-# One-time setup: repo Settings → Secrets and variables → Actions → New repository secret WORKER_SECRET (the same
-# value as on Vercel). Without it the run skips with a warning. (Vercel cron would do, but Hobby allows only daily.)
+# One-time setup: make up a long random string (32+ characters) and add it as CRON_SECRET in both places: repo Settings →
+# Secrets and variables → Actions → New repository secret, and Vercel → Settings → Environment Variables (then redeploy). Without it the run skips with a warning. (Vercel cron would do, but Hobby allows only daily.)
 name: Sweep dead GPUs
 on:
   schedule: [{ cron: "*/10 * * * *" }]
@@ -12,11 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 7
     env:
-      WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
+      # CRON_SECRET: any long random string, the same in GitHub (Actions secrets) and on Vercel; WORKER_SECRET also works
+      WORKER_SECRET: ${{ secrets.CRON_SECRET || secrets.WORKER_SECRET }}
     steps:
       - name: Sweep
         run: |
-          if [ -z "$WORKER_SECRET" ]; then echo "::warning::Add the WORKER_SECRET repository secret (see the top of this file)"; exit 0; fi
+          if [ -z "$WORKER_SECRET" ]; then echo "::warning::Add the CRON_SECRET repository secret (see the top of this file)"; exit 0; fi
           code=$(curl -s -o out.json -w '%{http_code}' -m 60 -X POST -H "Authorization: Bearer $WORKER_SECRET" \
             https://voiceboxstudio.vercel.app/api/cron/sweep)
           echo "$code $(cat out.json)"
