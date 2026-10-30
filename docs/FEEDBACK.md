@@ -4,7 +4,15 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (code execution with MCP, 2026-10-29)
+## Latest round (keys for other models, 2026-10-30)
+
+- **"Add a make-new-token button so I can add new models in their MCP settings"**: Settings → Claude & API → Other
+  models makes a key per model (shown once, revocable, held to a role if picked), and the settings to paste already
+  carry it. Never rotate `MCP_TOKEN` for a new model: that signs everyone out.
+- **"Gemini has web search, so what's the point?"**: right for chat; `SEARCH_API_KEY` is optional, only for
+  scheduled workflows and sandbox scripts that run with no chat model.
+
+## Earlier round (code execution with MCP, 2026-10-29)
 
 - **"Check out code execution with MCP; this will reduce the token consumption"** (Anthropic's article): adopted.
   The sandbox gets a `voicebox` module so a model calls tools from a script and only the filtered result enters its

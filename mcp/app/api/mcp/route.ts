@@ -4,8 +4,7 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { INSTRUCTIONS, registerTools } from "@/lib/mcptools";
 import { registerAutoTools } from "@/lib/auto/tools";
 import { guarded } from "@/lib/auto/wrap";
-import { safeEqual } from "@/lib/worker";
-import { SCOPE, verify } from "@/lib/oauth";
+import { verifyMcp } from "@/lib/auto/auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // starting a Colab GPU waits on the VM to boot (lib/colab.ts)
@@ -19,20 +18,6 @@ const handler = createMcpHandler((server) => {
   instructions: INSTRUCTIONS,
 });
 
-const authed = withMcpAuth(
-  handler,
-  (_req, token) => {
-    const expected = process.env.MCP_TOKEN ?? "";
-    if (expected.length < 24 || !token) return undefined;
-    if (safeEqual(token, expected)) return { token, clientId: "owner", scopes: [SCOPE] };
-    // OAuth access token from /api/oauth/token (claude.ai connectors and other header-less clients)
-    const at = verify<{ typ: "access"; cid: string; exp: number }>(token, "access");
-    if (at) return { token, clientId: at.cid, scopes: [SCOPE], expiresAt: at.exp };
-    // code mode: a script in the sandbox (lib/auto/bench.ts runKey), for as long as its run
-    const run = verify<{ typ: "run"; model: string; exp: number }>(token, "run");
-    return run && { token, clientId: `run:${run.model}`, scopes: [SCOPE], expiresAt: run.exp };
-  },
-  { required: true },
-);
+const authed = withMcpAuth(handler, verifyMcp, { required: true });
 
 export { authed as GET, authed as POST, authed as DELETE };

@@ -8,7 +8,8 @@ import type { ToolServer } from "../mcptools";
 import { ASK_FIRST, capApprovedToday, getControl, logCall, requestApproval, unitsToday, useApproval, type AskKey } from "./control";
 
 type Args = Record<string, unknown>;
-type Ctx = { http?: { req?: Request; authInfo?: { clientId?: string } }; authInfo?: { clientId?: string } } | undefined;
+type Auth = { clientId?: string; extra?: Record<string, unknown> };
+type Ctx = { http?: { req?: Request; authInfo?: Auth }; authInfo?: Auth } | undefined;
 type Result = { content: { type: string; text?: string }[]; isError?: boolean };
 
 /** Which approval a call needs, if any; `always` asks even when the owner switched that kind off (the platform repo's
@@ -64,9 +65,11 @@ const PAUSES: Record<string, (a: Args) => boolean> = {
   agents: (a) => a.action === "save", memory: (a) => ["note_set", "lesson_add", "skill_save"].includes(String(a.action)),
 };
 
-/** Which model made the call: the X-Model header (Gemini CLI and others set it, docs/AUTOMATION.md), else the client
- *  in the user agent, else the OAuth client. */
+/** Which model made the call: the name on its model key (lib/auto/keys.ts), else the X-Model header (Gemini CLI and
+ *  others set it, docs/AUTOMATION.md), else the client in the user agent, else the OAuth client. */
 export function modelOf(ctx: Ctx) {
+  const keyed = (ctx?.http?.authInfo ?? ctx?.authInfo)?.extra?.model;
+  if (typeof keyed === "string") return keyed;
   const h = ctx?.http?.req?.headers;
   const x = h?.get("x-model")?.trim();
   if (x) return x.replace(/[^\w .:/@+-]/g, "").slice(0, 60) || "unknown";
@@ -79,6 +82,8 @@ export function modelOf(ctx: Ctx) {
 
 /** The role a client works as (X-Role: researcher, editor, publisher, auditor…; lib/auto/agents.ts), if it said. */
 export function roleOf(ctx: Ctx) {
+  const keyed = (ctx?.http?.authInfo ?? ctx?.authInfo)?.extra?.role; // a key held to a role can't leave it
+  if (typeof keyed === "string") return keyed;
   const r = ctx?.http?.req?.headers?.get("x-role")?.trim().toLowerCase();
   return r && /^[a-z][a-z0-9-]{1,30}$/.test(r) ? r : undefined;
 }

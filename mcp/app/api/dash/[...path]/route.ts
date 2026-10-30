@@ -71,6 +71,7 @@ export async function GET(req: Request, ctx: Ctx) {
       return Response.json(await getAnalytics(range, q.get("fresh") === "1", (p) => after(p)));
     }
     if (a === "upload-keys" && !b) return Response.json({ keys: await (await import("@/lib/inbox")).listKeys() });
+    if (a === "automation" && b === "keys") return Response.json({ keys: await (await import("@/lib/auto/keys")).listModelKeys() });
     if (a === "automation" && !b) {
       // Settings → Automation: the switches, today's units, the approvals inbox and the call log (lib/auto/control.ts)
       const ac = await import("@/lib/auto/control");
@@ -328,6 +329,13 @@ export async function POST(req: Request, ctx: Ctx) {
       if (b === "settings") return Response.json(await ac.setControl({ cap_units: body.cap_units, ask_first: body.ask_first, repos: body.repos }, by));
       if (b === "stop") return Response.json(await ac.stopAll(by, "stopped from the dashboard"));
       if (b === "resume") return Response.json(await ac.setControl({ paused: false }, by));
+      if (b === "keys") {
+        // a model key (lib/auto/keys.ts): made here, shown once; revoked here
+        const mk = await import("@/lib/auto/keys");
+        if (typeof body.revoke === "string") { await mk.revokeModelKey(body.revoke); return Response.json({ ok: true }); }
+        try { return Response.json(await mk.createModelKey(String(body.name ?? ""), typeof body.role === "string" ? body.role : undefined, by)); }
+        catch (e) { return Response.json({ error: (e as Error).message }, { status: 400 }); }
+      }
       if (b === "lesson" && typeof body.id === "string") {
         // the owner's call on a lesson: approve (every model gets it through playbook), reject, or promote into
         // docs/FEEDBACK.md by a PR (lib/auto/memory.ts)
