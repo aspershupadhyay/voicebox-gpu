@@ -78,7 +78,36 @@ needs it (the skill is fetched from `playbook`, not pasted into every session).
   with `detail: "full"` on request, paging, one id shape, errors that say how to fix the call, and
   `readOnlyHint`/`destructiveHint` annotations so clients can skip confirmations on safe reads.
 
-## A. Fix the basics (one PR, first)
+## A. Fix the basics (one PR, first) ✅ shipped
+
+**Done (2026-10-30)**, checked on a Linux box as root the way Colab runs it (the sandbox user, Node from nodejs.org,
+HyperFrames from npm, Chromium 1243):
+- [x] Node 22 + npm + npx in `run`: installed once per runtime into `/opt/vb-node` (3.4 s here) and put first on the
+  sandbox's PATH whenever the run is `lang=node` or its code mentions node/npx/npm/hyperframes. Measured: `node
+  v22.11.0` as uid `vbsandbox`, `npx 10.9.0`.
+- [x] `hyperframes` on the sandbox's PATH at the version the nearest `package.json` pins (a project pinning `^0.8.192`
+  got `0.8.192`, the folder above it `0.8.217`; each pinned version is installed by root from the version string
+  alone, read as the sandbox user); `check`, `snapshot`, `render`, `preview`, `lint`, `inspect` all listed.
+  `video_template action=render project=…` renders with the project's own pin too.
+- [x] Templates: fonts (Google font fetched once to `/opt/vb-fonts`, served from `assets/`) and GSAP (`npm` beside
+  HyperFrames) from the worker's cache, never a CDN; the title is on screen at frame 0; every template has a drifting
+  shape, a progress bar and a slow push-in, so something moves on every frame, and `qa` now checks frozen frames on
+  templates (it used to skip them). `music` (+ `music_db`) mixes a bed, ducked under any voice in the piece.
+  Measured (draft quality, CPU): `list` 3 items 10 s in 17.8 s, `title_card` 9.9 s, `quote` 11.9 s; `list` with music
+  QA **PASS** on every check (no black, no frozen stretch, -13.8 LUFS, peaks -6.9 dBFS).
+- [x] `repo checkout` takes a commit: a short or full sha is resolved through GitHub to the full sha (a branch named
+  like a sha still wins), and the worker fetches just that commit, checked out detached. Measured: `HEAD~3` cloned at
+  `2cfb5ab` as asked.
+- [x] One id shape (`lib/auto/ids.ts`, run by `guarded()` for every tool): every file tool takes `m:x`, `g:x` or the
+  bare id (12 hex = a generated item, else an upload); `delete_media` takes `m:x`; `revoice`, `clean_audio`,
+  `add_media`, `add_reference_voice` take `file_id` beside `url` (or an id in `url`); `imagine image_urls`,
+  `voice_dataset add_urls` and `transcribe sources[].url` take ids too.
+- [x] The clean-up DNS error, diagnosed: the self-check hands the clean-up job a voiced line's link on the worker's own
+  brand-new trycloudflare name, which doesn't resolve on the machine itself for the first minute ("Name or service not
+  known", seen in `worker_status.selfcheck` on the live L4). Fixed: a link to the worker's own address is fetched from
+  the gateway on localhost, and every download retries a name or connection failure 4 times (2, 4, 8 s).
+- [x] The stale `?lean=1` line: `docs/AUTOMATION.md` already says `/api/mcp/lean`; the playbook's copy was stale and is
+  rebuilt.
 
 - Node 22 and `npx` in the sandbox. `run lang=node` works, and so do `npx hyperframes check | snapshot | render`, at the
   version the project's `package.json` pins.
@@ -214,3 +243,11 @@ YOUR PART: <one line from below>
    auto-editor, PySceneDetect, rembg/SAM 2, Real-ESRGAN, RIFE; skills indexed in `playbook`; one test shot per tool.
 6. **E: Many agents at once** (after B). Fair queues per key, per-key units caps, server-numbered cases, the shared
    ledger with a nightly PR, competing creatives with a judge.
+
+## Still to check on Colab
+
+Each with the exact test a model should run through the MCP (worker 3.12.0 or later: `gpu action=update_worker`).
+
+- **A1, Node in the sandbox**: `run {"lang":"bash","code":"which node npx && node -v && npx --version"}` → `/opt/vb-node/bin/node`, `v22.11.0`.
+- **A2, the clean-up self-check**: `gpu action=selfcheck`, then `worker_status` → `selfcheck.steps` has `clean-up · Resemble Enhance` ok.
+- **A3, a template on the L4**: `video_template {"template":"list","fields":{"title":"3 Reels mistakes","items":["No hook","Too long","No captions"]}}` → qa PASS, then `inspect_media checks ["sheet"]` on it: the title is on the first frame.

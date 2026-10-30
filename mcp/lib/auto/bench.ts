@@ -145,7 +145,7 @@ export async function view(job: BenchJob, actor: { name: string } = { name: "Wor
  *  (the video, else the first file). */
 export async function inputFile(ref: string): Promise<{ url: string; name: string }> {
   if (/^https?:\/\//.test(ref)) return { url: ref, name: decodeURIComponent(new URL(ref).pathname.split("/").pop() || "file") };
-  const d = await (await import("../filemanager")).fileDetail(ref) as { name: string; download?: string | null; url?: string | null; links?: Record<string, string> };
+  const d = await (await import("../filemanager")).fileDetail((await import("./ids")).fileKey(ref)) as { name: string; download?: string | null; url?: string | null; links?: Record<string, string> };
   if (d.download || d.url) return { url: (d.download ?? d.url)!, name: d.name };
   const links = Object.entries(d.links ?? {});
   const main = links.find(([n]) => n === "video.mp4") ?? links[0];

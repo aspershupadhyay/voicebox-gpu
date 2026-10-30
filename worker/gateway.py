@@ -8,7 +8,7 @@ thing at a time, post-processes audio for video timelines, and serves results th
 Auth: every endpoint needs `Authorization: Bearer $WORKER_SECRET`, except /files/* which needs a
 valid ?exp=&sig= signature (so download links can be handed to tools that can't set headers).
 """
-import argparse, base64, hashlib, hmac, json, os, re, shutil, subprocess, sys, threading, time, traceback, uuid
+import argparse, base64, hashlib, hmac, json, os, re, shutil, socket, subprocess, sys, threading, time, traceback, uuid
 import urllib.error, urllib.parse, urllib.request, zipfile
 from collections import OrderedDict, defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -3418,19 +3418,38 @@ def run_storycard(job):
     job["results"] = [{"id": "story", "text": "", "duration": 0}]
 
 
+def own_link(url):
+    """A link to this worker's own public address (a voiced line's result, handed to a clean-up) goes straight to the
+    gateway on localhost: a fresh trycloudflare name often doesn't resolve on the machine itself for a minute (the
+    clean-up self-check's "Name or service not known", docs/FACTORY.md A)."""
+    pub = public_url().rstrip("/")
+    if pub and url.startswith(pub + "/"):
+        return f"http://127.0.0.1:{os.environ.get('VOICEBOX_PORT', '8000')}{url[len(pub):]}"
+    return url
+
+
 def _download(url, path, limit=600 * 1024 * 1024):
     if not _http_url(url, "url"):  # every caller passes a link from a request: never file:// or ftp:// (local files)
         raise ValueError("url is missing")
-    with urllib.request.urlopen(url, timeout=300) as r, open(path, "wb") as f:
-        n = 0
-        while True:
-            chunk = r.read(1 << 20)
-            if not chunk:
-                break
-            n += len(chunk)
-            if n > limit:
-                raise ValueError("download too large")
-            f.write(chunk)
+    url = own_link(url)
+    for attempt in range(4):  # a name that doesn't resolve yet, or a dropped connection: try again before failing
+        try:
+            with urllib.request.urlopen(url, timeout=300) as r, open(path, "wb") as f:
+                n = 0
+                while True:
+                    chunk = r.read(1 << 20)
+                    if not chunk:
+                        break
+                    n += len(chunk)
+                    if n > limit:
+                        raise ValueError("download too large")
+                    f.write(chunk)
+            return
+        except urllib.error.URLError as e:
+            if attempt == 3 or not isinstance(getattr(e, "reason", None), (socket.gaierror, ConnectionError, TimeoutError)):
+                raise
+            log(f"download: {e.reason}; trying again in {2 ** attempt * 2} s")
+            time.sleep(2 ** attempt * 2)
 
 
 def run_image(job):
