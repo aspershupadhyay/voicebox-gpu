@@ -21,6 +21,63 @@ order. Each phase ships as its own PR and is checked on the real Colab L4 before
 ChatGPT's own conclusion holds: the gap isn't missing tools, it's that the sandbox, the renderer and the pipeline aren't
 one environment yet, and nothing runs videos as a batch.
 
+## What Gemini's post-mortem found (Case 027), checked against the code
+
+Gemini made Case 027 end to end through the MCP and wrote a "10× speedup" post-mortem. Verdicts:
+
+| Claim | Verdict | What's really going on | Fix (phase) |
+|---|---|---|---|
+| Assets make a 6-step round trip (ticket → upload → complete → signed URL → download) | **True, partly by design** | an image made on the model's side has to reach Colab somehow; the worker's tunnel serves jobs, not files (the 501) | make images on the worker (`imagine`) or in the sandbox so they never leave it; a project workspace on the worker holds drafts, and only keepers go to Files at `finish` (B, D). One presigned PUT when a file must come from outside |
+| Shared FUSE/S3FS/SSHFS mount between the model's computer and Colab | **Rejected** | it would expose the worker and storage to the model's machine and break on Colab restarts | the project workspace above does the same job safely |
+| Inconsistent ids and parameters (`get_file` wants `file_id`, `upload_media` returns `id`, `delete_media` rejects `m:`, `add_media` wants a URL) | **True** (`lib/mcptools.ts`) | tools grew one at a time | one id shape everywhere: every tool accepts `m:x` or `x` and takes a `file_id` wherever it takes a `url` (A) |
+| Node not on PATH in `run` | **True** (same as the ChatGPT finding) | see above | (A) |
+| GitHub 403 pushing to `videos-post` | **True, a key setting** | the owner's GitHub key has write access to the workbench, not to `videos-post` | the owner adds Contents + Pull requests write for `videos-post` to the key if models should open PRs there |
+| Deleting a 1-pixel scratch file waited for approval | **True** | blanket `delete` gate in `lib/auto/wrap.ts` | projects own their files (B) |
+| One pipeline command instead of six scripts | **Agreed** | the case scripts (`prep_audio`, `build_scenes`, `make_cues`…) run by hand | a `pipeline` op (D): one spec in, a draft and a QA report out, each step cached and re-run only when its inputs change |
+| A pre-baked Docker image | **Not possible on Colab** (it doesn't run custom images) | | a cached toolchain bundle (Node, Chromium, HyperFrames, Remotion, fonts) restored at boot from R2 in seconds (G) |
+| Put `VOICEBOX_UPLOAD_TOKEN` in the worker's `/etc/environment` | **Rejected** | the sandbox must never hold a key; its run key already saves files | none |
+| Taste and psychology checks at the script step | **Agreed** | weak scripts are only caught after a render | a `script_check` before any voice job: hook length, banned openers, spine, word count, numbers on screen, the ending (D) |
+| Ban "Seen a clip like this? Send it our way" and end on an identity line ("The industry sells you the score. We check the grader.") | **The owner's call** | that ending is the owner's own rule 13 in `videos-post/CLAUDE.md`; Gemini wants to replace it | A/B both endings on the next two posts, then keep the winner (owner decides) |
+| 45 min → 4–5 min per video | **Too optimistic** | one HyperFrames render already took ~125 s on the L4; voice, QA and the owner's checkpoints add up | measure in F; our target is a single video in ~10–12 min and a batch of 5 in under 2× that |
+
+## G. The motion toolkit (Apple-level editing)
+
+Everything a top motion editor reaches for, installed once, cached, and loaded into a model's context only when it
+needs it (the skill is fetched from `playbook`, not pasted into every session).
+
+- **Code-to-video renderers**: HyperFrames (pinned per project), **Remotion** (React; official agent skills since
+  January 2026; free for individuals and companies of up to 3 people, otherwise a company licence: the owner
+  confirms), **Revideo** (MIT, headless, made for pipelines). One `render` op picks by the project's `package.json`.
+- **Motion**: GSAP (check the current licence when installing), Lottie (`lottie-web`, dotLottie), Three.js for 3D
+  shots, Manim for explainer diagrams.
+- **Editing and finishing**: ffmpeg with NVENC, `auto-editor` (silence and dead-air cuts), PySceneDetect (shot
+  lists), Whisper word timings (already in), `rembg`/SAM 2 (cut-outs), Real-ESRGAN (upscaling stills), RIFE (smooth
+  slow motion), LUT grading (`videos-post` has LUTs), planar tracking (`videos-post/tools/track_plane.py`).
+- **Skills served on demand**: `videos-post/.claude/skills` (hyperframes, apple-film-moves, media-use) and Remotion's
+  skills indexed in `playbook`, so `playbook search "label pinned to a surface"` returns the right page and only that.
+- **Proof**: one short test shot per tool on the L4, with its time and a frame in this doc. A tool that doesn't
+  work is left out of the list instead of left broken.
+
+## H. Works with every AI tool, including ChatGPT (and image uploads from there)
+
+- **Schemas every client accepts**: our tool schemas include `$schema`, `anyOf` (e.g. `from` is an integer or a
+  string) and `propertyNames`. Gemini rejects these (third-party reports; it follows an OpenAPI 3.0 subset), and other
+  clients differ. Emit a safe subset (one type per field, no `$schema`), and check every schema in
+  `scripts/check_tools.py`.
+- **Test matrix**: claude.ai, Claude Code, Gemini CLI, ChatGPT (developer mode: OpenAI documents it for Business and
+  Enterprise, guides report Plus and Pro, and Go is unconfirmed, so the owner checks for the toggle under Settings →
+  Connectors → Advanced), OpenCode, Cursor. Clients without remote MCP get a stdio bridge (`npx mcp-remote <url>`).
+  ChatGPT needs OAuth; check our `/api/oauth` with its connector flow.
+- **Images from ChatGPT (or any chat app)**:
+  1. `upload_link` tool: answers with a one-time page on the dashboard. Open it on a phone or computer, drop the
+     images, and they land in the project's folder. Works from any app.
+  2. ChatGPT's Apps SDK `openai/fileParams` on an `import_file` tool, so ChatGPT hands an attached file to the tool
+     as a download URL (whether chat attachments reach a tool is unclear in OpenAI's forums: test it).
+  3. `add_media` with a URL, as today.
+- **Fewer tokens in every client**: short descriptions (what it does, when to pick it), concise answers by default
+  with `detail: "full"` on request, paging, one id shape, errors that say how to fix the call, and
+  `readOnlyHint`/`destructiveHint` annotations so clients can skip confirmations on safe reads.
+
 ## A. Fix the basics (one PR, first)
 
 - Node 22 and `npx` in the sandbox. `run lang=node` works, and so do `npx hyperframes check | snapshot | render`, at the
@@ -28,6 +85,7 @@ one environment yet, and nothing runs videos as a batch.
 - Templates render from the first frame: fonts and GSAP come from the worker's cache instead of a CDN; there's a
   `music` field (a Files id, ducked under any voice); motion at least every 2 s.
 - `repo checkout` accepts a commit sha.
+- One id shape: every file tool accepts `m:x` or `x`, and a `file_id` wherever it takes a `url` (Gemini's finding).
 - The clean-up DNS failure diagnosed and fixed; the stale `?lean=1` line in `docs/AUTOMATION.md` corrected.
 - Checked by a model on Colab with the test prompt, and the results written here.
 
@@ -110,10 +168,49 @@ is hidden from the tool list, not left in it broken.
 
 ## Order and owner decisions
 
-A → B → C → D → E, with F's measurements taken along the way.
+A, B and C+H can run at the same time in separate sessions (they touch different files); D, E and G follow once A
+is merged (they share `worker/bench.py` and `worker/gateway.py`). F's measurements are taken along the way.
 
 Decisions (recommended first):
 1. **One endpoint with a small core, toolsets on demand** (C), vs listing everything by default.
 2. **Agents delete their own project's files freely, to the trash only** (B); other files still ask; deleting forever
    stays the owner's.
 3. **The CPU Colab runtime as the render farm** (D): it spends a few units an hour while a batch runs, and saves GPU time.
+
+## Session prompts (paste one into a new session; several can run at once)
+
+Every session gets the same opening, then its own part. Run sessions 1–3 together; start 4–6 after session 1 merges.
+
+```
+You're working on voicebox-gpu (VoiceBox Studio). Read CLAUDE.md, docs/FEEDBACK.md, docs/AUTOMATION.md and
+docs/FACTORY.md first. Your job is ONE part of docs/FACTORY.md, named below. Other sessions are building the other
+parts at the same time, so:
+- touch only the files your part needs; if you must change a shared file (lib/auto/wrap.ts, lib/mcptools.ts,
+  worker/gateway.py, worker/config.py), keep the change small and merge origin/main into your branch right before
+  your PR;
+- in docs/FACTORY.md, tick and add notes only under your own part's heading;
+- bump worker/config.py VERSION only if you changed worker/, after merging main.
+Verify your own work: run the repo's checks (CLAUDE.md), test end to end against the local harness or the live MCP,
+and screenshot any dashboard change at 1280 and 390 px. Anything you can't prove without the Colab GPU goes in
+FACTORY.md under "Still to check on Colab" with the exact test a model should run. Keep tool answers short and
+token-lean. Ship per CLAUDE.md (PR to main, merge once checks pass, confirm the Deploy run), then tell me what's
+live, what you measured, and what still needs the GPU.
+
+YOUR PART: <one line from below>
+```
+
+1. **A: Fix the basics.** Node 22 and npx in the sandbox; the HyperFrames CLI at the project's pinned version;
+   templates with no black opening and something moving every 2 s, plus a music bed; `repo checkout` by sha; one id
+   shape across the file tools; diagnose the clean-up DNS error.
+2. **B: Projects.** The `project` tool (start, status, finish), files owned by the project and the key that made
+   them, free deleting of the project's own files (to the trash only), cleanup at `finish`, live projects in
+   Settings → Automation.
+3. **C + H: One endpoint for every client.** The small core plus toolsets on demand at `/api/mcp`; concise answers;
+   `vb.gather` in the code-mode kit; schemas every client accepts; the client test matrix; `upload_link` and the
+   ChatGPT `import_file` tool; measure the tokens before and after.
+4. **D: The factory** (after A). The `pipeline` op and `script_check`; one batched voice job for N videos; renders
+   on the CPU runtime; per-scene caching; the `factory` batch tool.
+5. **G: The motion toolkit** (after A). The cached toolchain bundle; Remotion, Revideo, Lottie, Three.js, Manim,
+   auto-editor, PySceneDetect, rembg/SAM 2, Real-ESRGAN, RIFE; skills indexed in `playbook`; one test shot per tool.
+6. **E: Many agents at once** (after B). Fair queues per key, per-key units caps, server-numbered cases, the shared
+   ledger with a nightly PR, competing creatives with a judge.
