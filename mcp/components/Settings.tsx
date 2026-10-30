@@ -15,6 +15,7 @@ import { LookCard, useLook } from "./look";
 import { api, useSeed, type MyVoice } from "./api";
 import { useDialog } from "./Dialog";
 import SecurityCard from "./SecurityCard";
+import OtherModels from "./OtherModels";
 import UploadKeys from "./UploadKeys";
 import { Field, Toggle } from "./ui";
 import { Select } from "./pop";
@@ -250,6 +251,7 @@ export default function Settings() {
               </Field>
             </section>
             <div className="b-3"><UploadKeys /></div>
+            <div className="b-6"><OtherModels /></div>
           </div>
         )}
       </div>
