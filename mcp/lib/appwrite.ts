@@ -1,7 +1,8 @@
 // Server side of the shared workspace: plain REST calls to Appwrite Cloud with the project's API key (APPWRITE_API_KEY),
 // or with a user's JWT when we only need to know who they are. The browser talks to Appwrite directly for live sync.
 import { AW, POST_FIELDS, type Comment, type Media, type Member, type Post } from "./workspace";
-import { presign, putObj } from "./store";
+import { delObjs, presign, putObj } from "./store";
+import { FILES_ON_R2, adopt, assertRoom, fileSig, mediaKey } from "./r2files";
 
 export class AppwriteError extends Error {
   constructor(message: string, public status: number, public type = "") { super(message); }
@@ -175,10 +176,12 @@ export async function postsBetween(from: string, to: string) {
     { method: "orderAsc", attribute: "due_at" }, { method: "limit", values: [200] })}`)).rows;
 }
 
-/** Delete a workspace file: the stored file and its row (the R2 backup copy, if any, stays). */
+/** Delete a workspace file: the stored file and its row (an Appwrite file's R2 backup copy, if any, stays; a file kept
+ *  in R2 goes with its row). */
 export async function deleteMediaRow(id: string, actor: { id?: string; name: string }) {
   const m = await getMedia(id);
-  await aw(`/storage/buckets/${AW.bucket}/files/${encodeURIComponent(m.file_id)}`, { method: "DELETE" }).catch(() => {});
+  if (m.file_id.startsWith("r2_")) { if (m.r2_key) await delObjs([m.r2_key]); }
+  else await aw(`/storage/buckets/${AW.bucket}/files/${encodeURIComponent(m.file_id)}`, { method: "DELETE" }).catch(() => {});
   await aw(`${rows("media")}/${encodeURIComponent(id)}`, { method: "DELETE" });
   await logActivity({ post_id: m.post_id, verb: "deleted", text: m.name }, actor);
   return m;
@@ -239,6 +242,12 @@ export async function addMediaBytes(bytes: Uint8Array, mime: string, name: strin
   if (bytes.length > FETCH_MAX) throw new Error(`file is ${(bytes.length / 1e6).toFixed(0)} MB; upload files over ${FETCH_MAX / 1e6} MB from the Media page`);
   if (mime === "application/octet-stream") mime = mimeFor(name);
   const fileId = crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+  if (FILES_ON_R2) {
+    await assertRoom(bytes.length);
+    const key = mediaKey(fileId, name);
+    await putObj(key, bytes as BodyInit, mime);
+    return mediaRow(`r2_${fileId}`, name, mime, bytes.length, key, opts, actor);
+  }
   await sendChunks(fileId, name, mime, bytes.length, async (start, end) => bytes.slice(start, end).buffer as ArrayBuffer);
   return mediaRow(fileId, name, mime, bytes.length, null, opts, actor);
 }
@@ -301,6 +310,7 @@ async function mediaRow(fileId: string, name: string, mime: string, size: number
   const { kindOf } = await import("./workspace");
   const row = await aw<Media>(rows("media"), { method: "POST", body: { rowId: "unique()", data: {
     file_id: fileId, name, mime, size, kind: kindOf(mime, name), post_id: opts.postId ?? null, uploaded_by: actor.id ?? null, uploaded_name: actor.name, ...(r2Key ? { r2_key: r2Key } : {}),
+    ...(fileId.startsWith("r2_") && r2Key ? { token: fileSig(r2Key) } : {}),
   } } });
   await logActivity({ post_id: opts.postId ?? null, verb: "uploaded", text: name }, actor);
   return finalizeMedia(row.$id, { backup: opts.backup });
@@ -310,8 +320,14 @@ async function mediaRow(fileId: string, name: string, mime: string, size: number
  *  big video never sits whole in the function's memory. The R2 copy stays as the file's backup. */
 export async function addMediaFromR2(key: string, size: number, mime: string, name: string, fileId: string, opts: { postId?: string | null }, actor: { id?: string; name: string }) {
   // a second save of the same file (a retry after a timeout) finds it: the row it already has, or the file without one
-  const had = await aw<{ rows: Media[] }>(`${rows("media")}?${q({ method: "equal", attribute: "file_id", values: [fileId] }, { method: "limit", values: [1] })}`).catch(() => null);
+  const id = FILES_ON_R2 ? `r2_${fileId}`.slice(0, 36) : fileId;
+  const had = await aw<{ rows: Media[] }>(`${rows("media")}?${q({ method: "equal", attribute: "file_id", values: [id] }, { method: "limit", values: [1] })}`).catch(() => null);
   if (had?.rows?.[0]) return finalizeMedia(had.rows[0].$id, { backup: false });
+  if (FILES_ON_R2) {
+    // kept where it is in R2 (a download's slot moves to its Files key first): no copy into Appwrite
+    const at = await adopt(key, fileId, name);
+    return mediaRow(id, name, mime, size, at, { ...opts, backup: false }, actor);
+  }
   const src = await presign(key, "GET", 3600);
   const read = async (start: number, end: number) => {
     for (let attempt = 0; ; attempt++) {

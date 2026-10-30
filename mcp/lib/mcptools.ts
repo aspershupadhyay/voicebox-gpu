@@ -1327,7 +1327,7 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     "delete_files",
     {
       title: "Delete files",
-      description: "Move files (or folders as f:<id>) to the trash, kept 30 days. With forever: true they're deleted for good instead (an upload's R2 backup copy stays). Only when the user explicitly asks; forever only when they ask for that too.",
+      description: "Move files (or folders as f:<id>) to the trash, kept 30 days. With forever: true they're deleted for good instead (an Appwrite upload's R2 backup copy stays; a file kept in R2 goes with it). Only when the user explicitly asks; forever only when they ask for that too.",
       inputSchema: z.object({ items: z.array(ITEM_ID).min(1).max(500), forever: z.boolean().optional() }),
     },
     async ({ items, forever }) => files(async () => (await import("@/lib/filemanager")).deleteItems(items, CLAUDE, !!forever)),

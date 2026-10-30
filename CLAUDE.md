@@ -69,6 +69,8 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   read-only; the token is kept only as a SHA-256 and uploads are served by Appwrite tokens that expire with the link.
   An upload link `/u/<token>` (and `/api/u/<token>`, lib/auto/uplinks.ts) is public by design too: a signed, expiring
   claim that can only start and finish uploads into its one folder, up to its file cap; it reads and lists nothing.
+  A Files upload kept in R2 is served by `/api/m/<token>/<key>` (lib/r2files.ts), public by design like an Appwrite file
+  token: the token is an HMAC of the key kept only in team-only rows, and it serves `workspace/media/` and nothing else.
 - Never loosen the allow-list, the same-origin check or the session expiry.
 
 ## Checks before pushing

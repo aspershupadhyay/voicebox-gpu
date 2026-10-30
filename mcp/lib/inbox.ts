@@ -9,6 +9,7 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { addMediaFromR2, mimeFor } from "./appwrite";
 import { after } from "next/server";
 import { joinCarousel } from "./carousels";
+import { assertRoom } from "./r2files";
 import { fileUrl } from "./workspace";
 import { findFolder, getTree, moveItems } from "./files";
 import { getJson, headObj, presign, putJson } from "./store";
@@ -30,6 +31,7 @@ export async function startUpload(input: { name?: unknown; type?: unknown; size?
   if (!name || !/\.[A-Za-z0-9]{1,8}$/.test(name)) throw new Error("name needs a file extension, e.g. clip.mp4");
   const size = input.size == null ? null : Number(input.size);
   if (size != null && (!isFinite(size) || size < 0 || size > MAX_BYTES)) throw new Error("files go up to 2 GB");
+  await assertRoom(size);
   const mime = String(input.type ?? "") || mimeFor(name);
   let folder: string | null = null;
   if (input.folder) {
@@ -110,7 +112,7 @@ export async function completeUpload(ticket: string, actor: { id?: string; name:
 
 /** Have Appwrite make (and cache) an image's card and screen sizes now, so the first look in Files is instant. */
 function warmPreviews(m: { kind: string; file_id: string; token: string | null }) {
-  if (m.kind !== "image" || !m.token) return;
+  if (m.kind !== "image" || !m.token || m.file_id.startsWith("r2_")) return; // an R2 photo's sizes are made on first look
   const urls = [480, 1280, 1920].map((w) => fileUrl(m, "preview", w));
   const go = Promise.allSettled(urls.map((u) => fetch(u, { cache: "no-store" }).then((r) => r.arrayBuffer())));
   try { after(() => go); } catch { /* outside a request: let it run */ }

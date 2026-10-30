@@ -56,9 +56,24 @@ export function kindOf(mime: string, name = ""): MediaKind {
   return "other";
 }
 
-/** A token URL for a stored file. Tokens are secrets kept in team-only rows, so <img>/<video> work without a session cookie. */
-export function fileUrl(m: Pick<Media, "file_id" | "token">, mode: "view" | "download" | "preview" = "view", w?: number) {
-  const u = new URL(`${AW.endpoint}/storage/buckets/${AW.bucket}/files/${m.file_id}/${mode}`);
+/** A file whose bytes live in R2 (lib/r2files.ts), not Appwrite Storage. */
+export const onR2 = (m: Pick<Media, "file_id">) => m.file_id.startsWith("r2_");
+
+type Stored = Pick<Media, "file_id" | "token"> & Partial<Pick<Media, "r2_key">>;
+/** The dashboard's own address: relative in the browser, absolute on the server (the worker, Instagram, MCP answers). */
+const site = () => typeof window !== "undefined" ? "" : process.env.VERCEL_ENV === "preview" && process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}`
+  : process.env.APP_URL?.replace(/\/$/, "") || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "");
+
+/** A token URL for a stored file. Tokens are secrets kept in team-only rows, so <img>/<video> work without a session cookie.
+ *  An R2 file goes through /api/m with the same query (mode, width, output), so callers don't need to know which. */
+export function fileUrl(m: Stored, mode: "view" | "download" | "preview" = "view", w?: number) {
+  const r2 = onR2(m) && m.r2_key;
+  const u = r2 ? new URL(`${site() || "http://x"}/api/m/${m.token ?? ""}/${m.r2_key}`) : new URL(`${AW.endpoint}/storage/buckets/${AW.bucket}/files/${m.file_id}/${mode}`);
+  if (r2) {
+    if (mode !== "view") u.searchParams.set("mode", mode);
+    if (mode === "preview" && w) { u.searchParams.set("width", String(w)); u.searchParams.set("output", "webp"); }
+    return site() ? u.toString() : `${u.pathname}${u.search}`;
+  }
   u.searchParams.set("project", AW.project);
   if (m.token) u.searchParams.set("token", m.token);
   if (mode === "preview" && w) { u.searchParams.set("width", String(w)); u.searchParams.set("quality", "82"); u.searchParams.set("output", "webp"); }
@@ -67,7 +82,7 @@ export function fileUrl(m: Pick<Media, "file_id" | "token">, mode: "view" | "dow
 
 /** A photo sized for this screen (Appwrite resizes and sends WebP), so a 12 MB camera shot opens in a blink and always
  *  fits. Animated GIFs, SVGs and HEIC go as they are. Widths come in steps so the browser's cache is reused. */
-export function screenPreview(m: Pick<Media, "file_id" | "token" | "mime" | "name">) {
+export function screenPreview(m: Stored & Pick<Media, "mime" | "name">) {
   if (/gif|svg|heic|heif/i.test(`${m.mime ?? ""} ${m.name}`)) return null;
   const want = typeof window === "undefined" ? 1920 : Math.max(window.innerWidth, window.innerHeight) * Math.min(2, window.devicePixelRatio || 1);
   const w = [1280, 1920, 2560, 3200].find((x) => x >= want) ?? 3200;

@@ -208,7 +208,7 @@ async function runYoutube(p: Plan, acc: Account & { tokens: Tokens }, deadline: 
   if (p.cover && !p.log.some((l) => l.text.startsWith("Thumbnail"))) {
     try {
       const c = await resolve(p.cover);
-      const url = c.m ? jpegUrl(c.m, 1280) : c.url;
+      const url = c.m ? await jpegUrl(c.m, 1280) : c.url;
       const bytes = new Uint8Array(await (await fetch(url!, { cache: "no-store" })).arrayBuffer());
       await YT.setThumbnail(token, id, bytes, "image/jpeg");
       line(p, "Thumbnail set", true);
@@ -224,7 +224,7 @@ async function runYoutube(p: Plan, acc: Account & { tokens: Tokens }, deadline: 
 
 async function igItem(s: Source): Promise<IG.IgItem> {
   if (s.kind === "image") {
-    const url = s.m ? jpegUrl(s.m, 1440) : null;
+    const url = s.m ? await jpegUrl(s.m, 1440) : null;
     if (!url) throw new Error(`${s.name} isn't ready for Instagram`);
     return { kind: "image", url };
   }
