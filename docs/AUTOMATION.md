@@ -150,8 +150,15 @@ The owner's feedback still goes into `docs/FEEDBACK.md` in the same PR as the ch
   (Radar → 3 idea drafts, 07:30 Kolkata), `check_downloads`, `check_after_48h`, `translate_and_dub`. A schedule or
   trigger on steps that publish needs the owner's approval to save or switch on; a workflow can't start workflows.
   Settings → Automation → Workflows: each one, when it runs, its last run, Run and on/off, recent runs with Stop.
-- [ ] **8. Agents, audit, memory**: roles, the auditor, lessons, scorecards, the promote step. Done when: an audit run
-  writes lessons with evidence and the owner can approve one into the playbook.
+- [x] **8. Agents, audit, memory**: roles, the auditor, lessons, scorecards, the promote step. Done when: an audit run
+  writes lessons with evidence and the owner can approve one into the playbook. **Shipped**: `lib/auto/agents.ts`
+  (roles researcher, editor, publisher, auditor with their tools, enforced when a client sends `X-Role`; scorecards per
+  model and role from the call log: calls, worked, QA pass rate, redos, approvals hit; the rule-based audit: the same
+  error 3+ times, the same QA check failing, the owner's refusals, the same work sent again, each a suggested lesson
+  with evidence; `packet` for an auditor model), `lib/auto/memory.ts` (notes by key; lessons suggested → kept →
+  "Make it a rule", a PR adding it to `docs/FEEDBACK.md`; skills: saved scripts `run` imports), tools `agents`,
+  `audit`, `memory`; `playbook` search serves kept lessons and skills; the call log keeps each call's role and QA
+  verdict; a `nightly_audit` example workflow; Settings → Automation → Lessons and Scorecards.
 - [ ] **9. Any model**: setup guide for Gemini CLI and other MCP clients (below), model name sent in a header
   (`X-Model`) for the log; tool descriptions checked with a cheaper model.
 
@@ -219,6 +226,15 @@ Friday 18:45 New York 22:45Z (summer time), hourly at :20; one forced due fired 
 `match {source: instagram}` started for an Instagram download and not for a YouTube one. A scheduled workflow that
 publishes asked for approval; one that calls `workflow` was refused; the dashboard's Run / on-off refused a bearer
 token. Found and fixed: a run out of time mid-job said "running" instead of "waiting".
+
+## How the learning loop is checked
+
+Locally: a model's 3 identical failures, two files failing QA on shape and loudness, and an approval the owner denied
+with a note became 4 suggested lessons with evidence; a second audit over the same hours added nothing (fixed: it
+counted them seen again); a kept lesson came back in `playbook` search and in the editor's brief; a researcher's
+`edit_video` was refused, its playbook call went through; a saved skill imported in a run (fixed: the workspace
+wasn't on Python's path); "Make it a rule" opened a PR adding the lesson under "Lessons from the models" (fixed: a
+branch with a / in its name was sent as %2F to GitHub; newer lessons went above the section's line).
 
 ## How repos are checked
 

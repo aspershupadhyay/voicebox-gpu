@@ -61,6 +61,7 @@ const PAUSES: Record<string, (a: Args) => boolean> = {
   publish_post: (a) => !!a.go && a.go !== "save", auto_post: () => true,
   repo: (a) => ["branch", "commit", "push", "pr", "comment", "merge", "allow"].includes(String(a.action)),
   workflow: (a) => ["save", "run", "enable"].includes(String(a.action)),
+  agents: (a) => a.action === "save", memory: (a) => ["note_set", "lesson_add", "skill_save"].includes(String(a.action)),
 };
 
 /** Which model made the call: the X-Model header (Gemini CLI and others set it, docs/AUTOMATION.md), else the client
@@ -74,6 +75,12 @@ export function modelOf(ctx: Ctx) {
     if (ua.includes(k)) return v;
   const cid = ctx?.http?.authInfo?.clientId ?? ctx?.authInfo?.clientId;
   return cid === "owner" ? "owner token" : cid ? `oauth:${cid.slice(0, 12)}` : "unknown";
+}
+
+/** The role a client works as (X-Role: researcher, editor, publisher, auditor…; lib/auto/agents.ts), if it said. */
+export function roleOf(ctx: Ctx) {
+  const r = ctx?.http?.req?.headers?.get("x-role")?.trim().toLowerCase();
+  return r && /^[a-z][a-z0-9-]{1,30}$/.test(r) ? r : undefined;
 }
 
 const trimArgs = (a: Args) => {
@@ -100,7 +107,12 @@ function describe(tool: string, a: Args) {
 }
 
 /** The checks one call has to pass before it runs. null = go; else the answer to give instead. */
-export async function preflight(tool: string, args: Args, model: string): Promise<Result | null> {
+export async function preflight(tool: string, args: Args, model: string, roleName?: string): Promise<Result | null> {
+  if (roleName) {
+    const r = await (await import("./agents")).role(roleName);
+    if (!r) return stop(`NO SUCH ROLE: ${roleName}. agents action=list shows the roles; or connect without X-Role.`);
+    if (r.tools.length && !r.tools.includes(tool)) return stop(`NOT YOUR ROLE: the ${r.name} role doesn't use ${tool} (it uses ${r.tools.slice(0, 12).join(", ")}…). Hand it to the right role, or ask the owner to change the role (agents).`);
+  }
   const g = (await GATES[tool]?.(args)) ?? null;
   const gate = typeof g === "string" ? g : g?.key ?? null;
   const always = typeof g === "object" && !!g?.always;
@@ -143,10 +155,11 @@ export function guarded(server: ToolServer, via?: string): ToolServer {
     return orig(name, { ...cfg, ...(schema ? { inputSchema: schema } : {}) }, async (args: Args, ctx: Ctx) => {
       const t = Date.now();
       const model = modelOf(ctx);
+      const roleName = roleOf(ctx);
       let res: Result;
       let gate: string | undefined;
       try {
-        const blocked = await preflight(name, args ?? {}, model);
+        const blocked = await preflight(name, args ?? {}, model, roleName);
         if (blocked) { res = blocked; gate = said(blocked).split(/[:(]/)[0].trim(); }
         else res = await handler(args, ctx);
       } catch (e) {
@@ -154,8 +167,11 @@ export function guarded(server: ToolServer, via?: string): ToolServer {
       }
       const text = said(res);
       const from = via ?? (ctx?.http?.authInfo?.clientId?.startsWith("run:") ? "code" : undefined); // a sandbox script
+      const qa = text.match(/"(?:verdict|qa)":\s*"(PASS|WARN|FAIL)"/)?.[1] as "PASS" | "WARN" | "FAIL" | undefined;
+      const qaFail = [...text.matchAll(/FAIL ([a-z][a-z "]{2,40}?):/g)].map((m) => m[1].replace(/"/g, "").trim()).slice(0, 6);
       later(logCall({ t, tool: name, model, client: ctx?.http?.authInfo?.clientId, args: trimArgs(args ?? {}), ok: !res.isError, ms: Date.now() - t,
-        ...(res.isError ? { err: text.slice(0, 300) } : {}), ...(jobIn(text) ? { job: jobIn(text) } : {}), ...(gate ? { gate } : {}), ...(from ? { via: from } : {}) }));
+        ...(res.isError ? { err: text.slice(0, 300) } : {}), ...(jobIn(text) ? { job: jobIn(text) } : {}), ...(gate ? { gate } : {}), ...(from ? { via: from } : {}), ...(roleName ? { role: roleName } : {}),
+        ...(qa ? { qa } : {}), ...(qaFail.length ? { qa_fail: qaFail } : {}) }));
       return res;
     });
   };

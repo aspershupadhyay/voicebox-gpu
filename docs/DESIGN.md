@@ -27,7 +27,7 @@ own phone tabs (Overview, Live, Content, Competitors, More). Page by page:
 | Create | Writing room | `/writing` | Five tools as orbs (after the owner's poster): Hook score, Titles, Captions, Thumbnails, Weekly digest, each at `?tool=` (and `&post=`), the others shrunk into a rail; under the orbs, "On your desk" (every open post's hook, title, thumbnail and captions) |
 | Create | Voiceover | `/voiceover` | Write, pick a voice, generate; Script and Lines views |
 | Create | Clean-up, Subtitles, Images | `/clean-up`, `/subtitles`, `/images` | One tool each, in the tool layout |
-| Studio | Settings | `/settings` | Tabs along the top with their own addresses (`?tab=`): Profile, Voice & sound, Publishing, GPU & engines (start/stop the Colab GPU, engines, machine, worker, failures; `/gpu` lands here), Security, Automation (approvals inbox, kill switch, units cap, ask-first switches, repos, workflows, call log), Claude & API (MCP, upload keys). Each tab is a bento of cards; no H1, the breadcrumb names the page |
+| Studio | Settings | `/settings` | Tabs along the top with their own addresses (`?tab=`): Profile, Voice & sound, Publishing, GPU & engines (start/stop the Colab GPU, engines, machine, worker, failures; `/gpu` lands here), Security, Automation (approvals inbox, kill switch, units cap, ask-first switches, repos, workflows, lessons, scorecards, call log), Claude & API (MCP, upload keys). Each tab is a bento of cards; no H1, the breadcrumb names the page |
 
 Making a voice opens from the Voices cards: Instant voice clone (`/voices/new`), Professional voice clone (`/voices/professional`,
 your trained model) and Re-voice (`/voices/revoice`). Old addresses redirect (`next.config.ts`), `/model` included. Add a

@@ -380,6 +380,11 @@ export const EXAMPLES: Record<string, Omit<Flow, "id" | "by" | "created" | "upda
     triggers: [{ event: "post.live", delay_h: 48 }],
     steps: [{ tool: "analytics", args: { view: "overview", range: 7 }, as: "numbers" }],
   },
+  nightly_audit: {
+    name: "Nightly audit", about: "Every night: the day's calls reviewed; what keeps going wrong becomes suggested lessons for the owner.",
+    schedule: { every: "day", at: "23:40", tz: "Asia/Kolkata" },
+    steps: [{ tool: "audit", args: { action: "run", hours: 24 }, as: "audit" }],
+  },
   translate_and_dub: {
     name: "Translate and dub", about: "Hears a video, then stops for the model to translate the words (input.script) and voices and lays them on. Run with input {video, script, voice}.",
     steps: [
