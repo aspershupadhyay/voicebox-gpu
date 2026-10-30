@@ -1,5 +1,7 @@
 // Server side of the shared workspace: plain REST calls to Appwrite Cloud with the project's API key (APPWRITE_API_KEY),
 // or with a user's JWT when we only need to know who they are. The browser talks to Appwrite directly for live sync.
+// The workspace's rows go through listOf/rowOf/insert/patch/remove: Appwrite today, Postgres on Neon with DB_BACKEND=neon
+// (lib/db.ts, docs/MIGRATION.md phase 2), so every caller works on either without knowing which.
 import { AW, POST_FIELDS, type Comment, type Media, type Member, type Post } from "./workspace";
 import { delObjs, presign, putObj } from "./store";
 import { FILES_ON_R2, adopt, assertRoom, fileSig, mediaKey } from "./r2files";
@@ -25,6 +27,34 @@ async function aw<T>(path: string, init: { method?: string; body?: unknown; jwt?
 
 const q = (...queries: object[]) => queries.map((x) => `queries[]=${encodeURIComponent(JSON.stringify(x))}`).join("&");
 const rows = (table: string) => `/tablesdb/${AW.db}/tables/${table}/rows`;
+
+export type Table = "posts" | "comments" | "activity" | "media";
+const onNeon = () => process.env.DB_BACKEND === "neon";
+const pg = () => import("./db");
+const at = (table: Table, id: string) => `${rows(table)}/${encodeURIComponent(id)}`;
+
+export async function listOf<T>(table: Table, ...qs: object[]): Promise<T[]> {
+  return onNeon() ? (await pg()).listRows<T>(table, qs as never) : (await aw<{ rows: T[] }>(`${rows(table)}?${q(...qs)}`)).rows;
+}
+export const rowOf = async <T>(table: Table, id: string): Promise<T> => (onNeon() ? (await pg()).getRow<T>(table, id) : aw<T>(at(table, id)));
+export async function insert<T>(table: Table, data: Record<string, unknown>, rowId = "unique()", extra: object = {}): Promise<T> {
+  return onNeon() ? (await pg()).insertRow<T>(table, data, rowId === "unique()" ? undefined : rowId) : aw<T>(rows(table), { method: "POST", body: { rowId, data, ...extra } });
+}
+export const patch = async <T>(table: Table, id: string, data: Record<string, unknown>): Promise<T> =>
+  onNeon() ? (await pg()).patchRow<T>(table, id, data) : aw<T>(at(table, id), { method: "PATCH", body: { data } });
+export const remove = async (table: Table, id: string) => { if (onNeon()) await (await pg()).deleteRow(table, id); else await aw(at(table, id), { method: "DELETE" }); };
+
+/** With DB_BACKEND=neon, each write to Postgres is copied back to Appwrite under the same id (lib/db.ts), so unsetting
+ *  the switch loses nothing. Never fails the real write: a row Appwrite never had is skipped. */
+export async function awMirror(op: "create" | "update" | "delete", table: Table, id: string, data?: Record<string, unknown>) {
+  try {
+    if (op === "create") await aw(rows(table), { method: "POST", body: { rowId: id, data } });
+    else if (op === "update") await aw(at(table, id), { method: "PATCH", body: { data } });
+    else await aw(at(table, id), { method: "DELETE" });
+  } catch (e) {
+    if (!(e instanceof AppwriteError && e.status === 404)) console.warn(`appwrite copy (${op} ${table}/${id}) failed: ${(e as Error).message}`);
+  }
+}
 
 /** Every row of a table, oldest first, 100 at a time (the copy into Postgres: lib/db.ts). */
 export async function allRows(table: "posts" | "comments" | "activity" | "media") {
@@ -78,10 +108,10 @@ const PERMS: string[] = []; // table-level team permissions cover every row
 export async function listPosts(opts: { status?: string; limit?: number } = {}) {
   const qs = [{ method: "orderDesc", attribute: "$updatedAt" }, { method: "limit", values: [Math.min(opts.limit ?? 50, 200)] }];
   if (opts.status) qs.push({ method: "equal", attribute: "status", values: [opts.status] } as never);
-  return (await aw<{ rows: Post[] }>(`${rows("posts")}?${q(...qs)}`)).rows;
+  return listOf<Post>("posts", ...qs);
 }
 
-export const getPost = (id: string) => aw<Post>(`${rows("posts")}/${encodeURIComponent(id)}`);
+export const getPost = (id: string) => rowOf<Post>("posts", id);
 
 function pickPost(data: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
@@ -90,71 +120,65 @@ function pickPost(data: Record<string, unknown>) {
 }
 
 export async function createPost(data: Partial<Post>, actor: { id?: string; name: string }, rowId = "unique()") {
-  const row = await aw<Post>(rows("posts"), {
-    method: "POST",
-    body: { rowId, data: { status: "idea", platforms: [], jobs: [], ...pickPost(data), owner_id: actor.id ?? null, owner_name: actor.name }, permissions: PERMS },
-  });
+  const row = await insert<Post>("posts", { status: "idea", platforms: [], jobs: [], ...pickPost(data), owner_id: actor.id ?? null, owner_name: actor.name }, rowId, { permissions: PERMS });
   await logActivity({ post_id: row.$id, verb: "created", text: row.title }, actor);
   return row;
 }
 
 export async function updatePost(id: string, data: Partial<Post>, actor: { id?: string; name: string }) {
   const before = await getPost(id);
-  const row = await aw<Post>(`${rows("posts")}/${encodeURIComponent(id)}`, { method: "PATCH", body: { data: pickPost(data) } });
+  const row = await patch<Post>("posts", id, pickPost(data));
   if (data.status && data.status !== before.status) await logActivity({ post_id: id, verb: "moved", text: `${before.status} → ${data.status}` }, actor);
   else await logActivity({ post_id: id, verb: "edited", text: Object.keys(pickPost(data)).join(", ") }, actor);
   return row;
 }
 
 export async function listComments(postId: string) {
-  return (await aw<{ rows: Comment[] }>(`${rows("comments")}?${q({ method: "equal", attribute: "post_id", values: [postId] }, { method: "orderAsc", attribute: "$createdAt" }, { method: "limit", values: [200] })}`)).rows;
+  return listOf<Comment>("comments", { method: "equal", attribute: "post_id", values: [postId] }, { method: "orderAsc", attribute: "$createdAt" }, { method: "limit", values: [200] });
 }
 
 export async function addComment(postId: string, body: string, actor: { id?: string; name: string }) {
-  const row = await aw<Comment>(rows("comments"), { method: "POST", body: { rowId: "unique()", data: { post_id: postId, body, author_id: actor.id ?? null, author_name: actor.name } } });
+  const row = await insert<Comment>("comments", { post_id: postId, body, author_id: actor.id ?? null, author_name: actor.name });
   await logActivity({ post_id: postId, verb: "commented", text: body.slice(0, 200) }, actor);
   return row;
 }
 
 export async function logActivity(a: { post_id?: string | null; verb: string; text?: string }, actor: { id?: string; name: string }) {
-  await aw(rows("activity"), {
-    method: "POST",
-    body: { rowId: "unique()", data: { post_id: a.post_id ?? null, verb: a.verb, text: (a.text ?? "").slice(0, 500), actor_id: actor.id ?? null, actor_name: actor.name } },
-  }).catch(() => {}); // the feed is nice-to-have; never fail the real write over it
+  await insert("activity", { post_id: a.post_id ?? null, verb: a.verb, text: (a.text ?? "").slice(0, 500), actor_id: actor.id ?? null, actor_name: actor.name }).catch(() => {}); // the feed is nice-to-have; never fail the real write over it
 }
 
 // ── media
 
 export async function getMedia(id: string) {
-  return aw<Media>(`${rows("media")}/${encodeURIComponent(id)}`);
+  return rowOf<Media>("media", id);
 }
 
 export async function listMedia(postId?: string, limit = 100) {
   const qs: object[] = [{ method: "orderDesc", attribute: "$createdAt" }, { method: "limit", values: [Math.min(limit, 1000)] }];
   if (postId) qs.push({ method: "equal", attribute: "post_id", values: [postId] });
-  return (await aw<{ rows: Media[] }>(`${rows("media")}?${q(...qs)}`)).rows;
+  return listOf<Media>("media", ...qs);
 }
 
 /** Give an uploaded file a token so it plays in <img>/<video> anywhere, and (optionally) back it up to R2. */
 export async function finalizeMedia(mediaId: string, opts: { backup: boolean }) {
   const m = await getMedia(mediaId);
-  const patch: Partial<Media> = {};
+  const change: Partial<Media> = {};
   if (!m.token) {
     const t = await aw<{ secret: string }>(`/tokens/buckets/${AW.bucket}/files/${m.file_id}`, { method: "POST", body: {} });
-    patch.token = t.secret;
+    change.token = t.secret;
   }
   let backup: string | undefined;
   if (opts.backup && !m.r2_key) {
     if ((m.size ?? 0) > BACKUP_MAX) backup = `skipped: larger than ${BACKUP_MAX / 1e6} MB (back it up from the Media page later)`;
     else {
       try {
-        patch.r2_key = await backupToR2(m);
+        change.r2_key = await backupToR2(m);
       } catch (e) {
         backup = `R2 backup failed: ${(e as Error).message}`;
       }
     }
   }
-  const row = Object.keys(patch).length ? await aw<Media>(`${rows("media")}/${mediaId}`, { method: "PATCH", body: { data: patch } }) : m;
+  const row = Object.keys(change).length ? await patch<Media>("media", mediaId, change) : m;
   return { media: row, backup };
 }
 
@@ -178,13 +202,13 @@ export const backupUrl = (m: Media) => (m.r2_key ? presign(m.r2_key, "GET", 6 * 
 export async function listActivity(limit = 30, postId?: string) {
   const qs: object[] = [{ method: "orderDesc", attribute: "$createdAt" }, { method: "limit", values: [Math.min(limit, 100)] }];
   if (postId) qs.push({ method: "equal", attribute: "post_id", values: [postId] });
-  return (await aw<{ rows: { $createdAt: string; post_id: string | null; verb: string; text: string | null; actor_name: string | null }[] }>(`${rows("activity")}?${q(...qs)}`)).rows;
+  return listOf<{ $createdAt: string; post_id: string | null; verb: string; text: string | null; actor_name: string | null }>("activity", ...qs);
 }
 
 export async function postsBetween(from: string, to: string) {
-  return (await aw<{ rows: Post[] }>(`${rows("posts")}?${q(
+  return listOf<Post>("posts",
     { method: "greaterThanEqual", attribute: "due_at", values: [from] }, { method: "lessThan", attribute: "due_at", values: [to] },
-    { method: "orderAsc", attribute: "due_at" }, { method: "limit", values: [200] })}`)).rows;
+    { method: "orderAsc", attribute: "due_at" }, { method: "limit", values: [200] });
 }
 
 /** Delete a workspace file: the stored file and its row (an Appwrite file's R2 backup copy, if any, stays; a file kept
@@ -193,7 +217,7 @@ export async function deleteMediaRow(id: string, actor: { id?: string; name: str
   const m = await getMedia(id);
   if (m.file_id.startsWith("r2_")) { if (m.r2_key) await delObjs([m.r2_key]); }
   else await aw(`/storage/buckets/${AW.bucket}/files/${encodeURIComponent(m.file_id)}`, { method: "DELETE" }).catch(() => {});
-  await aw(`${rows("media")}/${encodeURIComponent(id)}`, { method: "DELETE" });
+  await remove("media", id);
   await logActivity({ post_id: m.post_id, verb: "deleted", text: m.name }, actor);
   return m;
 }
@@ -201,7 +225,7 @@ export async function deleteMediaRow(id: string, actor: { id?: string; name: str
 /** Rename a workspace file (the row's name; the stored file keeps its id). */
 export async function renameMedia(id: string, name: string, actor: { id?: string; name: string }) {
   const before = await getMedia(id);
-  const row = await aw<Media>(`${rows("media")}/${encodeURIComponent(id)}`, { method: "PATCH", body: { data: { name: name.slice(0, 255) } } });
+  const row = await patch<Media>("media", id, { name: name.slice(0, 255) });
   await logActivity({ post_id: before.post_id, verb: "renamed", text: `${before.name} → ${row.name}` }, actor);
   return row;
 }
@@ -212,12 +236,12 @@ export const createFileToken = (fileId: string, expire: string) => aw<{ $id: str
 export const deleteFileToken = (tokenId: string) => aw(`/tokens/${encodeURIComponent(tokenId)}`, { method: "DELETE" }).catch(() => null);
 
 export async function setMediaPost(id: string, postId: string | null) {
-  return aw<Media>(`${rows("media")}/${encodeURIComponent(id)}`, { method: "PATCH", body: { data: { post_id: postId } } });
+  return patch<Media>("media", id, { post_id: postId });
 }
 
 export async function deletePost(id: string, actor: { id?: string; name: string }) {
   const p = await getPost(id);
-  await aw(`${rows("posts")}/${encodeURIComponent(id)}`, { method: "DELETE" });
+  await remove("posts", id);
   await logActivity({ verb: "deleted", text: p.title }, actor);
 }
 
@@ -225,7 +249,7 @@ export async function deletePost(id: string, actor: { id?: string; name: string 
 export async function linkJob(postId: string, jobId: string, actor: { id?: string; name: string }) {
   const p = await getPost(postId);
   if ((p.jobs ?? []).includes(jobId)) return p;
-  const row = await aw<Post>(`${rows("posts")}/${encodeURIComponent(postId)}`, { method: "PATCH", body: { data: { jobs: [...(p.jobs ?? []), jobId] } } });
+  const row = await patch<Post>("posts", postId, { jobs: [...(p.jobs ?? []), jobId] });
   await logActivity({ post_id: postId, verb: "voiced", text: jobId }, actor);
   return row;
 }
@@ -319,10 +343,10 @@ async function sendChunks(fileId: string, name: string, mime: string, size: numb
 
 async function mediaRow(fileId: string, name: string, mime: string, size: number, r2Key: string | null, opts: { postId?: string | null; backup: boolean }, actor: { id?: string; name: string }) {
   const { kindOf } = await import("./workspace");
-  const row = await aw<Media>(rows("media"), { method: "POST", body: { rowId: "unique()", data: {
+  const row = await insert<Media>("media", {
     file_id: fileId, name, mime, size, kind: kindOf(mime, name), post_id: opts.postId ?? null, uploaded_by: actor.id ?? null, uploaded_name: actor.name, ...(r2Key ? { r2_key: r2Key } : {}),
     ...(fileId.startsWith("r2_") && r2Key ? { token: fileSig(r2Key) } : {}),
-  } } });
+  });
   await logActivity({ post_id: opts.postId ?? null, verb: "uploaded", text: name }, actor);
   return finalizeMedia(row.$id, { backup: opts.backup });
 }
@@ -332,8 +356,8 @@ async function mediaRow(fileId: string, name: string, mime: string, size: number
 export async function addMediaFromR2(key: string, size: number, mime: string, name: string, fileId: string, opts: { postId?: string | null }, actor: { id?: string; name: string }) {
   // a second save of the same file (a retry after a timeout) finds it: the row it already has, or the file without one
   const id = FILES_ON_R2 ? `r2_${fileId}`.slice(0, 36) : fileId;
-  const had = await aw<{ rows: Media[] }>(`${rows("media")}?${q({ method: "equal", attribute: "file_id", values: [id] }, { method: "limit", values: [1] })}`).catch(() => null);
-  if (had?.rows?.[0]) return finalizeMedia(had.rows[0].$id, { backup: false });
+  const had = await listOf<Media>("media", { method: "equal", attribute: "file_id", values: [id] }, { method: "limit", values: [1] }).catch(() => null);
+  if (had?.[0]) return finalizeMedia(had[0].$id, { backup: false });
   if (FILES_ON_R2) {
     // kept where it is in R2 (a download's slot moves to its Files key first): no copy into Appwrite
     const at = await adopt(key, fileId, name);

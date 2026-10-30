@@ -5,9 +5,9 @@ import { ArrowUpRight, CalendarBlank, ChatCircle, Pulse, Microphone, Paperclip, 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AW, PLATFORMS, STATUSES, type Activity, type Comment, type Media, type Platform, type Post, type Status } from "@/lib/workspace";
+import { PLATFORMS, STATUSES, type Activity, type Comment, type Media, type Platform, type Post, type Status } from "@/lib/workspace";
 import { api, fmtS } from "./api";
-import { aw, getMe, ID, logActivity, Query, timeAgo, useLive, useMe, useMembers } from "./aw";
+import { getMe, logActivity, Query, rowCreate, rowDelete, rowUpdate, timeAgo, useLive, useMe, useMembers } from "./aw";
 import { useDialog } from "./Dialog";
 import Player from "./Player";
 import { Avatar, deleteMedia, Gate, MediaTile, MediaViewer, UploadList, useUploader } from "./wsparts";
@@ -18,7 +18,6 @@ import { Select } from "./pop";
 import { Composer, PublishPill } from "./Publish";
 import { Pipeline } from "./Pipeline";
 
-const T = { databaseId: AW.db, tableId: "posts" };
 const LABEL = Object.fromEntries(PLATFORMS.map((p) => [p.id, p.label])) as Record<Platform, string>;
 
 export function dueLabel(iso: string | null) {
@@ -36,16 +35,16 @@ const overdue = (p: Post) => !!p.due_at && p.status !== "posted" && Date.parse(p
 
 export async function createPost(data: Partial<Post>) {
   const me = await getMe();
-  const row = await aw().tables.createRow<Post>({ ...T, rowId: ID.unique(), data: {
+  const row = await rowCreate<Post>("posts", {
     title: "Untitled", status: "idea", platforms: [], jobs: [], ...data, owner_id: me.user?.id ?? null, owner_name: me.user?.name ?? null,
-  } as Partial<Post> as Post });
+  });
   logActivity(row.$id, "created", row.title);
   return row;
 }
 
 export async function savePost(p: Post, data: Partial<Post>) {
   if (data.status === "posted" && p.status !== "posted" && !data.posted_at) data.posted_at = new Date().toISOString();
-  const row = await aw().tables.updateRow<Post>({ ...T, rowId: p.$id, data });
+  const row = await rowUpdate<Post>("posts", p.$id, data);
   if (data.status && data.status !== p.status) logActivity(p.$id, "moved", `${p.title} → ${STATUSES.find((s) => s.id === data.status)?.label}`);
   return row;
 }
@@ -112,7 +111,7 @@ function Comments({ postId }: { postId: string }) {
     const body = v.trim();
     if (!body) return;
     setV("");
-    await aw().tables.createRow({ databaseId: AW.db, tableId: "comments", rowId: ID.unique(), data: { post_id: postId, body, author_id: me?.user?.id ?? null, author_name: me?.user?.name ?? null } });
+    await rowCreate("comments", { post_id: postId, body, author_id: me?.user?.id ?? null, author_name: me?.user?.name ?? null });
     logActivity(postId, "commented", body.slice(0, 120));
   }
   return (
@@ -224,7 +223,7 @@ export function PostDrawer({ post, onClose }: { post: Post; onClose: () => void 
 
   async function remove() {
     if (!(await confirm({ title: "Delete this post?", body: <>“{post.title}”, its comments stay in the activity log. Its files stay in Files.</>, confirm: "Delete", danger: true }))) return;
-    await aw().tables.deleteRow({ ...T, rowId: post.$id });
+    await rowDelete("posts", post.$id);
     forgetTargets(post.$id);
     logActivity(null, "deleted", post.title);
     onClose();

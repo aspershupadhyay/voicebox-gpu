@@ -46,7 +46,17 @@ export type Media = Row & {
 };
 export type Member = { id: string; name: string; email: string };
 
-export const POST_FIELDS = ["title", "status", "platforms", "script", "caption", "notes", "due_at", "posted_at", "link", "assignee_id", "assignee_name", "jobs", "cover"] as const;
+/** A Postgres row (lib/db.ts; a live one from Neon Realtime in the browser) in Appwrite's shape, so the pages and the
+ *  tools read either the same way: $id and the two times, times as ISO strings, a size as a number. */
+export function fromPg<T>(table: string, r: Record<string, unknown>): T {
+  const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : v == null ? null : String(v));
+  const { id, created_at, updated_at, ...rest } = r;
+  for (const k of ["due_at", "posted_at"]) if (k in rest) rest[k] = iso(rest[k]);
+  if (rest.size != null) rest.size = Number(rest.size);
+  return { $id: String(id), $createdAt: iso(created_at), $updatedAt: iso(updated_at), $sequence: "", $tableId: table, $databaseId: "studio", $permissions: [], ...rest } as T;
+}
+
+export const POST_FIELDS =["title", "status", "platforms", "script", "caption", "notes", "due_at", "posted_at", "link", "assignee_id", "assignee_name", "jobs", "cover"] as const;
 
 export function kindOf(mime: string, name = ""): MediaKind {
   if (mime.startsWith("image/")) return "image";

@@ -18,9 +18,15 @@ export async function POST(req: Request) {
   if (!safeEqual(req.headers.get("x-appwrite-webhook-signature") ?? "", want)) return Response.json({ error: "unauthorized" }, { status: 401 });
   let data: Record<string, unknown>;
   try { data = JSON.parse(body); } catch { return Response.json({ error: "bad body" }, { status: 400 }); }
+  // once Postgres leads (DB_BACKEND=neon) Appwrite only holds its copy: its deliveries are echoes of our own writes
+  const leads = process.env.DB_BACKEND === "neon";
   try {
-    if (data.op === "copy") return Response.json({ copied: await db.copyFromAppwrite(), check: await db.checkCopy() });
+    if (data.op === "copy") {
+      if (leads) return Response.json({ error: "Postgres already leads (DB_BACKEND=neon): a copy from Appwrite would go backwards" }, { status: 409 });
+      return Response.json({ copied: await db.copyFromAppwrite(), check: await db.checkCopy() });
+    }
     if (data.op === "check") return Response.json(await db.checkCopy());
+    if (leads) return Response.json({ ignored: "Postgres leads" });
     const table = data.$tableId;
     if (data.$databaseId !== "studio" || !db.isTable(table) || typeof data.$id !== "string") return Response.json({ ignored: true });
     const events = req.headers.get("x-appwrite-webhook-events") ?? "";

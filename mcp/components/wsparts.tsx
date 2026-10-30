@@ -3,7 +3,7 @@
 import { FileAudio, FileText, FilmStrip, Paperclip, Play, UsersThree } from "@phosphor-icons/react";
 import { useCallback, useState } from "react";
 import { AW, fileUrl, initials, kindOf, onR2, screenPreview, type Media, type MediaKind } from "@/lib/workspace";
-import { aw, getMe, ID, logActivity, signOut, useMe } from "./aw";
+import { aw, getMe, ID, logActivity, rowCreate, rowDelete, rowGet, signOut, useMe } from "./aw";
 import { Empty, PageHeader } from "./ui";
 import { FileViewer } from "./Viewer";
 
@@ -60,7 +60,7 @@ async function uploadToR2(file: File, postId: string | null | undefined, onProgr
   const start = await post("/api/files/upload", { name: `${file.name}${ext}`, size: file.size, type, post_id: postId ?? undefined });
   await putWithProgress(start.upload_url, file, type, onProgress);
   const done = await post("/api/files/complete", { ticket: start.ticket });
-  return aw().tables.getRow<Media>({ databaseId: AW.db, tableId: "media", rowId: done.media });
+  return rowGet<Media>("media", done.media);
 }
 
 /** Upload to Appwrite Storage (chunked, resumable), record it in the media table, then mint a view token (the R2 backup
@@ -93,10 +93,9 @@ export function useUploader(postId?: string | null) {
         // the bytes are up: the lane takes the next file while this one is recorded and gets its link
         finishing.push((async () => {
           try {
-            const row = await aw().tables.createRow<Media>({
-              databaseId: AW.db, tableId: "media", rowId: ID.unique(),
-              data: { file_id: f.$id, name: file.name.slice(0, 255), mime: file.type || null, size: file.size, kind: kindOf(file.type, file.name), post_id: postId ?? null,
-                uploaded_by: user?.id ?? null, uploaded_name: user?.name ?? null, r2_key: null, token: null },
+            const row = await rowCreate<Media>("media", {
+              file_id: f.$id, name: file.name.slice(0, 255), mime: file.type || null, size: file.size, kind: kindOf(file.type, file.name), post_id: postId ?? null,
+              uploaded_by: user?.id ?? null, uploaded_name: user?.name ?? null, r2_key: null, token: null,
             });
             set({ mediaId: row.$id });
             onRow?.(row, file, key);
@@ -171,12 +170,13 @@ export function MediaViewer({ m, onClose, onDelete }: { m: Media; onClose: () =>
 }
 
 export async function deleteMedia(m: Media) {
-  if (onR2(m)) {
+  // the server deletes the file with its row: always for R2 files, and for every file once Postgres leads
+  if (onR2(m) || (await getMe()).db === "neon") {
     const r = await fetch(`/api/ws/media/${m.$id}`, { method: "DELETE" });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't delete it");
     return;
   }
   await aw().storage.deleteFile({ bucketId: AW.bucket, fileId: m.file_id }).catch(() => {});
-  await aw().tables.deleteRow({ databaseId: AW.db, tableId: "media", rowId: m.$id });
+  await rowDelete("media", m.$id);
   logActivity(m.post_id, "deleted file", m.name);
 }

@@ -73,6 +73,9 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   token: the token is an HMAC of the key kept only in team-only rows, and it serves `workspace/media/` and nothing else.
   Appwrite's webhook `/api/hooks/appwrite` (lib/db.ts) takes only deliveries signed with a key derived from the database
   URL (HMAC-SHA1 of the URL and body); it mirrors workspace rows into Postgres and, signed the same way, runs the copy.
+  With `DB_BACKEND=neon` the browser reads and writes rows through `/api/ws/rows` and watches them through sealed Neon
+  Realtime queries from `/api/ws/live` (signed-in only; the query is built on the server from allowed columns, the
+  Realtime secret never leaves it).
 - Never loosen the allow-list, the same-origin check or the session expiry.
 
 ## Checks before pushing

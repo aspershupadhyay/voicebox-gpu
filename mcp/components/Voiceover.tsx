@@ -20,9 +20,9 @@ import JobProgress from "./JobProgress";
 import { Select, useDismiss } from "./pop";
 import { SampleButton, useSamples } from "./Sample";
 import { useStatus } from "./Shell";
-import { aw, logActivity } from "./aw";
+import { logActivity, rowGet, rowUpdate } from "./aw";
 import { Notice, PopMenu } from "./ui";
-import { AW, type Post } from "@/lib/workspace";
+import { type Post } from "@/lib/workspace";
 
 type Param = { type: "number" | "integer" | "string" | "boolean"; default: number | string | boolean; min?: number; max?: number; about?: string };
 type Engine = { kind: string; about: string; voices: string[]; presets: Record<string, string>; params: Record<string, Param>; state: string; seconds_per_char?: number };
@@ -488,7 +488,7 @@ export default function Voiceover() {
     api<{ models: { voice: string; name: string; sample_url?: string | null }[] }>("qmodels").then((r) => setQmodels(r.models)).catch(() => {});
     // from a post: /voiceover?post=<id> loads its script; the finished voiceover is attached back to the post
     const pid = q.get("post");
-    if (pid) aw().tables.getRow<Post>({ databaseId: AW.db, tableId: "posts", rowId: pid }).then((p) => {
+    if (pid) rowGet<Post>("posts", pid).then((p) => {
       setForPost(p);
       if (p.script?.trim()) setScript(p.script);
       setLabel(p.title);
@@ -596,7 +596,7 @@ export default function Voiceover() {
       timer.current = setTimeout(() => poll(j.id), 800);
       if (forPost) {
         const jobs = [...(forPost.jobs ?? []).filter((x) => x !== j.id), j.id];
-        aw().tables.updateRow<Post>({ databaseId: AW.db, tableId: "posts", rowId: forPost.$id, data: { jobs } }).then(setForPost).catch(() => {});
+        rowUpdate<Post>("posts", forPost.$id, { jobs }).then(setForPost).catch(() => {});
         logActivity(forPost.$id, "voiced", `${engine} · ${label || forPost.title}`);
       }
 

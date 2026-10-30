@@ -9,8 +9,8 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { NETWORKS, SHAPE, SPACES, spaceName, spaceOf, shippedAt, targetsOf, type SpaceId, type Target } from "@/lib/spaces";
-import { AW, fileUrl, STATUSES, type Media, type Post, type Status } from "@/lib/workspace";
-import { aw, logActivity, Query, timeAgo, useLive, useMe } from "./aw";
+import { fileUrl, STATUSES, type Media, type Post, type Status } from "@/lib/workspace";
+import { logActivity, Query, rowDelete, timeAgo, useLive, useMe } from "./aw";
 import { useDialog } from "./Dialog";
 import { NET, PlatformBadge, ShapeGlyph } from "./platform";
 import { createPost, dueLabel, Feed, PostDrawer, savePost } from "./PostDrawer";
@@ -250,7 +250,7 @@ function PostsInner() {
   async function remove(p: Post) {
     if (!(await confirm({ title: "Delete this post?", body: <>“{p.title}” is removed from every platform. Its files stay in Files.</>, confirm: "Delete", danger: true }))) return;
     try {
-      await aw().tables.deleteRow({ databaseId: AW.db, tableId: "posts", rowId: p.$id });
+      await rowDelete("posts", p.$id);
       forgetTargets(p.$id);
       logActivity(null, "deleted", p.title);
     } catch (x) { toast((x as Error).message, "bad"); }
