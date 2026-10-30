@@ -1044,7 +1044,17 @@ print(json.dumps(out))
 
 # ── the job ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-OPS = {"run": run_code, "clone": clone_repo, "diff": diff_repo, "edit": edit_media, "inspect": inspect_media, "browse": browse, "repurpose": repurpose, "template": render_template}
+def drop_workspace(job, jdir):
+    """A finished project's workspace, removed (as the sandbox user, so a link in it can't reach the worker's files)."""
+    b = job["bench"]
+    path = os.path.join(ROOT, "ws", b["workspace"])
+    existed = os.path.isdir(path)
+    if existed:
+        _done_ws(path)
+    b.update(stage="done", removed=existed)
+
+
+OPS = {"drop": drop_workspace, "run": run_code, "clone": clone_repo, "diff": diff_repo, "edit": edit_media, "inspect": inspect_media, "browse": browse, "repurpose": repurpose, "template": render_template}
 
 
 def prepare(job, body):
@@ -1121,6 +1131,10 @@ def prepare(job, body):
         b["spec"] = {k: spec[k] for k in ("url", "steps", "width", "screenshot", "full_page", "read", "max_chars", "links", "keep_going", "step_timeout_ms") if k in spec}
         b["timeout_s"] = max(20, min(300, int(body.get("timeout_s") or 90)))
         job["est_total"] = 20.0
+    if op == "drop":
+        b["workspace"] = str(body.get("workspace") or "")
+        if not WS_RE.match(b["workspace"]) or b["workspace"] == "default":
+            raise ValueError("workspace: a project's workspace (p-<id>)")
     if op in ("clone", "diff"):
         d = str(body.get("dir") or "")
         if not re.match(r"^[A-Za-z0-9._-]{1,100}$", d) or d.startswith("."):

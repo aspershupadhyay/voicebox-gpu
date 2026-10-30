@@ -118,7 +118,26 @@ HyperFrames from npm, Chromium 1243):
 - The clean-up DNS failure diagnosed and fixed; the stale `?lean=1` line in `docs/AUTOMATION.md` corrected.
 - Checked by a model on Colab with the test prompt, and the results written here.
 
-## B. Projects: each agent works in its own space, and cleans up (the owner's ask)
+## B. Projects: each agent works in its own space, and cleans up (the owner's ask) ✅ shipped
+
+**Done (2026-10-30)**: `lib/auto/projects.ts`, the `project` tool, `guarded()` (wrap.ts) and Settings → Automation →
+Projects. Checked locally against an S3 stand-in (the tree, the trash and the records live in R2):
+- [x] `project start` → id, folder `Projects/<name>-<id>`, workspace `p-<id>`, branch `agent/<model>/<name>-<id>`,
+  owned by the caller's model name (its model key's name, or X-Model). `status`, `list` (yours; `all` for everyone's),
+  `finish`. Someone else's project is refused ("belongs to gemini, not you").
+- [x] `project: "<id>"` on run, edit_video, video_template, repurpose, inspect_media, browse, save_file, upload_media,
+  add_media, download, voice_lines, imagine, transcribe, clean_audio, revoice: outputs default to the project's folder
+  (and `run` to its workspace); the file ids an answer names are recorded as the project's, and a job's files when
+  `get_job` sees it finish (a job → project pointer in R2).
+- [x] Deleting: `delete_files` (to the trash) of only the caller's own live project's files or its folder runs with no
+  approval; another model's call on the same file, a file it didn't make, or `forever` still asks. Measured: gemini's
+  own file → no approval; claude on gemini's file → NEEDS APPROVAL; forever → NEEDS APPROVAL; after finish → asks again.
+- [x] `finish keep=[…]`: kept files go back to their kind's folder (or `keep_to`), the rest to the trash (30 days),
+  the folder to the trash once nothing else is in it, the workspace removed by the worker's new `drop` op (worker
+  3.12.1). Answer: kept, removed count and ids, folder, workspace.
+- [x] Settings → Automation → Projects: each project (who, files, jobs, calls, folder, when) with Stop (no more calls
+  under it, its running jobs cancelled, files kept). Checked at 1280 and 390 px.
+- Units per project aren't counted (Colab bills the runtime, not a job); calls and jobs stand in.
 
 The owner's rule: "deletion asking me defeats automation; an agent may delete only what it works on, in its own
 folder, and clean up when it's done."
@@ -250,4 +269,5 @@ Each with the exact test a model should run through the MCP (worker 3.12.0 or la
 
 - **A1, Node in the sandbox**: `run {"lang":"bash","code":"which node npx && node -v && npx --version"}` → `/opt/vb-node/bin/node`, `v22.11.0`.
 - **A2, the clean-up self-check**: `gpu action=selfcheck`, then `worker_status` → `selfcheck.steps` has `clean-up · Resemble Enhance` ok.
+- **B1, a project end to end**: `project start name="colab check"`, then `run {"project":"<id>","code":"open('out/a.txt','w').write('x')"}`, `project status` lists the saved file, `delete_files` on it runs with no approval, `project finish` answers `workspace: removed`.
 - **A3, a template on the L4**: `video_template {"template":"list","fields":{"title":"3 Reels mistakes","items":["No hook","Too long","No captions"]}}` → qa PASS, then `inspect_media checks ["sheet"]` on it: the title is on the first frame.

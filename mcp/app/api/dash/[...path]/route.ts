@@ -82,7 +82,8 @@ export async function GET(req: Request, ctx: Ctx) {
         keys: await (await import("@/lib/auto/secrets")).secretsStatus(), platform: (await import("@/lib/auto/repo")).PLATFORM,
         flows: await import("@/lib/auto/flows").then(async (f) => ({ list: await f.listFlows(), runs: (await f.listRuns()).slice(0, 15) })),
         lessons: (await (await import("@/lib/auto/memory")).lessons()).slice(0, 60),
-        cards: (await import("@/lib/auto/agents")).scorecards(await ac.readLog({ limit: 1000, since: Date.now() - 7 * 86_400_000, days: 8 })).slice(0, 12) });
+        cards: (await import("@/lib/auto/agents")).scorecards(await ac.readLog({ limit: 1000, since: Date.now() - 7 * 86_400_000, days: 8 })).slice(0, 12),
+        projects: await import("@/lib/auto/projects").then(async (p) => (await p.listProjects().catch(() => [])).slice(0, 30).map(p.summary)) });
     }
     if (a === "live" && b === "pins") {
       // Grow's sidebar: the rivals you pinned, with the name and picture YouTube gave
@@ -351,6 +352,11 @@ export async function POST(req: Request, ctx: Ctx) {
         if (body.decision === "promote") return Response.json(await mem.promote(body.id, by));
         if (body.decision === "approve" || body.decision === "reject")
           return Response.json(await mem.decideLesson(body.id, body.decision === "approve" ? "approved" : "rejected", by, { text: typeof body.text === "string" ? body.text : undefined }));
+      }
+      if (b === "project" && typeof body.id === "string" && body.stop === true) {
+        // the owner's Stop on a model's project: no more calls under it, its jobs cancelled (lib/auto/projects.ts)
+        const pr = await import("@/lib/auto/projects");
+        return Response.json(pr.summary(await pr.stopProject(body.id, by)));
       }
       if (b === "flow" && typeof body.id === "string") {
         // a workflow switched on or off, run now, deleted, or a run stopped (lib/auto/flows.ts)

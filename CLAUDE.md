@@ -65,6 +65,8 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
 ## Checks before pushing
 
 - `cd mcp && npx tsc --noEmit` and `npx next build`
+- `cd mcp && npx -y tsx scripts/check-register.mts` for any tool change: every tool registered and its schema
+  converted as clients get it (a throw there is a dead MCP in production; #131 shipped one)
 - `python3 -m py_compile worker/*.py` for worker changes
 
 ## Secrets
