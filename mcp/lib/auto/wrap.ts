@@ -21,7 +21,9 @@ export const GATES: Record<string, (a: Args) => Gate | Promise<Gate>> = {
   publish_post: (a) => (a.go === "now" || a.go === "share_to_story" ? "publish_now" : null),
   auto_post: (a) => (a.go === "now" ? "publish_now" : null),
   automation_rules: (a) => (a.set && Object.keys(a.set as object).length ? "publishing_rules" : null),
-  delete_post: () => "delete", delete_media: () => "delete", delete_folder: () => "delete", delete_files: () => "delete", empty_trash: () => "delete",
+  // the owner's call (2026-10-31): nothing that can be brought back asks first. The trash keeps files and folders 30
+  // days (restore_files) and a deleted post is in the nightly database dump (14 days); only what's gone for good asks.
+  delete_files: (a) => (a.forever ? "delete" : null), delete_media: () => "delete", empty_trash: () => "delete",
   workflow: async (a) => {
     // a schedule or a trigger on steps that publish: the owner says yes once, when it's saved or switched on
     if (a.action !== "save" && a.action !== "enable") return null;
