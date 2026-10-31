@@ -363,7 +363,7 @@ export function registerAutoTools(server: ToolServer) {
     "import_file",
     {
       title: "Import a file the chat app attached (ChatGPT)",
-      description: "Save a file the user attached in the chat into Files. In ChatGPT the attachment arrives as file {download_url, file_id}; any client can pass {download_url} (a public or signed link). Lands in folder (or the project's folder). Example: {\"file\":{\"download_url\":\"https://…\"},\"name\":\"ref.png\"}.",
+      description: "Save a file from the chat into Files, original bytes (no Base64, no re-encoding), up to 150 MB: an image you generated or one the user attached. In ChatGPT pass the file itself as `file` (it arrives as {download_url, file_id}); a sandbox with no network can't curl, so use this instead of save_file there. Any client can pass {download_url} (a public or signed link). Lands in folder (or the project's folder); answers bytes and sha256 to check against the original. Example: {\"file\":{\"download_url\":\"https://…\"},\"name\":\"ref.png\",\"folder\":\"Images\"}.",
       inputSchema: z.object({
         file: z.object({ download_url: z.string().max(4000), file_id: z.string().max(200).optional() }),
         name: z.string().max(200).optional(), folder: z.string().max(300).optional(),
@@ -376,7 +376,10 @@ export function registerAutoTools(server: ToolServer) {
         const { importUrl } = await import("../filemanager");
         const { getSettings } = await import("../settings");
         const { media, folder: placed } = await importUrl(file.download_url, { name, folder: folder ?? null, backup: (await getSettings()).backup_media }, { name: "Claude (MCP)" });
-        return text({ file_id: `m:${media.$id}`, name: media.name, kind: media.kind, folder: placed });
+        // the stored copy's own size and SHA-256, so the caller can check it is byte for byte the original
+        const stored = media.r2_key ? await (await import("../store")).getObj(media.r2_key).catch(() => null) : null;
+        const sha256 = stored?.body ? await (await import("../inbox")).sha256Of(stored.body as ReadableStream<Uint8Array>).catch(() => null) : null;
+        return text({ file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mime: media.mime, bytes: media.size, ...(sha256 ? { sha256 } : {}), folder: placed });
       } catch (e) { return fail(e); }
     },
   );

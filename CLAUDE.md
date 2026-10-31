@@ -39,7 +39,7 @@ Check dark (the only theme) and 390px width before you ship.
 The MCP is a cloud workbench any model (Claude, Gemini…) can drive: approvals, units cap, call log and kill switch
 (`lib/auto/control.ts`, `wrap.ts`: every tool call goes through them), a sandbox with code mode (`worker/bench.py`),
 repos, media recipes (`worker/media.py`), the browser, templates, workflows, roles, the audit and lessons, projects
-(`lib/auto/projects.ts`), and one adaptive endpoint (`lib/auto/endpoint.ts`: a 9-tool core, toolsets on demand,
+(`lib/auto/projects.ts`), and one adaptive endpoint (`lib/auto/endpoint.ts`: a 10-tool core (with `import_file` for ChatGPT), toolsets on demand,
 strict schemas for non-Claude clients; `/api/mcp/lean` is its alias). All nine phases shipped; `docs/AUTOMATION.md` has the decisions, what's waiting on the
 owner and what still needs checking on Colab: read it before working on any of it. What's next is `docs/FACTORY.md`
 (the video factory: fixes from the audit, projects that own and clean their files, one adaptive endpoint, batches,
