@@ -44,7 +44,9 @@ export function scriptCheck(lines: string[], platform = "reels") {
 // ── a batch ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export type Scene = { line: string; template?: string; fields?: Record<string, unknown>; clip?: string; from?: number };
-export type VideoSpec = { name: string; scenes: Scene[]; platform?: string; shape?: string; music?: string; captions?: boolean };
+export type VideoSpec = { name: string; scenes: Scene[]; platform?: string; shape?: string; music?: string; captions?: boolean; format?: string;
+  /** from its format (lib/auto/formats.ts): the scenes' colours and font, a logo (Files id), the caption style */
+  brand?: import("./templates").Brand; logo?: string; caption_style?: { style: string; position: string } | null };
 type SceneState = { file?: string; job?: string; err?: string; dur?: number; voice?: string; cached?: boolean; len?: number; redone?: boolean };
 /** How long a line will take before it's voiced (165 wpm and a little), so scenes render while the voice job runs. */
 /** A list's points all land within its line (by 75% of it): the scene is cut to the line, so points paced for a
@@ -60,8 +62,8 @@ export type Batch = {
 
 const KEY = (id: string) => `auto/factory/${id}.json`;
 const CACHE = (h: string) => `auto/factory/cache/${h}.json`;
-export const sceneKey = (s: Scene, shape: string, draft: boolean, dur: number) =>
-  createHash("sha256").update(JSON.stringify([s.template, s.fields, shape, draft, Math.round(dur * 10)])).digest("hex").slice(0, 24);
+export const sceneKey = (s: Scene, shape: string, draft: boolean, dur: number, brand?: unknown) =>
+  createHash("sha256").update(JSON.stringify([s.template, s.fields, shape, draft, Math.round(dur * 10), ...(brand ? [brand] : [])])).digest("hex").slice(0, 24);
 
 async function save(b: Batch) {
   b.updated = Date.now();
@@ -169,12 +171,12 @@ async function step(b: Batch, call: Call) {
     if (st.file && st.dur != null) { st.file = undefined; st.job = undefined; st.redone = true; } // too short for the real line
     if (st.file) return; // rendered to the estimate; the voice decides
     const len = st.dur != null ? need + 0.5 : Math.ceil((estimate(sc.line) * 1.3 + 1) * 2) / 2;
-    const h = sceneKey(sc, shapeOf(it.spec), b.draft, len);
+    const h = sceneKey(sc, shapeOf(it.spec), b.draft, len, it.spec.brand);
     if (!st.job) {
       const hit = await getJson<{ file: string; len?: number }>(CACHE(h)).catch(() => null);
       if (hit) { st.file = hit.file; st.len = hit.len ?? len; st.cached = true; return; }
       const fields = { ...(sc.fields ?? {}), seconds: len, ...(sc.template === "list" ? listPace(st.dur ?? estimate(sc.line), (sc.fields?.items as unknown[] | undefined)?.length ?? 2) : {}) };
-      const r = await call("video_template", { template: sc.template, fields, shape: shapeOf(it.spec), quality: b.draft ? "draft" : "standard", ...(b.draft ? { size: "half" } : {}), name: `${it.name}-s${k + 1}`, ...(b.project ? { project: b.project } : { save_to: "Factory/scenes" }) });
+      const r = await call("video_template", { template: sc.template, fields, shape: shapeOf(it.spec), ...(it.spec.brand ? { brand: it.spec.brand } : {}), quality: b.draft ? "draft" : "standard", ...(b.draft ? { size: "half" } : {}), name: `${it.name}-s${k + 1}`, ...(b.project ? { project: b.project } : { save_to: "Factory/scenes" }) });
       const x = v<{ job_id?: string; status?: string; file?: { file_id?: string }; error?: string }>(r.value);
       if (!r.ok) { st.err = r.text.slice(0, 200); return; }
       if (x?.file?.file_id) { st.file = x.file.file_id; st.len = len; await putJson(CACHE(h), { file: st.file, len }); return; }
@@ -200,11 +202,14 @@ async function step(b: Batch, call: Call) {
       const inputs: Record<string, string> = {};
       it.scenes.forEach((s, k) => { inputs[`s${k}`] = s.file!; inputs[`l${k}`] = s.voice!; });
       if (it.spec.music) inputs.music = it.spec.music;
+      if (it.spec.logo) inputs.logo = it.spec.logo;
+      const cs = it.spec.caption_style;
       const spec = {
         platform: it.spec.platform ?? "reels", fit: "crop", ...(b.draft ? { fps: 15, quality: "fast" } : {}), original_volume_db: "mute",
         clips: it.scenes.map((s, k) => ({ src: `s${k}`, ...(it.spec.scenes[k].from != null ? { from: it.spec.scenes[k].from } : {}), to: (it.spec.scenes[k].from ?? 0) + (s.dur ?? 3) + 0.25 })),
         voice: { src: it.scenes.map((_, k) => `l${k}`), gap_s: 0.25 },
-        ...(it.spec.music ? { music: { src: "music", duck: true } } : {}), ...(it.spec.captions === false ? {} : { captions: { style: "pop" } }),
+        ...(it.spec.music ? { music: { src: "music", duck: true } } : {}), ...(it.spec.captions === false ? {} : { captions: { style: cs?.style ?? "pop", ...(cs?.position ? { position: cs.position } : {}) } }),
+        ...(it.spec.logo ? { logo: { src: "logo", corner: "tr", size: 0.12 } } : {}),
         name: it.name,
       };
       const r = await call("edit_video", { inputs, spec, ...(b.project ? { project: b.project } : { save_to: "Factory" }) });

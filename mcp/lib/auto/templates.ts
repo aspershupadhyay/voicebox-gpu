@@ -107,7 +107,9 @@ function scene(w: number, h: number, s: number, b: Brand, body: string, tl: stri
       <div id="drift" style="position:absolute;width:${Math.round(w * 0.9)}px;height:${Math.round(w * 0.9)}px;border-radius:50%;background:${b.accent};opacity:.16;left:${Math.round(w * 0.45)}px;top:${Math.round(h * -0.12)}px"></div>
       <div id="bar" style="position:absolute;left:0;bottom:0;height:${Math.max(6, Math.round(h * 0.006))}px;width:${w}px;background:${b.accent};transform-origin:0 50%;transform:scaleX(0)"></div>
     </div>
+    <!--STICKERS-->
     <script src="assets/gsap.min.js"></script>
+    <!--LOTTIE-->
     <script>
       const tl = gsap.timeline({ paused: true });
       // something moves on every frame from frame 0 (docs/FACTORY.md A): the stage breathes, a shape drifts, the bar fills
@@ -115,6 +117,7 @@ function scene(w: number, h: number, s: number, b: Brand, body: string, tl: stri
       tl.fromTo("#drift", {x: 0, y: 0}, {x: ${-Math.round(w * 0.5)}, y: ${Math.round(h * 0.55)}, duration: ${s}, ease: "sine.inOut"}, 0);
       tl.to("#bar", {scaleX: 1, duration: ${s}, ease: "none"}, 0);
       ${tl}
+      /*STICKERS*/
       window.__timelines = window.__timelines || {};
       window.__timelines.vb = tl;
     </script>
@@ -130,5 +133,49 @@ export function build(template: string, fields: Fields, shape: Shape = "9:16", b
   // quarter of the pixels (docs/FACTORY.md D)
   const [w, h] = (SIZES[shape] ?? SIZES["9:16"]).map((x) => (half ? x / 2 : x));
   const b: Brand = { bg: color(brand.bg, BRAND.bg), ink: color(brand.ink, BRAND.ink), accent: color(brand.accent, BRAND.accent), font: font(brand.font, BRAND.font) };
-  return { ...t.build(fields, b, w, h), width: w, height: h, font: b.font };
+  const built = t.build(fields, b, w, h);
+  const st = fields.sticker ? sticker(fields.sticker, b, w, h, built.seconds) : null;
+  const html = built.html.replace("<!--STICKERS-->", st?.html ?? "").replace("/*STICKERS*/", st?.tl ?? "")
+    .replace("<!--LOTTIE-->", st?.lottie ? '<script src="assets/lottie.min.js"></script>' : "");
+  return { ...built, html, width: w, height: h, font: b.font, lottie: !!st?.lottie };
+}
+
+// ── stickers: a small animated accent on any template (fields.sticker), drawn in SVG and moved by GSAP, so it costs
+// nothing to render and needs no files; or any Lottie animation (kind "lottie" with its JSON, which the MCP reads from
+// Files), played frame-exact on the template's timeline (lottie-web from the worker's cache, never a CDN)
+export const STICKERS = ["badge", "arrow", "check", "follow", "pop", "lottie"] as const;
+type StickerSpec = { kind?: string; text?: string; at?: number; position?: string; lottie?: unknown };
+
+function sticker(raw: unknown, b: Brand, w: number, h: number, s: number) {
+  const o: StickerSpec = typeof raw === "string" ? { kind: raw } : (raw && typeof raw === "object" ? raw as StickerSpec : {});
+  const kind = String(o.kind ?? "");
+  if (!(STICKERS as readonly string[]).includes(kind)) throw new Error(`sticker: one of ${STICKERS.join(", ")}`);
+  const at = Math.min(Math.max(Number(o.at) || 0.15, 0), Math.max(0, s - 0.5));
+  const pos = o.position ?? (kind === "arrow" || kind === "follow" ? "bottom" : kind === "badge" ? "top" : "middle");
+  const place = pos === "top" ? `top:${Math.round(h * 0.09)}px;left:0;right:0` : pos === "bottom" ? `bottom:${Math.round(h * 0.2)}px;left:0;right:0`
+    : pos === "corner" ? `top:${Math.round(h * 0.08)}px;right:${Math.round(w * 0.06)}px` : `top:${Math.round(h * 0.42)}px;left:0;right:0`;
+  const wrap = (inner: string) => `<div class="clip" data-start="0" data-duration="${s}" data-track-index="6" style="position:absolute;inset:0;pointer-events:none">
+      <div style="position:absolute;${place};display:flex;justify-content:center">${inner}</div></div>`;
+  const u = Math.round(w * 0.01); // one unit: 1% of the width
+  const label = esc(String(o.text ?? "").slice(0, 40));
+  if (kind === "badge") return { html: wrap(`<div id="stk" style="background:${b.accent};color:${b.bg};font-weight:800;letter-spacing:.06em;font-size:${u * 4}px;padding:${u * 1.4}px ${u * 3}px;border-radius:${u * 1.2}px;text-transform:uppercase">${label || "NEW"}</div>`),
+    tl: `tl.from("#stk", {scale: 0, rotation: -8, duration: 0.45, ease: "back.out(2.5)"}, ${at});tl.to("#stk", {x: ${u}, duration: 0.06, yoyo: true, repeat: 5, ease: "none"}, ${at + 0.5});` };
+  if (kind === "arrow") return { html: wrap(`<svg id="stk" width="${u * 14}" height="${u * 14}" viewBox="0 0 100 100"><path d="M20 35 L50 65 L80 35" fill="none" stroke="${b.accent}" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/></svg>`),
+    tl: `tl.from("#stk", {opacity: 0, y: -${u * 4}, duration: 0.35}, ${at});tl.to("#stk", {y: ${u * 3}, duration: 0.45, yoyo: true, repeat: ${Math.max(1, Math.floor((s - at - 0.4) / 0.45) - 1)}, ease: "sine.inOut"}, ${at + 0.35});` };
+  if (kind === "check") return { html: wrap(`<svg id="stk" width="${u * 22}" height="${u * 22}" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44" fill="none" stroke="${b.accent}" stroke-width="7" stroke-dasharray="277" stroke-dashoffset="277" id="stkc"/><path id="stkp" d="M30 52 L45 66 L72 36" fill="none" stroke="${b.ink}" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="70" stroke-dashoffset="70"/></svg>`),
+    tl: `tl.to("#stkc", {strokeDashoffset: 0, duration: 0.5, ease: "power2.out"}, ${at});tl.to("#stkp", {strokeDashoffset: 0, duration: 0.35, ease: "power2.out"}, ${at + 0.4});tl.fromTo("#stk", {scale: 0.9}, {scale: 1, duration: 0.3, ease: "back.out(3)"}, ${at + 0.7});` };
+  if (kind === "follow") return { html: wrap(`<div id="stk" style="display:flex;align-items:center;gap:${u * 1.5}px;background:${b.accent};color:${b.bg};font-weight:800;font-size:${u * 4.2}px;padding:${u * 2}px ${u * 4}px;border-radius:999px"><span style="font-size:${u * 5.5}px;line-height:1">+</span>${label ? `Follow ${label}` : "Follow"}</div>`),
+    tl: `tl.from("#stk", {y: ${u * 12}, opacity: 0, duration: 0.5, ease: "back.out(1.8)"}, ${at});tl.to("#stk", {scale: 0.92, duration: 0.12, yoyo: true, repeat: 1}, ${at + 1.1});` };
+  if (kind === "pop") return { html: wrap(`<div id="stk" style="color:${b.accent};font-weight:900;font-size:${u * 14}px;letter-spacing:-0.02em;text-shadow:0 ${u * 0.6}px 0 ${b.bg}">${label || "WAIT"}</div>`),
+    tl: `tl.from("#stk", {scale: 3, opacity: 0, duration: 0.35, ease: "power4.out"}, ${at});tl.to("#stk", {opacity: 0, duration: 0.3}, ${Math.min(s - 0.3, at + 1.6)});` };
+  // lottie: its JSON inline (the MCP read it from Files), driven through a proxy so a seek to any frame shows that frame
+  const data = (typeof o.lottie === "string" ? o.lottie : JSON.stringify(o.lottie ?? null)).replace(/<\//g, "<\\/"); // never a </script> inside
+  if (!data || data === "null" || data.length > 600_000) throw new Error("sticker lottie: give lottie (a Files id of a Lottie .json, up to 600 KB)");
+  const size = Math.round(w * 0.42);
+  return { lottie: true, html: wrap(`<div id="stk" style="width:${size}px;height:${size}px"></div>`),
+    tl: `const stkData = ${data};
+      const stkAnim = lottie.loadAnimation({ container: document.getElementById("stk"), renderer: "svg", loop: false, autoplay: false, animationData: stkData });
+      const stkFrames = Math.max(1, (stkData.op || 60) - (stkData.ip || 0));
+      const stkProxy = { _f: 0, get f() { return this._f; }, set f(v) { this._f = v; stkAnim.goToAndStop(v, true); } };
+      tl.fromTo(stkProxy, {f: 0}, {f: stkFrames - 1, duration: Math.min(${s - at}, stkFrames / (stkData.fr || 30)), ease: "none"}, ${at});` };
 }
