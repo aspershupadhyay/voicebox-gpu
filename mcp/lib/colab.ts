@@ -219,7 +219,7 @@ function bootstrap(origin: string, prewarm: string, mode = "") {
     'APP = "/content/voicebox/app"',
     "os.makedirs(APP, exist_ok=True)",
     'print("voicebox kernel up; fetching the worker", flush=True)',
-    'req = urllib.request.Request(os.environ["REGISTER_URL"].rsplit("/api/", 1)[0] + "/api/bundle", headers={"Authorization": "Bearer " + os.environ["WORKER_SECRET"]})',
+    'req = urllib.request.Request(os.environ["REGISTER_URL"].rsplit("/api/", 1)[0] + "/api/bundle", headers={"Authorization": "Bearer " + os.environ["WORKER_SECRET"], "User-Agent": "voicebox-worker"})',
     "data = urllib.request.urlopen(req, timeout=120).read()",
     'tarfile.open(fileobj=io.BytesIO(data), mode="r:gz").extractall(APP, filter="data")',
     'print("voicebox worker unpacked; starting", flush=True)',

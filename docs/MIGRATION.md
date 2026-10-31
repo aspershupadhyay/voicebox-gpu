@@ -169,6 +169,10 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    account that has none, and changing your own needs the current one (`lib/users.ts` `setPassword`).
    Sign-in got faster on the way: the lockout, the invite list and the password are checked at once, the record of the
    try is written after the reply, and storage reads go through the Worker's R2 binding instead of signed S3 calls.
+   **Two fixes after the move (2026-10-31)**: starting Colab from the Worker failed (the `ws` package opens TCP sockets
+   itself; the kernel's websocket now uses the Worker's own), and Cloudflare's bot filter on `*.pages.dev` refuses
+   Python's default `Python-urllib` user agent (error 1010), so a worker couldn't fetch its bundle or heartbeat: every
+   worker request now says `voicebox-worker/<version>` (`worker/config.py`, worker 3.15.2).
    **Left for the owner, by hand**: delete the Appwrite project (Appwrite console → project `voicebox-studio` →
    Settings → Delete project) and the Vercel project (Vercel → the project → Settings → Delete), after a last look
    that nothing there is wanted. Nothing in the studio depends on either any more.
