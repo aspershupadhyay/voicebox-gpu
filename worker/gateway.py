@@ -3302,6 +3302,10 @@ def run_fetch(job):
         if raw.get("formats") or raw.get("_type") in ("url", "url_transparent"):
             with yt_dlp.YoutubeDL(opts_for(**kw)) as y:  # what was read already: no second visit to the site
                 return y.process_ie_result(raw, download=True) or raw
+        if re.search(r"(^|\.)(youtube\.com|youtu\.be)$", urlparse(raw.get("webpage_url") or url).netloc or ""):
+            # a YouTube video with no formats is YouTube refusing this server (its bot check), not a photo post: its
+            # thumbnail alone is not the download that was asked for
+            raise RuntimeError("YouTube gave no video to this server: Sign in to confirm you're not a bot")
         photo(raw, 1)  # a photo post
         return raw
 
