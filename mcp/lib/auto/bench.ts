@@ -116,7 +116,7 @@ export async function view(job: BenchJob, actor: { name: string } = { name: "Wor
     const saved = files && "saved" in files ? files.saved : undefined;
     if (b.op === "edit") {
       return {
-        ...base, seconds: b.seconds_out, render_s: b.render_s, ...(b.encoder ? { encoder: b.encoder } : {}), ...(b.captions ? { captions: b.captions } : {}),
+        ...base, seconds: b.seconds_out, render_s: b.render_s, ...(b.encoder ? { encoder: b.encoder } : {}), ...(b.captions ? { captions: b.captions } : {}), ...(b.beats ? { beats: b.beats } : {}), ...(b.lossless ? { lossless: b.lossless } : {}),
         qa: qa ? { verdict: qa.verdict, ...(issues?.length ? { issues } : {}) } : null,
         file: saved?.[0] ?? (files && "error" in files ? files : b.outputs?.[0]?.name),
         next: job.status === "error" ? "Fix what the error names and send the edit again." : qa?.verdict === "FAIL" ? "Fix the FAIL lines (change the spec) and render again before posting." : "Done: it's in Files. inspect_media with checks [\"sheet\"] shows its frames.",
