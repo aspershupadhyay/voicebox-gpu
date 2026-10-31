@@ -5,7 +5,7 @@ source of truth for defaults and ranges (docs/API.md is generated from the same 
 """
 import os
 
-VERSION = "3.15.2"
+VERSION = "3.15.3"
 
 # Cloudflare's bot filter in front of the dashboard (*.pages.dev) refuses urllib's default "Python-urllib/x" with error
 # 1010, so the heartbeat, the bundle, downloads and the cache would never reach it. Every request from a worker process
