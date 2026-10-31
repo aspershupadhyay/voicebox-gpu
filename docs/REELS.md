@@ -1,0 +1,62 @@
+# Making Reels and Shorts (what works, learned on the EGM explainer, 2026-10-31)
+
+The owner's rules for short videos, and the pipeline that made the first two (the Elephant-Goldfish Model explainer:
+a 57 s story cut and a ~35 s hype cut). Read this before making any Reel, Short or TikTok. Newer owner feedback in
+`docs/FEEDBACK.md` wins.
+
+## The owner's rules
+
+0. **Informative, never AI slop.** One video that can go viral on substance: real facts on screen (the repo, the real
+   commands, what each part does, the numbers labelled as estimates). No stamps, no shaking, no white flashes, no
+   cartoon crawling bugs or smug robots, no record-scratch or cartoon sound effects. Text rises in cleanly (fade +
+   ~24 px, no overshoot, no tilt); emphasis is colour, not a box. Sound: soft whooshes on section changes, light
+   ticks on cuts, one gentle chime where a verdict lands; the voice clearly leads (drums ~12 dB under it).
+0b. **Keep the house look** (the owner liked v1): warm paper backgrounds with a dot grid, navy for the big title and
+   number scenes, Inter 800 headlines with Caveat hand notes, sticky notes and paper docs, the hand-drawn elephant
+   and goldfish, big 1-2 word captions in a dark pill. A new video changes the script and the pacing, not the art.
+1. **Hook like the posts that blow up.** Open on authority + news + stakes, the way viral X posts do: "Google just
+   open-sourced the tool thousands of its engineers use to stop AI from shipping sloppy code." Not a slow question.
+   Then punchy parallel lines ("No code until the plan survives. No AI grading its own homework."), a turn ("Here's
+   the wild part:"), and an honest catch at the end. Learn the pattern; never copy someone's post.
+2. **Triple hook in the first 2 seconds.** On frame 1, all three at once: the picture is already moving (no fade in
+   from black, no empty first frame), the text hook is already on screen, and the spoken hook starts at ~0.05 s.
+3. **Fast paced, calmly.** A cut every 2-3 s, most of them on a spoken word; a subtle punch-in (≤5%) on hard cuts,
+   a push or zoom transition (0.22 s) on section changes, a slow drift so the camera is never fully still. Short lines
+   (hype delivery, ~1.08x tempo), tiny gaps between them (snap to the next 8th note, 0.1-0.2 s).
+4. **B-roll between the story beats**: the real thing on screen (terminals typing the real command, the repo card,
+   the workflow), not filler.
+5. **Big captions, 1-2 words**, the current word lit, inside the safe area, on every line (most people watch muted).
+6. **End on a loop**: the last half second fades into the hook's first frame, so a rewatch is seamless; a "Follow
+   for more" beat before it.
+7. **One video** unless asked for more: the hype script's hook and pace with the story version's clarity.
+8. **Facts are checked against the source** (the repo, the docs) before they go in. A viral post can be wrong (the
+   one we learned from said EGM runs only in Antigravity and has no security reviewer; the repo shows Claude Code and
+   Codex installs and a design critic that checks security). Estimates are labelled as estimates on screen.
+
+## The pipeline (all in the cloud, ~20 min of work, ~0.3 Colab units)
+
+1. **Script**: one line per beat, written to be said. Put it in `assets/script.json`.
+2. **Voice** through the VoiceBox MCP: `gpu action=start purpose=voice`, then `voice_lines` with `engine: myvoice`,
+   `voice: sparsh` (or `harsh`), `style: hype` for fast cuts (`tech` for calm), `platform: raw` (we master ourselves),
+   `subtitles: true` (Whisper word times), `takes: 2`, `post: {tempo: 1.08}`. Poll `get_job`; download `zip_url`;
+   then `gpu action=stop` (it costs ~2 units an hour while on). The first load of myvoice takes ~2 min.
+3. **Word times**: build `vodata.js` from each line's `.subs.json` and `.wav` (duration, a 30 fps loudness envelope).
+   Use the **script's words on Whisper's times** whenever the word counts match: Whisper mishears ("$150,000" for
+   "one hundred fifty thousand", "to catch up" for "The catch? Up"), and a misheard caption is worse than none.
+4. **The film**: the `animation-studio` skill (canvas drawn in code, sound synthesized in code). `score.js` lays the
+   voice lines on a beat grid and names every hit as a word (`word(line, 'prefix')`); `film.js` and `song.js` both
+   read it, so picture, music and voice can't drift. Characters for an idea can be drawn from `G.*` primitives
+   (`cast-egm.js`: an elephant with glasses and a pencil, goldfish in bowls).
+5. **Mix**: voice on top (stem RMS ~10-12 dB above the bed), music ducked under the voice and sidechained to the
+   kick, master to -14 LUFS (`MIX.master(..., {lufs: -14})`). Measure it (`engine/tools/levels.js`): nobody listens.
+6. **Review like a director before rendering**: `render.js sheet 0 <dur> 18 6`, `board`, `stills` at the hits. Look
+   for text over characters, text past the right edge (the app's buttons live there), captions colliding with
+   on-screen text, and anything misleading. Fix and re-check the same times.
+7. **Render**: `render.js video` (background, ~4-5 min for 57 s), `mux`, `check`, `verify` (sync at every marker).
+8. **Deliver**: save to Files (`save_file` → PUT to `put_url` → ticket) in a folder like `Videos/<topic>`, and send it.
+
+## Costs seen
+
+- Voice: 10-11 lines in Sparsh's trained voice, 2 takes each, ~3.5 min of GPU including the model load, about
+  0.1-0.15 units each run.
+- Render: 1717 frames (57 s at 30 fps) in 265 s on the session's CPU, 32 MB H.264.
