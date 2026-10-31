@@ -36,7 +36,26 @@ const KEY = "workspace/downloads.json";
 const COOKIES = "workspace/downloads/cookies.txt"; // optional sign-ins for yt-dlp (Netscape format), never sent back
 const MAX = 200;
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
-const SERVER_MAX = 140e6; // bigger files go through the worker (the server holds a file in memory to copy it)
+const SERVER_MAX = 140e6; // bigger files go through the worker
+const BUFFER_MAX = 40e6; // a file with no stated size is read whole: only this much (a Worker has 128 MB)
+
+/** The whole body, or null (cancelled) past `max` bytes. */
+async function readCapped(r: Response, max: number) {
+  if (!r.body) return new Uint8Array(await r.arrayBuffer());
+  const reader = r.body.getReader(), parts: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > max) { await reader.cancel().catch(() => null); return null; }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+}
 const SLOTS = 20;
 const RETRY_AFTER_MIN = [10, 25]; // waits before the 1st and 2nd automatic try: long enough for a site's rate limit to lift
 const GPU_CLAIM = "workspace/downloads-gpu.json"; // who started the GPU for downloads and when: one start, not one per link
@@ -289,7 +308,7 @@ async function run(d: Dl, actor: Actor) {
 }
 
 async function saveFromServer(d: Dl, found: Found, actor: Actor): Promise<DlItem[] | null> {
-  const { addMediaBytes, mimeFor } = await import("./data");
+  const { addMediaBytes, addMediaStream, mimeFor } = await import("./data");
   const { getSettings } = await import("./settings");
   const backup = (await getSettings()).backup_media;
   const items: DlItem[] = [];
@@ -298,10 +317,18 @@ async function saveFromServer(d: Dl, found: Found, actor: Actor): Promise<DlItem
     if (!r.ok) { r.body?.cancel().catch(() => null); throw new DlError(`${new URL(r.finalUrl).hostname.replace(/^www\./, "")} refused the file: HTTP ${r.status}`); }
     const size = Number(r.headers.get("content-length") ?? 0);
     if (size > SERVER_MAX) { r.body?.cancel().catch(() => null); return null; } // big: the worker streams it instead
-    const bytes = new Uint8Array(await r.arrayBuffer());
-    const mime = (r.headers.get("content-type") ?? "").split(";")[0] || mimeFor(f.name);
+    const raw = (r.headers.get("content-type") ?? "").split(";")[0] || mimeFor(f.name);
     const name = nameFor(d, f.name, i, found.files.length);
-    const { media } = await addMediaBytes(bytes, mime.startsWith("binary") || mime === "application/octet-stream" ? mimeFor(name) : mime, name, { postId: d.post, backup }, actor);
+    const mime = raw.startsWith("binary") || raw === "application/octet-stream" ? mimeFor(name) : raw;
+    // streamed into Files as it arrives (a Worker has 128 MB: a big video held whole, then copied, ran out of memory
+    // and left the download stuck); without a size it's read whole, but only up to BUFFER_MAX, else the worker takes it
+    const streamed = r.body && size > 0 ? await addMediaStream(r.body as ReadableStream<Uint8Array>, size, mime, name, { postId: d.post }, actor) : null;
+    let media = streamed?.media;
+    if (!media) {
+      const bytes = await readCapped(r, BUFFER_MAX);
+      if (!bytes) return null;
+      media = (await addMediaBytes(bytes, mime, name, { postId: d.post, backup }, actor)).media;
+    }
     items.push(await itemOf(media));
     await patch(d.id, { pct: 0.2 + 0.75 * ((i + 1) / found.files.length), stage: found.files.length > 1 ? `Saved ${i + 1} of ${found.files.length}` : "Saving to Files" });
   }

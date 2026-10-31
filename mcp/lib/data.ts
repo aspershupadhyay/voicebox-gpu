@@ -2,7 +2,7 @@
 // files themselves in R2 (lib/r2files.ts), the team in the users table (lib/users.ts). The MCP tools, the API routes and
 // the publishing code all come through here. (Until 2026-10-31 this was lib/appwrite.ts: docs/MIGRATION.md.)
 import { POST_FIELDS, kindOf, type Comment, type Media, type Member, type Post } from "./workspace";
-import { delObjs, presign, putObj } from "./store";
+import { delObjs, presign, putObj, putStream } from "./store";
 import { adopt, assertRoom, fileSig, mediaKey } from "./r2files";
 import { DataError, deleteRow, getRow, hasDb, insertRow, listRows, patchRow, type Q, type Table } from "./db";
 
@@ -146,10 +146,13 @@ const FETCH_MAX = 150e6;
 export async function addMediaFromUrl(url: string, opts: { name?: string; postId?: string | null; backup?: boolean }, actor: { id?: string; name: string }) {
   const r = await fetch(url, { cache: "no-store" });
   if (!r.ok) throw new Error(`could not fetch the file: ${r.status}`);
-  const bytes = new Uint8Array(await r.arrayBuffer());
   const mime = (r.headers.get("content-type") ?? "application/octet-stream").split(";")[0];
   const name = (opts.name || decodeURIComponent(new URL(url).pathname.split("/").pop() || "file")).slice(0, 255);
-  return addMediaBytes(bytes, mime, name, opts, actor);
+  const size = Number(r.headers.get("content-length") ?? 0);
+  if (size > FETCH_MAX) { r.body?.cancel().catch(() => null); throw new Error(`file is ${(size / 1e6).toFixed(0)} MB; use download or save_file for files over ${FETCH_MAX / 1e6} MB`); }
+  // streamed when its size is known (a Worker has 128 MB of memory), else read whole
+  const streamed = r.body && size > 0 ? await addMediaStream(r.body as ReadableStream<Uint8Array>, size, mime, name, opts, actor) : null;
+  return streamed ?? addMediaBytes(new Uint8Array(await r.arrayBuffer()), mime, name, opts, actor);
 }
 
 const MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", mp4: "video/mp4",
@@ -166,6 +169,18 @@ export async function addMediaBytes(bytes: Uint8Array, mime: string, name: strin
   const key = mediaKey(fileId, name);
   await putObj(key, bytes as BodyInit, mime);
   return mediaRow(`r2_${fileId}`, name, mime, bytes.length, key, opts, actor);
+}
+
+/** A download's body into Files as it arrives (size known), so a big video never sits whole in the Worker's memory.
+ *  Null when it can't be streamed here (no size, or not on Cloudflare): the caller buffers or hands it on. */
+export async function addMediaStream(body: ReadableStream<Uint8Array>, size: number, mime: string, name: string, opts: { postId?: string | null }, actor: { id?: string; name: string }) {
+  if (!(size > 0)) return null;
+  if (mime === "application/octet-stream") mime = mimeFor(name);
+  await assertRoom(size);
+  const fileId = crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+  const key = mediaKey(fileId, name);
+  if (!(await putStream(key, body, size, mime))) return null;
+  return mediaRow(`r2_${fileId}`, name, mime, size, key, opts, actor);
 }
 
 async function mediaRow(fileId: string, name: string, mime: string, size: number, r2Key: string, opts: { postId?: string | null }, actor: { id?: string; name: string }) {
