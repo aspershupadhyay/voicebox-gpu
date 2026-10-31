@@ -137,6 +137,10 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    Instagram and GitHub OAuth secrets and a Hugging Face token, with the new address as each redirect URL. The timer
    points at the new address; deploy.yml deploys with `CLOUDFLARE_API_TOKEN`. Checked live: pages, sign-in, the MCP,
    the board from Neon, a file from R2, the sweep, and the backup (the trained voices fully copied to Neon storage).
+   **The short address (2026-10-31)**: https://voiceboxstudio.pages.dev, a Pages project (`voiceboxstudio`) whose
+   `_worker.js` passes every request to the Worker through a service binding (the request keeps its URL, so cookies,
+   sign-in and OAuth callbacks see this address; `APP_URL` is set to it). The workers.dev address still works. A custom
+   domain replaces it later (Cloudflare Registrar, then a custom domain on the Worker).
    The original plan: **API and MCP to one Cloudflare Worker.** `/api/*` and the MCP run there, reaching CockroachDB through Hyperdrive.
    The long routes (starting the Colab GPU, copying downloads) become Queue jobs; a Cloudflare cron replaces
    `sweep.yml`. Vercel rewrites `/api/*` to the Worker so it stays one origin (cookies, the same-origin check and

@@ -16,7 +16,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: 057fb7340dca399cea8eaf0071aa5760
-      SITE: https://voicebox-studio.elitemode-sparsh.workers.dev
+      SITE: https://voiceboxstudio.pages.dev # the short address: a Pages front door that hands requests to the Worker
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
