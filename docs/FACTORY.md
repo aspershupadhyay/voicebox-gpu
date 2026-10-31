@@ -113,6 +113,35 @@ needs it (the skill is fetched from `playbook`, not pasted into every session).
   with `detail: "full"` on request, paging, one id shape, errors that say how to fix the call, and
   `readOnlyHint`/`destructiveHint` annotations so clients can skip confirmations on safe reads.
 
+## I. Formats, stickers, beats and lossless cuts (2026-10-31) ✅ shipped
+
+The owner's ask: templates for our videos, so they look like one channel and cost less to make. What the studio had
+was four motion templates, the factory and `edit_video`; what was missing was a saved look.
+
+- **Formats** (`lib/auto/formats.ts`, tool `formats`): a series' look saved once: brand (colours, font), platform and
+  shape, fit, caption style, logo and music (Files ids), beat sync, the opening scene's sticker, an outro scene, an
+  on-screen source credit, the voice. `factory` videos and `edit_video` take `format` and fill in what the call
+  doesn't say. Built in: **news** (CatchTheError News: red accent, ERROR CAUGHT badge on the hook, pop captions, follow
+  card), **explainer** (amber, arrow on the hook, clean captions in the middle, save card), **clip** (clip +
+  commentary: blurred fill, the source credited, its sound at -14 dB under the voice, bold captions, cuts on the beat).
+  Saving one with a built-in id makes the owner's own version; deleting it restores the built-in. The factory now
+  passes the brand to every scene (it rendered every scene in the default colours before) and keys its cache on it,
+  so the same outro and stickers render once and come from the cache after.
+- **Stickers** on every template (`fields.sticker`, `lib/auto/templates.ts`): badge, arrow, check, follow, pop, drawn
+  in SVG and moved by GSAP (no files, no extra render time), or **lottie**: any Lottie animation from Files or a link,
+  inlined by the MCP and played frame-exact on the template's timeline (lottie-web 5.12.2 from the worker's cache).
+- **Beat sync** (`edit_video` spec `beat_sync`, worker `media.beat_times` / `snap_to_beats`): the music's beats
+  (librosa when installed, else the same method in numpy: onset strength, tempo by autocorrelation, the grid by dynamic
+  programming), then each cut and text start moved onto the nearest beat (within half a beat; a clip only grows when
+  its source has the room). The answer says the BPM and how many cuts moved. The factory doesn't beat-sync: its scenes
+  are cut to the voiced lines.
+- **Lossless cut** (`edit_video` spec `lossless`): one clip cut from-to with its streams copied (the LosslessCut idea
+  in ffmpeg): instant, no GPU, full quality; it starts on the keyframe at or before `from`.
+- **Remotion's own skills** (github.com/remotion-dev/skills, Remotion's licence): a model writing a Remotion scene in
+  `run` clones them into its workspace and reads `remotion-best-practices` and `remotion-markup` first (docs/MOTION.md).
+- Left for later (the owner agreed): a Three.js 3D shot (one 5-second test first: headless WebGL may be slow) and
+  WhisperX (who is speaking, for interview clips).
+
 ## A. Fix the basics (one PR, first) ✅ shipped
 
 **Done (2026-10-30)**, checked on a Linux box as root the way Colab runs it (the sandbox user, Node from nodejs.org,

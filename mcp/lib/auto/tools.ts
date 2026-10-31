@@ -12,6 +12,33 @@ const iso = (t?: number) => (t ? new Date(t).toISOString().slice(0, 16) + "Z" : 
 type Ctx = { http?: { req?: Request } } | undefined;
 const modelName = async (ctx: Ctx) => (await import("./wrap")).modelOf(ctx as never);
 const PLATFORM = z.enum(["reels", "shorts", "tiktok", "youtube", "ig_post", "square"]);
+/** A Lottie animation's JSON from a Files id or a link (stickers: lib/auto/templates.ts), at most 600 KB. */
+async function readLottie(ref: string): Promise<string> {
+  let body = "";
+  if (/^https?:\/\//.test(ref)) {
+    const r = await fetch(ref, { signal: AbortSignal.timeout(20_000) });
+    if (!r.ok) throw new Error(`lottie: ${ref} answered ${r.status}`);
+    body = await r.text();
+  } else {
+    const id = ref.replace(/^m:/, "");
+    const m = await (await import("../data")).getMedia(id);
+    if (!m.r2_key) throw new Error(`lottie: ${ref} has no file`);
+    const o = await (await import("../store")).getObj(m.r2_key);
+    if (!o) throw new Error(`lottie: ${ref} is gone`);
+    body = await o.text();
+  }
+  if (body.length > 600_000) throw new Error("lottie: up to 600 KB");
+  const j = JSON.parse(body) as { op?: number; layers?: unknown[] };
+  if (!Array.isArray(j.layers)) throw new Error("lottie: that isn't a Lottie animation (no layers)");
+  return JSON.stringify(j);
+}
+/** fields.sticker {kind: "lottie", lottie: <Files id or link>} with the animation's JSON in place of the reference. */
+async function withLottie(fields: Record<string, unknown> | undefined) {
+  const st = fields?.sticker as { kind?: string; lottie?: unknown } | undefined;
+  if (!st || typeof st !== "object" || st.kind !== "lottie" || typeof st.lottie !== "string" || st.lottie.trim().startsWith("{")) return fields;
+  return { ...fields, sticker: { ...st, lottie: await readLottie(st.lottie) } };
+}
+
 const fileKeySync = (x: string) => (/^[mgf]:|^https?:/.test(x) ? x : /^[a-f0-9]{12}$/.test(x) ? `g:${x}` : `m:${x}`);
 
 /** The factory's calls, made in-process through the guarded path as the batch's own caller (lib/auto/factory.ts). */
@@ -210,7 +237,7 @@ export function registerAutoTools(server: ToolServer) {
     {
       title: "The factory: several videos at once",
       description: [
-        "Make N videos (1-20) in about the time of one. Each video is scenes [{line: what's said, template + fields (video_template's) or clip: a Files id, from?}]. The factory checks every script (script_check; a FAIL stops that video unless force), voices every line of every video in ONE job (voice: engine, voice, style), renders each scene once (cached by its content: run a fixed batch again and only changed scenes render), then joins each video: scenes cut to their line, the lines as one voice, music (a Files id) ducked, pop captions, and QA.",
+        "Make N videos (1-20) in about the time of one. A video can name a format (formats action list: news, explainer, clip, or the owner's own): its brand, captions, music, logo, the opening scene's sticker and the outro are filled in, so a video is only its lines. Each video is scenes [{line: what's said, template + fields (video_template's) or clip: a Files id, from?}]. The factory checks every script (script_check; a FAIL stops that video unless force), voices every line of every video in ONE job (voice: engine, voice, style), renders each scene once (cached by its content: run a fixed batch again and only changed scenes render), then joins each video: scenes cut to their line, the lines as one voice, music (a Files id) ducked, pop captions, and QA.",
         "draft (default true): 15 fps, fast encode, for checking; draft false for delivery. project: everything lands in that project's folder.",
         "action compete (spine, candidates [{by: the model, hook}], platform): a judge (hook_score + script_check on each hook with the spine) picks a winner; the others go to the ledger's SPEC.md for A/B tests, and each model's tally builds up (scores lists it: which model writes the best hooks). start (videos, voice?, draft?, project?, force?) → batch id; status (batch): moves it on for up to 40 s and answers only each video's state, file and QA, and failures (the 10-minute sweep carries on batches nobody polls); list; stop (batch).",
         "Example: {\"action\":\"start\",\"videos\":[{\"name\":\"tip-1\",\"scenes\":[{\"line\":\"Your hook is too slow.\",\"template\":\"title_card\",\"fields\":{\"title\":\"Too slow\"}},{\"line\":\"Three fixes.\",\"template\":\"list\",\"fields\":{\"title\":\"Fix it\",\"items\":[\"Cut\",\"Show\",\"Say it\"]}}]}],\"voice\":{\"engine\":\"kokoro\"}}.",
@@ -224,6 +251,7 @@ export function registerAutoTools(server: ToolServer) {
         videos: z.array(z.object({
           name: z.string().min(1).max(60), platform: PLATFORM.optional(), shape: z.enum(["9:16", "16:9", "1:1", "4:5"]).optional(),
           music: z.string().max(80).optional(), captions: z.boolean().optional(),
+          format: z.string().max(31).optional().describe("a saved format (formats action list): its brand, captions, music, logo, opening sticker and outro"),
           scenes: z.array(z.object({ line: z.string().min(1).max(2000), template: z.string().max(40).optional(), fields: z.record(z.string(), z.unknown()).optional(), clip: z.string().max(80).optional(), from: z.number().min(0).optional() })).min(1).max(30),
         })).max(20).optional(),
         voice: z.object({ engine: z.string().max(20).optional(), voice: z.string().max(60).optional(), style: z.enum(["tech", "hype", "narrator", "neutral"]).optional() }).optional(),
@@ -256,7 +284,16 @@ export function registerAutoTools(server: ToolServer) {
         if (action === "start") {
           if (!videos?.length) throw new Error("start needs videos");
           if (project) await (await import("./projects")).usable(project, me);
-          const b = await f.startBatch(videos.map((x) => ({ ...x, music: x.music ? fileKeySync(x.music) : undefined, scenes: x.scenes.map((s) => ({ ...s, clip: s.clip ? (fileKeySync(s.clip)) : undefined })) })), { by: me, voice, draft, project, force });
+          const fm = await import("./formats");
+          const ready = await Promise.all(videos.map(async (x) => {
+            const fmt = x.format ? await fm.getFormat(x.format) : null;
+            const y: ReturnType<typeof fm.applyFormat> = fmt ? fm.applyFormat(x, fmt) : x;
+            return { ...y, music: y.music ? fileKeySync(y.music) : undefined, logo: y.logo ? fileKeySync(y.logo) : undefined,
+              scenes: await Promise.all(y.scenes.map(async (s) => ({ ...s, fields: await withLottie(s.fields), clip: s.clip ? fileKeySync(s.clip) : undefined }))) };
+          }));
+          const fv = videos.find((x) => x.format);
+          const fvoice = fv ? (await fm.getFormat(fv.format!)).voice : undefined;
+          const b = await f.startBatch(ready, { by: me, voice: { ...(fvoice ?? {}), ...(voice ?? {}) }, draft, project, force });
           return text(f.view(await f.advance(b.id, factoryCall(me), 35_000)));
         }
         if (!batch) throw new Error(`${action} needs batch`);
@@ -267,6 +304,35 @@ export function registerAutoTools(server: ToolServer) {
           return text({ batch: b.id, status: "stopped" });
         }
         return text(f.view(await f.advance(batch, factoryCall(me), 40_000)));
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "formats",
+    {
+      title: "Formats: a series' saved look",
+      description: [
+        "A format is a series' look saved once, so each video is only its content: brand (bg, ink, accent colours, a Google font), platform and shape, fit, captions {style pop|bold|clean, position lower|middle|upper} or null, logo and music (Files ids) with music_db, beat_sync (edit_video cuts on the beat), hook_sticker (the opening scene's sticker: video_template's kinds), outro {line, template, fields} (a last scene on every factory video), credit (edit_video shows the source: pass credit), original_volume_db, voice {engine, voice, style}.",
+        "factory videos and edit_video take format: \"<id>\" and fill in what the call doesn't say; the same look means the same rendered outro and stickers, so the factory's cache serves them. Built in: news (CatchTheError News), explainer, clip (clip + commentary).",
+        "action list (default): every format; get (id); save (format: an id and the fields to change; a built-in id makes your own version of it); delete (id: your saved one; a built-in goes back to how it shipped).",
+        "Example: {\"action\":\"save\",\"format\":{\"id\":\"news\",\"brand\":{\"accent\":\"#30d158\"},\"music\":\"m:abc123\"}}.",
+      ].join(" "),
+      inputSchema: z.object({
+        action: z.enum(["list", "get", "save", "delete"]).optional(),
+        id: z.string().max(31).optional(),
+        format: z.record(z.string(), z.unknown()).optional().describe("save: id plus the fields to set"),
+      }),
+    },
+    async ({ action = "list", id, format }) => {
+      try {
+        const fm = await import("./formats");
+        if (action === "list") return text((await fm.listFormats()).map((f) => ({ id: f.id, name: f.name, about: f.about, platform: f.platform, built_in: !!f.built_in })));
+        if (action === "get") return text(await fm.getFormat(id ?? ""));
+        if (action === "delete") return text(await fm.deleteFormat(id ?? ""));
+        const f = { ...(format ?? {}), id: String(format?.id ?? id ?? "") } as Parameters<typeof fm.saveFormat>[0];
+        for (const k of ["logo", "music"] as const) if (typeof f[k] === "string") f[k] = fileKeySync(f[k] as string);
+        return text({ saved: await fm.saveFormat(f), next: "Use it: factory videos[].format or edit_video format." });
       } catch (e) { return fail(e); }
     },
   );
@@ -438,7 +504,7 @@ export function registerAutoTools(server: ToolServer) {
       title: "Edit a video (cut, shape, voice, music, captions, logo, text)",
       description: [
         "One call renders a finished video on the Colab worker (NVENC on the GPU) and checks it (inspect_media's qa runs after every render: shape, length, loudness, black or frozen frames, text in the safe zones), then saves it to Files (save_to, default Workbench).",
-        "inputs: names for your files, {\"a\": \"m:<Files id>\", \"vo\": \"g:<voiceover id>\", \"song\": \"https://…\"}. spec: platform (reels default, shorts, tiktok, youtube, ig_post, square: sets the shape, the safe zones, the length limit and -14 LUFS), shape (9:16, 16:9, 1:1, 4:5) and fit (crop default, pad, blur: the frame filled with a blurred copy), clips in order [{src, from, to, speed, mute} or a photo {src, seconds, zoom}] (default the whole first input), voice {src, at, volume_db}, music {src, volume_db -16, duck true: dips under speech}, original_volume_db (a number or \"mute\"), captions {style pop|bold|clean, position lower|middle|upper; from speech by Whisper, or srt: an input key, or words [{w,s,e}]}, logo {src, corner tr|tl|br|bl, size 0.12}, texts [{text, from, to, position top|middle|bottom, size}], fade {in, out}, max_seconds, name.",
+        "inputs: names for your files, {\"a\": \"m:<Files id>\", \"vo\": \"g:<voiceover id>\", \"song\": \"https://…\"}. spec: platform (reels default, shorts, tiktok, youtube, ig_post, square: sets the shape, the safe zones, the length limit and -14 LUFS), shape (9:16, 16:9, 1:1, 4:5) and fit (crop default, pad, blur: the frame filled with a blurred copy), clips in order [{src, from, to, speed, mute} or a photo {src, seconds, zoom}] (default the whole first input), voice {src, at, volume_db}, music {src, volume_db -16, duck true: dips under speech}, original_volume_db (a number or \"mute\"), captions {style pop|bold|clean, position lower|middle|upper; from speech by Whisper, or srt: an input key, or words [{w,s,e}]}, logo {src, corner tr|tl|br|bl, size 0.12}, texts [{text, from, to, position top|middle|bottom, size}], fade {in, out}, max_seconds, name. beat_sync: true moves each cut and text onto the music's nearest beat. lossless: true cuts one clip from-to with no re-encode (instant, no GPU; lands on a keyframe). format: a saved look (formats) fills in what the spec doesn't say; credit names the source for formats that show it.",
         "Example: {\"inputs\":{\"a\":\"m:abc123\"},\"spec\":{\"platform\":\"reels\",\"fit\":\"blur\",\"clips\":[{\"src\":\"a\",\"from\":12,\"to\":41}],\"captions\":{\"style\":\"pop\"},\"name\":\"tip-3\"}}. Waits up to 45 s; longer renders return a job id for get_job.",
       ].join(" "),
       inputSchema: z.object({
@@ -458,12 +524,25 @@ export function registerAutoTools(server: ToolServer) {
             size: z.number().min(20).max(200).optional(), box: z.boolean().optional() })).max(20).optional(),
           fade: z.object({ in: z.number().min(0).max(5).optional(), out: z.number().min(0).max(5).optional() }).optional(),
           lufs: z.number().min(-30).max(-8).optional(), max_seconds: z.number().min(1).max(3600).optional(), name: z.string().max(80).optional(),
+          beat_sync: z.boolean().optional().describe("cuts and texts land on the music's beats (needs music)"),
+          lossless: z.boolean().optional().describe("one clip cut from-to with no re-encode: instant, no GPU, full quality; cuts land on the nearest keyframe; nothing else in the spec"),
         }),
+        format: z.string().max(31).optional().describe("a saved format (formats action list): fills in platform, shape, fit, captions, music, logo and beat sync the spec doesn't set"),
+        credit: z.string().max(100).optional().describe("with a format that credits (clip): who made the source, shown on screen, e.g. \"@mkbhd on YouTube\""),
         save_to: z.string().max(200).nullable().optional(),
       }),
     },
-    async ({ inputs, spec, save_to }, ctx) => {
-      try { return await media("edit", inputs, { spec }, ctx, save_to, `edit ${spec.name ?? ""}`.trim()); } catch (e) { return fail(e); }
+    async ({ inputs, spec, format, credit, save_to }, ctx) => {
+      try {
+        let ins = inputs, sp: Record<string, unknown> = spec;
+        if (format) ({ inputs: ins, spec: sp } = (await import("./formats")).applyToEdit(inputs, spec, await (await import("./formats")).getFormat(format), credit));
+        if (sp.lossless) {
+          const extra = ["voice", "music", "captions", "logo", "texts", "fade", "beat_sync"].filter((k) => sp[k]);
+          if (extra.length || ((sp.clips as unknown[]) ?? []).length > 1) throw new Error(`lossless is one clip cut with nothing added (drop ${extra.join(", ") || "the other clips"})`);
+        }
+        if (sp.beat_sync && !sp.music) throw new Error("beat_sync needs music (an input's key, or a format with music)");
+        return await media("edit", ins, { spec: sp }, ctx, save_to, `edit ${spec.name ?? ""}`.trim());
+      } catch (e) { return fail(e); }
     },
   );
 
@@ -529,7 +608,7 @@ export function registerAutoTools(server: ToolServer) {
       title: "Video from a template (HyperFrames)",
       description: [
         "Branded motion pieces filled from a little JSON; you never write HTML. action render (default): template + fields (+ inputs for any photo or video it uses) + shape (9:16 default) + brand {bg, ink, accent: hex colours, font: a Google font}, rendered on the Colab worker with HyperFrames, checked, saved to Files. action list: the templates and their fields.",
-        "Templates: title_card {title, sub?, media?, seconds?}; list {title, items: 2-6, per_item?} (\"3 tips\"); quote {quote, author?, media?}; lower_third {media: a video, name, role?, at?, hold?, seconds}. Every template moves from the first frame. music: an input's key for a bed under it (music_db, default -16; ducked under any voice in it).",
+        "Templates: title_card {title, sub?, media?, seconds?}; list {title, items: 2-6, per_item?} (\"3 tips\"); quote {quote, author?, media?}; lower_third {media: a video, name, role?, at?, hold?, seconds}. Every template moves from the first frame. Any template takes fields.sticker: badge (text), arrow, check, follow (text: the handle), pop (a word), or lottie (a Lottie .json from Files or a link), with at (s) and position. format: a saved look's brand. music: an input's key for a bed under it (music_db, default -16; ducked under any voice in it).",
         "A custom scene from a repo at a commit (the owner's videos-post cases; a HyperFrames project renders with the version its package.json pins, a Remotion project with Remotion): repo action checkout (ref = the commit), then {\"action\":\"render\",\"project\":{\"workspace\":\"default\",\"dir\":\"videos-post/cases/025\"}}. Example: {\"template\":\"list\",\"fields\":{\"title\":\"3 Reels mistakes\",\"items\":[\"No hook\",\"Too long\",\"No captions\"]}}.",
       ].join(" "),
       inputSchema: z.object({
@@ -542,13 +621,17 @@ export function registerAutoTools(server: ToolServer) {
         platform: PLAT.optional(), quality: z.enum(["draft", "standard", "high", "delivery"]).optional(), name: z.string().max(80).optional(),
         music: SRC.optional().describe("an input's key: a music bed under the piece"), music_db: z.number().min(-40).max(0).optional(),
         size: z.enum(["full", "half"]).optional().describe("half: a draft at half the size (540x960), about 3x faster"),
+        format: z.string().max(31).optional().describe("a saved format: its brand (brand given here wins)"),
         save_to: z.string().max(200).nullable().optional(),
       }),
     },
-    async ({ action = "render", template, fields, inputs, shape, brand, project, composition, platform, quality, name, music, music_db, size, save_to }, ctx) => {
+    async ({ action = "render", template, fields: rawFields, inputs, shape, brand: rawBrand, project, composition, platform, quality, name, music, music_db, size, format, save_to }, ctx) => {
       try {
         const t = await import("./templates");
-        if (action === "list") return text(Object.entries(t.TEMPLATES).map(([id, x]) => ({ template: id, about: x.about, fields: x.fields })));
+        if (action === "list") return text({ templates: Object.entries(t.TEMPLATES).map(([id, x]) => ({ template: id, about: x.about, fields: x.fields })),
+          stickers: { on: "every template: fields.sticker", kinds: t.STICKERS, shape: "\"badge\" or {kind, text?, at? (s), position? top|middle|bottom|corner, lottie? (kind lottie: a Files id or link of a Lottie .json)}" } });
+        const brand = format ? { ...(await (await import("./formats")).getFormat(format)).brand, ...(rawBrand ?? {}) } : rawBrand;
+        const fields = await withLottie(rawFields);
         if (music && !(inputs ?? {})[music]) throw new Error(`music: no input called ${music}`);
         const bed = music ? { music: { key: music, volume_db: music_db ?? -16 } } : {};
         if (project && typeof project === "object") return await media("template" as never, inputs ?? {}, { project, composition, platform, quality, name, ...bed }, ctx, save_to, `template ${project.dir}`);
@@ -556,7 +639,7 @@ export function registerAutoTools(server: ToolServer) {
         const built = t.build(template, fields ?? {}, shape ?? "9:16", brand ?? {}, size === "half");
         const missing = built.media.filter((k) => !(inputs ?? {})[k]);
         if (missing.length) throw new Error(`fields name media that isn't in inputs: ${missing.join(", ")}`);
-        return await media("template" as never, inputs ?? {}, { html: built.html, font: built.font, platform: platform ?? (shape === "16:9" ? "youtube" : "reels"), quality, name: name ?? template, ...bed }, ctx, save_to, `template ${template}`);
+        return await media("template" as never, inputs ?? {}, { html: built.html, font: built.font, lottie: built.lottie, platform: platform ?? (shape === "16:9" ? "youtube" : "reels"), quality, name: name ?? template, ...bed }, ctx, save_to, `template ${template}`);
       } catch (e) { return fail(e); }
     },
   );

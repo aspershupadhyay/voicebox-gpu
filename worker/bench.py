@@ -522,6 +522,49 @@ def _done_ws(ws):
         pass
 
 
+def media_mod():
+    import media
+    return media
+
+
+def music_beats(run, ws, name, seconds=600):
+    """The beats of a music input: its first `seconds` decoded to mono 11 kHz by ffmpeg in the sandbox, then tracked."""
+    import numpy as np
+    code, _, err = run(["ffmpeg", "-hide_banner", "-y", "-nostats", "-t", str(seconds), "-i", name, "-vn", "-ac", "1", "-ar", "11025", "-f", "f32le", "beats.f32"], timeout=300)
+    if code:
+        raise ValueError(f"couldn't read the music for its beats: {err.strip()[-200:]}")
+    y = np.fromfile(os.path.join(ws, "beats.f32"), dtype=np.float32)
+    return media_mod().beat_times(y, 11025)
+
+
+def lossless_cut(job, ws, jdir, run, infos, spec):
+    """One clip cut from-to with its streams copied, not re-encoded: instant and full quality. The cut lands on the
+    keyframe at or before `from` (a copy can only start on one), so it may start up to a couple of seconds early."""
+    import media
+    b = job["bench"]
+    c = (spec.get("clips") or [{"src": next(iter(infos))}])[0]
+    if c.get("src") not in infos:
+        raise ValueError(f"clip: no input called {c.get('src')!r}")
+    name, info = infos[c["src"]]
+    if info.get("image"):
+        raise ValueError("lossless cuts a video or audio file, not a photo")
+    a = media.num(c.get("from"), 0, info["duration"], 0.0)
+    z = media.num(c.get("to"), a + 0.1, info["duration"], info["duration"])
+    b["stage"] = "cutting (stream copy, no re-encode)"
+    t0 = time.time()
+    ext = os.path.splitext(name)[1].lower() or ".mp4"
+    out = f"cut{ext}"
+    code, _, err = run(["ffmpeg", "-hide_banner", "-y", "-nostats", "-ss", f"{a:.3f}", "-to", f"{z:.3f}", "-i", name, "-map", "0", "-c", "copy",
+                        "-avoid_negative_ts", "make_zero", *(["-movflags", "+faststart"] if ext in (".mp4", ".mov", ".m4a") else []), out], timeout=900)
+    if code:
+        raise ValueError(f"the lossless cut failed: {err.strip()[-400:]}")
+    got = media.probe(run, out)
+    fname = re.sub(r"[^A-Za-z0-9._-]+", "_", str(spec.get("name") or "cut"))[:80].removesuffix(ext) + ext
+    kept = keep_result(ws, jdir, out, fname)
+    b.update(render_s=round(time.time() - t0, 1), seconds_out=round(float(got.get("duration") or 0), 2), outputs=[kept],
+             lossless={"asked": [a, z], "note": "stream copy: it starts on the keyframe at or before from"}, stage="done")
+
+
 def edit_media(job, jdir):
     b = job["bench"]
     b["isolation"] = setup()
@@ -530,6 +573,14 @@ def edit_media(job, jdir):
     try:
         infos = _probe_inputs(job, ws, run)
         spec = dict(b["spec"])
+        if spec.get("lossless"):
+            return lossless_cut(job, ws, jdir, run, infos, spec)
+        if spec.get("beat_sync") and spec.get("music"):
+            b["stage"] = "finding the beats"
+            beats, bpm = music_beats(run, ws, infos[spec["music"]["src"]][0])
+            spec["clips"] = [dict(c) for c in spec.get("clips") or [{"src": next(iter(infos))}]]
+            spec["texts"] = [dict(t) for t in spec.get("texts") or []]
+            b["beats"] = {"bpm": bpm, "found": len(beats), "moved": media_mod().snap_to_beats(spec, infos, beats)}
         r = render_spec(job, ws, jdir, run, infos, spec, b["inputs"], str(spec.get("name") or "edit"))
         b.update(qa=r["qa"], render_s=r["render_s"], seconds_out=r["seconds"], outputs=[{k: r[k] for k in ("name", "path", "bytes")}],
                  **({"captions": r["captions"]} if r.get("captions") else {}))
@@ -540,7 +591,7 @@ def edit_media(job, jdir):
 
 # ── templates: HyperFrames compositions (lib/auto/templates.ts writes them; custom ones come from a repo) ────────────
 
-HF_VERSION, GSAP_VERSION = "0.8.217", "3.12.5"
+HF_VERSION, GSAP_VERSION, LOTTIE_VERSION = "0.8.217", "3.12.5", "5.12.2"
 NODE_DIR, HF_DIR = "/opt/vb-node", "/opt/vb-hyperframes"
 _HF = {"ready": None, "lock": threading.Lock()}
 
@@ -604,16 +655,17 @@ def hf_cli(b, version=HF_VERSION):
     bin_dir = ensure_node(b)
     home = os.path.join(HF_DIR, version)
     cli = os.path.join(home, "node_modules", "hyperframes", "bin", "hyperframes.mjs")
+    lottie = os.path.join(home, "node_modules", "lottie-web", "build", "player", "lottie.min.js")
     with _HF["lock"]:
-        if not os.path.exists(cli):
+        if not os.path.exists(cli) or not os.path.exists(lottie):  # an older install without the Lottie player: again
             def install():
                 os.makedirs(home, exist_ok=True)
-                r = subprocess.run([os.path.join(bin_dir, "npm"), "install", "--prefix", home, "--no-audit", "--no-fund", f"hyperframes@{version}", f"gsap@{GSAP_VERSION}"],
+                r = subprocess.run([os.path.join(bin_dir, "npm"), "install", "--prefix", home, "--no-audit", "--no-fund", f"hyperframes@{version}", f"gsap@{GSAP_VERSION}", f"lottie-web@{LOTTIE_VERSION}"],
                                    capture_output=True, timeout=900, env={**os.environ, "PATH": f"{bin_dir}:{BASE_ENV['PATH']}"})
                 if r.returncode or not os.path.exists(cli):
                     raise ValueError(f"couldn't install HyperFrames {version}: {r.stderr.decode('utf-8', 'replace')[-400:]}")
             shutil.rmtree(home, ignore_errors=True)
-            cached_install(f"hyperframes-{version}-gsap-{GSAP_VERSION}", home, install, b)
+            cached_install(f"hyperframes-{version}-gsap-{GSAP_VERSION}-lottie-{LOTTIE_VERSION}", home, install, b)
     return cli
 
 
@@ -809,6 +861,11 @@ def template_assets(ws, proj, b, version):
     if not os.path.exists(gsap):
         raise ValueError("GSAP isn't in the worker's cache: run the template again (it's installed with HyperFrames)")
     write_as_user(ws, f"{proj}/assets/gsap.min.js", open(gsap, "rb").read())
+    if b.get("lottie"):  # a Lottie sticker: the player from the same cache (installed with HyperFrames)
+        lot = os.path.join(HF_DIR, version, "node_modules", "lottie-web", "build", "player", "lottie.min.js")
+        if not os.path.exists(lot):
+            raise ValueError("lottie-web isn't in the worker's cache: restart the worker to install it")
+        write_as_user(ws, f"{proj}/assets/lottie.min.js", open(lot, "rb").read())
     files = font_css(b.get("font") or "Inter")
     if not files:
         b.setdefault("notes", []).append(f"the font {b.get('font') or 'Inter'} couldn't be fetched: DejaVu Sans stood in")

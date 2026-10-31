@@ -580,3 +580,108 @@ def audiogram(audio, cover, a, z, W, H, title, font_file):
     args += ["-filter_complex", fg, "-map", "[v1]", "-map", "0:a", "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
              "-c:a", "aac", "-b:a", "192k", "-shortest", "audiogram.mp4"]
     return args, files
+
+
+# ── beats (librosa when it's there, else the same idea in numpy: onset strength, tempo by autocorrelation, then the
+# beat grid by dynamic programming, Ellis 2007), and an edit spec moved onto them ────────────────────────────────────
+
+def beat_times(samples, sr):
+    """Beat times (s) and the tempo (BPM) of a mono float signal."""
+    import numpy as np
+    y = np.asarray(samples, dtype=np.float32)
+    if y.size < sr * 2:
+        return [], 0.0
+    try:
+        import librosa  # type: ignore
+        tempo, frames = librosa.beat.beat_track(y=y, sr=sr, units="frames")
+        return [round(float(t), 3) for t in librosa.frames_to_time(frames, sr=sr)], float(np.atleast_1d(tempo)[0])
+    except Exception:  # noqa: BLE001  not installed (the worker's base Python): numpy does it
+        pass
+    hop, n = 256, 1024
+    frames = 1 + (len(y) - n) // hop
+    idx = np.arange(n)[None, :] + hop * np.arange(frames)[:, None]
+    mag = np.log1p(np.abs(np.fft.rfft(y[idx] * np.hanning(n)[None, :], axis=1)) * 10)
+    onset = np.maximum(0, np.diff(mag, axis=0)).sum(axis=1)
+    onset = onset - np.convolve(onset, np.ones(16) / 16, mode="same")
+    onset = np.maximum(onset, 0)
+    if onset.max() <= 0:
+        return [], 0.0
+    onset /= onset.std() + 1e-9
+    fps = sr / hop
+    # tempo: the lag (60-200 BPM) whose autocorrelation is strongest, leaning towards ~120 BPM like a listener does
+    ac = np.correlate(onset, onset, mode="full")[len(onset) - 1:]
+    lags = np.arange(int(fps * 60 / 200), int(fps * 60 / 60) + 1)
+    lags = lags[lags < len(ac)]
+    if not len(lags):
+        return [], 0.0
+    bpm = 60 * fps / lags
+    weight = np.exp(-0.5 * (np.log2(bpm / 120)) ** 2 / 0.9 ** 2)
+    period = float(lags[np.argmax(ac[lags] * weight)])
+    # the grid: each beat's score is its onset plus the best earlier beat about one period back, penalised for drift
+    score, back = onset.astype(np.float64).copy(), np.full(len(onset), -1)
+    lo, hi = int(round(period / 2)), int(round(period * 2))
+    for t in range(lo, len(onset)):
+        prev = np.arange(max(0, t - hi), t - lo + 1)
+        if not len(prev):
+            continue
+        cand = score[prev] - 100 * (np.log((t - prev) / period)) ** 2
+        k = int(np.argmax(cand))
+        if cand[k] > 0:
+            score[t] += cand[k]
+            back[t] = prev[k]
+    t = int(np.argmax(score[-int(period * 2):]) + max(0, len(score) - int(period * 2)))
+    beats = []
+    while t >= 0:
+        beats.append(t)
+        t = back[t]
+    return [round(float((b * hop + n / 2) / sr), 3) for b in reversed(beats)], round(float(60 * fps / period), 1)
+
+
+def snap_to_beats(spec, infos, beats):
+    """The spec's cut points moved onto the nearest beat (within half a beat): a clip ends a little sooner or later
+    (when its source has the room), a photo stays a little longer or shorter; texts start on a beat. Returns how many
+    moved. The music starts at 0 in the edit, so its beat times are the edit's."""
+    if len(beats) < 4:
+        return 0
+    import bisect
+    gap = (beats[-1] - beats[0]) / (len(beats) - 1)
+
+    def nearest(t):
+        i = bisect.bisect_left(beats, t)
+        c = [b for b in beats[max(0, i - 1):i + 1]]
+        b = min(c, key=lambda x: abs(x - t)) if c else t
+        return b if abs(b - t) <= gap / 2 else t
+
+    moved, at = 0, 0.0
+    clips = spec.get("clips") or []
+    for i, c in enumerate(clips):
+        info = infos.get(c.get("src"), ("", {}))[1]
+        speed = num(c.get("speed"), 0.25, 4, 1.0)
+        if info.get("image"):
+            dur = num(c.get("seconds"), 0.5, 60, 3.0)
+        else:
+            a = num(c.get("from"), 0, info.get("duration") or 0, 0.0)
+            b = num(c.get("to"), a + 0.1, info.get("duration") or 0, info.get("duration") or 0)
+            dur = (b - a) / speed
+        end = at + dur
+        if i < len(clips) - 1:
+            want = nearest(end)
+            d = want - end
+            if abs(d) > 0.02:
+                if info.get("image") and dur + d >= 0.5:
+                    c["seconds"] = round(float(dur + d), 3); dur += d; moved += 1
+                elif not info.get("image"):
+                    nb = b + d * speed
+                    if a + 0.3 < nb <= (info.get("duration") or 0):
+                        c["to"] = round(float(nb), 3); dur += d; moved += 1
+        at += dur
+    for t in spec.get("texts") or []:
+        f = num(t.get("from"), 0, 3600, 0)
+        nf = nearest(f) if f > 0 else f
+        if nf != f:
+            span = num(t.get("to"), 0, 3600, 0) - f if t.get("to") is not None else None
+            t["from"] = round(float(nf), 3)
+            if span:
+                t["to"] = round(float(nf + span), 3)
+            moved += 1
+    return moved

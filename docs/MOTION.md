@@ -23,6 +23,18 @@ GSAP (cached), Lottie (`lottie-web`, dotLottie) and Three.js are npm packages a 
 `run` workspace; the sandbox has the network). Keep every scene moving: something changes at least every 2 s, and
 `inspect_media` QA fails frozen stretches.
 
+## Stickers, beats, lossless cuts and formats
+
+- Any template takes `fields.sticker`: `badge` (text), `arrow`, `check`, `follow` (text: the handle), `pop` (a word),
+  or `{kind: "lottie", lottie: "m:<Files id>" | a link}` for a Lottie animation, with `at` (s) and `position`.
+- `edit_video` spec `beat_sync: true` puts cuts and text starts on the music's beats; `lossless: true` cuts one clip
+  with no re-encode.
+- A saved look is a format (`formats`): pass `format` to the factory or `edit_video` instead of repeating the brand,
+  captions, music, logo, sticker and outro (docs/FACTORY.md I).
+- Writing a Remotion scene: clone `https://github.com/remotion-dev/skills` into the `run` workspace first and follow
+  `skills/remotion-best-practices/SKILL.md` and `skills/remotion-markup/SKILL.md` (animate with `useCurrentFrame()` and
+  `interpolate()`, never CSS transitions; seconds to frames with `fps` from `useVideoConfig()`).
+
 ## Editing and finishing (`run` with `tools`)
 
 | Tool | `tools:` | For | Test it passed |

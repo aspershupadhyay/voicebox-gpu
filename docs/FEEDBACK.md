@@ -13,6 +13,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
   lockout, the list and the password at once and writes its log after the reply; storage goes through the Worker's R2
   binding (no signed S3 round trip); the Appwrite SDK is gone from every page; the session check reads its two cached
   lists at once. Keep it that way: nothing slow on the sign-in path or in front of the first paint.
+- **"We need templates for our videos so we save resources"** (and the 20 motion tools list): saved formats (news,
+  explainer, clip), stickers on every template (SVG or any Lottie), beat-synced cuts, lossless trims, Remotion's own
+  skills for models (docs/FACTORY.md I). Of the list, Blender, the path tracer, Jolt, Tweakpane, ComfyUI and OBS were
+  left out on purpose (why: FACTORY.md I and the reply); 3D and WhisperX come later.
 - **"Don't ask for delete permission, there's nothing as such important"**: moving files or folders to the trash and
   deleting posts no longer wait for an approval (the trash keeps 30 days, the nightly dump 14); only deleting files
   for good (`forever`, `delete_media`, `empty_trash`) still asks (`lib/auto/wrap.ts`).
