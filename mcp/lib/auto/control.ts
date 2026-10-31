@@ -24,7 +24,7 @@ export async function mutate<T>(key: string, empty: T, fn: (cur: T) => T | Promi
 /** What waits for the owner's click (Settings → Automation). Each can be switched off there. */
 export const ASK_FIRST = {
   publish_now: "Publishing now (not at a planned time)",
-  delete: "Deleting files, folders or posts",
+  delete: "Deleting files for good (not to the trash)",
   publishing_rules: "Changing the publishing rules or a schedule that publishes",
   over_cap: "Spending past the day's units cap",
   merge_pr: "Merging a pull request",

@@ -13,6 +13,9 @@ for. Read this before touching the dashboard. Newest first. When something here 
   lockout, the list and the password at once and writes its log after the reply; storage goes through the Worker's R2
   binding (no signed S3 round trip); the Appwrite SDK is gone from every page; the session check reads its two cached
   lists at once. Keep it that way: nothing slow on the sign-in path or in front of the first paint.
+- **"Don't ask for delete permission, there's nothing as such important"**: moving files or folders to the trash and
+  deleting posts no longer wait for an approval (the trash keeps 30 days, the nightly dump 14); only deleting files
+  for good (`forever`, `delete_media`, `empty_trash`) still asks (`lib/auto/wrap.ts`).
 - **"Make sure everything we've done so far is written down"**: docs/MIGRATION.md opens with where everything runs.
 
 ## Earlier round (off Appwrite and most of Vercel, 2026-10-30)
