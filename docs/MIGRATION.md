@@ -173,6 +173,10 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    itself; the kernel's websocket now uses the Worker's own), and Cloudflare's bot filter on `*.pages.dev` refuses
    Python's default `Python-urllib` user agent (error 1010), so a worker couldn't fetch its bundle or heartbeat: every
    worker request now says `voicebox-worker/<version>` (`worker/config.py`, worker 3.15.2).
+   **Memory (2026-10-31)**: a Worker has 128 MB, and the server-side download (X, Pinterest, any file link) and
+   `add_media` read a whole file into memory and copied it again, so an 83 MB video ran out and the download stuck at
+   20 %. Both now stream straight into R2 through the binding (`putStream`, a fixed-length stream); a file with no
+   stated size is read whole only up to 40 MB, else the Colab downloader takes it.
    **Left for the owner, by hand**: delete the Appwrite project (Appwrite console → project `voicebox-studio` →
    Settings → Delete project) and the Vercel project (Vercel → the project → Settings → Delete), after a last look
    that nothing there is wanted. Nothing in the studio depends on either any more.

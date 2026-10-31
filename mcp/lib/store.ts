@@ -8,7 +8,7 @@ type R2Obj = { size: number; etag: string; httpEtag: string; uploaded: Date; key
 type R2Body = R2Obj & { body: ReadableStream };
 type R2Bucket = {
   get(key: string): Promise<R2Body | null>; head(key: string): Promise<R2Obj | null>;
-  put(key: string, v: ArrayBuffer | Uint8Array | string, o?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
+  put(key: string, v: ArrayBuffer | Uint8Array | string | ReadableStream, o?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
   delete(keys: string | string[]): Promise<void>;
   list(o: { prefix?: string; cursor?: string; delimiter?: string; limit?: number }): Promise<{ objects: R2Obj[]; truncated: boolean; cursor?: string; delimitedPrefixes: string[] }>;
 };
@@ -79,6 +79,18 @@ export async function putObj(key: string, body: BodyInit, type = typeOf(key)) {
   const signed = await aws().sign(url(key), { method: "PUT", headers: { "Content-Type": type, "X-Amz-Content-Sha256": "UNSIGNED-PAYLOAD" } });
   const r = await fetch(signed.url, { method: "PUT", headers: signed.headers, body: bytes });
   if (!r.ok) throw new Error(`storage PUT ${key}: ${r.status} ${(await r.text()).slice(0, 200)}`);
+}
+
+/** A body of known size straight into the bucket, never held whole in memory (a Worker has 128 MB): through the
+ *  binding with a fixed-length stream. False off Cloudflare (no binding): the caller buffers it instead. */
+export async function putStream(key: string, body: ReadableStream<Uint8Array>, size: number, type = typeOf(key)) {
+  const b = bound();
+  const FLS = (globalThis as { FixedLengthStream?: new (n: number) => TransformStream<Uint8Array, Uint8Array> }).FixedLengthStream;
+  if (!b || !FLS || !(size > 0)) return false;
+  const { readable, writable } = new FLS(size);
+  const piping = body.pipeTo(writable);
+  await Promise.all([b.put(key, readable, { httpMetadata: { contentType: type } }), piping]);
+  return true;
 }
 
 export const putJson = (key: string, value: unknown) => putObj(key, JSON.stringify(value, null, 2), "application/json");
