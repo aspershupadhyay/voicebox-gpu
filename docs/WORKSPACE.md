@@ -1,8 +1,8 @@
 # The shared workspace
 
 One desk for the two of you: every post you're making, its script, caption, files, voiceovers and the conversation about
-it, on both screens at once. It runs on **Appwrite Cloud** (project `voicebox-studio`, Singapore region, GitHub Student
-organization). Voiceovers and voices stay in **R2**, which is also the backup for workspace media.
+it, on both screens at once. Posts, comments, activity, the file list and accounts live in **Postgres on Neon**; every
+file, voiceover and voice in **R2**; the app on **Cloudflare** at https://voiceboxstudio.pages.dev (docs/MIGRATION.md).
 
 ## What's where
 
@@ -12,15 +12,15 @@ organization). Voiceovers and voices stay in **R2**, which is also the backup fo
 | **Post** (drawer) | Title, stage, **Publish to** (one row per space, each with its own stage, publish time and live link; *Cross-post to…* adds another; the post's stage is its furthest-behind target, so it's Posted only when every target is), publish time, owner, script (with **Voiceover** → opens the voice page with the script loaded; the result is attached back to the post), caption with per-platform character counts, media, notes, discussion. Edits save as you type. |
 | **Files** | A Drive-like file manager. Five category folders (Videos, Images, Audio, Docs & scripts, Other) file everything by kind on their own; your folders sit beside them; Recent shows the newest. Deleting goes to the Trash for 30 days (Undo, Restore, Delete forever, Empty trash). Uploads show as cards at once and in a panel. Over every upload (images, videos up to 2 GB, audio, docs) and everything the GPU made, in folders (six colours, nested). Upload with the button, by dropping files anywhere (or onto a folder) or by pasting a photo, files or a link. Drag cards onto a folder or the path to move them; right-click or ⋮ for open, rename (F2), move, cut, star, download, copy link and delete. Search covers every folder; filter by type, source, date and who added it; grid or list. Keys: ⌘F search, ⌘A select all, ⌘C copy links, ⌘X then ⌘V move, Delete, Esc. |
 
-Everything is live (Appwrite Realtime): when one of you moves a card, edits a script or comments, the other sees it within
+Everything is live (Neon Realtime): when one of you moves a card, edits a script or comments, the other sees it within
 a second. **Activity** (top right of Posts) says who did what.
 
 ## Accounts
 
-Each person signs in with their own email and password (**Create an account** on the sign-in page). The Appwrite project
-allows up to **four** accounts (Auth → Security → Users limit); a fifth sign-up is refused. Signing in puts you on the
-`studio` team, which is what grants access to the data. To lock it down further, set `WORKSPACE_EMAILS` on Vercel; people
-listed in **Settings → Claude / MCP access → Workspace people** are always let in on top of it.
+Each person signs in with their own email and password (**Create an account** on the sign-in page, for an email on the
+list). Accounts are rows in Postgres with scrypt password hashes (`mcp/lib/users.ts`). Who may sign in: the people in
+**Settings → Security** plus `WORKSPACE_EMAILS` on the Worker. The key icon there changes your password, or sets one for
+a teammate who has none yet.
 
 **Claude / MCP:** any number of connections. In the same Settings card, up to 4 GitHub usernames may connect with
 "Continue with GitHub" (besides `OWNER_GITHUB`); anyone with the access token can connect too.
@@ -37,28 +37,23 @@ It opens full-screen with a bottom tab bar on phones, and starts on Home.
 
 ## Storage and the R2 backup
 
-Files upload straight from the browser to Appwrite Storage (chunked, so large videos resume after a network blip). Each
-file then gets a view token (so previews and video play anywhere) and, with **Settings → Back up uploads to R2** on, a copy
-in your R2 bucket under `workspace/media/`. Files over ~180 MB skip the automatic copy (a serverless function holds the
-file in memory to copy it).
-
-Watch the plan's storage and bandwidth in the Appwrite console. If the student plan ends: everything in R2 is yours,
-and the code paths to R2 (`mcp/lib/store.ts`) are unchanged.
+Files upload straight from the browser to R2 (`workspace/media/`) with a progress bar, then get a row with a token so
+previews and video play anywhere (`/api/m/<token>/<key>`, `mcp/lib/r2files.ts`). Uploads stop at `STORAGE_CAP_GB` (9 GB
+of R2's free 10); Settings → Usage shows every free tier. Each night the database is dumped to Neon storage and the
+trained voices copied there too (`mcp/lib/backup.ts`).
 
 ## Server configuration
 
 | Variable | Where | What |
 |---|---|---|
-| `APPWRITE_API_KEY` | Vercel | Server key `dashboard-server` (scopes: users.read, teams.read/write, tables.read, rows.read/write, buckets.read, files.read/write, tokens.read/write). Needed to put people on the team, mint file tokens, back up to R2 and for the MCP workspace tools. |
-| `NEXT_PUBLIC_APPWRITE_ENDPOINT` / `NEXT_PUBLIC_APPWRITE_PROJECT` | optional | Default to `https://sgp.cloud.appwrite.io/v1` and `voicebox-studio`. |
+| `DATABASE_URL_POOLED` | Worker | Neon's pooled connection string (posts, comments, activity, media, users). |
+| `NEON_REALTIME_URL` / `NEON_REALTIME_SECRET` | Worker | The live board. |
 | `WORKSPACE_EMAILS` | optional | Comma-separated allow-list. |
 
-Folders, where each file sits and stars are not in Appwrite: they're one small JSON file in R2 (`workspace/files.json`,
+Folders, where each file sits and stars are not in the database: they're one small JSON file in R2 (`workspace/files.json`,
 `mcp/lib/files.ts`), read fresh before every change. The page re-reads it every 20 s and when the tab comes back.
 
-Schema (database `studio`): `posts`, `comments`, `activity`, `media` tables, team-level permissions for `team:studio`;
-storage bucket `media` (2 GB per file, encrypted, antivirus, image previews). The dashboard's web platform is registered
-for `voiceboxstudio.vercel.app`, `mcp-eta-tawny.vercel.app` and `localhost`; add a platform in the Appwrite console if you add a custom domain.
+Schema: `mcp/db/001_workspace.sql` (`posts`, `comments`, `activity`, `media`) and `mcp/db/002_users.sql` (`users`).
 
 ## From Claude (MCP)
 
@@ -66,6 +61,6 @@ The MCP server covers the workspace too: `workspace_board`, `get_post`, `create_
 `content_calendar`, `workspace_media`, `add_media` (from a link), `upload_media` (file bytes), `delete_media`, `attach_voiceover`, `workspace_activity`, `workspace_members`,
 the Files tools (`list_files`, `get_file`, `create_folder`, `update_folder`, `delete_folder`, `move_files`, `rename_file`, `star_files`, `delete_files`, `restore_files`, `empty_trash`; see docs/API.md), and
 `voice_lines` with `post_id` to voice a post's script. Posts take `targets` (spaces such as `ig_reel`, `yt_short`, `x_post`) to cross-post, and `workspace_board` filters by `space`.
-Where each post goes is stored in R2 (`workspace/spaces.json`) next to the Appwrite post, whose `platforms` follow it.
+Where each post goes is stored in R2 (`workspace/spaces.json`) next to the post, whose `platforms` follow it.
 Ask things like "plan three Shorts for next week about Git and
 write the scripts", "voice the Docker post in my voice", or "what did Ravi change today?".

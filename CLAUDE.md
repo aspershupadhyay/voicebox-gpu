@@ -47,11 +47,12 @@ many agents at once), in order. A new tool goes in
 `lib/auto/tools.ts` with an action enum and a worked example (`scripts/check_tools.py`); anything risky gets a gate in
 `wrap.ts`.
 
-## Moving off Appwrite
+## Where things run
 
-`docs/MIGRATION.md` is the plan (R2 for files, Postgres on Neon for data (`lib/db.ts`), the API and MCP on a Cloudflare Worker, Vercel for
-the pages), with its rules: one phase per PR, every switch behind a setting, nothing deleted from Appwrite until a week
-on the new setup, and the trained voices in R2 (`models/`, `datasets/`) never touched. Read it before any of it.
+Done moving (2026-10-31, `docs/MIGRATION.md`): the app on a Cloudflare Worker, files in R2 (the Worker reads it through its
+`BUCKET` binding, `lib/store.ts`), posts, comments, activity, file rows and accounts in Postgres on Neon (`lib/db.ts`,
+`lib/data.ts`, `lib/users.ts`), backups in Neon storage, deploys from GitHub. Appwrite and Vercel are not used by any
+code. The trained voices in R2 (`models/`, `datasets/`) are never touched.
 
 ## Inference work
 
@@ -69,18 +70,16 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   Cloudflare live timer's secret, kept only as a SHA-256; `/api/files/upload`, `/complete` and `/api/files/carousels` also take an
   upload key, which can save files and arrange carousels and nothing else: no reading other files, no deleting). The
   share page `/s/<token>` is public by design (lib/shares.ts): it shows only what one unexpired, unrevoked link names,
-  read-only; the token is kept only as a SHA-256 and uploads are served by Appwrite tokens that expire with the link.
+  read-only; the token is kept only as a SHA-256 and files are served by hour-long R2 links made on each visit.
   An upload link `/u/<token>` (and `/api/u/<token>`, lib/auto/uplinks.ts) is public by design too: a signed, expiring
   claim that can only start and finish uploads into its one folder, up to its file cap; it reads and lists nothing.
-  A Files upload kept in R2 is served by `/api/m/<token>/<key>` (lib/r2files.ts), public by design like an Appwrite file
-  token: the token is an HMAC of the key kept only in team-only rows, and it serves `workspace/media/` and nothing else.
-  Appwrite's webhook `/api/hooks/appwrite` (lib/db.ts) takes only deliveries signed with a key derived from the database
-  URL (HMAC-SHA1 of the URL and body); it mirrors workspace rows into Postgres and, signed the same way, runs the copy.
-  With `DB_BACKEND=neon` the browser reads and writes rows through `/api/ws/rows` and watches them through sealed Neon
-  Realtime queries from `/api/ws/live` (signed-in only; the query is built on the server from allowed columns, the
-  Realtime secret never leaves it).
-  With `AUTH_BACKEND=neon`, `/api/login` checks email and password against Postgres (`lib/users.ts`: scrypt hashes,
-  the same lockout and invite list); the password is never stored, only its hash. `/api/cron/sweep`,
+  A Files upload is served by `/api/m/<token>/<key>` (lib/r2files.ts), public by design: the token is an HMAC of the
+  key kept only in team-only rows, and it serves `workspace/media/` and nothing else.
+  The browser reads and writes rows through `/api/ws/rows` and watches them through sealed Neon Realtime queries from
+  `/api/ws/live` (signed-in only; the query is built on the server from allowed columns, the Realtime secret never
+  leaves it). `/api/login` checks email and password against Postgres (`lib/users.ts`: scrypt hashes, the same lockout
+  and invite list); the password is never stored, only its hash. Settings → Security sets a password (signed-in only):
+  your own with the current one, or a teammate's that has none yet, never replacing someone else's. `/api/cron/sweep`,
   `/api/cron/backup` and `/api/cron/live` take `WORKER_SECRET`, `CRON_SECRET`, the Cloudflare timer's secret (kept as a
   SHA-256), or GitHub's OIDC token for `sweep.yml` on main
   (`lib/cronauth.ts`: signed by GitHub, audience `voicebox-cron`, this repository's workflow only).

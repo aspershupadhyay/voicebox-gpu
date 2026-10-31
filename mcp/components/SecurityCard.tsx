@@ -1,13 +1,13 @@
 "use client";
 // Settings → Security: who can get into the studio (and remove them), how this browser is signed in, "sign out
 // everywhere", and the last sign-ins, failed ones included. Server side: lib/access.ts, lib/session.ts.
-import { CheckCircle, GithubLogo, ShieldCheck, SignOut, UserPlus, WarningCircle, X } from "@phosphor-icons/react";
-import { useCallback, useEffect, useState } from "react";
+import { CheckCircle, GithubLogo, Key, ShieldCheck, SignOut, UserPlus, WarningCircle, X } from "@phosphor-icons/react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
 import { Info } from "./Info";
 
-type Person = { email: string; name: string | null; on_vercel: boolean; invited: boolean; member: boolean };
+type Person = { email: string; name: string | null; on_vercel: boolean; invited: boolean; member: boolean; no_password?: boolean };
 type Sec = { session: { how: string; who: string; since: number; until: number } | null; me: string | null; people: Person[]; github: string[]; session_days: number;
   log: { at: number; ok: boolean; who: string; how: string; ip: string; agent: string }[] };
 
@@ -21,13 +21,16 @@ export default function SecurityCard({ part }: { part?: "people" | "device" | "l
   const [d, setD] = useState<Sec | null>(null);
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pw, setPw] = useState<{ email: string; next: string; current: string } | null>(null); // the set-password form, open on one person
   const load = useCallback(() => { api<Sec>("security").then(setD).catch(() => {}); }, []);
   useEffect(load, [load]);
 
   async function act(path: string, body: object, ok: string) {
     setBusy(true);
-    try { await api(`security/${path}`, { body }); toast(ok, "ok"); load(); } catch (e) { toast((e as Error).message, "bad"); }
+    let done = false;
+    try { await api(`security/${path}`, { body }); toast(ok, "ok"); load(); done = true; } catch (e) { toast((e as Error).message, "bad"); }
     setBusy(false);
+    return done;
   }
 
   return (
@@ -41,19 +44,44 @@ export default function SecurityCard({ part }: { part?: "people" | "device" | "l
 
       <div className="stack" style={{ gap: 0, marginTop: 8 }}>
         {(d?.people ?? []).map((p) => (
-          <div key={p.email} className="sec-row">
+          <Fragment key={p.email}>
+          <div className="sec-row">
             <span className="avatar sm">{(p.name ?? p.email).slice(0, 2).toUpperCase()}</span>
             <div style={{ minWidth: 0 }}>
               <div className="small" style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{p.name ?? p.email}{p.email === d?.me ? <span className="faint"> · you</span> : null}</div>
-              <div className="tiny dim">{p.email} · {p.member ? "member" : "invited, not signed in yet"}{p.on_vercel ? " · set on Vercel" : ""}</div>
+              <div className="tiny dim">{p.email} · {p.member ? "member" : "invited, not signed in yet"}{p.no_password ? " · no password yet" : ""}{p.on_vercel ? " · set on the Worker" : ""}</div>
             </div>
+            <span className="row" style={{ gap: 4 }}>
+            {p.email === d?.me || p.no_password ? (
+              <button className="icon-btn" title={p.email === d?.me ? "Change your password" : `Set a password for ${p.email}`} aria-label={p.email === d?.me ? "Change your password" : `Set a password for ${p.email}`}
+                disabled={busy} onClick={() => setPw(pw?.email === p.email ? null : { email: p.email, next: "", current: "" })}><Key size={15} /></button>
+            ) : null}
             {p.email !== d?.me && !p.on_vercel ? (
               <button className="icon-btn danger-h" title={`Remove ${p.email}`} disabled={busy} onClick={async () => {
                 if (await confirm({ title: `Remove ${p.email}?`, body: "They're signed out everywhere within a minute and can't sign back in until you add them again.", confirm: "Remove", danger: true }))
                   act("remove", { email: p.email }, `${p.email} removed`);
               }}><X size={15} /></button>
-            ) : <span />}
+            ) : null}
+            </span>
           </div>
+          {pw?.email === p.email && (
+            <form className="stack" style={{ gap: 8, padding: "4px 0 12px 40px" }} onSubmit={(e) => {
+              e.preventDefault();
+              const mine = p.email === d?.me;
+              act("password", mine && !p.no_password ? { email: p.email, password: pw.next, current: pw.current } : { email: p.email, password: pw.next },
+                mine ? "Password saved" : `Password set for ${p.email}`).then((ok) => { if (ok) setPw(null); });
+            }}>
+              {p.email === d?.me && !p.no_password && <input type="password" autoComplete="current-password" aria-label="Current password" placeholder="Current password"
+                value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />}
+              <input type="password" autoComplete="new-password" aria-label="New password" placeholder="New password (8+ characters)" minLength={8}
+                value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} />
+              <div className="row" style={{ gap: 8 }}>
+                <button className="primary sm" disabled={busy || pw.next.length < 8}>Save password</button>
+                <button type="button" className="ghost sm" onClick={() => setPw(null)}>Cancel</button>
+              </div>
+            </form>
+          )}
+          </Fragment>
         ))}
         {d?.github.length ? <div className="sec-row"><GithubLogo size={20} /><div className="small">GitHub sign-in: <span className="mono">{d.github.join(", ")}</span></div><span /></div> : null}
       </div>

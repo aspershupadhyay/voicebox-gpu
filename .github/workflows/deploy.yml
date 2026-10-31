@@ -31,7 +31,6 @@ jobs:
         run: python3 scripts/build_playbook.py
       - name: Build for Workers
         working-directory: mcp
-        env: { NEXT_PUBLIC_FILES_BACKEND: r2 }
         run: npm ci && npx opennextjs-cloudflare build
       - name: Deploy
         working-directory: mcp

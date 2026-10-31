@@ -1,5 +1,5 @@
 "use client";
-// Files: a file manager like Google Drive over everything you have. Uploads (the shared workspace, Appwrite) and
+// Files: a file manager like Google Drive over everything you have. Uploads (the shared workspace, R2) and
 // generated items (takes, subtitles, images and videos the GPU made, in R2) sit side by side. Five category folders
 // file everything by kind on their own (Videos, Images, Audio, Docs & scripts, Other); your folders sit beside them
 // (lib/filetree.ts). Upload with the button, by dropping files anywhere or by pasting (a photo, files or a link); drag

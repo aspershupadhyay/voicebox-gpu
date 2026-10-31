@@ -1,5 +1,5 @@
 // A Files upload kept in R2 (lib/r2files.ts): /api/m/<token>/<key>[?mode=download|preview&width=&output=webp|png|jpg].
-// Public by design, like an Appwrite file token: the token is an HMAC of the key, kept only in team-only rows, so
+// Public by design: the token is an HMAC of the key, kept only in team-only rows, so
 // <img>/<video> and the worker can load it without a session. It only serves workspace/media/; nothing else in the
 // bucket. Answers with a redirect to a presigned R2 link (bytes never pass through here) that the browser and the CDN
 // keep for an hour; a photo's resized copy is made once, the first time it's asked for.

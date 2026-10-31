@@ -6,7 +6,7 @@
 // With `carousel` (a carousel's id or a name; a new name makes one) and `position` (1 = first), a post's ten photos
 // land as one stack on the Files page, in that order whatever order the uploads finish in (lib/carousels.ts).
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { addMediaFromR2, mimeFor } from "./appwrite";
+import { addMediaFromR2, mimeFor } from "./data";
 import { after } from "next/server";
 import { joinCarousel } from "./carousels";
 import { assertRoom } from "./r2files";
@@ -110,7 +110,7 @@ export async function completeUpload(ticket: string, actor: { id?: string; name:
   return { media: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: Math.round(head.size / 1e5) / 10, folder: t.d, post_id: t.p, carousel, already: false };
 }
 
-/** Have Appwrite make (and cache) an image's card and screen sizes now, so the first look in Files is instant. */
+/** Make (and cache) an image's card and screen sizes now, so the first look in Files is instant. */
 function warmPreviews(m: { kind: string; file_id: string; token: string | null }) {
   if (m.kind !== "image" || !m.token || m.file_id.startsWith("r2_")) return; // an R2 photo's sizes are made on first look
   const urls = [480, 1280, 1920].map((w) => fileUrl(m, "preview", w));

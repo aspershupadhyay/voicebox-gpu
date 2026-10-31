@@ -135,10 +135,11 @@ export async function GET(req: Request, ctx: Ctx) {
       const acc = await import("@/lib/access");
       const s = await getSettings();
       const env = (process.env.WORKSPACE_EMAILS ?? "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
-      const members = await import("@/lib/appwrite").then((m) => (m.hasPeople() ? m.listMembers() : [])).catch(() => []);
+      const [members, nopass] = await Promise.all([import("@/lib/data").then((m) => m.listMembers()).catch(() => []),
+        import("@/lib/users").then((u) => u.withoutPassword()).catch(() => [] as string[])]);
       const emails = [...new Set([...env, ...s.workspace_emails, ...members.map((m) => m.email.toLowerCase())])];
       const people = emails.map((email) => ({ email, name: members.find((m) => m.email.toLowerCase() === email)?.name ?? null,
-        on_vercel: env.includes(email), invited: s.workspace_emails.includes(email), member: members.some((m) => m.email.toLowerCase() === email) }));
+        on_vercel: env.includes(email), invited: s.workspace_emails.includes(email), member: members.some((m) => m.email.toLowerCase() === email), no_password: nopass.includes(email) }));
       const { allowedLogins } = await import("@/lib/github");
       return Response.json({ session: await sessionInfo(), me: (await currentUser())?.email ?? null, people, github: await allowedLogins(),
         log: await acc.signInLog(), session_days: (await import("@/lib/session")).SESSION_DAYS });
@@ -594,6 +595,13 @@ export async function POST(req: Request, ctx: Ctx) {
     if (a === "security") {
       const acc = await import("@/lib/access");
       if (b === "signout-all") { await acc.signOutEverywhere(); return Response.json({ ok: true }); }
+      if (b === "password") {
+        // your own password (with the current one), or a teammate's that has none yet: signed-in people only
+        const me = await currentUser();
+        if (!me) return Response.json({ error: "sign in with your account first" }, { status: 403 });
+        const why = await (await import("@/lib/users")).setPassword(me.email, String(body.email ?? me.email), String(body.password ?? ""), body.current === undefined ? undefined : String(body.current));
+        return why ? Response.json({ error: why }, { status: 400 }) : Response.json({ ok: true });
+      }
       const email = String(body.email ?? "").trim().toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return Response.json({ error: "a valid email, please" }, { status: 400 });
       const s = await getSettings();
@@ -601,10 +609,9 @@ export async function POST(req: Request, ctx: Ctx) {
       if (b === "remove") {
         if (email === (await currentUser())?.email.toLowerCase()) return Response.json({ error: "you can't remove yourself" }, { status: 400 });
         if ((process.env.WORKSPACE_EMAILS ?? "").toLowerCase().split(",").map((x) => x.trim()).includes(email))
-          return Response.json({ error: "this email is in WORKSPACE_EMAILS on Vercel: remove it there" }, { status: 400 });
+          return Response.json({ error: "this email is in WORKSPACE_EMAILS on the Worker: remove it there" }, { status: 400 });
         await updateSettings({ workspace_emails: s.workspace_emails.filter((x) => x !== email) });
-        const { hasPeople, removeMember } = await import("@/lib/appwrite");
-        if (hasPeople()) await removeMember(email);
+        await (await import("@/lib/data")).removeMember(email);
         await acc.allowedEmails(true);
         return Response.json({ ok: true });
       }

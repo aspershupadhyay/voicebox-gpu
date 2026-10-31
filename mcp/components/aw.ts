@@ -1,78 +1,58 @@
 "use client";
-// Browser side of the shared workspace: one Appwrite client, plus useLive() — a table that stays in sync over Realtime.
-// With DB_BACKEND=neon (getMe().db, docs/MIGRATION.md phase 2) rows are read and written through /api/ws/rows and kept
-// live by a sealed Neon Realtime query, closed while nobody's looking so the database can sleep. row* and useLive pick.
-import { Account, Channel, Client, ID, Query, Realtime, Storage, TablesDB, type Models } from "appwrite";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AW, fromPg, type Member } from "@/lib/workspace";
+// Browser side of the shared workspace: rows are read and written through /api/ws/rows (Postgres on Neon) and kept live
+// by a sealed Neon Realtime query, closed while nobody's looking so the database can sleep. Sign-in posts to /api/login.
+import { useCallback, useEffect, useState } from "react";
+import { fromPg, type Member } from "@/lib/workspace";
 
-let sdk: { client: Client; account: Account; tables: TablesDB; storage: Storage; realtime: Realtime } | null = null;
+/** Row queries as JSON strings ({method, attribute, values}), checked column by column on the server (lib/db.ts). */
+const qy = (method: string, attribute?: string, values?: unknown[]) => JSON.stringify({ method, ...(attribute ? { attribute } : {}), ...(values ? { values } : {}) });
+export const Query = {
+  equal: (attribute: string, value: unknown) => qy("equal", attribute, Array.isArray(value) ? value : [value]),
+  notEqual: (attribute: string, value: unknown) => qy("notEqual", attribute, [value]),
+  lessThan: (attribute: string, value: unknown) => qy("lessThan", attribute, [value]),
+  greaterThan: (attribute: string, value: unknown) => qy("greaterThan", attribute, [value]),
+  isNull: (attribute: string) => qy("isNull", attribute),
+  isNotNull: (attribute: string) => qy("isNotNull", attribute),
+  orderAsc: (attribute: string) => qy("orderAsc", attribute),
+  orderDesc: (attribute: string) => qy("orderDesc", attribute),
+  limit: (n: number) => qy("limit", undefined, [n]),
+};
 
-export function aw() {
-  if (!sdk) {
-    const client = new Client().setEndpoint(AW.endpoint).setProject(AW.project);
-    sdk = { client, account: new Account(client), tables: new TablesDB(client), storage: new Storage(client), realtime: new Realtime(client) };
-  }
-  return sdk;
-}
-export { ID, Query };
-
-/** Sign in: with accounts in Postgres (AUTH_BACKEND=neon) the server checks the password itself; otherwise Appwrite
- *  signs in and its short-lived JWT is traded for the dashboard's own cookie (who you are, for attribution).
- *  With a name it's a sign-up: the server checks the invite list first and creates the account (api/login). */
+/** Sign in, or with a name sign up (the server checks the invite list first). */
 export async function signIn(email: string, password: string, name?: string) {
-  // accounts in Postgres (AUTH_BACKEND=neon): straight to the server, no Appwrite session
-  const own = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+  const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(name !== undefined ? { signup: { name, email, password } } : { email, password }) });
-  const res = await own.json().catch(() => ({}));
-  if (own.ok && res.user) return res as { user: { id: string; name: string; email: string }; workspace: boolean };
-  if (!(own.status === 409 && res.use === "appwrite") && !(name !== undefined && own.ok)) throw new Error(res.error || "Sign-in failed");
-  if (name !== undefined) return signInAppwrite(email, password, name, res);
-  return signInAppwrite(email, password);
-}
-
-async function signInAppwrite(email: string, password: string, name?: string, signedUp?: { create?: string }) {
-  const { account } = aw();
-  await account.deleteSession({ sessionId: "current" }).catch(() => {});
-  if (name !== undefined && signedUp?.create === "client") await account.create({ userId: ID.unique(), email, password, name: name || email.split("@")[0] });
-  await account.createEmailPasswordSession({ email, password });
-  const { jwt } = await account.createJWT();
-  const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jwt }) });
-  const out = await r.json();
-  if (!r.ok) { await account.deleteSession({ sessionId: "current" }).catch(() => {}); throw new Error(out.error || "Sign-in failed"); }
-  return out as { user: { id: string; name: string; email: string }; workspace: boolean };
+  const res = await r.json().catch(() => ({}));
+  if (!r.ok || !res.user) throw new Error(res.error || "Sign-in failed");
+  meCache = null;
+  return res as { user: { id: string; name: string; email: string }; workspace: boolean };
 }
 
 export async function signOut() {
   (await import("./cache")).clearCache();
-  await aw().account.deleteSession({ sessionId: "current" }).catch(() => {});
+  meCache = null;
   await fetch("/api/login", { method: "DELETE" });
 }
 
 type Me = { id: string; name: string; email: string };
-type MeState = { user: Me | null; workspace: boolean; session: boolean; db: "appwrite" | "neon"; auth: "appwrite" | "neon" };
+type MeState = { user: Me | null; workspace: boolean; session: boolean };
 let meCache: Promise<MeState> | null = null;
 
 export function getMe() {
-  meCache ??= (async () => {
-    const r = await fetch("/api/ws/me").then((x) => x.json()).catch(() => ({ user: null, workspace: false }));
-    // signed in with an account in Postgres, the dashboard's cookie is the whole session; else Appwrite's is needed too
-    const session = r.auth === "neon" ? !!r.user : await aw().account.get().then(() => true).catch(() => false);
-    return { user: r.user ?? null, workspace: !!r.workspace, session, db: r.db === "neon" ? "neon" : "appwrite", auth: r.auth === "neon" ? "neon" : "appwrite" } as MeState;
-  })();
+  meCache ??= fetch("/api/ws/me").then((x) => x.json()).catch(() => ({ user: null, workspace: false }))
+    .then((r) => ({ user: r.user ?? null, workspace: !!r.workspace, session: !!r.user }));
   return meCache;
 }
 
-/** The signed-in person (from our cookie) and whether this browser also holds an Appwrite session (needed for live data). */
+/** The signed-in person (from the dashboard's cookie). */
 export function useMe() {
   const [me, setMe] = useState<MeState | null>(null);
   useEffect(() => { getMe().then(setMe); }, []);
   return me;
 }
 
-// ── one row at a time, from whichever database leads
+// ── one row at a time
 
-const onNeon = async () => (await getMe()).db === "neon";
 async function wsRows<T>(method: string, path: string, body?: unknown): Promise<T> {
   const r = await fetch(`/api/ws/rows/${path}`, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
   const out = await r.json().catch(() => ({}));
@@ -80,19 +60,10 @@ async function wsRows<T>(method: string, path: string, body?: unknown): Promise<
   return out as T;
 }
 type Data = Record<string, unknown>;
-export async function rowGet<T>(table: string, id: string): Promise<T> {
-  return (await onNeon()) ? wsRows<T>("GET", `${table}/${id}`) : (aw().tables.getRow({ databaseId: AW.db, tableId: table, rowId: id }) as Promise<T>);
-}
-export async function rowCreate<T>(table: string, data: Data): Promise<T> {
-  return (await onNeon()) ? wsRows<T>("POST", table, { data }) : (aw().tables.createRow({ databaseId: AW.db, tableId: table, rowId: ID.unique(), data }) as Promise<T>);
-}
-export async function rowUpdate<T>(table: string, id: string, data: Data): Promise<T> {
-  return (await onNeon()) ? wsRows<T>("PATCH", `${table}/${id}`, { data }) : (aw().tables.updateRow({ databaseId: AW.db, tableId: table, rowId: id, data }) as Promise<T>);
-}
-export async function rowDelete(table: string, id: string) {
-  if (await onNeon()) await wsRows("DELETE", `${table}/${id}`);
-  else await aw().tables.deleteRow({ databaseId: AW.db, tableId: table, rowId: id });
-}
+export const rowGet = <T>(table: string, id: string) => wsRows<T>("GET", `${table}/${id}`);
+export const rowCreate = <T>(table: string, data: Data) => wsRows<T>("POST", table, { data });
+export const rowUpdate = <T>(table: string, id: string, data: Data) => wsRows<T>("PATCH", `${table}/${id}`, { data });
+export async function rowDelete(table: string, id: string) { await wsRows("DELETE", `${table}/${id}`); }
 
 /** One line in the shared activity feed ("Asha moved 'Rust in 60s' to Review"). Never throws. */
 export async function logActivity(postId: string | null, verb: string, text = "") {
@@ -112,24 +83,21 @@ export function useMembers() {
   return m;
 }
 
-type RowLike = Models.Row & { $id: string };
+type RowLike = { $id: string; $createdAt: string; $updatedAt: string };
 
 /**
  * Rows of one table, kept live: a first list, then every create/update/delete from either of you lands within a second.
- * `match` filters realtime events client-side the same way `queries` filter the first list.
+ * (`_match` is kept for the callers: the server applies `queries` to the live rows too.)
  */
-export function useLive<T extends RowLike>(table: string, queries: string[], match: (row: T) => boolean = () => true, deps: unknown[] = []) {
+export function useLive<T extends RowLike>(table: string, queries: string[], _match: (row: T) => boolean = () => true, deps: unknown[] = []) {
   const [rows, setRows] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const matchRef = useRef(match);
-  matchRef.current = match;
   const key = JSON.stringify([table, queries, ...deps]);
 
   const reload = useCallback(async () => {
     try {
-      if (await onNeon()) setRows((await wsRows<{ rows: T[] }>("GET", `${table}?q=${encodeURIComponent(JSON.stringify(queries))}`)).rows);
-      else setRows((await aw().tables.listRows<T>({ databaseId: AW.db, tableId: table, queries })).rows);
+      setRows((await wsRows<{ rows: T[] }>("GET", `${table}?q=${encodeURIComponent(JSON.stringify(queries))}`)).rows);
       setError("");
     } catch (e) {
       setError((e as Error).message);
@@ -141,33 +109,8 @@ export function useLive<T extends RowLike>(table: string, queries: string[], mat
 
   useEffect(() => {
     setLoading(true);
-    let stop = () => {};
-    let dead = false;
-    getMe().then((me) => {
-      if (dead) return;
-      stop = me.db === "neon" ? liveFromNeon<T>(table, queries, setRows, setLoading, setError, reload) : liveFromAppwrite();
-    });
-    return () => { dead = true; stop(); };
-
-    function liveFromAppwrite() {
-      reload();
-      let sub: { unsubscribe: () => Promise<void> } | null = null;
-      aw().realtime.subscribe(Channel.tablesdb(AW.db).table(table).row(), (ev) => {
-        const row = ev.payload as T;
-        const del = ev.events.some((e) => e.endsWith(".delete"));
-        setRows((cur) => {
-          const rest = cur.filter((r) => r.$id !== row.$id);
-          if (del || !matchRef.current(row)) return rest;
-          const i = cur.findIndex((r) => r.$id === row.$id);
-          if (i < 0) return [row, ...cur];
-          const next = cur.slice(); next[i] = row; return next;
-        });
-      }).then((s) => { if (dead) s.unsubscribe(); else sub = s; }).catch(() => {});
-      // when the tab comes back (laptop lid, phone lock) the socket may have missed events: refetch once
-      const onVis = () => { if (document.visibilityState === "visible") reload(); };
-      document.addEventListener("visibilitychange", onVis);
-      return () => { sub?.unsubscribe(); document.removeEventListener("visibilitychange", onVis); };
-    }
+    const stop = liveFromNeon<T>(table, queries, setRows, setLoading, setError, reload);
+    return stop;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, reload, table]);
 
@@ -237,9 +180,6 @@ function liveFromNeon<T>(table: string, queries: string[], setRows: (r: T[]) => 
     removeEventListener("keydown", onTouch);
   };
 }
-
-export const tables = () => aw().tables;
-export const db = AW.db;
 
 export function timeAgo(iso: string) {
   const s = (Date.now() - Date.parse(iso)) / 1000;

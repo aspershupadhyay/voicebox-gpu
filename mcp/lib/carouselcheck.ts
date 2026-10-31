@@ -2,7 +2,7 @@
 // the original, so a 12 MB photo is never downloaded whole), and near-duplicates (a 64-bit difference hash of a tiny
 // copy, compared pairwise). What each file measured is kept in R2 (workspace/carousel-checks/<media id>.json): files
 // don't change, so a carousel is measured once.
-import { getMedia } from "./appwrite";
+import { getMedia } from "./data";
 import { getJson, putJson } from "./store";
 import { fileUrl, type Media } from "./workspace";
 

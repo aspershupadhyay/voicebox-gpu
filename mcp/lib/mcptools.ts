@@ -1,5 +1,5 @@
 // Voicebox tools: everything on the dashboard, as tools (served by the MCP route, app/api/mcp/route.ts). The Colab GPU worker (Kokoro, Chatterbox, Orpheus, Qwen TTS,
-// Whisper subtitles, Resemble Enhance clean-up, Z-Image / Qwen-Image stills) plus the shared workspace in Appwrite
+// Whisper subtitles, Resemble Enhance clean-up, Z-Image / Qwen-Image stills) plus the shared workspace (Postgres on Neon, files in R2)
 // (posts and their scripts, calendar, comments, media, activity), so an assistant can plan, write, voice and file a post.
 import type { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
@@ -11,7 +11,7 @@ import { describeProfile, profileFor, withProfile } from "@/lib/profiles";
 import { listDataset } from "@/lib/datasets";
 import { listModels } from "@/lib/voicemodel";
 import {
-  addComment, createPost, deletePost, getPost, hasKey, linkJob, listActivity, listComments, listMedia, listMembers, listPosts, postsBetween, updatePost, hasWorkspace, addMediaBytes, deleteMediaRow, mimeFor } from "@/lib/appwrite";
+  addComment, createPost, deletePost, getPost, linkJob, listActivity, listComments, listMedia, listMembers, listPosts, postsBetween, updatePost, hasWorkspace, addMediaBytes, deleteMediaRow, mimeFor } from "@/lib/data";
 import { SPACE_IDS, spaceName, targetsOf, type TargetMap } from "@/lib/spaces";
 import { dropTargets, getTargets, setTargets } from "@/lib/spacestore";
 import { fileUrl, PLATFORMS as POST_PLATFORMS, STATUSES, type Post } from "@/lib/workspace";
@@ -744,7 +744,7 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     },
   );
 
-  // ── shared workspace (Appwrite): the same posts, calendar, comments and media the two of you see on the dashboard
+  // ── shared workspace: the same posts, calendar, comments and media the two of you see on the dashboard
 
   const brief = (p: Post, tmap?: TargetMap) => ({
     id: p.$id, title: p.title, status: p.status, platforms: p.platforms,
@@ -753,7 +753,7 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     link: `/posts?post=${p.$id}`,
   });
   const ws = async <T,>(fn: () => Promise<T>) => {
-    if (!hasWorkspace()) return { ...text("ERROR: the shared workspace is not configured on the server (APPWRITE_API_KEY)."), isError: true };
+    if (!hasWorkspace()) return { ...text("ERROR: the shared workspace is not configured on the server (DATABASE_URL_POOLED)."), isError: true };
     try { return text(await fn()); } catch (e) { return fail(e); }
   };
   const dlRow = (d: import("@/lib/downloads").Dl) => ({
@@ -1327,7 +1327,7 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     "delete_files",
     {
       title: "Delete files",
-      description: "Move files (or folders as f:<id>) to the trash, kept 30 days. With forever: true they're deleted for good instead (an Appwrite upload's R2 backup copy stays; a file kept in R2 goes with it). Only when the user explicitly asks; forever only when they ask for that too.",
+      description: "Move files (or folders as f:<id>) to the trash, kept 30 days. With forever: true they're deleted for good instead (the file in R2 goes with it). Only when the user explicitly asks; forever only when they ask for that too.",
       inputSchema: z.object({ items: z.array(ITEM_ID).min(1).max(500), forever: z.boolean().optional() }),
     },
     async ({ items, forever }) => files(async () => (await import("@/lib/filemanager")).deleteItems(items, CLAUDE, !!forever)),

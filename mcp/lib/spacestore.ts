@@ -1,10 +1,10 @@
 // Where each post goes (its targets, see spaces.ts) and the studio's weekly goals, kept in R2 as one small JSON file:
 // workspace/spaces.json ({ posts: { <post id>: Target[] }, goals: { <space>: n } }). Writes read the latest copy first and
-// change one thing, so two people editing different posts never overwrite each other. The Appwrite post is updated to
+// change one thing, so two people editing different posts never overwrite each other. The post row is updated to
 // match its targets (platforms, stage, publish time).
 import { getJson, putJson } from "./store";
 import { cleanGoals, cleanTargets, postFromTargets, type Goals, type Target, type TargetMap } from "./spaces";
-import { getPost, hasWorkspace, updatePost } from "./appwrite";
+import { getPost, hasWorkspace, updatePost } from "./data";
 
 const KEY = "workspace/spaces.json";
 type Store = { posts: TargetMap; goals: Goals };

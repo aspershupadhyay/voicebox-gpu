@@ -19,7 +19,7 @@ export async function usage() {
   if (hasDb()) {
     const size = await sql().query("select pg_database_size(current_database())::bigint as b").then((r) => Number((r as { b: string }[])[0].b)).catch(() => null);
     meters.push(meter({ id: "neon-db", name: "Database (Neon Postgres)", used: size, limit: Number(process.env.NEON_STORAGE_GB || 1) * GB, unit: "bytes",
-      note: process.env.DB_BACKEND === "neon" ? "Posts, comments, activity and the file list live here." : "A copy for now; Appwrite still leads." }));
+      note: "Posts, comments, activity, accounts and the file list live here." }));
     meters.push(meter({ id: "neon-cu", name: "Database compute (Neon)", used: await computeHours(), limit: 100, unit: "hours",
       note: process.env.NEON_API_KEY ? "CU-hours this month. Capped at 0.25 CU; it sleeps after 5 idle minutes." : "Add NEON_API_KEY on Vercel to see this month's hours." }));
   }

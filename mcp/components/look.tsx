@@ -5,7 +5,6 @@
 // Every click drops a small ginger ripple where it lands (Miso's colour), like a drop on water.
 import { Check } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { aw } from "./aw";
 import { CHARACTERS, CHARACTER_IDS, characterFor, PixelAvatar, type Character } from "./pixel";
 
 export type CursorStyle = "system" | "arrow" | "ascii";
@@ -47,21 +46,12 @@ function applyCursor(c: CursorStyle) {
 }
 
 // ───────────── the hook
-let synced = false;
 export function useLook() {
   const [look, setLook] = useState<Look>({ avatar: null, cursor: "arrow" });
   useEffect(() => {
     setLook(read());
     const on = () => setLook(read());
     addEventListener("vb-look", on);
-    // once per visit, take the character saved to the account (it may have been picked on another device)
-    if (!synced) {
-      synced = true;
-      aw().account.getPrefs().then((p) => {
-        const a = (p as { avatar?: string })?.avatar;
-        if (a && a in CHARACTERS && a !== read().avatar) save({ avatar: a as Character }, false);
-      }).catch(() => {});
-    }
     return () => removeEventListener("vb-look", on);
   }, []);
   return look;
@@ -71,7 +61,6 @@ function save(part: Partial<Look>, toAccount = true) {
   try { localStorage.setItem(KEY, JSON.stringify(next)); } catch {}
   if (part.cursor) applyCursor(part.cursor);
   dispatchEvent(new Event("vb-look"));
-  if (toAccount && part.avatar) aw().account.getPrefs().then((p) => aw().account.updatePrefs({ prefs: { ...p, avatar: part.avatar } })).catch(() => {});
 }
 /** Put the saved cursor on as the frame mounts, and drop a ripple wherever you click (one element per click, gone when
  *  its animation ends; nothing for reduced motion). */

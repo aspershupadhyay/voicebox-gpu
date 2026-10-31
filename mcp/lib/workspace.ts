@@ -1,13 +1,5 @@
-// Shared workspace (Appwrite Cloud): ids, types and labels used by the browser, the API routes and the MCP tools.
-// Appwrite holds the team's posts, comments, activity and media; R2 stays the voiceover library and the media backup.
-
-export const AW = {
-  endpoint: process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://sgp.cloud.appwrite.io/v1",
-  project: process.env.NEXT_PUBLIC_APPWRITE_PROJECT || "voicebox-studio",
-  db: "studio",
-  bucket: "media",
-  team: "studio",
-} as const;
+// Shared workspace: ids, types and labels used by the browser, the API routes and the MCP tools. The team's posts,
+// comments, activity and media rows live in Postgres on Neon (lib/db.ts); the files themselves in R2 (lib/r2files.ts).
 
 export const STATUSES = [
   { id: "idea", label: "Ideas", hint: "Anything worth making" },
@@ -46,8 +38,8 @@ export type Media = Row & {
 };
 export type Member = { id: string; name: string; email: string };
 
-/** A Postgres row (lib/db.ts; a live one from Neon Realtime in the browser) in Appwrite's shape, so the pages and the
- *  tools read either the same way: $id and the two times, times as ISO strings, a size as a number. */
+/** A Postgres row (lib/db.ts; a live one from Neon Realtime in the browser) in the shape the pages and tools use:
+ *  $id and the two times, times as ISO strings, a size as a number. */
 export function fromPg<T>(table: string, r: Record<string, unknown>): T {
   const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : v == null ? null : String(v));
   const { id, created_at, updated_at, ...rest } = r;
@@ -66,31 +58,23 @@ export function kindOf(mime: string, name = ""): MediaKind {
   return "other";
 }
 
-/** A file whose bytes live in R2 (lib/r2files.ts), not Appwrite Storage. */
+/** A file whose bytes live in R2 (lib/r2files.ts): every file since 2026-10-31. */
 export const onR2 = (m: Pick<Media, "file_id">) => m.file_id.startsWith("r2_");
 
 type Stored = Pick<Media, "file_id" | "token"> & Partial<Pick<Media, "r2_key">>;
 /** The dashboard's own address: relative in the browser, absolute on the server (the worker, Instagram, MCP answers). */
-const site = () => typeof window !== "undefined" ? "" : process.env.VERCEL_ENV === "preview" && process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}`
-  : process.env.APP_URL?.replace(/\/$/, "") || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "");
+const site = () => typeof window !== "undefined" ? "" : process.env.APP_URL?.replace(/\/$/, "") || "https://voiceboxstudio.pages.dev";
 
-/** A token URL for a stored file. Tokens are secrets kept in team-only rows, so <img>/<video> work without a session cookie.
- *  An R2 file goes through /api/m with the same query (mode, width, output), so callers don't need to know which. */
+/** A token URL for a stored file, through /api/m (lib/r2files.ts). Tokens are secrets kept in team-only rows, so
+ *  <img>/<video> work without a session cookie. A preview asks for a resized WebP. */
 export function fileUrl(m: Stored, mode: "view" | "download" | "preview" = "view", w?: number) {
-  const r2 = onR2(m) && m.r2_key;
-  const u = r2 ? new URL(`${site() || "http://x"}/api/m/${m.token ?? ""}/${m.r2_key}`) : new URL(`${AW.endpoint}/storage/buckets/${AW.bucket}/files/${m.file_id}/${mode}`);
-  if (r2) {
-    if (mode !== "view") u.searchParams.set("mode", mode);
-    if (mode === "preview" && w) { u.searchParams.set("width", String(w)); u.searchParams.set("output", "webp"); }
-    return site() ? u.toString() : `${u.pathname}${u.search}`;
-  }
-  u.searchParams.set("project", AW.project);
-  if (m.token) u.searchParams.set("token", m.token);
-  if (mode === "preview" && w) { u.searchParams.set("width", String(w)); u.searchParams.set("quality", "82"); u.searchParams.set("output", "webp"); }
-  return u.toString();
+  const u = new URL(`${site() || "http://x"}/api/m/${m.token ?? ""}/${m.r2_key ?? ""}`);
+  if (mode !== "view") u.searchParams.set("mode", mode);
+  if (mode === "preview" && w) { u.searchParams.set("width", String(w)); u.searchParams.set("output", "webp"); }
+  return site() ? u.toString() : `${u.pathname}${u.search}`;
 }
 
-/** A photo sized for this screen (Appwrite resizes and sends WebP), so a 12 MB camera shot opens in a blink and always
+/** A photo sized for this screen (resized to WebP), so a 12 MB camera shot opens in a blink and always
  *  fits. Animated GIFs, SVGs and HEIC go as they are. Widths come in steps so the browser's cache is reused. */
 export function screenPreview(m: Stored & Pick<Media, "mime" | "name">) {
   if (/gif|svg|heic|heif/i.test(`${m.mime ?? ""} ${m.name}`)) return null;

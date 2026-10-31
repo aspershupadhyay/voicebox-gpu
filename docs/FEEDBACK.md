@@ -4,7 +4,18 @@ Every piece of design or product feedback the owner gives lands here, in the sam
 for. Read this before touching the dashboard. Newest first. When something here conflicts with an older rule in
 `docs/DESIGN.md`, this wins (and DESIGN.md is updated to match).
 
-## Latest round (off Appwrite and most of Vercel, 2026-10-30)
+## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
+
+- **"I don't need Appwrite and the Vercel project; get over with Appwrite completely"**: no code talks to Appwrite now
+  (`lib/data.ts`, Postgres and R2 only; the package, webhook and switches removed), and the old Vercel project is
+  unused. Deleting both projects is the owner's click (docs/MIGRATION.md phase 4).
+- **"Login fast as fuck; speed and performance really matter now; loading at lightning speed"**: sign-in checks the
+  lockout, the list and the password at once and writes its log after the reply; storage goes through the Worker's R2
+  binding (no signed S3 round trip); the Appwrite SDK is gone from every page; the session check reads its two cached
+  lists at once. Keep it that way: nothing slow on the sign-in path or in front of the first paint.
+- **"Make sure everything we've done so far is written down"**: docs/MIGRATION.md opens with where everything runs.
+
+## Earlier round (off Appwrite and most of Vercel, 2026-10-30)
 
 - **"Stay free without the hectic: R2 for every file, CockroachDB for data, the API and MCP on a Cloudflare Worker,
   Vercel only for the pages"**: the plan is `docs/MIGRATION.md`, one phase per PR.

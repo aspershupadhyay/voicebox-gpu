@@ -33,7 +33,7 @@ Two layers. You normally only touch the first.
 | `engine` | `{name, action: load\|unload\|forget}` prewarm, free VRAM, or delete downloaded weights to free disk. |
 | `imagine` | `{prompt, model?: zimage\|qwenimage, aspect?, count?, ...}` → stills (thumbnails, B-roll) saved to the library. |
 
-**Shared workspace** (Appwrite; needs `APPWRITE_API_KEY` on the server). Changes made through MCP show up live on both
+**Shared workspace** (Postgres on Neon, files in R2). Changes made through MCP show up live on both
 dashboards and are signed "Claude (MCP)" in the activity feed.
 
 | Tool | What it does |

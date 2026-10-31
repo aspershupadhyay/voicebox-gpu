@@ -18,7 +18,7 @@ import { getRules, listPlans } from "./publish/plans";
 import * as YT from "./publish/youtube";
 import { getSpaces } from "./spacestore";
 import { spaceName, type SpaceId } from "./spaces";
-import { listPosts } from "./appwrite";
+import { listPosts } from "./data";
 import { DAY, hashtagsOf, iso, median, msg, report, settle, sum, windows, type Bar, type Daily, type Kpi, type Range, type Win } from "./analytics-util";
 import { AGE, DEVICES, TRAFFIC, ytDeep, ytPost, type PostDetail, type YtDeep } from "./analytics-yt";
 import { igDeep, igPost, type IgDeep } from "./analytics-ig";

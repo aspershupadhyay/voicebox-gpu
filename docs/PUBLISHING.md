@@ -19,7 +19,7 @@ upload page, mark it posted. Code: `mcp/lib/publish/` (server), `mcp/components/
    posting slots, footers.
 
 Files come from the post's Media (uploads) and the videos Voicebox made for it. Instagram photos are sent as JPEG
-(Appwrite converts them). Tokens are sealed with AES-256-GCM under `PUBLISH_KEY` (falls back to `MCP_TOKEN`) and
+(made from the R2 original, `lib/r2files.ts`). Tokens are sealed with AES-256-GCM under `PUBLISH_KEY` (falls back to `MCP_TOKEN`) and
 kept in R2 under `workspace/publish/accounts/`; plans are in `workspace/publish/plans/`, rules in
 `workspace/publish/rules.json`.
 

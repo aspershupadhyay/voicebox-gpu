@@ -1,5 +1,5 @@
 // Who may get in, and the record of who tried. Fail closed: an email is let in only when it's on the list
-// (WORKSPACE_EMAILS on Vercel, Settings → people with access, or already a member of the shared workspace). The one
+// (WORKSPACE_EMAILS on the Worker, Settings → people with access, or already a member of the shared workspace). The one
 // exception is a brand-new studio with nobody on any list: its first sign-in founds it.
 // Guessing is slowed per address: 8 failed sign-ins in 15 minutes lock that address out for 15 minutes.
 import { createHash } from "node:crypto";
@@ -14,14 +14,15 @@ const envList = () => (process.env.WORKSPACE_EMAILS ?? "").split(",").map((s) =>
 
 let cache: { at: number; emails: string[] } | null = null;
 
-/** Every email allowed in: Vercel's list, Settings' list, and the current workspace members (cached a minute). */
+/** Every email allowed in: the Worker's list, Settings' list, and the current workspace members (cached a minute). */
 export async function allowedEmails(fresh = false) {
   if (!fresh && cache && Date.now() - cache.at < 60_000) return cache.emails;
   const { getSettings } = await import("./settings");
-  const extra = await getSettings().then((s) => s.workspace_emails).catch(() => [] as string[]);
-  const members = await import("./appwrite").then(async (a) => (a.hasPeople() ? (await a.listMembers()).map((m) => m.email.toLowerCase()) : []))
-    .catch(() => null);
-  if (members === null) { // Appwrite unreachable: keep the last known list, else refuse (never fall open)
+  const [extra, members] = await Promise.all([
+    getSettings().then((s) => s.workspace_emails).catch(() => [] as string[]),
+    import("./data").then(async (a) => (await a.listMembers()).map((m) => m.email.toLowerCase())).catch(() => null),
+  ]);
+  if (members === null) { // the database unreachable: keep the last known list, else refuse (never fall open)
     if (cache) return cache.emails;
     throw new Error("can't check who has access right now: try again in a minute");
   }
