@@ -157,7 +157,8 @@ export async function addMediaFromUrl(url: string, opts: { name?: string; postId
 
 const MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", mp4: "video/mp4",
   mov: "video/quicktime", webm: "video/webm", mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", pdf: "application/pdf", txt: "text/plain",
-  md: "text/markdown", srt: "application/x-subrip", vtt: "text/vtt", json: "application/json", csv: "text/csv" };
+  md: "text/markdown", srt: "application/x-subrip", vtt: "text/vtt", json: "application/json", csv: "text/csv",
+  svg: "image/svg+xml", avif: "image/avif", heic: "image/heic", zip: "application/zip", flac: "audio/flac", aac: "audio/aac" };
 export const mimeFor = (name: string) => MIME[name.split(".").pop()?.toLowerCase() ?? ""] ?? "application/octet-stream";
 
 /** Store bytes in Files (R2) and give them a row. */

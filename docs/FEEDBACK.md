@@ -6,6 +6,11 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"ChatGPT should be able to upload a generated image directly into Files, original bytes, no Base64, one upload
+  workflow"**: `save_file` now also answers a `put_url` on our own domain (`/api/files/put/<ticket>`) for clients that
+  can't reach the R2 hostname: the raw bytes of a PUT stream into R2 through the Worker's binding, checked against the
+  ticket (name, type, size), and the receipt gives bytes and SHA-256. Up to 95 MB (Cloudflare's request cap); bigger
+  files still use the presigned `upload_url`. Same ticket, same `/api/files/complete`, same folders and backup.
 - **"I don't need Appwrite and the Vercel project; get over with Appwrite completely"**: no code talks to Appwrite now
   (`lib/data.ts`, Postgres and R2 only; the package, webhook and switches removed), and the old Vercel project is
   unused. Deleting both projects is the owner's click (docs/MIGRATION.md phase 4).
