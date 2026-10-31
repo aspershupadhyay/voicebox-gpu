@@ -10,8 +10,8 @@ import { addMediaFromR2, mimeFor } from "./data";
 import { after } from "next/server";
 import { joinCarousel } from "./carousels";
 import { assertRoom } from "./r2files";
-import { fileUrl } from "./workspace";
-import { findFolder, getTree, moveItems } from "./files";
+import { fileUrl, kindOf } from "./workspace";
+import { folderOrMake, moveItems, whereFiled } from "./files";
 import { getJson, headObj, presign, putJson, putObj, putStream } from "./store";
 import { safeEqual } from "./worker";
 
@@ -38,7 +38,7 @@ export async function startUpload(input: { name?: unknown; type?: unknown; size?
   const mime = String(input.type ?? "") || mimeFor(name);
   let folder: string | null = null;
   if (input.folder) {
-    const f = findFolder(await getTree(), String(input.folder));
+    const f = await folderOrMake(String(input.folder), "save_file");
     if (!f) throw new Error(`no folder "${input.folder}"`);
     folder = f.system ? null : f.id;
   }
@@ -146,9 +146,9 @@ export async function completeUpload(ticket: string, actor: { id?: string; name:
       // the file is in; only the carousel failed last time: try that again
       const carousel = await joinFor(t, done.media, actor);
       await putJson(DONE(t.f), { ...done, carousel });
-      return { ...done, carousel, file_id: `m:${done.media}`, already: true };
+      return { ...done, carousel, file_id: `m:${done.media}`, ...(await whereFiled(`m:${done.media}`, kindOf(mimeFor(done.name), done.name))), already: true };
     }
-    return { ...done, file_id: `m:${done.media}`, already: true };
+    return { ...done, file_id: `m:${done.media}`, ...(await whereFiled(`m:${done.media}`, kindOf(mimeFor(done.name), done.name))), already: true };
   }
   const head = await headObj(t.k);
   if (!head) throw new Error("nothing was uploaded yet: PUT the file to upload_url first (curl -T <file> '<upload_url>')");
@@ -161,7 +161,8 @@ export async function completeUpload(ticket: string, actor: { id?: string; name:
   const carousel = await joinFor(t, media.$id, actor);
   await putJson(DONE(t.f), { media: media.$id, name: media.name, carousel });
   warmPreviews(media);
-  return { media: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: Math.round(head.size / 1e5) / 10, bytes: head.size, ...(receipt ? { sha256: receipt.sha256 } : {}), folder: t.d, post_id: t.p, carousel, already: false };
+  const where = await whereFiled(`m:${media.$id}`, media.kind);
+  return { media: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: Math.round(head.size / 1e5) / 10, bytes: head.size, ...(receipt ? { sha256: receipt.sha256 } : {}), ...where, post_id: t.p, carousel, already: false };
 }
 
 /** Make (and cache) an image's card and screen sizes now, so the first look in Files is instant. */

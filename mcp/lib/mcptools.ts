@@ -1145,9 +1145,9 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       inputSchema: z.object({ url: z.string().url(), name: z.string().max(200).optional(), post_id: POST_ID.optional(), folder: FOLDER_REF.optional(), carousel: CAROUSEL_REF.optional(), position: POSITION.optional() }),
     },
     async ({ url, name, post_id, folder, carousel, position }) => ws(async () => {
-      const { media, backup, folder: placed } = await (await import("@/lib/filemanager")).importUrl(url, { name, postId: post_id, folder, backup: (await getSettings()).backup_media }, CLAUDE);
+      const { media, backup, where } = await (await import("@/lib/filemanager")).importUrl(url, { name, postId: post_id, folder, create: true, backup: (await getSettings()).backup_media }, CLAUDE);
       const stack = carousel ? await (await import("@/lib/carousels")).joinCarousel(carousel, `m:${media.$id}`, { position, post: post_id ?? null, by: CLAUDE.name }) : null;
-      return { id: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, url: fileUrl(media), folder: placed, carousel: stack, r2_backup: media.r2_key ? "saved" : backup ?? "off" };
+      return { id: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, url: fileUrl(media), ...where, carousel: stack, r2_backup: media.r2_key ? "saved" : backup ?? "off" };
     }),
   );
 
@@ -1163,12 +1163,15 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       }),
     },
     async ({ name, content_base64, mime, post_id, folder, carousel, position }) => ws(async () => {
-      const into = await folderId(folder);
+      const into = folder ? (await (await import("@/lib/files")).folderOrMake(folder, CLAUDE.name))?.id ?? null : null;
       const bytes = new Uint8Array(Buffer.from(content_base64.replace(/^data:[^,]*,/, ""), "base64"));
       const { media, backup } = await addMediaBytes(bytes, mime || mimeFor(name), name, { postId: post_id ?? null, backup: (await getSettings()).backup_media }, CLAUDE);
-      if (into) await (await import("@/lib/files")).moveItems([`m:${media.$id}`], into);
+      const fsm = await import("@/lib/files");
+      const sys = into ? (await fsm.getTree()).folders.find((f) => f.id === into)?.system : undefined;
+      if (into && !sys) await fsm.moveItems([`m:${media.$id}`], into);
+      const where = await fsm.whereFiled(`m:${media.$id}`, media.kind);
       const stack = carousel ? await (await import("@/lib/carousels")).joinCarousel(carousel, `m:${media.$id}`, { position, post: post_id ?? null, by: CLAUDE.name }) : null;
-      return { id: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: +(bytes.length / 1e6).toFixed(2), url: fileUrl(media), folder: into, carousel: stack, r2_backup: media.r2_key ? "saved" : backup ?? "off" };
+      return { id: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: +(bytes.length / 1e6).toFixed(2), url: fileUrl(media), ...where, carousel: stack, r2_backup: media.r2_key ? "saved" : backup ?? "off" };
     }),
   );
 

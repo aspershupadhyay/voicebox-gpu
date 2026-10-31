@@ -707,7 +707,7 @@ async function filesAction(b: string | undefined, c: string | undefined, body: R
     if (b === "poster") return Response.json(await fm.savePoster(keys([body.item])[0], String(body.data ?? "")));
     if (b === "import") {
       const r = await fm.importUrl(String(body.url ?? ""), { name: body.name ? String(body.name) : undefined, folder: folder(body.folder), backup: (await getSettings()).backup_media }, actor);
-      return Response.json({ media: r.media, backup: r.backup, folder: r.folder });
+      return Response.json({ media: r.media, backup: r.backup, folder: r.folder, ...r.where });
     }
     return Response.json({ error: "not found" }, { status: 404 });
   } catch (e) {

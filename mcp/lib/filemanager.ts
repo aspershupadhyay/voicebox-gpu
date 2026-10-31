@@ -5,7 +5,7 @@
 import { addMediaFromUrl, deleteMediaRow, getMedia, hasWorkspace, listMedia, listPosts, renameMedia } from "./data";
 import { groupsOf, POST_GROUP_RE, type Group } from "./carouselrules";
 import { createCarousel, forgetInCarousels, getCarousels, updateCarousel } from "./carousels";
-import { expired, FilesError, findFolder, forget, forgetPlan, getTree, markPoster, moveItems, pathOf, restoreItems, trashItems, type FileTree } from "./files";
+import { expired, FilesError, findFolder, folderOrMake, forget, forgetPlan, getTree, markPoster, moveItems, pathOf, restoreItems, trashItems, whereFiled, type FileTree } from "./files";
 import { folderFor, isTrashed } from "./filetree";
 import { deleteLibJob, getLibJob, listSummaries, renameLibJob, signer, withUrls, type LibSummary } from "./library";
 import { presign, putObj } from "./store";
@@ -161,12 +161,13 @@ export async function purgeTrash() {
 }
 
 /** Copy a file from a link into the shared uploads, filed in a folder. */
-export async function importUrl(url: string, opts: { name?: string; folder?: string | null; postId?: string | null; backup: boolean }, actor: Actor) {
+export async function importUrl(url: string, opts: { name?: string; folder?: string | null; postId?: string | null; backup: boolean; create?: boolean }, actor: Actor) {
   if (!/^https?:\/\//i.test(url)) throw new FilesError("only http(s) links can be imported");
-  const folder = opts.folder ? findFolder(await getTree(), opts.folder) : null;
+  // a folder named by path is made when it doesn't exist yet (create), before the file is fetched
+  const folder = !opts.folder ? null : opts.create ? await folderOrMake(opts.folder, actor.name) : findFolder(await getTree(), opts.folder);
   const { media, backup } = await addMediaFromUrl(url, { name: opts.name, postId: opts.postId, backup: opts.backup }, actor);
   if (folder && !folder.system) await moveItems([`m:${media.$id}`], folder.id);
-  return { media, backup, folder: folder?.id ?? null };
+  return { media, backup, folder: folder?.id ?? null, where: await whereFiled(`m:${media.$id}`, media.kind) };
 }
 
 // ── poster frames for uploaded videos (the browser grabs a frame; a card never has to load the video itself)

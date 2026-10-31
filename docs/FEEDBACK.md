@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"The answer says `folder: sysimages`; return the folder's name and path apart from its id"** (and "I can say which
+  folder to save in"): every file-saving answer (`import_file`, `save_file`, `add_media`, `upload_media`, the Files
+  import) gives `folder_id` (internal, unchanged), `folder_name` and `folder_path` (`lib/files.ts` `whereFiled`: where
+  the file really shows). A folder named by path (`"Images/Samurai"`) is made when it doesn't exist yet.
 - **"ChatGPT should be able to upload a generated image directly into Files, original bytes, no Base64, one upload
   workflow"**: `save_file` now also answers a `put_url` on our own domain (`/api/files/put/<ticket>`) for clients that
   can't reach the R2 hostname: the raw bytes of a PUT stream into R2 through the Worker's binding, checked against the
