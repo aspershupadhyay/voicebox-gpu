@@ -5,7 +5,15 @@ source of truth for defaults and ranges (docs/API.md is generated from the same 
 """
 import os
 
-VERSION = "3.15.1"
+VERSION = "3.15.2"
+
+# Cloudflare's bot filter in front of the dashboard (*.pages.dev) refuses urllib's default "Python-urllib/x" with error
+# 1010, so the heartbeat, the bundle, downloads and the cache would never reach it. Every request from a worker process
+# says who it is instead (a User-Agent set on a Request still wins: scrapers keep their browser one).
+import urllib.request as _ur  # noqa: E402
+_opener = _ur.build_opener()
+_opener.addheaders = [("User-Agent", f"voicebox-worker/{VERSION}")]
+_ur.install_opener(_opener)
 HOME = os.environ.get("VOICEBOX_HOME", "/content/voicebox")
 VENVS = os.environ.get("VOICEBOX_VENVS", os.path.join(HOME, "venvs"))
 

@@ -67,7 +67,7 @@ data, source = base64.b64decode(BUNDLE), "embedded v{version}"
 if os.environ.get("REGISTER_URL"):
     try:
         req = urllib.request.Request(os.environ["REGISTER_URL"].rsplit("/api/", 1)[0] + "/api/bundle",
-                                     headers={"Authorization": "Bearer " + os.environ["WORKER_SECRET"]})
+                                     headers={"Authorization": "Bearer " + os.environ["WORKER_SECRET"], "User-Agent": "voicebox-worker"})
         with urllib.request.urlopen(req, timeout=30) as r:
             data, source = r.read(), "server v" + r.headers.get("X-Worker-Version", "?")
     except Exception as e:
