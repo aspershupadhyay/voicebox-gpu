@@ -4,8 +4,9 @@
 
 Always ship finished work: commit, push the branch, open a pull request to `main`, and merge it once checks pass.
 Merging to `main` makes it live: `.github/workflows/deploy.yml` builds `mcp/` (dashboard + MCP server) with OpenNext
-and deploys it to Cloudflare Workers (https://voicebox-studio.elitemode-sparsh.workers.dev; moved off Vercel on
-2026-10-30, docs/MIGRATION.md), with the worker bundle that Colab pulls. Settings and keys live on the Worker
+and deploys it to Cloudflare Workers (the `voicebox-studio` Worker; moved off Vercel on 2026-10-30, docs/MIGRATION.md).
+The address is https://voiceboxstudio.pages.dev: a Pages project whose `_worker.js` hands every request to the Worker
+(a service binding), so the URL stays short until a custom domain replaces it, with the worker bundle that Colab pulls. Settings and keys live on the Worker
 (`npx wrangler secret put`), never in git. After merging, check the Deploy
 run succeeded and say so. A restarted Colab worker picks up `worker/` changes.
 
