@@ -136,7 +136,7 @@ export default function Files() {
   const me = useMe();
   const wsOn = !!(me?.user && me.session && me.workspace);
   const { rows: liveMedia, setRows: setMedia, loading: mediaLoading } = useLive<Media>("media", [Query.orderDesc("$createdAt"), Query.limit(1000)]);
-  const { uploads, upload, clear: clearUploads } = useUploader(null);
+  const { uploads, upload, clear: clearUploads, dismiss: dismissUploads } = useUploader(null);
   const { rows: posts } = useLive<Post>("posts", [Query.orderDesc("$updatedAt"), Query.limit(500)]); // names a post's carousel
 
   const [jobs, setJobs] = useState<JobSum[] | null>(null);
@@ -519,8 +519,15 @@ export default function Files() {
 
   /** To the trash, at once, with Undo. */
   function remove(keys: string[]) {
+    // a failed (or still going) upload is only a card in this browser: deleting it takes it off the page
+    const ups = keys.filter((x) => x.startsWith("u:")).map((x) => x.slice(2));
+    if (ups.length) {
+      dismissUploads(ups);
+      setPendingUp((p) => Object.fromEntries(Object.entries(p).filter(([key]) => !ups.includes(key))));
+      if (detail && keys.includes(detail)) setDetail(null);
+    }
     const k = keys.filter((x) => !isSys(x) && !x.startsWith("u:"));
-    if (!k.length) return toast("Category folders can't be deleted.", "bad");
+    if (!k.length) { if (ups.length) { setSel(new Set()); return; } return toast("Category folders can't be deleted.", "bad"); }
     setSel(new Set());
     if (detail && k.includes(detail)) setDetail(null);
     const at = Date.now();

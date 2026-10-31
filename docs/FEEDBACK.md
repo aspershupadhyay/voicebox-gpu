@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Pasting an image in Files says 'Upload failed: the connection dropped', and the card can't be deleted"**: the
+  browser PUT straight to the R2 hostname, which a browser refuses cross-site after the move to pages.dev and reports
+  only as a dropped connection. Files, the post drawer and upload links now send up to 95 MB through our own
+  `/api/files/put/<ticket>` (same origin), falling back to R2 directly; Delete on a failed upload's card takes it off.
 - **"How many images can it upload in one go? Make it unlimited; we need that capacity"**: `import_file` takes `files`
   (up to 100 per call, four at a time, no limit overall: the next call takes the next 100), all filed in one folder in
   one write, each answering its own bytes, SHA-256 and folder; one that fails doesn't stop the rest.

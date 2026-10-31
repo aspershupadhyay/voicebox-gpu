@@ -39,7 +39,8 @@ export function UploadLink({ token, link }: { token: string; link: Link }) {
         const s = await post({ action: "start", name: f.name, size: f.size, type: f.type });
         await new Promise<void>((ok, bad) => {
           const x = new XMLHttpRequest();
-          x.open("PUT", s.upload_url);
+          // up to 95 MB through our own domain (same origin: no CORS to trip on), bigger straight to the bucket
+          x.open("PUT", f.size <= 95e6 ? `/api/files/put/${s.ticket}` : s.upload_url);
           if (f.type) x.setRequestHeader("Content-Type", f.type);
           x.upload.onprogress = (e) => e.lengthComputable && set(i, { frac: e.loaded / e.total });
           x.onload = () => (x.status < 300 ? ok() : bad(new Error(`storage said ${x.status}`)));

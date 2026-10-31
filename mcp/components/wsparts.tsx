@@ -49,14 +49,24 @@ function putWithProgress(url: string, file: File, type: string, onProgress: (f: 
   });
 }
 
-/** Into R2 the way scripts do it (lib/inbox.ts): an address, the bytes straight to the bucket, then the ticket in. */
+/** Into R2 the way scripts do it (lib/inbox.ts): an address, the bytes, then the ticket in. Up to 95 MB the bytes go
+ *  through our own domain (/api/files/put: same origin, so no CORS for the browser to trip on; a refused cross-site PUT
+ *  shows up only as "the connection dropped"); bigger ones, or if that fails before anything is stored, straight to
+ *  the bucket. */
 async function uploadToR2(file: File, postId: string | null | undefined, onProgress: (f: number) => void) {
   const post = (path: string, body: unknown) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
     .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `${r.status}`); return j; });
   const ext = /\.[A-Za-z0-9]{1,8}$/.test(file.name) ? "" : `.${(file.type.split("/")[1] || "bin").replace(/[^a-z0-9]/gi, "").slice(0, 8) || "bin"}`;
   const type = file.type || "application/octet-stream";
   const start = await post("/api/files/upload", { name: `${file.name}${ext}`, size: file.size, type, post_id: postId ?? undefined });
-  await putWithProgress(start.upload_url, file, type, onProgress);
+  const PUT_MAX = start.put_max_bytes ?? 95e6;
+  if (file.size <= PUT_MAX) {
+    try { await putWithProgress(`/api/files/put/${start.ticket}`, file, type, onProgress); }
+    catch (e) {
+      // our own address is the sure one; R2 directly is the second try (a 409 means it's stored: go on)
+      if (!/\(409\)/.test((e as Error).message)) { onProgress(0); await putWithProgress(start.upload_url, file, type, onProgress); }
+    }
+  } else await putWithProgress(start.upload_url, file, type, onProgress);
   const done = await post("/api/files/complete", { ticket: start.ticket });
   return rowGet<Media>("media", done.media);
 }
@@ -84,7 +94,9 @@ export function useUploader(postId?: string | null) {
     await Promise.all(Array.from({ length: Math.min(lanesFor(list), queue.length) }, async () => { for (let j = queue.shift(); j; j = queue.shift()) await one(j); }));
   }, [postId]);
   const clear = useCallback(() => setUploads((u) => u.filter((x) => !x.done && !x.error)), []);
-  return { uploads, upload, clear };
+  /** Take uploads off the list (a failed one has no file to delete: this is how it goes). */
+  const dismiss = useCallback((keys: string[]) => setUploads((u) => u.filter((x) => !keys.includes(x.key))), []);
+  return { uploads, upload, clear, dismiss };
 }
 
 export function UploadList({ uploads: all }: { uploads: Upload[] }) {
