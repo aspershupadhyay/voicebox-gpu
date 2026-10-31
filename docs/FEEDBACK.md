@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **Videos (the EGM Reel)**: "hook it like the posts that go viral" (authority + news + stakes: "Google just
+  open-sourced…"), "triple hook, fast paced, attention spans are short", "keep the v1 visuals, they were perfect",
+  "nothing that looks like AI slop: informative, no stamps and all that", "one video that can go viral". All of it,
+  with the pipeline, is in `docs/REELS.md`: read it before making any Reel or Short.
 - **"Pasting an image in Files says 'Upload failed: the connection dropped', and the card can't be deleted"**: the
   browser PUT straight to the R2 hostname, which a browser refuses cross-site after the move to pages.dev and reports
   only as a dropped connection. Files, the post drawer and upload links now send up to 95 MB through our own

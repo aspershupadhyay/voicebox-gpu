@@ -16,6 +16,11 @@ run succeeded and say so. A restarted Colab worker picks up `worker/` changes.
 older rules. Read it before any dashboard work. Whenever the owner gives new feedback, add it there in the same pull
 request as the change, so the next session doesn't repeat the mistake.
 
+## Videos
+
+Reels and Shorts follow `docs/REELS.md` (the owner's rules: a viral-style hook, informative not slop, the house look,
+and the voice → animation → Files pipeline).
+
 ## Design
 
 Every dashboard change follows `docs/DESIGN.md`. In short:
