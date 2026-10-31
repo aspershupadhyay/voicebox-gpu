@@ -53,10 +53,21 @@ a 57 s story cut and a ~35 s hype cut). Read this before making any Reel, Short 
    for text over characters, text past the right edge (the app's buttons live there), captions colliding with
    on-screen text, and anything misleading. Fix and re-check the same times.
 7. **Render**: `render.js video` (background, ~4-5 min for 57 s), `mux`, `check`, `verify` (sync at every marker).
+7b. **Or render on Colab** (the L4's 12 cores: 157 s vs 215 s on a 4-core session for 47 s of video; worth it for
+   batches, about even for one video once boot is counted). Pack the project (engine, scripts, assets, out/music.wav;
+   ~22 MB) and `save_file` it (PUT to `put_url`); then `run` in bash in a named workspace with `files: [m:<id>]`:
+   Node is `/opt/vb-node/bin`; install Chrome once with `npx -y @puppeteer/browsers install chrome-headless-shell@stable
+   --path ~/chs`; the sandbox has no root, so fetch its four missing libraries with `apt-get download libatk1.0-0t64
+   libatk-bridge2.0-0t64 libxcomposite1 libatspi2.0-0t64`, `dpkg -x` them into `~/libroot` and set
+   `LD_LIBRARY_PATH=~/libroot/usr/lib/x86_64-linux-gnu` and `CHROME_PATH`; then `render.js video 11`, `mux`, `verify`,
+   copy the MP4 to `out/` with `save_to: "Videos/<topic>"`. The workspace keeps Chrome while the runtime is on.
 8. **Deliver**: save to Files (`save_file` → PUT to `put_url` → ticket) in a folder like `Videos/<topic>`, and send it.
 
 ## Costs seen
 
 - Voice: 10-11 lines in Sparsh's trained voice, 2 takes each, ~3.5 min of GPU including the model load, about
   0.1-0.15 units each run.
-- Render: 1717 frames (57 s at 30 fps) in 265 s on the session's CPU, 32 MB H.264.
+- Render: 1717 frames (57 s at 30 fps) in 265 s on the session's CPU, 32 MB H.264; 1401 frames (47 s) in 215 s
+  here and 157 s on the Colab L4 (12 cores, 9.4 fps).
+- Sync check: with no hit sound effects, mark cuts `sync: 'v'` (picture); Whisper's word starts are only good to
+  ~0.1 s, so an 'a' check on a spoken word fails for no visible reason.
