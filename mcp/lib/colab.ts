@@ -244,11 +244,10 @@ export async function launch(proxy: Proxy, code: string, deadline = Date.now() +
     else await new Promise((res) => setTimeout(res, 3000));
   }
   if (!kernel) throw new Error("the runtime didn't start a Python kernel");
-  const { default: WebSocket } = await import("ws");
   const session = randomUUID(), msgId = randomUUID();
   const qs = new URLSearchParams({ session_id: session, token: proxy.token, "colab-runtime-proxy-token": proxy.token });
-  const ws = new WebSocket(`${base.replace(/^http/, "ws")}/api/kernels/${kernel.id}/channels?${qs}`,
-    { headers: { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli", Authorization: `Bearer ${proxy.token}` } });
+  const ws = await openSocket(`${base.replace(/^http/, "ws")}/api/kernels/${kernel.id}/channels?${qs}`,
+    { "X-Colab-Runtime-Proxy-Token": proxy.token, "X-Colab-Client-Agent": "colab-cli", Authorization: `Bearer ${proxy.token}` });
   // what the connection actually did, so a failure says why instead of guessing
   const diag = { opened: false, frames: 0, types: new Set<string>(), closed: "" as string };
   const msg = (id: string, type: string, content: object) => JSON.stringify({
@@ -409,10 +408,10 @@ export async function touchKernel(endpoint: string) {
   const k = await fetch(`${base}/api/kernels`, { headers, signal: AbortSignal.timeout(10_000) }).catch(() => null);
   const kernels = k?.ok ? ((await k.json().catch(() => [])) as { id: string }[]) : [];
   if (!kernels.length) return;
-  const { default: WebSocket } = await import("ws");
   const session = randomUUID();
   const qs = new URLSearchParams({ session_id: session, token: proxy.token, "colab-runtime-proxy-token": proxy.token });
-  const ws = new WebSocket(`${base.replace(/^http/, "ws")}/api/kernels/${kernels[0].id}/channels?${qs}`, { headers });
+  const ws = await openSocket(`${base.replace(/^http/, "ws")}/api/kernels/${kernels[0].id}/channels?${qs}`, headers).catch(() => null);
+  if (!ws) return;
   await new Promise<void>((resolve) => {
     const done = setTimeout(resolve, 6000); // the kernel is busy running the worker: a reply is a bonus, the visit counts
     ws.on("open", () => {
@@ -425,6 +424,29 @@ export async function touchKernel(endpoint: string) {
     ws.on("error", () => { clearTimeout(done); resolve(); });
   });
   try { ws.close(); } catch { /* gone already */ }
+}
+
+
+/** A WebSocket client with the `ws` package's shape (on open/message/close/error, send, close). On Cloudflare Workers
+ *  `ws` can't open sockets (no node:net), so there it's the runtime's own: a fetch with Upgrade: websocket. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Sock = { on(ev: string, f: (...a: any[]) => void): void; send(d: string): void; close(): void };
+async function openSocket(url: string, headers: Record<string, string>): Promise<Sock> {
+  if (typeof (globalThis as { WebSocketPair?: unknown }).WebSocketPair === "undefined") {
+    const { default: WS } = await import("ws");
+    return new WS(url, { headers }) as unknown as Sock;
+  }
+  const r = await fetch(url.replace(/^ws/, "http"), { headers: { ...headers, Upgrade: "websocket" } });
+  const s = (r as Response & { webSocket?: { accept(): void; send(d: string): void; close(): void; addEventListener(t: string, f: (e: { data?: unknown; code?: number; reason?: string }) => void): void } }).webSocket;
+  if (!s) throw new Error(`the runtime refused the websocket (${r.status})`);
+  s.accept();
+  const subs: Record<string, ((...a: unknown[]) => void)[]> = {};
+  const emit = (ev: string, ...a: unknown[]) => (subs[ev] ?? []).forEach((f) => f(...a));
+  s.addEventListener("message", (e) => emit("message", typeof e.data === "string" ? e.data : Buffer.from(e.data as ArrayBuffer)));
+  s.addEventListener("close", (e) => emit("close", e.code ?? 0, e.reason ?? ""));
+  s.addEventListener("error", () => emit("error", new Error("websocket error")));
+  setTimeout(() => emit("open"), 0); // accepted = open; the caller adds its listeners first
+  return { on: (ev, f) => { (subs[ev] ??= []).push(f as (...a: unknown[]) => void); }, send: (d) => s.send(d), close: () => s.close() };
 }
 
 export async function onHeartbeat(hb: { started_at?: number; queue?: number; running?: number; last_active?: number; gpu?: string }) {
