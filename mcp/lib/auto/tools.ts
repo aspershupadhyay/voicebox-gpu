@@ -363,10 +363,11 @@ export function registerAutoTools(server: ToolServer) {
     "import_file",
     {
       title: "Import a file the chat app attached (ChatGPT)",
-      description: "Save a file from the chat into Files, original bytes (no Base64, no re-encoding), up to 150 MB: an image you generated or one the user attached. In ChatGPT pass the file itself as `file` (it arrives as {download_url, file_id}); a sandbox with no network can't curl, so use this instead of save_file there. Any client can pass {download_url} (a public or signed link). Lands in folder (or the project's folder); answers bytes and sha256 to check against the original. Example: {\"file\":{\"download_url\":\"https://…\"},\"name\":\"ref.png\",\"folder\":\"Images\"}.",
+      description: "Save a file from the chat into Files, original bytes (no Base64, no re-encoding), up to 150 MB: an image you generated or one the user attached. In ChatGPT pass the file itself as `file` (it arrives as {download_url, file_id}); a sandbox with no network can't curl, so use this instead of save_file there. Any client can pass {download_url} (a public or signed link). Lands in folder: a path by name such as \"Images\" or \"Images/Samurai\" (made if it doesn't exist yet), or the project's folder; with none it shows in its kind's folder (Images, Videos…). Answers bytes and sha256 to check against the original, and where it is: folder_name and folder_path (what people read) and folder_id (the internal id; never show it as a name). Example: {\"file\":{\"download_url\":\"https://…\"},\"name\":\"ref.png\",\"folder\":\"Images\"}.",
       inputSchema: z.object({
         file: z.object({ download_url: z.string().max(4000), file_id: z.string().max(200).optional() }),
-        name: z.string().max(200).optional(), folder: z.string().max(300).optional(),
+        name: z.string().max(200).optional().describe("file name with extension, e.g. samurai.png"),
+        folder: z.string().max(300).optional().describe("where to save it: a path by name, e.g. \"Images\" or \"Images/Samurai\" (made if new), or a folder id"),
       }),
       _meta: { "openai/fileParams": ["file"] },
     },
@@ -375,11 +376,11 @@ export function registerAutoTools(server: ToolServer) {
         if (!/^https:\/\//.test(file.download_url)) throw new Error("file.download_url: an https link");
         const { importUrl } = await import("../filemanager");
         const { getSettings } = await import("../settings");
-        const { media, folder: placed } = await importUrl(file.download_url, { name, folder: folder ?? null, backup: (await getSettings()).backup_media }, { name: "Claude (MCP)" });
+        const { media, where } = await importUrl(file.download_url, { name, folder: folder ?? null, create: true, backup: (await getSettings()).backup_media }, { name: "Claude (MCP)" });
         // the stored copy's own size and SHA-256, so the caller can check it is byte for byte the original
         const stored = media.r2_key ? await (await import("../store")).getObj(media.r2_key).catch(() => null) : null;
         const sha256 = stored?.body ? await (await import("../inbox")).sha256Of(stored.body as ReadableStream<Uint8Array>).catch(() => null) : null;
-        return text({ file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mime: media.mime, bytes: media.size, ...(sha256 ? { sha256 } : {}), folder: placed });
+        return text({ file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mime: media.mime, bytes: media.size, ...(sha256 ? { sha256 } : {}), ...where });
       } catch (e) { return fail(e); }
     },
   );

@@ -4,8 +4,9 @@
 // Writes read the latest copy first and change one thing, so two people filing different things never overwrite each
 // other. The rules (category folders, trash, where a file shows) are in lib/filetree.ts, shared with the browser.
 import { getJson, putJson } from "./store";
+import type { MediaKind } from "./workspace";
 import {
-  FOLDER_COLORS, FOLDER_RE, ITEM_RE, normalize, pathOf, ROOT, subtree, TRASH_DAYS, within, newFolderId, type FileTree, type Folder, type FolderColor,
+  FOLDER_COLORS, FOLDER_RE, ITEM_RE, folderFor, normalize, pathOf, ROOT, subtree, TRASH_DAYS, within, newFolderId, type FileTree, type Folder, type FolderColor,
 } from "./filetree";
 
 export { FOLDER_COLORS, FOLDER_RE, ITEM_RE, pathOf, type FileTree, type Folder, type FolderColor };
@@ -205,4 +206,29 @@ export function findFolder(t: FileTree, ref: string | null | undefined) {
     parent = found.id;
   }
   return found ?? null;
+}
+
+/** A folder by id or name path, made (each missing part of the path) when it doesn't exist yet: "Images/Samurai"
+ *  makes Samurai inside the Images category. null for the top level. */
+export async function folderOrMake(ref: string | null | undefined, by: string | null) {
+  if (!ref || ref === "/") return null;
+  try { return findFolder(await load(), ref); } catch (e) { if (!(e instanceof FilesError) || e.status !== 404) throw e; }
+  let parent: string | null = null;
+  let f: Folder | null = null;
+  for (const part of ref.split("/").map((s) => s.trim()).filter(Boolean)) {
+    const t = await load();
+    f = t.folders.find((x) => x.parent === parent && x.name.toLowerCase() === part.toLowerCase() && !t.trash[`f:${x.id}`]) ?? await createFolder({ name: part, parent }, by);
+    parent = f.id;
+  }
+  return f;
+}
+
+/** Where a file shows on the Files page, for answers: the internal id apart from the name and path people read, so
+ *  a model never mistakes "sysimages" for a folder called that. */
+export async function whereFiled(key: string, kind: MediaKind) {
+  const t = await load();
+  const id = folderFor(t, key, kind);
+  if (!id) return { folder_id: "/", folder_name: "Files", folder_path: "/" };
+  const f = t.folders.find((x) => x.id === id);
+  return { folder_id: id, folder_name: f?.name ?? id, folder_path: pathOf(t, id).split(" / ").join("/") };
 }
