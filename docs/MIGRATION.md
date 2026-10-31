@@ -139,7 +139,7 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    the board from Neon, a file from R2, the sweep, and the backup (the trained voices fully copied to Neon storage).
    **The short address (2026-10-31)**: https://voiceboxstudio.pages.dev, a Pages project (`voiceboxstudio`) whose
    `_worker.js` passes every request to the Worker through a service binding (the request keeps its URL, so cookies,
-   sign-in and OAuth callbacks see this address; `APP_URL` is set to it). The workers.dev address still works. A custom
+   sign-in and OAuth callbacks see this address; `APP_URL` is set to it). Its workers.dev address is switched off (`workers_dev: false`), so this is the only URL. A custom
    domain replaces it later (Cloudflare Registrar, then a custom domain on the Worker).
    The original plan: **API and MCP to one Cloudflare Worker.** `/api/*` and the MCP run there, reaching CockroachDB through Hyperdrive.
    The long routes (starting the Colab GPU, copying downloads) become Queue jobs; a Cloudflare cron replaces
