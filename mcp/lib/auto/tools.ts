@@ -362,25 +362,52 @@ export function registerAutoTools(server: ToolServer) {
   server.registerTool(
     "import_file",
     {
-      title: "Import a file the chat app attached (ChatGPT)",
-      description: "Save a file from the chat into Files, original bytes (no Base64, no re-encoding), up to 150 MB: an image you generated or one the user attached. In ChatGPT pass the file itself as `file` (it arrives as {download_url, file_id}); a sandbox with no network can't curl, so use this instead of save_file there. Any client can pass {download_url} (a public or signed link). Lands in folder: a path by name such as \"Images\" or \"Images/Samurai\" (made if it doesn't exist yet), or the project's folder; with none it shows in its kind's folder (Images, Videos…). Answers bytes and sha256 to check against the original, and where it is: folder_name and folder_path (what people read) and folder_id (the internal id; never show it as a name). Example: {\"file\":{\"download_url\":\"https://…\"},\"name\":\"ref.png\",\"folder\":\"Images\"}.",
+      title: "Import files the chat app attached or made (ChatGPT)",
+      description: "Save files from the chat into Files, original bytes (no Base64, no re-encoding), up to 150 MB each: images you generated or the user attached. One file: `file`; many: `files` (up to 100 per call, no limit overall: call again for the next 100). In ChatGPT pass the files themselves (each arrives as {download_url, file_id}); a sandbox with no network can't curl, so use this instead of save_file there. Any client can pass {download_url} (a public or signed link). All land in folder: a path by name such as \"Images\" or \"Images/Samurai\" (made if it doesn't exist yet), or the project's folder; with none each shows in its kind's folder (Images, Videos…). Answers each file's bytes and sha256 to check against the original, and where it is: folder_name and folder_path (what people read) and folder_id (the internal id; never show it as a name). One that fails says why and the rest still save. Example: {\"files\":[{\"download_url\":\"https://…\",\"name\":\"a.png\"},{\"download_url\":\"https://…\",\"name\":\"b.png\"}],\"folder\":\"Images/Samurai\"}.",
       inputSchema: z.object({
-        file: z.object({ download_url: z.string().max(4000), file_id: z.string().max(200).optional() }),
-        name: z.string().max(200).optional().describe("file name with extension, e.g. samurai.png"),
-        folder: z.string().max(300).optional().describe("where to save it: a path by name, e.g. \"Images\" or \"Images/Samurai\" (made if new), or a folder id"),
+        file: z.object({ download_url: z.string().max(4000), file_id: z.string().max(200).optional() }).optional().describe("one file"),
+        files: z.array(z.object({ download_url: z.string().max(4000), file_id: z.string().max(200).optional(), name: z.string().max(200).optional() })).max(100).optional()
+          .describe("many files, up to 100 per call (call again for more); each may carry its own name"),
+        name: z.string().max(200).optional().describe("file name with extension for `file`, e.g. samurai.png"),
+        folder: z.string().max(300).optional().describe("where to save them: a path by name, e.g. \"Images\" or \"Images/Samurai\" (made if new), or a folder id"),
       }),
-      _meta: { "openai/fileParams": ["file"] },
+      _meta: { "openai/fileParams": ["file", "files"] },
     },
-    async ({ file, name, folder }) => {
+    async ({ file, files, name, folder }) => {
       try {
-        if (!/^https:\/\//.test(file.download_url)) throw new Error("file.download_url: an https link");
+        const list = [...(file ? [{ ...file, name }] : []), ...(files ?? [])];
+        if (!list.length) throw new Error("give `file` (one) or `files` (many)");
+        if (list.length > 100) throw new Error("up to 100 files per call: send the rest in another call");
         const { importUrl } = await import("../filemanager");
+        const fsm = await import("../files");
         const { getSettings } = await import("../settings");
-        const { media, where } = await importUrl(file.download_url, { name, folder: folder ?? null, create: true, backup: (await getSettings()).backup_media }, { name: "Claude (MCP)" });
-        // the stored copy's own size and SHA-256, so the caller can check it is byte for byte the original
-        const stored = media.r2_key ? await (await import("../store")).getObj(media.r2_key).catch(() => null) : null;
-        const sha256 = stored?.body ? await (await import("../inbox")).sha256Of(stored.body as ReadableStream<Uint8Array>).catch(() => null) : null;
-        return text({ file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mime: media.mime, bytes: media.size, ...(sha256 ? { sha256 } : {}), ...where });
+        const backup = (await getSettings()).backup_media;
+        // the folder once (made if new), then the files side by side, then one move for all: the folder tree is one
+        // JSON, so filing them one by one in parallel would lose some
+        const into = folder ? await fsm.folderOrMake(folder, "Claude (MCP)") : null;
+        const store = await import("../store");
+        const { sha256Of } = await import("../inbox");
+        const one = async (f: (typeof list)[number]) => {
+          if (!/^https:\/\//.test(f.download_url)) throw new Error("download_url: an https link");
+          const { media } = await importUrl(f.download_url, { name: f.name, folder: null, backup }, { name: "Claude (MCP)" });
+          // the stored copy's own size and SHA-256, so the caller can check it is byte for byte the original
+          const stored = media.r2_key ? await store.getObj(media.r2_key).catch(() => null) : null;
+          const sha256 = stored?.body ? await sha256Of(stored.body as ReadableStream<Uint8Array>).catch(() => null) : null;
+          return { media, sha256 };
+        };
+        const results: ({ media: Awaited<ReturnType<typeof one>>["media"]; sha256: string | null } | { error: string; name?: string })[] = new Array(list.length);
+        let next = 0;
+        await Promise.all(Array.from({ length: Math.min(4, list.length) }, async () => {
+          for (let i = next++; i < list.length; i = next++) results[i] = await one(list[i]).catch((e: Error) => ({ error: e.message, name: list[i].name }));
+        }));
+        const saved = results.filter((r): r is Exclude<typeof r, { error: string }> => "media" in r);
+        if (into && !into.system && saved.length) await fsm.moveItems(saved.map((r) => `m:${r.media.$id}`), into.id);
+        const out = await Promise.all(results.map(async (r) => "error" in r ? r : {
+          file_id: `m:${r.media.$id}`, name: r.media.name, kind: r.media.kind, mime: r.media.mime, bytes: r.media.size, ...(r.sha256 ? { sha256: r.sha256 } : {}),
+          ...(await fsm.whereFiled(`m:${r.media.$id}`, r.media.kind)),
+        }));
+        if (file && !files?.length) return "error" in out[0] ? fail(new Error(out[0].error)) : text(out[0]);
+        return text({ saved: saved.length, failed: list.length - saved.length, files: out });
       } catch (e) { return fail(e); }
     },
   );

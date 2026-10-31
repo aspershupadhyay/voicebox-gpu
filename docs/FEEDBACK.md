@@ -6,6 +6,9 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"How many images can it upload in one go? Make it unlimited; we need that capacity"**: `import_file` takes `files`
+  (up to 100 per call, four at a time, no limit overall: the next call takes the next 100), all filed in one folder in
+  one write, each answering its own bytes, SHA-256 and folder; one that fails doesn't stop the rest.
 - **"The answer says `folder: sysimages`; return the folder's name and path apart from its id"** (and "I can say which
   folder to save in"): every file-saving answer (`import_file`, `save_file`, `add_media`, `upload_media`, the Files
   import) gives `folder_id` (internal, unchanged), `folder_name` and `folder_path` (`lib/files.ts` `whereFiled`: where
