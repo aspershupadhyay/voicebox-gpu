@@ -8,7 +8,9 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { getJson, putJson } from "../store";
 
-export const CORE = ["tools", "find_tools", "call_tool", "run", "get_job", "project", "playbook", "approvals", "worker_status"];
+// import_file is in the core so ChatGPT sees it from the first listing: its openai/fileParams only work on a tool the
+// client listed itself (through call_tool the file never arrives), and ChatGPT's sandbox has no network to upload with.
+export const CORE = ["tools", "find_tools", "call_tool", "run", "get_job", "project", "playbook", "approvals", "worker_status", "import_file"];
 
 export const SETS: Record<string, { about: string; tools: string[] }> = {
   video: { about: "edit, templates, repurpose, inspect, images, captions, the factory", tools: ["edit_video", "video_template", "repurpose", "inspect_media", "imagine", "captions", "transcribe", "attach_voiceover", "post_pipeline", "factory", "formats", "script_check", "list_jobs", "cancel_job"] },

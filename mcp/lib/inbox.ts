@@ -105,7 +105,7 @@ const alias = (m: string) => ALIASES[m] ?? m;
 
 export class UploadError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 
-async function sha256Of(body: ReadableStream<Uint8Array>) {
+export async function sha256Of(body: ReadableStream<Uint8Array>) {
   const DS = (crypto as unknown as { DigestStream?: new (a: string) => WritableStream<Uint8Array> & { digest: Promise<ArrayBuffer> } }).DigestStream;
   if (DS) { const d = new DS("SHA-256"); await body.pipeTo(d); return Buffer.from(await d.digest).toString("hex"); }
   const h = createHash("sha256");

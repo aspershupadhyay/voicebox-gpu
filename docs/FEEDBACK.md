@@ -11,6 +11,9 @@ for. Read this before touching the dashboard. Newest first. When something here 
   can't reach the R2 hostname: the raw bytes of a PUT stream into R2 through the Worker's binding, checked against the
   ticket (name, type, size), and the receipt gives bytes and SHA-256. Up to 95 MB (Cloudflare's request cap); bigger
   files still use the presigned `upload_url`. Same ticket, same `/api/files/complete`, same folders and backup.
+  Then: ChatGPT's sandbox has no network at all (`Could not resolve host`), so it can't PUT anywhere. Its one route is
+  `import_file`, now in the core listing so ChatGPT hands it the file itself (`openai/fileParams` only fire on a tool
+  the client listed), answering bytes and SHA-256 of the stored copy.
 - **"I don't need Appwrite and the Vercel project; get over with Appwrite completely"**: no code talks to Appwrite now
   (`lib/data.ts`, Postgres and R2 only; the package, webhook and switches removed), and the old Vercel project is
   unused. Deleting both projects is the owner's click (docs/MIGRATION.md phase 4).
