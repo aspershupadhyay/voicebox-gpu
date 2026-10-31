@@ -32,10 +32,12 @@ export async function verify(email: string, password: string): Promise<User | nu
   const row = await byEmail(email);
   if (row?.password_hash) return (await matches(password, row.password_hash)) ? { id: row.id, email: row.email, name: row.name } : null;
   const { checkAppwritePassword, hasKey } = await import("./appwrite");
-  if (!hasKey()) return null;
+  // without Appwrite's server key only someone already on the team here (copied over, no password yet) can move in:
+  // a stray Appwrite account must never add itself to the list
+  if (!hasKey() && !row) return null;
   const aw = await checkAppwritePassword(email, password);
   if (!aw) return null;
-  const user = { id: aw.$id, email, name: aw.name || email.split("@")[0] };
+  const user = { id: row?.id ?? aw.$id, email, name: row?.name || aw.name || email.split("@")[0] };
   await sql().query(`insert into users (id, email, name, password_hash) values ($1, $2, $3, $4)
     on conflict (email) do update set password_hash = excluded.password_hash, updated_at = now()`, [user.id, email, user.name, await hashPassword(password)]);
   return user;

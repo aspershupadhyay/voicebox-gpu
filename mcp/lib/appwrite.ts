@@ -90,6 +90,13 @@ export async function checkAppwritePassword(email: string, password: string): Pr
   if (r.status === 401 || r.status === 400) return null;
   if (!r.ok) throw new AppwriteError(`Appwrite ${r.status}`, r.status);
   const s = (await r.json()) as { $id: string; userId: string };
+  if (!hasKey()) {
+    // no server key (the app moved to Cloudflare without it): the session itself proves the password; close it with
+    // its own cookie. No name: the caller keeps the one it already has.
+    const cookie = (r.headers.get("set-cookie") ?? "").split(/,(?=\s*a_session)/).map((c) => c.split(";")[0].trim()).filter(Boolean).join("; ");
+    if (cookie) await fetch(`${AW.endpoint}/account/sessions/current`, { method: "DELETE", headers: { "X-Appwrite-Project": AW.project, Cookie: cookie } }).catch(() => null);
+    return { $id: s.userId, name: "", email };
+  }
   const user = await aw<AwUser>(`/users/${encodeURIComponent(s.userId)}`);
   await aw(`/users/${encodeURIComponent(s.userId)}/sessions/${encodeURIComponent(s.$id)}`, { method: "DELETE" }).catch(() => null);
   return user;
