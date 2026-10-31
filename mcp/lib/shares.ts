@@ -1,13 +1,12 @@
 // Share links: a private, expiring link to one carousel or one folder for someone without an account (a client, an
 // editor). The link is /s/<token>: 32 random bytes, shown once when it's made and never stored (R2 keeps only its
 // SHA-256, like the upload keys). Opening it shows only what that one share names, read-only: the carousel's photos in
-// order, or the folder's files (and its subfolders'), live. Uploads are served by Appwrite tokens made for this share
-// that stop working when it expires (and are deleted when it's revoked); uploads kept in R2 (lib/r2files.ts) and
-// generated files by R2 links good for an hour, made on each visit.
+// order, or the folder's files (and its subfolders'), live. Files are served by R2 links good for an hour, made on each
+// visit, so nothing outlives the link.
 // Nothing else is reachable from it: no other files, no names of folders around it, no way to change anything.
 // Kept in R2: workspace/shares.json.
 import { createHash, randomBytes } from "node:crypto";
-import { createFileToken, deleteFileToken, getMedia } from "./appwrite";
+import { getMedia } from "./data";
 import { CAROUSEL_RE, POST_GROUP_RE } from "./carouselrules";
 import { catalog, carouselDetail } from "./filemanager";
 import { FilesError } from "./files";
@@ -15,12 +14,11 @@ import { FOLDER_RE, subtree } from "./filetree";
 import { listSummaries, signer } from "./library";
 import { resizable, thumbUrl } from "./r2files";
 import { getJsonTagged, presign, putJson, putJsonIf } from "./store";
-import { AW } from "./workspace";
 
 export type Share = {
   id: string; hash: string; kind: "carousel" | "folder"; ref: string; name: string; created: number; by: string;
   expires: number; revoked: number | null; downloads: boolean; views: number; last_view: number | null;
-  /** Appwrite view tokens made for this share, per media row id */
+  /** (unused since files moved off Appwrite; kept so older records still read) */
   tokens: Record<string, { id: string; secret: string }>;
 };
 type Doc = { shares: Share[] };
@@ -81,11 +79,10 @@ export async function listShares(filter: { kind?: string; ref?: string } = {}) {
   return (await all()).filter((s) => (!filter.kind || s.kind === filter.kind) && (!filter.ref || s.ref === filter.ref)).sort((a, b) => b.created - a.created).map(outOf);
 }
 
-/** Revoke: the link stops at once, and its Appwrite file tokens are deleted. */
+/** Revoke: the link stops at once. */
 export async function revokeShare(id: string) {
   const s = await change((d) => { const x = d.shares.find((y) => y.id === id); if (x && !x.revoked) x.revoked = Date.now(); return x ? structuredClone(x) : null; });
   if (!s) throw new FilesError("no such link", 404);
-  await Promise.all(Object.values(s.tokens).map((t) => deleteFileToken(t.id)));
   return outOf(s);
 }
 
@@ -108,25 +105,11 @@ export async function openShare(token: string): Promise<{ share: ReturnType<type
   }
   keys = keys.slice(0, MAX_FILES);
   const byId = new Map(items.map((i) => [i.id, i]));
-  // a view token per upload, made once and good until the link runs out
-  const need = keys.filter((k) => k.startsWith("m:") && !s.tokens[k.slice(2)]);
-  const made: Record<string, { id: string; secret: string }> = {};
-  const expire = new Date(s.expires).toISOString();
-  for (let i = 0; i < need.length; i += 8) {
-    await Promise.all(need.slice(i, i + 8).map(async (k) => {
-      const m = await getMedia(k.slice(2)).catch(() => null);
-      if (!m || m.file_id.startsWith("r2_")) return; // an R2 file gets hour-long links on each visit instead
-      const t = await createFileToken(m.file_id, expire).catch(() => null);
-      if (t) made[m.$id] = { id: t.$id, secret: t.secret };
-    }));
-  }
   await change((d) => {
     const x = d.shares.find((y) => y.id === s.id);
     if (!x) return;
-    Object.assign(x.tokens, made);
     x.views += 1; x.last_view = Date.now();
   }).catch(() => null);
-  const tokens = { ...s.tokens, ...made };
   const sign = await signer(3600);
   const sums = keys.some((k) => k.startsWith("g:")) ? new Map((await listSummaries()).map((j) => [`g:${j.id}`, j])) : new Map();
   const files: SharedFile[] = [];
@@ -141,18 +124,7 @@ export async function openShare(token: string): Promise<{ share: ReturnType<type
         files.push({ id: k, name: m.name, kind: m.kind, thumb: img ? await thumbUrl(key, 480, "webp", 3600).catch(() => null) : null,
           view: img ? await thumbUrl(key, 1920, "webp", 3600) : await presign(key, "GET", 3600),
           download: s.downloads ? await presign(key, "GET", 3600, m.name) : null, mb: it.mb });
-        continue;
       }
-      const t = m && tokens[m.$id];
-      if (!m || !t) continue;
-      const u = (mode: string, w?: number) => {
-        const x = new URL(`${AW.endpoint}/storage/buckets/${AW.bucket}/files/${m.file_id}/${mode}`);
-        x.searchParams.set("project", AW.project); x.searchParams.set("token", t.secret);
-        if (w) { x.searchParams.set("width", String(w)); x.searchParams.set("quality", "82"); x.searchParams.set("output", "webp"); }
-        return x.toString();
-      };
-      const img = m.kind === "image" && !/gif|svg|heic/i.test(`${m.mime} ${m.name}`);
-      files.push({ id: k, name: m.name, kind: m.kind, thumb: img ? u("preview", 480) : null, view: img ? u("preview", 1920) : u("view"), download: s.downloads ? u("download") : null, mb: it.mb });
     } else {
       const j = sums.get(k);
       if (!j) continue;

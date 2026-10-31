@@ -106,7 +106,7 @@ async function formatOf(post: Post, media: Media[]) {
 
 /** The package for a post, made fresh from the research (nothing is written: applyPack does that). */
 export async function buildPack(postId: string, o: { keyword?: string | null; credit?: string | null; by: string }): Promise<Pack> {
-  const [{ getPost, listMedia }, rd, radar, { titleModel }, prev] = await Promise.all([import("./appwrite"), import("./radar-data"), import("./radar"), import("./writing"), getPack(postId)]);
+  const [{ getPost, listMedia }, rd, radar, { titleModel }, prev] = await Promise.all([import("./data"), import("./radar-data"), import("./radar"), import("./writing"), getPack(postId)]);
   const post = await getPost(postId);
   const media = await listMedia(postId, 100).catch(() => [] as Media[]);
   const { fmt, kind } = await formatOf(post, media);
@@ -175,7 +175,7 @@ export async function getPack(postId: string) { return getJson<Pack>(KEY(postId)
  *  what the last package wrote, change (overwrite: every field). Returns what changed. */
 export async function applyPack(pack: Pack, actor: Actor, o: { overwrite?: boolean } = {}) {
   const [{ getPost, updatePost }, { captionsFor, setCaptions }, plans, { BUSY, networkOf }, { adaptCaption }, { targetsOf }, { getTargets }] = await Promise.all([
-    import("./appwrite"), import("./captions"), import("./publish/plans"), import("./publish/shared"), import("./writing"), import("./spaces"), import("./spacestore"),
+    import("./data"), import("./captions"), import("./publish/plans"), import("./publish/shared"), import("./writing"), import("./spaces"), import("./spacestore"),
   ]);
   const post = await getPost(pack.post);
   const free = (key: string, cur: string | null | undefined) => o.overwrite || !(cur ?? "").trim() || (cur ?? "").trim() === (pack.applied[key] ?? "").trim();
@@ -268,7 +268,7 @@ export async function ensurePack(postId: string, actor: Actor) {
  *  ("draft"). Only targets on a connected account are made. */
 export async function autoPost(files: string[], actor: Actor, o: { go?: "draft" | "arm" | "now"; spaces?: SpaceId[]; keyword?: string | null; credit?: string | null; title?: string | null; post_id?: string | null } = {}) {
   const [aw, { listAccounts }, plansMod, { getTargets, setTargets }, { targetsOf }, { nextSlot }] = await Promise.all([
-    import("./appwrite"), import("./publish/accounts"), import("./publish/plans"), import("./spacestore"), import("./spaces"), import("./publish/run"),
+    import("./data"), import("./publish/accounts"), import("./publish/plans"), import("./spacestore"), import("./spaces"), import("./publish/run"),
   ]);
   const ids = [...new Set(files.map((f) => f.replace(/^m:/, "")))].filter((x) => /^[A-Za-z0-9_-]{1,64}$/.test(x)).slice(0, 20);
   if (!ids.length) throw new Error("give the files to post (m:<upload id>, from Files or list_files)");

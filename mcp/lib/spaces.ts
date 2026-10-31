@@ -1,6 +1,6 @@
 // Content spaces: where a post goes, one level finer than the platform (Instagram → Reels / Posts / Stories). A post can
 // target several spaces at once (cross-posting); each target has its own stage, publish time and live link.
-// Targets are kept in R2 (workspace/spaces.json, see spacestore.ts) next to the Appwrite post; the post's `platforms`
+// Targets are kept in R2 (workspace/spaces.json, see spacestore.ts) next to the post row; the post's `platforms`
 // array stays in sync (the platform of each target) so the board filters and older tools keep working.
 import { STATUSES, type Platform, type Post, type Status } from "./workspace";
 
@@ -53,7 +53,7 @@ export function targetsOf(p: Pick<Post, "$id" | "platforms" | "status" | "due_at
     .map((space) => ({ space, status: p.status, due_at: p.due_at, link: p.link }));
 }
 
-/** What the Appwrite post should say once its targets change: platforms of every target; the stage of the furthest-behind
+/** What the post row should say once its targets change: platforms of every target; the stage of the furthest-behind
  *  target (a post is "posted" only when every target is); the earliest publish time still ahead. */
 export function postFromTargets(targets: Target[]): { platforms: Platform[]; status?: Status; due_at?: string | null } {
   const platforms = [...new Set(targets.map((t) => spaceOf(t.space)?.legacy).filter(Boolean) as Platform[])];

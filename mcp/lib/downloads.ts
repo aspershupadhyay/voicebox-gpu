@@ -289,7 +289,7 @@ async function run(d: Dl, actor: Actor) {
 }
 
 async function saveFromServer(d: Dl, found: Found, actor: Actor): Promise<DlItem[] | null> {
-  const { addMediaBytes, mimeFor } = await import("./appwrite");
+  const { addMediaBytes, mimeFor } = await import("./data");
   const { getSettings } = await import("./settings");
   const backup = (await getSettings()).backup_media;
   const items: DlItem[] = [];
@@ -431,7 +431,7 @@ async function saveFromWorker(d: Dl, actor: Actor) {
   try {
     const info = await getJson<{ title?: string; uploader?: string; handle?: string; thumbnail?: string; warnings?: string[]; items: { slot: number; name: string; mime: string; size: number }[] }>(`workspace/downloads/${d.id}/info.json`);
     if (!info?.items?.length) throw new DlError("the Colab downloader finished but sent no files back: Retry");
-    const { addMediaFromR2 } = await import("./appwrite");
+    const { addMediaFromR2 } = await import("./data");
     const who = (info.handle || info.uploader || "").replace(/^@/, "");
     const base = `${who ? `@${words(who, 30).replace(/\s+/g, "")} on ` : ""}${SOURCES[d.source].name}${info.title ? ` - ${words(info.title, 60)}` : ""}`;
     const items: DlItem[] = [];
@@ -493,7 +493,7 @@ export function plain(raw: string, site = "The site", serverWhy?: string | null)
   if (/^Colab \d{3}|couldn't start|Colab didn't/i.test(m)) return `The Colab downloader couldn't start: ${m.replace(/^Colab \d{3}:\s*/, "")}`;
   if (/can't be reached|couldn't reach the Colab worker/i.test(m)) return `The Colab downloader is on, but the dashboard couldn't connect to it (${m.replace(/^.*?\(/, "").replace(/\)[^)]*$/, "")}). Nothing is wrong with the link: Retry in a minute.`;
   if (/^(TypeError: )?fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang up|other side closed/i.test(m)) return `A connection dropped on the way (${m.slice(0, 80)}): nothing is wrong with the link. Retry.`;
-  if (/upload failed|storage (GET|PUT)|could not read the upload|Appwrite/i.test(m)) return `Saving to Files failed (${m.slice(0, 140)}). The download itself worked: Retry.`;
+  if (/upload failed|storage (GET|PUT)|could not read the upload/i.test(m)) return `Saving to Files failed (${m.slice(0, 140)}). The download itself worked: Retry.`;
   const code = Number(/HTTP(?: Error)?:? (\d{3})|answered (\d{3})|status(?: code)? (\d{3})/i.exec(m)?.slice(1).find(Boolean) ?? 0);
   if (code === 404 || code === 410) return `That link is gone: ${site} says it doesn't exist (HTTP ${code}). Check the link.`;
   if (code === 401 || code === 403) return `${site} refused the download (HTTP ${code}): it wants a signed-in account, or it doesn't allow downloads from servers. If it's yours to download, ${SIGN_IN}.${was}`;

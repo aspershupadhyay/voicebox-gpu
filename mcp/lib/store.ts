@@ -1,6 +1,23 @@
-// Object storage: one private Cloudflare R2 bucket over the S3 API (signed with aws4fetch).
-// R2 has no egress fees and generous free operations, so audio/video play straight from presigned URLs.
+// Object storage: one private Cloudflare R2 bucket. On the Worker, reads, writes, lists and deletes go through the R2
+// binding (BUCKET in wrangler.jsonc: inside Cloudflare, no signing, no extra TLS hop, a few ms); anywhere else, and for
+// presigned links, conditional writes and copies, over the S3 API (signed with aws4fetch). R2 has no egress fees, so
+// audio/video play straight from presigned URLs.
 import { AwsClient } from "aws4fetch";
+
+type R2Obj = { size: number; etag: string; httpEtag: string; uploaded: Date; key: string; httpMetadata?: { contentType?: string } };
+type R2Body = R2Obj & { body: ReadableStream };
+type R2Bucket = {
+  get(key: string): Promise<R2Body | null>; head(key: string): Promise<R2Obj | null>;
+  put(key: string, v: ArrayBuffer | Uint8Array | string, o?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
+  delete(keys: string | string[]): Promise<void>;
+  list(o: { prefix?: string; cursor?: string; delimiter?: string; limit?: number }): Promise<{ objects: R2Obj[]; truncated: boolean; cursor?: string; delimitedPrefixes: string[] }>;
+};
+/** The Worker's R2 binding, or null off Cloudflare (next dev, scripts) or when the bucket names don't match. */
+function bound(): R2Bucket | null {
+  if ((process.env.R2_BUCKET || "voicebox") !== "voicebox" || process.env.R2_ENDPOINT) return null;
+  const ctx = (globalThis as Record<symbol, { env?: { BUCKET?: R2Bucket } } | undefined>)[Symbol.for("__cloudflare-context__")];
+  return ctx?.env?.BUCKET ?? null;
+}
 
 const BUCKET = process.env.R2_BUCKET || "voicebox";
 // R2_ENDPOINT (optional) points at another S3-compatible store, e.g. a local one for testing
@@ -26,6 +43,12 @@ const url = (key: string) => `${ENDPOINT}/${key.split("/").map(encodeURIComponen
 
 /** The object, or null when it doesn't exist. */
 export async function getObj(key: string): Promise<Response | null> {
+  const b = bound();
+  if (b) {
+    const o = await b.get(key);
+    if (!o) return null;
+    return new Response(o.body, { headers: { "content-type": o.httpMetadata?.contentType || typeOf(key), "content-length": String(o.size), etag: o.httpEtag } });
+  }
   const r = await aws().fetch(url(key), { cache: "no-store" });
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`storage GET ${key}: ${r.status}`);
@@ -34,6 +57,8 @@ export async function getObj(key: string): Promise<Response | null> {
 
 /** An object's size and type, or null when it doesn't exist. */
 export async function headObj(key: string): Promise<{ size: number; type: string } | null> {
+  const b = bound();
+  if (b) { const o = await b.head(key); return o ? { size: o.size, type: o.httpMetadata?.contentType ?? "" } : null; }
   const r = await aws().fetch(url(key), { method: "HEAD", cache: "no-store" });
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`storage HEAD ${key}: ${r.status}`);
@@ -49,6 +74,8 @@ export async function putObj(key: string, body: BodyInit, type = typeOf(key)) {
   // Sign headers only (UNSIGNED-PAYLOAD), then send plain bytes: a body inside a signed Request goes out chunked on
   // Vercel, and R2 rejects that with 411 MissingContentLength.
   const bytes = new Uint8Array(await new Response(body).arrayBuffer());
+  const b = bound();
+  if (b) return void (await b.put(key, bytes, { httpMetadata: { contentType: type } }));
   const signed = await aws().sign(url(key), { method: "PUT", headers: { "Content-Type": type, "X-Amz-Content-Sha256": "UNSIGNED-PAYLOAD" } });
   const r = await fetch(signed.url, { method: "PUT", headers: signed.headers, body: bytes });
   if (!r.ok) throw new Error(`storage PUT ${key}: ${r.status} ${(await r.text()).slice(0, 200)}`);
@@ -85,6 +112,15 @@ const unxml = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").repla
 /** Every object under a prefix (ListObjectsV2, paginated). */
 export async function listObjs(prefix: string): Promise<StoredObj[]> {
   const out: StoredObj[] = [];
+  const b = bound();
+  if (b) {
+    for (let cursor: string | undefined; ;) {
+      const r = await b.list({ prefix, cursor, limit: 1000 });
+      for (const o of r.objects) out.push({ key: o.key, size: o.size, modified: o.uploaded.getTime() });
+      if (!r.truncated) return out;
+      cursor = r.cursor;
+    }
+  }
   let token = "";
   do {
     const u = new URL(ENDPOINT);
@@ -107,6 +143,15 @@ export async function listObjs(prefix: string): Promise<StoredObj[]> {
 /** The "folders" directly under a prefix (ListObjectsV2 with a delimiter): one request however many files they hold. */
 export async function listDirs(prefix: string): Promise<string[]> {
   const out: string[] = [];
+  const b = bound();
+  if (b) {
+    for (let cursor: string | undefined; ;) {
+      const r = await b.list({ prefix, cursor, delimiter: "/", limit: 1000 });
+      for (const d of r.delimitedPrefixes) out.push(d.slice(prefix.length).replace(/\/$/, ""));
+      if (!r.truncated) return out;
+      cursor = r.cursor;
+    }
+  }
   let token = "";
   do {
     const u = new URL(ENDPOINT);
@@ -125,6 +170,8 @@ export async function listDirs(prefix: string): Promise<string[]> {
 }
 
 export async function delObjs(keys: string[]) {
+  const b = bound();
+  if (b) { for (let i = 0; i < keys.length; i += 1000) await b.delete(keys.slice(i, i + 1000)); return; }
   for (let i = 0; i < keys.length; i += 16) {
     await Promise.all(keys.slice(i, i + 16).map(async (k) => {
       const r = await aws().fetch(url(k), { method: "DELETE" });

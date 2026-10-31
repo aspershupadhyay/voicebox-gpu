@@ -1,7 +1,6 @@
-// Sign-in accounts in Postgres (docs/MIGRATION.md 2b), used once AUTH_BACKEND=neon. Passwords are scrypt hashes.
-// Nobody resets anything: the first time someone signs in here, an account still only in Appwrite is checked against
-// Appwrite once and moved over with the same id (so their posts and files stay theirs) and the hash of the password
-// that just worked. The invite list (lib/access.ts) still decides who gets in.
+// Sign-in accounts in Postgres. Passwords are scrypt hashes; the password itself is never stored. The invite list
+// (lib/access.ts) still decides who gets in. A teammate row without a password yet (copied from Appwrite before it went,
+// 2026-10-31) gets one from someone already signed in (Settings → Security: setPassword), never by itself.
 import { randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { sql } from "./db";
@@ -26,30 +25,21 @@ export type User = { id: string; email: string; name: string };
 type Row = User & { password_hash: string | null; member: boolean };
 const byEmail = async (email: string) => ((await sql().query("select id, email, name, password_hash, member from users where email = $1", [email.toLowerCase()])) as Row[])[0] ?? null;
 
-/** The account for this email and password, or null. Moves an Appwrite account over on its first sign-in here. */
-export async function verify(email: string, password: string): Promise<User | null> {
-  email = email.trim().toLowerCase();
-  const row = await byEmail(email);
-  if (row?.password_hash) return (await matches(password, row.password_hash)) ? { id: row.id, email: row.email, name: row.name } : null;
-  const { checkAppwritePassword, hasKey } = await import("./appwrite");
-  // without Appwrite's server key only someone already on the team here (copied over, no password yet) can move in:
-  // a stray Appwrite account must never add itself to the list
-  if (!hasKey() && !row) return null;
-  const aw = await checkAppwritePassword(email, password);
-  if (!aw) return null;
-  const user = { id: row?.id ?? aw.$id, email, name: row?.name || aw.name || email.split("@")[0] };
-  await sql().query(`insert into users (id, email, name, password_hash) values ($1, $2, $3, $4)
-    on conflict (email) do update set password_hash = excluded.password_hash, updated_at = now()`, [user.id, email, user.name, await hashPassword(password)]);
-  return user;
+/** The account for this email and password, or null. */
+export async function verify(email: string, password: string): Promise<(User & { member: boolean }) | null> {
+  const row = await byEmail(email.trim().toLowerCase());
+  if (!row?.password_hash) {
+    await hashPassword(password); // same time either way: no telling which emails have accounts
+    return null;
+  }
+  return (await matches(password, row.password_hash)) ? { id: row.id, email: row.email, name: row.name, member: row.member } : null;
 }
 
-/** A new account (the caller has checked the invite list). Throws 409 when the email has one here or in Appwrite. */
+/** A new account (the caller has checked the invite list). Throws 409 when the email has one already. */
 export async function createAccount(email: string, password: string, name: string): Promise<User> {
   email = email.trim().toLowerCase();
   const taken = () => Object.assign(new Error("That email already has a seat. Sign in instead."), { status: 409 });
   if (await byEmail(email)) throw taken();
-  const { findAppwriteUser, hasKey } = await import("./appwrite");
-  if (hasKey() && (await findAppwriteUser(email).catch(() => null))) throw taken(); // moves over on its first sign-in
   const { newId } = await import("./db");
   const user = { id: newId(), email, name: name || email.split("@")[0] };
   await sql().query("insert into users (id, email, name, password_hash) values ($1, $2, $3, $4)", [user.id, email, user.name, await hashPassword(password)]);
@@ -66,10 +56,21 @@ export async function listUsers(): Promise<Member[]> {
   return ((await sql().query("select id, name, email from users where member order by created_at limit 25")) as Member[]);
 }
 
-/** Copy the Appwrite team into Postgres (no passwords: each gets one on their first sign-in here). Safe to run again. */
-export async function copyTeam() {
-  const { appwriteMembers } = await import("./appwrite");
-  const team = await appwriteMembers();
-  for (const m of team) await sql().query("insert into users (id, email, name) values ($1, $2, $3) on conflict (email) do nothing", [m.id, m.email.toLowerCase(), m.name]);
-  return team.length;
+/** Accounts on the team that have no password yet (copied over without one): Settings → Security lists them. */
+export async function withoutPassword(): Promise<string[]> {
+  return ((await sql().query("select email from users where member and password_hash is null order by created_at")) as { email: string }[]).map((r) => r.email);
+}
+
+/** Set a password. Your own (the current one must match when you have one), or a teammate's that has none yet. Never
+ *  replaces someone else's password. Returns why not, or null when it's set. */
+export async function setPassword(me: string, email: string, password: string, current?: string): Promise<string | null> {
+  if (password.length < 8) return "Use at least 8 characters for the password.";
+  email = email.trim().toLowerCase();
+  const row = await byEmail(email);
+  if (!row) return "No account with that email.";
+  if (email === me.toLowerCase()) {
+    if (row.password_hash && !(await matches(current ?? "", row.password_hash))) return "Your current password doesn't match.";
+  } else if (row.password_hash || !row.member) return "You can only set a password for a teammate who doesn't have one yet.";
+  await sql().query("update users set password_hash = $2, updated_at = now() where email = $1", [email, await hashPassword(password)]);
+  return null;
 }

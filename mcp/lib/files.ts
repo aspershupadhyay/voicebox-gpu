@@ -1,5 +1,5 @@
 // The Files page's folder tree in R2 (workspace/files.json): folders, where each file sits, stars, the trash and which
-// uploaded videos have a poster frame. Files themselves stay where they are: uploads in Appwrite (`m:<media id>`),
+// uploaded videos have a poster frame. Files themselves stay where they are: uploads in R2 (`m:<media id>`),
 // generated takes, subtitles, images and videos in the R2 library (`g:<library id>`); folders are `f:<folder id>`.
 // Writes read the latest copy first and change one thing, so two people filing different things never overwrite each
 // other. The rules (category folders, trash, where a file shows) are in lib/filetree.ts, shared with the browser.

@@ -1,5 +1,4 @@
 import "./globals.css";
-import { AW } from "@/lib/workspace";
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
@@ -29,7 +28,7 @@ const boot = `if("serviceWorker"in navigator&&location.protocol==="https:")addEv
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
-      <head><script dangerouslySetInnerHTML={{ __html: boot }} />{/* photos and previews come from Appwrite: open the line early */}<link rel="preconnect" href={new URL(AW.endpoint).origin} crossOrigin="anonymous" /><link rel="dns-prefetch" href={new URL(AW.endpoint).origin} /></head>
+      <head><script dangerouslySetInnerHTML={{ __html: boot }} /></head>
       <body>{children}</body>
     </html>
   );

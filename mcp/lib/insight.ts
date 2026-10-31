@@ -6,7 +6,7 @@
 //    numbers and tags back here so every device and the MCP tools share them.
 // Kept in R2: workspace/insight/index.json (hash, shape, colours, tags per file) and workspace/insight/emb.json (the
 // numbers, only the browser's search reads them). Every write is conditional and retried, like the carousels.
-import { getMedia } from "./appwrite";
+import { getMedia } from "./data";
 import { catalog, type FileItem } from "./filemanager";
 import { ITEM_RE } from "./filetree";
 import { listSummaries, signer } from "./library";

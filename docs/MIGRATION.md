@@ -1,4 +1,18 @@
-# Moving off Appwrite and most of Vercel
+# Moving off Appwrite and Vercel
+
+**Done (2026-10-31).** The studio runs on Cloudflare (the app as one Worker behind https://voiceboxstudio.pages.dev,
+files in R2, the timer), Neon (posts, comments, activity, the file list, accounts, and the backups) and GitHub (code
+and deploys), with Colab as the GPU. Appwrite and Vercel are no longer used by any code; see phase 4 for what's left
+to switch off by hand.
+
+| What | Where |
+|---|---|
+| Pages, API, MCP | Cloudflare Worker `voicebox-studio`, reached through the Pages project `voiceboxstudio` |
+| Files, trained voices, settings, logs | R2 bucket `voicebox` (the Worker reads it through its `BUCKET` binding) |
+| Posts, comments, activity, file rows, accounts | Postgres on Neon (`plain-unit-11439440`), live board through Neon Realtime |
+| Backups | Neon object storage `uploads` (nightly database dump, `models/` and `datasets/` copied) |
+| Timer (Live, sweep, backup) | Cloudflare Worker `voicebox-live-timer`, every minute |
+| Deploys | GitHub Actions `deploy.yml` with `CLOUDFLARE_API_TOKEN` |
 
 The owner's call (2026-10-30): stay on free tiers without the hectic. Files all go to R2, data goes to CockroachDB, the
 API and the MCP move to one Cloudflare Worker, and Vercel keeps only the pages. **Nothing may break on the way**: every
@@ -145,7 +159,19 @@ The Files page was emptied on the owner's request on 2026-10-30, except `Passwor
    The long routes (starting the Colab GPU, copying downloads) become Queue jobs; a Cloudflare cron replaces
    `sweep.yml`. Vercel rewrites `/api/*` to the Worker so it stays one origin (cookies, the same-origin check and
    sign-in unchanged). MCP clients get the new address once.
-4. **Appwrite off** after a week with nothing wrong (and after 2b, sign-in). Vercel serves only the pages.
+4. **Appwrite off (2026-10-31, the owner's call, ahead of the planned week).** Every row, account and file was already
+   on Neon and R2 (checked that day: 1 media row, all in R2; both accounts in `users`), so the code no longer talks to
+   Appwrite at all: `lib/appwrite.ts` became `lib/data.ts` (Postgres and R2 only), the `appwrite` package, the webhook
+   (`/api/hooks/appwrite`), the copy and check routes, the JWT sign-in and the `DB_BACKEND` / `AUTH_BACKEND` /
+   `NEXT_PUBLIC_FILES_BACKEND` switches are gone (there's nothing left to switch back to). Share links serve R2 links
+   only; avatars are kept per browser. An account copied over without a password (the one that never signed in after
+   the switch) gets one in **Settings → Security → the key icon**: a signed-in teammate can set a password only for an
+   account that has none, and changing your own needs the current one (`lib/users.ts` `setPassword`).
+   Sign-in got faster on the way: the lockout, the invite list and the password are checked at once, the record of the
+   try is written after the reply, and storage reads go through the Worker's R2 binding instead of signed S3 calls.
+   **Left for the owner, by hand**: delete the Appwrite project (Appwrite console → project `voicebox-studio` →
+   Settings → Delete project) and the Vercel project (Vercel → the project → Settings → Delete), after a last look
+   that nothing there is wanted. Nothing in the studio depends on either any more.
 5. **Extras.** Trained voices backed up to a private Hugging Face repo; Google Drive for nightly backups and
    import/export.
 

@@ -1,5 +1,5 @@
 // Dashboard login. Three ways in:
-//  - your Appwrite account (email + password), let in only when your email is on the list (lib/access.ts);
+//  - your account (email + password, lib/users.ts), let in only when your email is on the list (lib/access.ts);
 //  - GitHub, for the logins in OWNER_GITHUB / Settings;
 //  - the MCP_TOKEN as a password (scripts and the old single-user flow): signed in, but anonymous.
 // The session cookie is a signed ticket: who, how, when it was issued and when it ends (14 days). It's checked on every
@@ -51,13 +51,11 @@ async function ticket(): Promise<Ticket | null> {
   try {
     const t = JSON.parse(Buffer.from(body, "base64url").toString()) as Ticket;
     if (!t.exp || t.exp < Date.now()) return null;
-    const { sessionEpoch } = await import("./access");
-    if (t.iat < (await sessionEpoch())) return null; // signed out everywhere since
-    if (t.k === "user") {
-      const { allowedEmails } = await import("./access");
-      const list = await allowedEmails().catch(() => null);
-      if (!list || (list.length && !list.includes(t.sub))) return null; // removed from the list
-    }
+    const { allowedEmails, sessionEpoch } = await import("./access");
+    // both at once: each is cached on the server, but a fresh instance fetches them
+    const [epoch, list] = await Promise.all([sessionEpoch(), t.k === "user" ? allowedEmails().catch(() => null) : ([] as string[])]);
+    if (t.iat < epoch) return null; // signed out everywhere since
+    if (t.k === "user" && (!list || (list.length && !list.includes(t.sub)))) return null; // removed from the list
     if (t.k === "github") {
       const { allowedLogins } = await import("./github");
       if (!(await allowedLogins()).map((l) => l.toLowerCase()).includes(t.sub)) return null;

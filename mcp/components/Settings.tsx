@@ -217,11 +217,6 @@ export default function Settings() {
                 options={[["youtube", "YouTube · -14 LUFS, subtitles"], ["shorts", "YouTube Shorts · -14 LUFS, pop-up captions"], ["reels", "Instagram Reels · -14 LUFS, pop-up captions"],
                   ["tiktok", "TikTok · -14 LUFS, pop-up captions"], ["podcast", "Podcast · -16 LUFS"], ["raw", "Raw · no mastering"]]} />
             </section>
-            <section className="card b-3">
-              <div className="card-head"><div><h2>Files backup</h2><p className="sub">A second copy of everything in Files</p></div></div>
-              <Toggle on={s.backup_media} set={(v) => set("backup_media", v)} title="Back up uploads to R2"
-                about="Every file added to the workspace is also copied to your R2 bucket (up to ~180 MB), so nothing is lost if Appwrite is down." />
-            </section>
             <section className="card b-6 set-wide">
               <div><h2>YouTube and Instagram</h2><p className="sub dim small" style={{ margin: "4px 0 0" }}>Connected accounts, posting slots, cross-posting rules and retries live with the posts.</p></div>
               <Link href="/posts?view=autopilot" className="btn ghost sm"><Megaphone size={14} />Open Autopilot</Link>

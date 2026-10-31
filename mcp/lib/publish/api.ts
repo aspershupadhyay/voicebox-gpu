@@ -8,7 +8,7 @@
 //   DELETE publish/<post>/<space>          forget the plan
 import { captionFor } from "../captions";
 import { after } from "next/server";
-import { getPost } from "../appwrite";
+import { getPost } from "../data";
 import { currentUser } from "../session";
 import { spaceOf, type SpaceId } from "../spaces";
 import { configured, getAccount, listAccounts, removeAccount } from "./accounts";

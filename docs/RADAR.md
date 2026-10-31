@@ -160,7 +160,7 @@ they need one more check from Vercel's network before they ship, because some si
 | Wikidata, OpenAlex | 429 here | — | Rate-limited from shared IPs; optional |
 
 **Our own history is the moat.** The paid tools sell history. We start keeping it: every watched topic and every
-topic that reaches the Brief is snapshotted daily (bet, its parts, the raw counts) in Appwrite. After 30 days we have
+topic that reaches the Brief is snapshotted daily (bet, its parts, the raw counts) in R2. After 30 days we have
 our own trend lines; after a year, seasonality. Wikipedia pageviews (back to 2015) and GDELT (a year) fill the past on
 day one.
 

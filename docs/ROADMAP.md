@@ -65,7 +65,7 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 ## Notes for whoever picks this up
 - Spaces are defined once in `mcp/lib/spaces.ts` (add a space there and it shows everywhere: sidebar, drawer, MCP enum).
 - Platform logos, colours and format glyphs: `mcp/components/platform.tsx`. The Posts page is `mcp/components/Posts.tsx`; the drawer and its "Publish to" editor (`TargetsEditor`) are in `PostDrawer.tsx`.
-- Targets refresh every 15 s (not Appwrite Realtime): `mcp/components/useTargets.ts`.
+- Targets refresh every 15 s (not Realtime): `mcp/components/useTargets.ts`.
 - Job tracking: `mcp/components/jobs.ts` (localStorage, `useResumeJob`), the tray `JobTray.tsx`; `api()` tracks every
   POST to `jobs` / `myvoices`. Saved recordings: `takes.ts` (IndexedDB); `startRecording(scope)` in `Recorder.tsx`.
 

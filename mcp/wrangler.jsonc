@@ -1,5 +1,5 @@
 // The studio on Cloudflare Workers (docs/MIGRATION.md step 3). Built by `npx opennextjs-cloudflare build`, deployed by
-// `npx opennextjs-cloudflare deploy`. Secrets are copied from Vercel by scripts/move_secrets (never written here).
+// `npx wrangler deploy` (.github/workflows/deploy.yml). Secrets live on the Worker (`npx wrangler secret put`), never here.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "voicebox-studio",
@@ -11,6 +11,8 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  // the studio's bucket, reached from inside Cloudflare (lib/store.ts); presigned links still use the S3 API
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "voicebox" }],
   "limits": { "cpu_ms": 300000 },
   "observability": { "enabled": true }
 }

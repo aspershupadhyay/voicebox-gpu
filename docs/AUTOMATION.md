@@ -19,7 +19,7 @@ owner"), fixing what that turns up, and the owner's next ideas. Read `CLAUDE.md`
   polling, signed result links, a "job finished" callback (`/api/downloads/done`), self-update from the dashboard bundle.
 - **GPU from the app** `mcp/lib/colab.ts`: start (L4 for voice and downloads), stop, idle and done auto-stop, sweep of
   dead runtimes, units balance and rates. A stopped runtime's worker is offline at once.
-- **Files** (Appwrite + R2): presigned uploads straight from the worker, carousels, folders, share links.
+- **Files** (R2): presigned uploads straight from the worker, carousels, folders, share links.
 - **Media**: voiceovers (Kokoro, Chatterbox, Orpheus, Qwen, the owner's own voice), clean-up, re-voice, Whisper
   subtitles, images, video (Wan, LTX), downloads from any link (`lib/downloads.ts`: server, then yt-dlp, as Chrome,
   gallery-dl, a page scan; auto retry; carousels whole and in order).

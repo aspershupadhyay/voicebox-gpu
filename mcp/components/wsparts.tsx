@@ -2,8 +2,8 @@
 // Building blocks shared by Posts and Files: the sign-in gate, avatars, uploads and media tiles.
 import { FileAudio, FileText, FilmStrip, Paperclip, Play, UsersThree } from "@phosphor-icons/react";
 import { useCallback, useState } from "react";
-import { AW, fileUrl, initials, kindOf, onR2, screenPreview, type Media, type MediaKind } from "@/lib/workspace";
-import { aw, getMe, ID, logActivity, rowCreate, rowDelete, rowGet, signOut, useMe } from "./aw";
+import { fileUrl, initials, kindOf, screenPreview, type Media, type MediaKind } from "@/lib/workspace";
+import { rowGet, signOut, useMe } from "./aw";
 import { Empty, PageHeader } from "./ui";
 import { FileViewer } from "./Viewer";
 
@@ -19,7 +19,7 @@ export function Gate({ children, title }: { children: React.ReactNode; title?: s
       <Empty icon={<UsersThree size={22} />} title={!me.workspace ? "The shared workspace isn't set up yet" : "Sign in with your account to see the shared workspace"}
         action={me.workspace ? <button className="sm" onClick={async () => { await signOut(); location.href = "/login"; }}>Sign in with email</button> : undefined}>
         {!me.workspace
-          ? "Posts, comments and shared files appear here once the owner connects the workspace (APPWRITE_API_KEY, see docs/WORKSPACE.md). Voiceovers, voices and files keep working meanwhile."
+          ? "Posts, comments and shared files appear here once the owner connects the workspace (DATABASE_URL_POOLED on the Worker). Voiceovers, voices and files keep working meanwhile."
           : "The access token opens the studio, but posts, comments and media belong to people. Sign in with your own account and you'll both see the same desk, live."}
       </Empty>
     </>
@@ -35,8 +35,6 @@ export type Upload = { key: string; name: string; size: number; kind: MediaKind;
 
 // files going up at once: many small ones fill the line in parallel; big ones go two or three at a time so each finishes soon
 const lanesFor = (files: File[]) => (files.every((f) => f.size < 8e6) ? 6 : files.some((f) => f.size > 200e6) ? 2 : 3);
-
-const FILES_ON_R2 = process.env.NEXT_PUBLIC_FILES_BACKEND === "r2";
 
 /** PUT a file to a presigned R2 address, reporting progress (fetch can't). */
 function putWithProgress(url: string, file: File, type: string, onProgress: (f: number) => void) {
@@ -63,9 +61,8 @@ async function uploadToR2(file: File, postId: string | null | undefined, onProgr
   return rowGet<Media>("media", done.media);
 }
 
-/** Upload to Appwrite Storage (chunked, resumable), record it in the media table, then mint a view token (the R2 backup
- *  copy follows on the server); with NEXT_PUBLIC_FILES_BACKEND=r2, into R2 instead (uploadToR2). `onRow` hears about
- *  each file as soon as its row exists; `onStart` as it's queued. */
+/** Upload into R2 (uploadToR2) and record it in the media table. `onRow` hears about each file as soon as its row
+ *  exists; `onStart` as it's queued. */
 export function useUploader(postId?: string | null) {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const upload = useCallback(async (files: FileList | File[], onRow?: (m: Media, file: File, key: string) => void, onStart?: (key: string, file: File) => void) => {
@@ -73,46 +70,18 @@ export function useUploader(postId?: string | null) {
     const jobs = list.map((file) => ({ file, key: `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}` }));
     setUploads((u) => [...u, ...jobs.map(({ file, key }) => ({ key, name: file.name, size: file.size, kind: kindOf(file.type, file.name), progress: 0 }))]);
     jobs.forEach(({ file, key }) => onStart?.(key, file));
-    const { user } = await getMe();
-    const finishing: Promise<void>[] = [];
     const one = async ({ file, key }: { file: File; key: string }) => {
       const set = (p: Partial<Upload>) => setUploads((u) => u.map((x) => (x.key === key ? { ...x, ...p } : x)));
-      if (FILES_ON_R2) {
-        try {
-          const row = await uploadToR2(file, postId, (p) => set({ progress: Math.min(0.99, p) }));
-          set({ mediaId: row.$id, progress: 1, done: true });
-          onRow?.(row, file, key);
-        } catch (e) {
-          set({ error: (e as Error).message || "Upload failed" });
-        }
-        return;
-      }
       try {
-        const f = await aw().storage.createFile({ bucketId: AW.bucket, fileId: ID.unique(), file, onProgress: (p) => set({ progress: Math.min(0.99, p.progress / 100) }) });
-        set({ progress: 0.99 });
-        // the bytes are up: the lane takes the next file while this one is recorded and gets its link
-        finishing.push((async () => {
-          try {
-            const row = await rowCreate<Media>("media", {
-              file_id: f.$id, name: file.name.slice(0, 255), mime: file.type || null, size: file.size, kind: kindOf(file.type, file.name), post_id: postId ?? null,
-              uploaded_by: user?.id ?? null, uploaded_name: user?.name ?? null, r2_key: null, token: null,
-            });
-            set({ mediaId: row.$id });
-            onRow?.(row, file, key);
-            const fin = await fetch(`/api/ws/media/${row.$id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then((r) => r.json()).catch(() => ({}));
-            set({ progress: 1, done: true, error: fin.backup || undefined });
-            logActivity(postId ?? null, "uploaded", file.name);
-          } catch (e) {
-            set({ error: (e as Error).message || "Upload failed" });
-          }
-        })());
+        const row = await uploadToR2(file, postId, (p) => set({ progress: Math.min(0.99, p) }));
+        set({ mediaId: row.$id, progress: 1, done: true });
+        onRow?.(row, file, key);
       } catch (e) {
         set({ error: (e as Error).message || "Upload failed" });
       }
     };
     const queue = [...jobs];
     await Promise.all(Array.from({ length: Math.min(lanesFor(list), queue.length) }, async () => { for (let j = queue.shift(); j; j = queue.shift()) await one(j); }));
-    await Promise.all(finishing);
   }, [postId]);
   const clear = useCallback(() => setUploads((u) => u.filter((x) => !x.done && !x.error)), []);
   return { uploads, upload, clear };
@@ -170,13 +139,7 @@ export function MediaViewer({ m, onClose, onDelete }: { m: Media; onClose: () =>
 }
 
 export async function deleteMedia(m: Media) {
-  // the server deletes the file with its row: always for R2 files, and for every file once Postgres leads
-  if (onR2(m) || (await getMe()).db === "neon") {
-    const r = await fetch(`/api/ws/media/${m.$id}`, { method: "DELETE" });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't delete it");
-    return;
-  }
-  await aw().storage.deleteFile({ bucketId: AW.bucket, fileId: m.file_id }).catch(() => {});
-  await rowDelete("media", m.$id);
-  logActivity(m.post_id, "deleted file", m.name);
+  // the server deletes the file with its row
+  const r = await fetch(`/api/ws/media/${m.$id}`, { method: "DELETE" });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't delete it");
 }

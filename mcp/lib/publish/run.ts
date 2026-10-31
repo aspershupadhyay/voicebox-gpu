@@ -3,7 +3,7 @@
 // .github/workflows/sweep.yml: it starts plans whose time has come, carries on unfinished ones, retries failures with
 // backoff, refreshes Instagram tokens, gives Scheduled posts without a time the next posting slot, and marks posts live.
 import { captionFor } from "../captions";
-import { logActivity } from "../appwrite";
+import { logActivity } from "../data";
 import { notify } from "../colab";
 import { spaceName, targetsOf, type SpaceId, type Target } from "../spaces";
 import { getTargets, setTargets } from "../spacestore";
@@ -109,7 +109,7 @@ async function finish(p: Plan, rules: Rules) {
 /** The board follows: the target goes to Posted (or Scheduled while YouTube holds it) with its live link. */
 async function markLive(p: Plan, live: boolean) {
   const map = await getTargets();
-  const { getPost } = await import("../appwrite");
+  const { getPost } = await import("../data");
   const post = await getPost(p.post).catch(() => null);
   if (!post) return;
   const ts = targetsOf(post, map).map((t) => (t.space === p.space ? { ...t, status: live ? ("posted" as const) : ("scheduled" as const), link: p.result?.url ?? t.link } : t));
@@ -121,7 +121,7 @@ async function markLive(p: Plan, live: boolean) {
 async function crosspost(p: Plan, rules: Rules) {
   const due = rules.crosspost.filter((r) => r.on && r.from === p.space);
   if (!due.length) return;
-  const { getPost } = await import("../appwrite");
+  const { getPost } = await import("../data");
   const post = await getPost(p.post);
   const map = await getTargets();
   let targets = targetsOf(post, map);

@@ -1,8 +1,8 @@
 // Everything the Files page can do to a file, on the server, for the dashboard routes and the MCP tools alike: one
-// catalog of uploads (Appwrite) and generated items (R2 library) with their folders, stars and the trash; rename,
+// catalog of uploads (R2, rows in Postgres) and generated items (R2 library) with their folders, stars and the trash; rename,
 // trash / restore / delete for good, import from a link, poster frames for uploaded videos and the sidebar's
 // favourites. The folder tree itself is lib/files.ts (rules in lib/filetree.ts).
-import { addMediaFromUrl, deleteMediaRow, getMedia, hasKey, hasWorkspace, listMedia, listPosts, renameMedia } from "./appwrite";
+import { addMediaFromUrl, deleteMediaRow, getMedia, hasWorkspace, listMedia, listPosts, renameMedia } from "./data";
 import { groupsOf, POST_GROUP_RE, type Group } from "./carouselrules";
 import { createCarousel, forgetInCarousels, getCarousels, updateCarousel } from "./carousels";
 import { expired, FilesError, findFolder, forget, forgetPlan, getTree, markPoster, moveItems, pathOf, restoreItems, trashItems, type FileTree } from "./files";
@@ -44,7 +44,7 @@ const fromJob = (j: LibSummary, t: FileTree): FileItem => {
 export async function catalog(opts: { trash?: boolean } = {}) {
   const [tree, media, jobs, made, posts] = await Promise.all([
     getTree(),
-    hasWorkspace() ? listMedia(undefined, 1000).catch((e: Error) => e) : Promise.resolve(new Error("the shared workspace isn't connected (APPWRITE_API_KEY)")),
+    hasWorkspace() ? listMedia(undefined, 1000).catch((e: Error) => e) : Promise.resolve(new Error("the shared workspace isn't connected (DATABASE_URL_POOLED)")),
     listSummaries(),
     getCarousels().catch(() => []),
     hasWorkspace() ? listPosts({ limit: 200 }).catch(() => []) : Promise.resolve([]),
@@ -228,9 +228,9 @@ export class LiveAlready extends FilesError {
 }
 
 export async function publishCarousel(id: string, actor: Actor, opts: { caption?: string; account?: string; go?: "draft" | "arm" | "now"; at?: string; again?: boolean } = {}) {
-  if (!hasWorkspace()) throw new FilesError("the shared workspace isn't connected (APPWRITE_API_KEY)");
+  if (!hasWorkspace()) throw new FilesError("the shared workspace isn't connected (DATABASE_URL_POOLED)");
   const [{ createPost, getPost, setMediaPost }, { targetsOf }, plansMod, { BUSY, LIMITS }, { getTargets, setTargets }, { captionFor }, { adaptCaption }, { listAccounts }, cat] = await Promise.all([
-    import("./appwrite"), import("./spaces"), import("./publish/plans"), import("./publish/shared"), import("./spacestore"), import("./captions"), import("./writing"), import("./publish/accounts"), catalog(),
+    import("./data"), import("./spaces"), import("./publish/plans"), import("./publish/shared"), import("./spacestore"), import("./captions"), import("./writing"), import("./publish/accounts"), catalog(),
   ]);
   const { getPlan, putPlan, editPlan, getRules, listPlans } = plansMod;
   let g = cat.allGroups.find((x) => x.id === id) ?? cat.allGroups.find((x) => x.name.toLowerCase() === id.trim().toLowerCase());

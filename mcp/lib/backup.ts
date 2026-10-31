@@ -124,7 +124,7 @@ export async function nightly(ms = 120_000) {
     if (hasDb()) {
       try {
         next.dump = await dumpDb(day);
-        if (process.env.DB_BACKEND === "neon") next.pruned = await pruneActivity();
+        next.pruned = await pruneActivity();
         next.error = undefined;
       } catch (e) { next.error = (e as Error).message; }
     }

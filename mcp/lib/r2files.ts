@@ -1,14 +1,12 @@
-// Files uploads kept in R2 instead of Appwrite Storage (docs/MIGRATION.md, phase 1). A row whose file_id starts with
-// "r2_" has its bytes at r2_key; its token is an HMAC of that key, so /api/m/<token>/<key> can check a link without
-// reading the row (like an Appwrite file token: a secret kept in team-only rows that lets <img>/<video> work without a
-// session). Photos get resized copies made once with sharp and kept under cache/thumbs/ (a bucket rule drops them after
-// 30 days; they're made again on the next look). NEXT_PUBLIC_FILES_BACKEND=r2 sends new uploads here; rows already in
-// Appwrite keep working as they are.
+// Files uploads, kept in R2 (every file since 2026-10-31; docs/MIGRATION.md). A row's file_id starts with "r2_" and
+// its bytes are at r2_key; its token is an HMAC of that key, so /api/m/<token>/<key> can check a link without reading
+// the row (a secret kept in team-only rows that lets <img>/<video> work without a session). Photos get resized copies
+// made once and kept under cache/thumbs/ (a bucket rule drops them after 30 days; they're made again on the next look).
 import { createHash, createHmac } from "node:crypto";
 import { copyObj, delObjs, getObj, headObj, listObjs, presign, putObj } from "./store";
 import { safeEqual } from "./worker";
 
-export const FILES_ON_R2 = process.env.NEXT_PUBLIC_FILES_BACKEND === "r2";
+
 
 /** Where an R2 file may live: what /api/m serves and nothing else (models, datasets and the rest stay private). */
 export const SERVABLE = /^workspace\/media\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
