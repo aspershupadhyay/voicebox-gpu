@@ -12,7 +12,7 @@ import { joinCarousel } from "./carousels";
 import { assertRoom } from "./r2files";
 import { fileUrl } from "./workspace";
 import { findFolder, getTree, moveItems } from "./files";
-import { getJson, headObj, presign, putJson } from "./store";
+import { getJson, headObj, presign, putJson, putObj, putStream } from "./store";
 import { safeEqual } from "./worker";
 
 export const MAX_BYTES = 2e9;
@@ -24,9 +24,12 @@ const secret = () => {
 };
 const sign = (body: string) => createHmac("sha256", secret()).update(`voicebox-inbox-v1:${body}`).digest("base64url");
 
-type Ticket = { f: string; k: string; n: string; m: string; p: string | null; d: string | null; e: number; c?: string; o?: number };
+type Ticket = { f: string; k: string; n: string; m: string; p: string | null; d: string | null; e: number; c?: string; o?: number; s?: number };
+/** The most a PUT through our own domain can carry: Cloudflare caps a request body at 100 MB. Bigger files use the
+ *  presigned R2 address. */
+export const PUT_MAX = 95e6;
 
-export async function startUpload(input: { name?: unknown; type?: unknown; size?: unknown; folder?: unknown; post_id?: unknown; carousel?: unknown; position?: unknown }) {
+export async function startUpload(input: { name?: unknown; type?: unknown; size?: unknown; folder?: unknown; post_id?: unknown; carousel?: unknown; position?: unknown }, origin?: string) {
   const name = String(input.name ?? "").trim().replace(/[\\/\0]/g, "_").slice(-200);
   if (!name || !/\.[A-Za-z0-9]{1,8}$/.test(name)) throw new Error("name needs a file extension, e.g. clip.mp4");
   const size = input.size == null ? null : Number(input.size);
@@ -46,21 +49,70 @@ export async function startUpload(input: { name?: unknown; type?: unknown; size?
   const fileId = randomBytes(10).toString("hex");
   const key = `workspace/media/${fileId}/${name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120)}`;
   const t: Ticket = { f: fileId, k: key, n: name, m: mime, p: input.post_id ? String(input.post_id).slice(0, 64) : null, d: folder, e: Date.now() + TTL,
-    ...(carousel ? { c: carousel } : {}), ...(position ? { o: position } : {}) };
+    ...(carousel ? { c: carousel } : {}), ...(position ? { o: position } : {}), ...(size != null ? { s: size } : {}) };
   const body = Buffer.from(JSON.stringify(t)).toString("base64url");
+  const ticket = `${body}.${sign(body)}`;
   const upload_url = await presign(key, "PUT", TTL / 1000);
-  return { upload_url, ticket: `${body}.${sign(body)}`, expires_at: new Date(t.e).toISOString(), max_bytes: MAX_BYTES, content_type: mime, carousel: carousel ?? null, position: position ?? null };
+  // the same upload through our own domain (app/api/files/put): for clients that can't reach the R2 hostname
+  const base = (await import("./colab")).appOrigin(origin) || "https://voiceboxstudio.pages.dev";
+  const put_url = base && (size == null || size <= PUT_MAX) ? `${base}/api/files/put/${ticket}` : null;
+  return { upload_url, put_url, ticket, expires_at: new Date(t.e).toISOString(), max_bytes: MAX_BYTES, put_max_bytes: PUT_MAX, content_type: mime, carousel: carousel ?? null, position: position ?? null };
 }
 
 function readTicket(ticket: string): Ticket {
   const [body, mac] = String(ticket).split(".");
   if (!body || !mac || !safeEqual(mac, sign(body))) throw new Error("that ticket isn't valid");
-  const t = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Ticket;
+  let t: Ticket;
+  try { t = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Ticket; } catch { throw new Error("that ticket isn't valid"); }
   if (Date.now() > t.e + TTL) throw new Error("that ticket has expired; start the upload again");
   return t;
 }
 
 const DONE = (f: string) => `workspace/inbox/${f}.json`;
+const RECEIPT = (f: string) => `workspace/inbox/${f}.put.json`;
+type Receipt = { bytes: number; sha256: string; content_type: string; at: string };
+
+/** Step 2 through our own domain: the raw bytes of a PUT stream into R2 through the Worker's binding, unchanged, and
+ *  the answer is a receipt with their size and SHA-256. A ticket takes one PUT, before it expires, of exactly the
+ *  size it was started with (when one was given), and a type that matches its file's (or application/octet-stream). */
+export async function putUpload(ticket: string, req: Request) {
+  const t = readTicket(ticket);
+  if (Date.now() > t.e) throw new UploadError(410, "this upload address has expired; start the upload again");
+  const len = Number(req.headers.get("content-length") ?? NaN);
+  if (!Number.isInteger(len) || len < 0) throw new UploadError(411, "send Content-Length (curl -T <file> or --data-binary @<file> do)");
+  if (len > PUT_MAX) throw new UploadError(413, `over ${PUT_MAX / 1e6} MB through this address: PUT it to upload_url instead`);
+  if (t.s != null && len !== t.s) throw new UploadError(400, `this ticket is for ${t.s} bytes; the request has ${len}`);
+  const type = alias((req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase());
+  if (type && type !== "application/octet-stream" && type !== alias(t.m.toLowerCase()))
+    throw new UploadError(415, `this ticket is for ${t.m} (${t.n}); send that Content-Type or application/octet-stream`);
+  if (await headObj(t.k)) throw new UploadError(409, "this ticket's file is already uploaded: turn the ticket in with save_file { ticket }");
+  if (!req.body && len > 0) throw new UploadError(400, "no body");
+  const [toStore, toHash] = (req.body ?? new Response(new Uint8Array()).body!).tee();
+  const hashing = sha256Of(toHash);
+  hashing.catch(() => null); // a failed store says why below; the hash's own failure isn't the news
+  const streamed = await putStream(t.k, toStore, len, t.m);
+  if (!streamed) await putObj(t.k, await new Response(toStore).arrayBuffer(), t.m); // off Cloudflare, or an empty file
+  const sha256 = await hashing;
+  const head = await headObj(t.k);
+  if (!head || head.size !== len) throw new UploadError(500, `stored ${head?.size ?? 0} bytes of ${len}; PUT it again`);
+  const r: Receipt = { bytes: len, sha256, content_type: t.m, at: new Date().toISOString() };
+  await putJson(RECEIPT(t.f), r);
+  return { ...r, name: t.n, next: "call save_file again with { ticket } (or POST it to /api/files/complete)" };
+}
+
+const ALIASES: Record<string, string> = { "audio/x-wav": "audio/wav", "audio/wave": "audio/wav", "audio/vnd.wave": "audio/wav", "image/jpg": "image/jpeg", "image/pjpeg": "image/jpeg", "audio/mp3": "audio/mpeg" };
+const alias = (m: string) => ALIASES[m] ?? m;
+
+export class UploadError extends Error { constructor(public status: number, msg: string) { super(msg); } }
+
+async function sha256Of(body: ReadableStream<Uint8Array>) {
+  const DS = (crypto as unknown as { DigestStream?: new (a: string) => WritableStream<Uint8Array> & { digest: Promise<ArrayBuffer> } }).DigestStream;
+  if (DS) { const d = new DS("SHA-256"); await body.pipeTo(d); return Buffer.from(await d.digest).toString("hex"); }
+  const h = createHash("sha256");
+  const rd = body.getReader();
+  for (;;) { const { done, value } = await rd.read(); if (done) break; h.update(value); }
+  return h.digest("hex");
+}
 
 type Done = { media: string; name: string; carousel?: { error?: string } | null };
 
@@ -71,11 +123,11 @@ async function joinFor(t: Ticket, mediaId: string, actor: { name: string }) {
 }
 
 /** Start several uploads at once (one carousel's photos): each file gets its own address and ticket. */
-export async function startUploads(input: { files?: unknown; folder?: unknown; post_id?: unknown; carousel?: unknown }) {
+export async function startUploads(input: { files?: unknown; folder?: unknown; post_id?: unknown; carousel?: unknown }, origin?: string) {
   const files = Array.isArray(input.files) ? input.files as Record<string, unknown>[] : [];
   if (!files.length || files.length > 100) throw new Error("files: 1 to 100 of {name, size?, type?, position?}");
   const auto = files.every((f) => f.position == null) && !!input.carousel; // no positions given: the order they're listed in
-  const out = await Promise.all(files.map((f, i) => startUpload({ ...f, folder: input.folder, post_id: input.post_id, carousel: input.carousel, position: f.position ?? (auto ? i + 1 : undefined) })));
+  const out = await Promise.all(files.map((f, i) => startUpload({ ...f, folder: input.folder, post_id: input.post_id, carousel: input.carousel, position: f.position ?? (auto ? i + 1 : undefined) }, origin)));
   return out.map((r, i) => ({ name: String(files[i].name), ...r }));
 }
 
@@ -101,13 +153,15 @@ export async function completeUpload(ticket: string, actor: { id?: string; name:
   const head = await headObj(t.k);
   if (!head) throw new Error("nothing was uploaded yet: PUT the file to upload_url first (curl -T <file> '<upload_url>')");
   if (head.size > MAX_BYTES) throw new Error("files go up to 2 GB");
+  if (t.s != null && head.size !== t.s) throw new Error(`the upload has ${head.size} bytes; this ticket is for ${t.s}. PUT it again`);
+  const receipt = await getJson<Receipt>(RECEIPT(t.f)).catch(() => null);
   const { media } = await addMediaFromR2(t.k, head.size, t.m, t.n, t.f, { postId: t.p }, actor);
   if (t.d) await moveItems([`m:${media.$id}`], t.d);
   // the file is saved either way; a carousel that can't take it says so in the answer
   const carousel = await joinFor(t, media.$id, actor);
   await putJson(DONE(t.f), { media: media.$id, name: media.name, carousel });
   warmPreviews(media);
-  return { media: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: Math.round(head.size / 1e5) / 10, folder: t.d, post_id: t.p, carousel, already: false };
+  return { media: media.$id, file_id: `m:${media.$id}`, name: media.name, kind: media.kind, mb: Math.round(head.size / 1e5) / 10, bytes: head.size, ...(receipt ? { sha256: receipt.sha256 } : {}), folder: t.d, post_id: t.p, carousel, already: false };
 }
 
 /** Make (and cache) an image's card and screen sizes now, so the first look in Files is instant. */

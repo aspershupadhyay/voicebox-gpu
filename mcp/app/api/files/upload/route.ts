@@ -16,12 +16,12 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const origin = new URL(req.url).origin;
     if (Array.isArray(body.files)) {
-      const uploads = await startUploads(body);
-      return Response.json({ uploads, next: [`curl -sS -T <file> "<upload_url>"  (each file; run them side by side)`,
+      const uploads = await startUploads(body, origin);
+      return Response.json({ uploads, next: [`curl -sS -T <file> "<put_url>"  (or <upload_url> over 95 MB; each file; run them side by side)`,
         `curl -sS -X POST ${origin}/api/files/complete -H "Authorization: Bearer <key>" -H "Content-Type: application/json" -d '{"tickets":["<ticket>", ...]}'`] });
     }
-    const r = await startUpload(body);
-    return Response.json({ ...r, next: [`curl -sS -T <file> "${r.upload_url}"`, `curl -sS -X POST ${origin}/api/files/complete -H "Authorization: Bearer <key>" -H "Content-Type: application/json" -d '{"ticket":"${r.ticket}"}'`] });
+    const r = await startUpload(body, origin);
+    return Response.json({ ...r, next: [`curl -sS -T <file> "${r.put_url ?? r.upload_url}"`, `curl -sS -X POST ${origin}/api/files/complete -H "Authorization: Bearer <key>" -H "Content-Type: application/json" -d '{"ticket":"${r.ticket}"}'`] });
   } catch (e) {
     return Response.json({ error: (e as Error).message }, { status: 400 });
   }

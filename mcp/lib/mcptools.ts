@@ -1177,7 +1177,7 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     {
       title: "Save a file of any size to Files",
       description: "Save a file you made (a rendered video, audio, images, a PDF) into the Files page, up to 2 GB, without sending its bytes through MCP. " +
-        "Two calls: first with `name` (and size, folder, post_id) — it answers an upload_url; PUT the file there with one shell command (curl -sS -T <file> \"<upload_url>\", within an hour); " +
+        "Two calls: first with `name` (and size in bytes, folder, post_id) — it answers a put_url (our own domain, up to 95 MB) and an upload_url (R2, up to 2 GB); PUT the file's raw bytes to one with one shell command (curl -sS -T <file> \"<put_url>\", within an hour; no Base64): put_url answers a receipt with bytes and sha256 to check against your file; " +
         "then call again with the `ticket` it gave, and the file appears in Files (filed in the folder, attached to the post). Use this instead of upload_media for anything over ~3 MB. " +
         "For a carousel post (several photos or clips), give every file the same `carousel` (a name makes one; the carousels tool lists ids) and its `position` (1 = first): they show as one stack on the Files page, in that order.",
       inputSchema: z.object({
@@ -1192,7 +1192,9 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       if (ticket) return { saved: await inbox.completeUpload(ticket, CLAUDE) };
       if (!name) throw new Error("give `name` to start, or `ticket` to finish");
       const r = await inbox.startUpload({ name, size, folder, post_id, carousel, position });
-      return { upload_url: r.upload_url, ticket: r.ticket, expires_at: r.expires_at, run: `curl -sS -T '<path to ${name}>' '${r.upload_url}'`, then: "call save_file again with { ticket }" };
+      const to = r.put_url ?? r.upload_url;
+      return { put_url: r.put_url, upload_url: r.upload_url, ticket: r.ticket, expires_at: r.expires_at, content_type: r.content_type,
+        run: `curl -sS -T '<path to ${name}>' -H 'Content-Type: ${r.content_type}' '${to}'`, then: "call save_file again with { ticket }; the answer has bytes (and sha256 after a put_url upload) to check against your file" };
     }),
   );
 
