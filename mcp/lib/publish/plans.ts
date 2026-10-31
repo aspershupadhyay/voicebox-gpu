@@ -38,7 +38,11 @@ export async function listPlans(): Promise<Plan[]> {
 
 export async function getRules(): Promise<Rules> {
   const r = await getJson<Partial<Rules>>(RULES).catch(() => null);
-  return { ...DEFAULT_RULES, ...(r ?? {}), yt_defaults: { ...DEFAULT_RULES.yt_defaults, ...(r?.yt_defaults ?? {}) }, footer: { ...(r?.footer ?? {}) } };
+  // rules saved with a missing or repeated id (the text "undefined") read with stable ones, so each slot can be removed
+  const fix = <T extends { id: string }>(xs: T[] | undefined, pre: string) => { const seen = new Set<string>();
+    return (xs ?? []).map((x, i) => { const id = x.id && x.id !== "undefined" && !seen.has(x.id) ? x.id : `${pre}${i}`; seen.add(id); return { ...x, id }; }); };
+  const base = { ...DEFAULT_RULES, ...(r ?? {}) };
+  return { ...base, slots: fix(base.slots, "s"), crosspost: fix(base.crosspost, "c"), yt_defaults: { ...DEFAULT_RULES.yt_defaults, ...(r?.yt_defaults ?? {}) }, footer: { ...(r?.footer ?? {}) } };
 }
 
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
@@ -53,6 +57,9 @@ export async function setRules(given: Partial<Rules>): Promise<Rules> {
   const cur = await getRules();
   const g = given ?? {};
   const sp = (v: unknown) => (spaceOf(String(v)) ? (String(v) as SpaceId) : null);
+  // an id kept as it was, unless it's missing, the leftover text "undefined", or one already used in this list
+  const seen = new Set<string>();
+  const idOf = (v: unknown) => { const id = typeof v === "string" && v !== "undefined" && ID.test(v) && !seen.has(v) ? v : rid(); seen.add(id); return id; };
   const next: Rules = {
     autopilot: bool(g.autopilot, cur.autopilot),
     retries: typeof g.retries === "number" ? Math.max(0, Math.min(8, Math.round(g.retries))) : cur.retries,
@@ -60,10 +67,10 @@ export async function setRules(given: Partial<Rules>): Promise<Rules> {
     notify: bool(g.notify, cur.notify),
     tz: typeof g.tz === "string" && validTz(g.tz) ? g.tz : cur.tz,
     crosspost: Array.isArray(g.crosspost)
-      ? g.crosspost.slice(0, 20).flatMap((c) => { const from = sp(c?.from), to = sp(c?.to); return from && to && from !== to ? [{ id: ID.test(String(c.id)) ? String(c.id) : rid(), from, to, hours: Math.max(0, Math.min(168, Number(c.hours) || 0)), on: bool(c.on, true) }] : []; })
+      ? g.crosspost.slice(0, 20).flatMap((c) => { const from = sp(c?.from), to = sp(c?.to); return from && to && from !== to ? [{ id: idOf(c.id), from, to, hours: Math.max(0, Math.min(168, Number(c.hours) || 0)), on: bool(c.on, true) }] : []; })
       : cur.crosspost,
     slots: Array.isArray(g.slots)
-      ? g.slots.slice(0, 60).flatMap((s) => { const space = sp(s?.space); return space && TIME.test(String(s.time)) && Number(s.day) >= 0 && Number(s.day) <= 6 ? [{ id: ID.test(String(s.id)) ? String(s.id) : rid(), space, day: Number(s.day), time: String(s.time) }] : []; })
+      ? g.slots.slice(0, 60).flatMap((s) => { const space = sp(s?.space); return space && TIME.test(String(s.time)) && Number(s.day) >= 0 && Number(s.day) <= 6 ? [{ id: idOf(s.id), space, day: Number(s.day), time: String(s.time) }] : []; })
       : cur.slots,
     footer: g.footer && typeof g.footer === "object"
       ? Object.fromEntries(Object.entries(g.footer).flatMap(([k, v]) => (spaceOf(k) && typeof v === "string" && v.trim() ? [[k, v.slice(0, 1000)]] : [])))
