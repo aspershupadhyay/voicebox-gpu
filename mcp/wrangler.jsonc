@@ -4,6 +4,10 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "voicebox-studio",
   "main": ".open-next/worker.js",
+  // reached only through https://voiceboxstudio.pages.dev (a Pages front door with a service binding): no workers.dev
+  // address, so there's one URL for sign-in cookies and OAuth callbacks
+  "workers_dev": false,
+  "preview_urls": false,
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
