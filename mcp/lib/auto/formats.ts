@@ -120,7 +120,10 @@ export function applyFormat(v: Video, f: Format): Video {
 export function applyToEdit(inputs: Record<string, string>, spec: Record<string, unknown>, f: Format, credit?: string) {
   const ins = { ...inputs };
   const s: Record<string, unknown> = { platform: f.platform, ...(f.shape ? { shape: f.shape } : {}), ...(f.fit ? { fit: f.fit } : {}), ...spec };
-  if (spec.captions === undefined && f.captions) s.captions = { ...f.captions };
+  // captions only when someone speaks: a voiceover, or the clip's own sound left on (Whisper on music alone invents
+  // words: seen on the first test, "I'LL SEE" over a muted clip and a beat)
+  const speaks = !!spec.voice || (spec.original_volume_db !== "mute" && spec.original_volume_db !== -60);
+  if (spec.captions === undefined && f.captions && speaks) s.captions = { ...f.captions };
   if (!spec.music && f.music) { ins.fmt_music = f.music; s.music = { src: "fmt_music", volume_db: f.music_db ?? -18, duck: true }; }
   else if (spec.music && f.music_db != null && (spec.music as { volume_db?: number }).volume_db == null) s.music = { ...(spec.music as object), volume_db: f.music_db };
   if (!spec.logo && f.logo) { ins.fmt_logo = f.logo; s.logo = { src: "fmt_logo", corner: "tr", size: 0.12 }; }
