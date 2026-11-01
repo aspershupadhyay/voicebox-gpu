@@ -1,0 +1,17 @@
+{
+ "l01": "Andrej Karpathy just built a better YouTube. In two hours.",
+ "l02": "He was tired of YouTube's recommendations.",
+ "l03": "So he had Claude read forty-three million Hacker News comments.",
+ "l04": "Twenty years of them.",
+ "l05": "And keep only the videos people recommend again and again.",
+ "l06": "Six thousand four hundred fifty-four.",
+ "l07": "This is HackerTube.",
+ "l08": "No login. Your history stays in your browser.",
+ "l09": "Every thumbnail is a real frame from the middle of the video. Not A/B-tested clickbait.",
+ "l10": "And all the data is one zip file. Point your Claude at it, and build your own.",
+ "l11": "His only manual work? An API key, a server, and a domain.",
+ "l12": "Claude did the rest. Secured it. Hardened it. Deployed it.",
+ "l13": "Projects that took months now get done before breakfast.",
+ "l14": "So what else are we not thinking of?",
+ "l15": "Follow for more. And send this to a friend who builds."
+}
