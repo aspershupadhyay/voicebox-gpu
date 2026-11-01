@@ -10,6 +10,7 @@ const FILE = "auto/secrets.json";
 export const SECRETS = {
   github: { env: "GITHUB_AGENT_TOKEN", label: "GitHub key" },
   search: { env: "SEARCH_API_KEY", label: "Search key" },
+  anthropic: { env: "ANTHROPIC_API_KEY", label: "Claude key" },
 } as const;
 export type SecretName = keyof typeof SECRETS;
 type Stored = { enc: string; last4: string; at: number; by: string; note?: string };

@@ -155,3 +155,11 @@ export const reply = (token: string, comment: string, message: string) =>
 /** Ask Instagram to send this account's events (comments, messages) to the app's webhook. */
 export const subscribeApp = (token: string, fields: string[]) =>
   ig<{ success?: boolean }>("/me/subscribed_apps", token, { method: "POST", params: { subscribed_fields: fields.join(",") } });
+
+/** Hide or show a comment (Auto-DM's comment rules). */
+export const hideComment = (token: string, comment: string, hide: boolean) =>
+  ig<{ success?: boolean }>(`/${comment}`, token, { method: "POST", params: { hide: String(hide) } });
+
+/** Delete a comment on one of the account's posts. */
+export const deleteComment = (token: string, comment: string) =>
+  ig<{ success?: boolean }>(`/${comment}`, token, { method: "DELETE" });

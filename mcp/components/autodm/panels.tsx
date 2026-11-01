@@ -1,74 +1,316 @@
 "use client";
-// The Auto-DM page's other tabs: Activity (every comment, DM, story reply and button tap an automation answered, with
-// why one failed), Contacts (everyone who triggered one, whether they follow, CSV export) and Settings (the master
-// switch, per-account pauses, setup, defaults and a tester across every live automation).
-import { ArrowsClockwise, ChatCircle, CheckCircle, Circle, Copy, DownloadSimple, Flask, Hourglass, MagnifyingGlass, PaperPlaneTilt, Prohibit, XCircle } from "@phosphor-icons/react";
-import { useCallback, useEffect, useState } from "react";
+// The Auto-DM page's middle tabs. Comments: rules that hide, delete or flag comments (as short sentences you can read
+// at a glance), and the list to review what they caught. People: everyone who triggered an automation, and the emails
+// collected, with CSV and block. Insights: the weekly note, five numbers against the period before, every day as
+// striped bars, the best automations, A/B tests, and the full log.
+import { ArrowsClockwise, ChatCircle, CheckCircle, DownloadSimple, EnvelopeSimple, Eye, EyeSlash, Flag, Hourglass, MagnifyingGlass, PaperPlaneTilt, PencilSimple, Plus, Prohibit, ShieldCheck, Sparkle, Trash, Trophy, XCircle } from "@phosphor-icons/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useDialog } from "../Dialog";
 import { Select } from "../pop";
-import { Empty, Field, Toggle } from "../ui";
-import { Seg, ago, handleOf, type Overview } from "./shared";
+import { Empty, Field } from "../ui";
+import { Chips, Seg, ago, compact, downloadCsv, handleOf, rate, useDebounced, type ModRule, type Overview, type Totals } from "./shared";
 
-type Ev = { id: number; at: string; account: string; kind: "comment" | "dm" | "story"; automation: string | null; automation_name: string | null; from_name: string | null; text: string | null; status: string; replied: boolean; following: boolean | null; error: string | null; note: string | null };
-type Contact = { account: string; from_id: string; from_name: string | null; times: number; got: number; last: string; following: boolean | null; automations: string[] | null };
-
-const KIND = { comment: "Comment", dm: "DM", story: "Story reply" } as const;
-const STATUS: Record<string, { label: string; tone: string; Ic: typeof CheckCircle }> = {
-  sent: { label: "Sent", tone: "ok", Ic: CheckCircle }, gated: { label: "Waiting to follow", tone: "warn", Ic: Hourglass },
-  failed: { label: "Failed", tone: "bad", Ic: XCircle }, skipped: { label: "Skipped", tone: "", Ic: Prohibit }, pending: { label: "Sending", tone: "blue", Ic: PaperPlaneTilt },
+type Ev = { id: number; at: string; account: string; kind: "comment" | "dm" | "story" | "mention" | "ai" | "mod"; automation: string | null; automation_name: string | null; from_name: string | null; text: string | null; status: string; replied: boolean; following: boolean | null; error: string | null; note: string | null; clicked_at?: string | null; variant?: string | null };
+type Contact = { account: string; from_id: string; from_name: string | null; times: number; got: number; clicked: number; last: string; following: boolean | null; automations: string[] | null; email: string | null };
+type Lead = { id: number; at: string; account: string; from_name: string | null; email: string; automation_name: string | null };
+type Insights = {
+  days: number; now: Totals; prev: Totals; daily: { day: string; sent: number; clicked: number }[];
+  top: { automation: string; name: string; sent: number; clicked: number }[];
+  report: { at: number; from: string; to: string; text: string } | null;
+  ab: { id: string; name: string; winner: "a" | "b" | null; min: number; a: { sent: number; clicked: number }; b: { sent: number; clicked: number } }[];
 };
-const acctOpts = (d: Overview) => [["", "All accounts"], ...d.status.accounts.map((a) => [a.id, `@${a.handle ?? a.name}`] as [string, string])] as [string, string][];
 
-function useDebounced<T>(v: T, ms = 300) {
-  const [x, setX] = useState(v);
-  useEffect(() => { const t = setTimeout(() => setX(v), ms); return () => clearTimeout(t); }, [v, ms]);
-  return x;
+const acctOpts = (d: Overview) => [["", "All accounts"], ...d.status.accounts.map((a) => [a.id, handleOf(a)] as [string, string])] as [string, string][];
+const post = (body: object) => api("publish/autodm", { body });
+const igLink = (n: string | null, fallback = "Someone") => (n ? <a href={`https://instagram.com/${n}`} target="_blank" rel="noreferrer">@{n}</a> : fallback);
+
+// ─────────────────────────────── Comments
+
+const ACTION = { hide: ["Hide it", "warn"], delete: ["Delete it", "bad"], flag: ["Flag it for me", "blue"] } as const;
+const PRESETS: { name: string; make: () => Partial<ModRule> }[] = [
+  { name: "Hide links", make: () => ({ name: "Links", links: true, words: [], action: "hide" }) },
+  { name: "Hide spam", make: () => ({ name: "Spam", words: ["dm me", "check my page", "promo", "crypto", "follow back", "giveaway winner"], match: "fuzzy", action: "hide" }) },
+  { name: "Flag rude words", make: () => ({ name: "Rude", words: [], match: "fuzzy", action: "flag" }) },
+];
+const blankRule = (): ModRule => ({ id: "", name: "", on: true, accounts: [], words: [], match: "word", links: false, action: "hide" });
+
+/** A rule as a sentence: "Hide comments with a link or 'promo', 'crypto' +3". */
+function sentence(r: ModRule) {
+  const w = r.words.slice(0, 3).map((x) => `“${x}”`).join(", ") + (r.words.length > 3 ? ` +${r.words.length - 3}` : "");
+  const what = [r.links && "a link", w].filter(Boolean).join(" or ") || "…";
+  return `${r.action === "delete" ? "Delete" : r.action === "flag" ? "Flag" : "Hide"} comments with ${what}${r.match === "fuzzy" && r.words.length ? " (typos too)" : ""}`;
 }
 
-export function Activity({ d }: { d: Overview }) {
+function RuleEditor({ d, rule, onSave, onCancel, onDelete }: { d: Overview; rule: ModRule; onSave: (r: ModRule) => void; onCancel: () => void; onDelete?: () => void }) {
+  const [r, setR] = useState(rule);
+  const ok = r.links || r.words.length > 0;
+  return (
+    <div className="dm-rule-edit">
+      <div className="dm-grid">
+        <Field label="Name"><input value={r.name} maxLength={60} placeholder="e.g. Spam" onChange={(e) => setR({ ...r, name: e.target.value })} /></Field>
+        <Field label="Then"><Select label="What to do" value={r.action} onChange={(v) => setR({ ...r, action: v })} options={Object.entries(ACTION).map(([k, [l]]) => [k as ModRule["action"], l])} /></Field>
+      </div>
+      <Field label="Words or phrases" hint="Type and press Enter."><Chips label="Words" value={r.words} set={(words) => setR({ ...r, words })} placeholder="promo, check my page…" max={100} /></Field>
+      <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+        <Seg label="Matching" value={r.match} set={(match) => setR({ ...r, match })} options={[["word", "Exact words"], ["fuzzy", "Typos too"]]} />
+        <button type="button" className={`dm-pill${r.links ? " on" : ""}`} aria-pressed={r.links} onClick={() => setR({ ...r, links: !r.links })}>Any link</button>
+        {d.status.accounts.length > 1 && <Select size="sm" label="Account" value={r.accounts[0] ?? ""} onChange={(v) => setR({ ...r, accounts: v ? [v] : [] })} options={[["", "Every account"], ...d.status.accounts.map((a) => [a.id, handleOf(a)] as [string, string])]} />}
+      </div>
+      <p className="tiny dim" style={{ margin: 0 }}>{sentence(r)}.</p>
+      <div className="row" style={{ gap: 8 }}>
+        <button className="sm" disabled={!ok} onClick={() => onSave({ ...r, name: r.name.trim() || r.words[0] || (r.links ? "Links" : "Rule") })}>Save rule</button>
+        <button className="ghost sm" onClick={onCancel}>Cancel</button>
+        {onDelete && <button className="ghost sm bad-t" style={{ marginLeft: "auto" }} onClick={onDelete}><Trash size={14} />Delete</button>}
+      </div>
+    </div>
+  );
+}
+
+const MOD_STATUS: Record<string, { label: string; tone: string }> = { flagged: { label: "Flagged", tone: "blue" }, hidden: { label: "Hidden", tone: "warn" }, deleted: { label: "Deleted", tone: "bad" }, dismissed: { label: "Left up", tone: "" }, failed: { label: "Couldn't act", tone: "bad" }, pending: { label: "Working", tone: "" } };
+
+export function CommentsTab({ d, reload }: { d: Overview; reload: () => void }) {
+  const { toast, confirm } = useDialog();
+  const m = d.settings.moderation;
+  const [editing, setEditing] = useState<ModRule | null>(null);
+  const [status, setStatus] = useState<"" | "flagged" | "hidden" | "deleted">("flagged");
   const [q, setQ] = useState("");
-  const [automation, setAutomation] = useState("");
+  const dq = useDebounced(q);
+  const [rows, setRows] = useState<Ev[] | null>(null);
+  const load = useCallback(() => {
+    const p = new URLSearchParams(Object.entries({ status, q: dq }).filter(([, v]) => v));
+    api<{ events: Ev[] }>(`publish/autodm/comments?${p}`).then((r) => setRows(r.events)).catch((e) => { setRows([]); toast((e as Error).message, "bad"); });
+  }, [status, dq, toast]);
+  useEffect(() => { load(); }, [load]);
+
+  const save = (rules: ModRule[], on = m.on, msg = "Rules saved") => post({ moderation: { on, rules } }).then(() => { toast(msg, "ok"); setEditing(null); reload(); }).catch((e) => toast((e as Error).message, "bad"));
+  const upsert = (r: ModRule) => save(r.id ? m.rules.map((x) => (x.id === r.id ? r : x)) : [...m.rules, r], m.on || m.rules.length === 0);
+  const act = (e: Ev, action: "hide" | "unhide" | "delete" | "dismiss") => (async () => {
+    if (action === "delete" && !(await confirm({ title: "Delete this comment?", body: "It's removed from Instagram for good.", confirm: "Delete", danger: true }))) return;
+    await api("publish/autodm/comment", { body: { id: e.id, action } }).then(() => { toast(action === "unhide" ? "Shown again" : action === "dismiss" ? "Left up" : action === "hide" ? "Hidden" : "Deleted", "ok"); load(); }).catch((x) => toast((x as Error).message, "bad"));
+  })();
+
+  return (
+    <div className="dm-two">
+      <section className="card dm-rules">
+        <div className="dm-sec-h">
+          <div><h2>Comment rules</h2><p className="small dim">Checked on every new comment, before any automation answers it.</p></div>
+          <button type="button" role="switch" aria-checked={m.on} aria-label="Comment rules on" className={`switch${m.on ? " on" : ""}`} onClick={() => save(m.rules, !m.on, !m.on ? "Comment rules are on" : "Comment rules are off")} />
+        </div>
+        {m.rules.length > 0 && (
+          <ul className="dm-rule-list">
+            {m.rules.map((r) => editing?.id === r.id ? (
+              <li key={r.id}><RuleEditor d={d} rule={editing} onCancel={() => setEditing(null)} onSave={upsert} onDelete={() => save(m.rules.filter((x) => x.id !== r.id), m.on, "Rule deleted")} /></li>
+            ) : (
+              <li key={r.id} className={`dm-rule${r.on ? "" : " off"}`}>
+                <span className={`dm-rule-dot ${ACTION[r.action][1]}`} aria-hidden />
+                <div className="dm-rule-t"><b>{r.name}</b><span className="small dim">{sentence(r)}</span></div>
+                <button type="button" className="icon-btn" aria-label={`Edit ${r.name}`} onClick={() => setEditing(r)}><PencilSimple size={15} /></button>
+                <button type="button" role="switch" aria-checked={r.on} aria-label={`${r.name} on`} className={`switch${r.on ? " on" : ""}`} onClick={() => save(m.rules.map((x) => (x.id === r.id ? { ...x, on: !r.on } : x)), m.on, r.on ? "Rule paused" : "Rule on")} />
+              </li>
+            ))}
+          </ul>
+        )}
+        {editing && !editing.id ? <RuleEditor d={d} rule={editing} onCancel={() => setEditing(null)} onSave={upsert} /> : (
+          <div className="dm-pills" style={{ marginTop: m.rules.length ? 12 : 4 }}>
+            <button type="button" className="dm-pill add" onClick={() => setEditing(blankRule())}><Plus size={13} />New rule</button>
+            {PRESETS.filter((p) => !m.rules.some((r) => r.name === p.make().name)).map((p) => (
+              <button key={p.name} type="button" className="dm-pill ghosted" onClick={() => setEditing({ ...blankRule(), ...p.make() })}>{p.name}</button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="dm-list-wrap">
+        <div className="dm-toolbar">
+          <Seg label="Show" value={status} set={setStatus} options={[["flagged", "To review"], ["hidden", "Hidden"], ["deleted", "Deleted"], ["", "All"]]} />
+          <label className="dm-search"><MagnifyingGlass size={15} aria-hidden /><input type="search" aria-label="Search comments" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} /></label>
+        </div>
+        {!rows ? <div className="skel" style={{ height: 200 }} /> : !rows.length ? (
+          <Empty icon={<ShieldCheck size={22} />} title={status === "flagged" ? "Nothing to review" : "Nothing here"}>{m.rules.length ? "Comments your rules catch land here: show one again, or delete it." : "Add a rule and the comments it catches show up here."}</Empty>
+        ) : (
+          <div className="q-list">
+            {rows.map((e) => {
+              const s = MOD_STATUS[e.status] ?? MOD_STATUS.pending;
+              return (
+                <div key={e.id} className="q-row dm-ev">
+                  <div className="q-main" style={{ cursor: "default" }}>
+                    <b className="ellipsis">{igLink(e.from_name)}<span className="tiny dim"> · {e.automation_name ?? "rule"} · {ago(e.at)}</span></b>
+                    {e.text && <span className="small ellipsis">&ldquo;{e.text}&rdquo;</span>}
+                    {e.error && <span className="tiny bad-t">{e.error}</span>}
+                  </div>
+                  <span className="dm-ev-tags">
+                    <span className={`pill ${s.tone}`}>{s.label}</span>
+                    {e.status === "hidden" && <button className="ghost xs" onClick={() => act(e, "unhide")}><Eye size={13} />Show</button>}
+                    {e.status === "flagged" && <><button className="ghost xs" onClick={() => act(e, "hide")}><EyeSlash size={13} />Hide</button><button className="ghost xs" onClick={() => act(e, "dismiss")}>Leave</button></>}
+                    {(e.status === "flagged" || e.status === "hidden") && <button className="ghost xs" aria-label="Delete the comment" onClick={() => act(e, "delete")}><Trash size={13} /></button>}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ─────────────────────────────── People
+
+export function PeopleTab({ d, reload }: { d: Overview; reload: () => void }) {
+  const { toast } = useDialog();
+  const [view, setView] = useState<"all" | "emails">("all");
+  const [q, setQ] = useState("");
   const [account, setAccount] = useState("");
-  const [status, setStatus] = useState<"" | "sent" | "gated" | "failed" | "skipped">("");
+  const [people, setPeople] = useState<Contact[] | null>(null);
+  const [leads, setLeads] = useState<Lead[] | null>(null);
+  const dq = useDebounced(q);
+  const blocked = useMemo(() => new Set(d.settings.safety.blocklist), [d.settings.safety.blocklist]);
+  useEffect(() => {
+    const p = new URLSearchParams(Object.entries({ q: dq, account }).filter(([, v]) => v));
+    if (view === "all") api<{ contacts: Contact[] }>(`publish/autodm/contacts?${p}`).then((r) => setPeople(r.contacts)).catch((e) => { setPeople([]); toast((e as Error).message, "bad"); });
+    else api<{ leads: Lead[] }>(`publish/autodm/leads?${p}`).then((r) => setLeads(r.leads)).catch((e) => { setLeads([]); toast((e as Error).message, "bad"); });
+  }, [view, dq, account, toast]);
+  const acct = (id: string) => handleOf(d.status.accounts.find((a) => a.id === id));
+  const block = (name: string, on: boolean) => post(on ? { block: [name] } : { unblock: [name] }).then(() => { toast(on ? `@${name} won't get DMs` : `@${name} can get DMs again`, "ok"); reload(); }).catch((e) => toast((e as Error).message, "bad"));
+  const csv = () => view === "all"
+    ? people && downloadCsv("auto-dm-people", ["username", "account", "times", "got_dm", "opened", "follows", "email", "last", "automations"], people.map((r) => [r.from_name, acct(r.account), r.times, r.got, r.clicked, r.following == null ? "" : r.following ? "yes" : "no", r.email, r.last, (r.automations ?? []).join("; ")]))
+    : leads && downloadCsv("auto-dm-emails", ["email", "username", "account", "automation", "at"], leads.map((l) => [l.email, l.from_name, acct(l.account), l.automation_name, l.at]));
+  const rows = view === "all" ? people : leads;
+
+  return (
+    <div className="dm-list-wrap">
+      <div className="dm-toolbar">
+        <Seg label="Show" value={view} set={setView} options={[["all", "Everyone"], ["emails", `Emails${d.totals?.leads ? ` · ${compact(d.totals.leads)}` : ""}`]]} />
+        <label className="dm-search"><MagnifyingGlass size={15} aria-hidden /><input type="search" aria-label="Search people" placeholder={view === "all" ? "Search usernames" : "Search emails and usernames"} value={q} onChange={(e) => setQ(e.target.value)} /></label>
+        {d.status.accounts.length > 1 && <Select size="sm" label="Account" value={account} onChange={setAccount} options={acctOpts(d)} />}
+        <button className="ghost xs" disabled={!rows?.length} onClick={csv}><DownloadSimple size={13} />CSV</button>
+      </div>
+      {!rows ? <div className="skel" style={{ height: 240 }} /> : !rows.length ? (
+        view === "all"
+          ? <Empty icon={<ChatCircle size={22} />} title="No one yet">Everyone who comments a keyword or messages one shows here: how often, what they opened, whether they follow.</Empty>
+          : <Empty icon={<EnvelopeSimple size={22} />} title="No emails yet">Turn on &ldquo;Ask for their email&rdquo; in an automation and the addresses people send land here, ready for your newsletter.</Empty>
+      ) : view === "all" ? (
+        <div className="q-list">
+          {people!.map((r) => {
+            const isBlocked = !!r.from_name && blocked.has(r.from_name.toLowerCase());
+            return (
+              <div key={`${r.account}-${r.from_id}`} className={`q-row dm-person${isBlocked ? " off" : ""}`}>
+                <span className="pv-av" aria-hidden>{(r.from_name ?? "?").slice(0, 1).toUpperCase()}</span>
+                <div className="q-main" style={{ cursor: "default" }}>
+                  <b className="ellipsis">{igLink(r.from_name, "Someone (a DM)")}{d.status.accounts.length > 1 && <span className="tiny dim"> · {acct(r.account)}</span>}</b>
+                  <span className="tiny dim ellipsis">{r.got} DM{r.got === 1 ? "" : "s"} · opened {r.clicked}{r.email ? ` · ${r.email}` : ""}{r.automations?.length ? ` · ${r.automations.join(", ")}` : ""}</span>
+                </div>
+                <span className="dm-ev-tags">
+                  {isBlocked ? <span className="pill bad">Blocked</span> : r.following != null && <span className={`pill ${r.following ? "ok" : ""}`}>{r.following ? "Follows" : "Doesn't follow"}</span>}
+                  {r.from_name && <button className="ghost xs" aria-label={isBlocked ? `Unblock @${r.from_name}` : `Block @${r.from_name}`} title={isBlocked ? "Unblock" : "Never DM them"} onClick={() => block(r.from_name!, !isBlocked)}>{isBlocked ? "Unblock" : <Prohibit size={13} />}</button>}
+                </span>
+                <span className="q-when tiny mono dim">{ago(r.last)}</span>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="q-list">
+          {leads!.map((l) => (
+            <div key={l.id} className="q-row">
+              <EnvelopeSimple size={18} className="dim" aria-hidden />
+              <div className="q-main" style={{ cursor: "default" }}>
+                <b className="ellipsis mono" style={{ fontWeight: 500 }}>{l.email}</b>
+                <span className="tiny dim ellipsis">{igLink(l.from_name)}{l.automation_name ? ` · ${l.automation_name}` : ""}{d.status.accounts.length > 1 ? ` · ${acct(l.account)}` : ""}</span>
+              </div>
+              <button className="ghost xs" aria-label={`Copy ${l.email}`} onClick={() => navigator.clipboard.writeText(l.email).then(() => toast("Copied", "ok"))}>Copy</button>
+              <span className="q-when tiny mono dim">{ago(l.at)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────── Insights
+
+const delta = (n: number, p: number) => (p ? Math.round(((n - p) / p) * 100) : n ? null : 0);
+
+function Kpi({ label, n, p, sub }: { label: string; n: number; p: number; sub?: string }) {
+  const c = delta(n, p);
+  return (
+    <div className="dm-kpi">
+      <span className="tiny dim">{label}</span>
+      <b className="mono">{compact(n)}</b>
+      <span className="tiny">{sub && <span className="dim">{sub} · </span>}{c === null ? <span className="ok-t">new</span> : c === 0 ? <span className="faint">same</span> : <span className={c > 0 ? "ok-t" : "bad-t"}>{c > 0 ? "+" : ""}{c}%</span>}</span>
+    </div>
+  );
+}
+
+function Bars({ daily }: { daily: Insights["daily"] }) {
+  const max = Math.max(1, ...daily.map((x) => x.sent));
+  const [hover, setHover] = useState<number | null>(null);
+  const h = hover ?? daily.length - 1;
+  const cur = daily[h];
+  return (
+    <div className="dm-bars-wrap">
+      <div className="row tiny dim" style={{ justifyContent: "space-between" }}>
+        <span>{cur ? new Date(cur.day).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : ""}</span>
+        <span className="mono">{cur ? <><b>{cur.sent}</b> sent · <b>{cur.clicked}</b> opened</> : ""}</span>
+      </div>
+      <div className="dm-bars" role="img" aria-label={`DMs sent each day, up to ${max}`} onMouseLeave={() => setHover(null)}>
+        {daily.map((x, i) => (
+          <span key={x.day} className={i === h ? "on" : ""} onMouseEnter={() => setHover(i)} style={{ "--h": `${(x.sent / max) * 100}%`, "--o": `${x.sent ? (x.clicked / x.sent) * 100 : 0}%` } as React.CSSProperties}><i /></span>
+        ))}
+      </div>
+      <div className="row tiny faint" style={{ gap: 14 }}><span className="dm-key sent" />Sent<span className="dm-key open" />Opened</div>
+    </div>
+  );
+}
+
+const LOG_STATUS: Record<string, { label: string; tone: string; Ic: typeof CheckCircle }> = {
+  sent: { label: "Sent", tone: "ok", Ic: CheckCircle }, gated: { label: "Waiting", tone: "warn", Ic: Hourglass }, held: { label: "Held (limit)", tone: "warn", Ic: Hourglass },
+  failed: { label: "Failed", tone: "bad", Ic: XCircle }, skipped: { label: "Skipped", tone: "", Ic: Prohibit }, pending: { label: "Sending", tone: "blue", Ic: PaperPlaneTilt }, handoff: { label: "For you", tone: "blue", Ic: Flag },
+};
+const KIND: Record<string, string> = { comment: "Comment", dm: "DM", story: "Story reply", mention: "Mention", ai: "AI answer" };
+
+function Log({ d }: { d: Overview }) {
+  const [q, setQ] = useState("");
+  const [kind, setKind] = useState("");
+  const [status, setStatus] = useState("");
+  const [automation, setAutomation] = useState("");
   const [rows, setRows] = useState<Ev[] | null>(null);
   const [more, setMore] = useState(false);
-  const [err, setErr] = useState("");
   const dq = useDebounced(q);
   const load = useCallback(async (before?: number) => {
-    const p = new URLSearchParams(Object.entries({ q: dq, automation, account, status, before: before ? String(before) : "" }).filter(([, v]) => v));
-    await api<{ events: Ev[] }>(`publish/autodm/activity?${p}`).then((r) => { setRows((x) => (before ? [...(x ?? []), ...r.events] : r.events)); setMore(r.events.length === 50); setErr(""); }).catch((e) => setErr((e as Error).message));
-  }, [dq, automation, account, status]);
+    const p = new URLSearchParams(Object.entries({ q: dq, kind, status, automation, before: before ? String(before) : "" }).filter(([, v]) => v));
+    await api<{ events: Ev[] }>(`publish/autodm/activity?${p}`).then((r) => { setRows((x) => (before ? [...(x ?? []), ...r.events] : r.events)); setMore(r.events.length === 50); }).catch(() => setRows([]));
+  }, [dq, kind, status, automation]);
   useEffect(() => { load(); }, [load]);
   return (
     <div className="dm-list-wrap">
       <div className="dm-toolbar">
-        <label className="dm-search"><MagnifyingGlass size={15} aria-hidden /><input type="search" aria-label="Search activity" placeholder="Search names and comments" value={q} onChange={(e) => setQ(e.target.value)} /></label>
-        <Seg label="Status" value={status} set={setStatus} options={[["", "All"], ["sent", "Sent"], ["gated", "Waiting"], ["failed", "Failed"], ["skipped", "Skipped"]]} />
+        <label className="dm-search"><MagnifyingGlass size={15} aria-hidden /><input type="search" aria-label="Search the log" placeholder="Search names and messages" value={q} onChange={(e) => setQ(e.target.value)} /></label>
+        <Select size="sm" label="Kind" value={kind} onChange={setKind} options={[["", "Every kind"], ...Object.entries(KIND)] as [string, string][]} />
+        <Select size="sm" label="Status" value={status} onChange={setStatus} options={[["", "Any status"], ["sent", "Sent"], ["gated", "Waiting to follow"], ["held", "Held by a limit"], ["failed", "Failed"], ["skipped", "Skipped"]]} />
         <Select size="sm" label="Automation" value={automation} onChange={setAutomation} options={[["", "Every automation"], ...d.settings.automations.map((a) => [a.id, a.name] as [string, string])]} />
-        {d.status.accounts.length > 1 && <Select size="sm" label="Account" value={account} onChange={setAccount} options={acctOpts(d)} />}
-        <button className="ghost xs" onClick={() => load()}><ArrowsClockwise size={13} />Refresh</button>
+        <button className="ghost xs" aria-label="Refresh" onClick={() => load()}><ArrowsClockwise size={13} /></button>
       </div>
-      {err && <p className="err">{err}</p>}
       {!rows ? <div className="skel" style={{ height: 240 }} /> : !rows.length ? (
-        <Empty icon={<ChatCircle size={22} />} title="Nothing yet">Every comment, DM and story reply an automation answers shows here, with what was sent and why anything failed.</Empty>
+        <Empty icon={<ChatCircle size={22} />} title="Nothing yet">Every comment, DM, mention and AI answer shows here, with what was sent and why anything didn&apos;t go.</Empty>
       ) : (
         <div className="q-list">
           {rows.map((e) => {
-            const s = STATUS[e.status] ?? STATUS.skipped;
-            const acc = d.status.accounts.find((a) => a.id === e.account);
+            const s = LOG_STATUS[e.status] ?? LOG_STATUS.skipped;
             return (
               <div key={e.id} className="q-row dm-ev">
                 <s.Ic size={18} weight="fill" className={s.tone ? `${s.tone}-t` : "faint"} aria-label={s.label} />
                 <div className="q-main" style={{ cursor: "default" }}>
-                  <b className="ellipsis">{e.from_name ? <a href={`https://instagram.com/${e.from_name}`} target="_blank" rel="noreferrer">@{e.from_name}</a> : "Someone"}<span className="tiny dim"> · {KIND[e.kind]}{d.status.accounts.length > 1 && acc ? ` on ${handleOf(acc)}` : ""} · {e.automation_name ?? "—"}</span></b>
+                  <b className="ellipsis">{igLink(e.from_name)}<span className="tiny dim"> · {KIND[e.kind] ?? e.kind} · {e.automation_name ?? "—"}{e.variant === "b" ? " · B" : ""}</span></b>
                   {e.text && <span className="tiny dim ellipsis">&ldquo;{e.text}&rdquo;</span>}
                   {(e.error || e.note) && <span className={`tiny ${e.error ? "bad-t" : "faint"}`}>{e.error ?? e.note}</span>}
                 </div>
                 <span className="dm-ev-tags">
                   <span className={`pill ${s.tone}`}>{s.label}</span>
-                  {e.replied && <span className="pill outline">Answered in public</span>}
-                  {e.following === true && <span className="pill outline">Follows</span>}
+                  {e.clicked_at && <span className="pill outline">Opened</span>}
+                  {e.replied && <span className="pill outline">Answered</span>}
                 </span>
                 <span className="q-when tiny mono dim">{ago(e.at)}</span>
               </div>
@@ -81,166 +323,89 @@ export function Activity({ d }: { d: Overview }) {
   );
 }
 
-export function Contacts({ d }: { d: Overview }) {
-  const [q, setQ] = useState("");
-  const [account, setAccount] = useState("");
-  const [rows, setRows] = useState<Contact[] | null>(null);
-  const [err, setErr] = useState("");
-  const dq = useDebounced(q);
-  useEffect(() => {
-    const p = new URLSearchParams(Object.entries({ q: dq, account }).filter(([, v]) => v));
-    api<{ contacts: Contact[] }>(`publish/autodm/contacts?${p}`).then((r) => { setRows(r.contacts); setErr(""); }).catch((e) => setErr((e as Error).message));
-  }, [dq, account]);
-  const csv = () => {
-    if (!rows) return;
-    const cell = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const out = [["username", "account", "times", "got_dm", "follows", "last", "automations"].join(","),
-      ...rows.map((r) => [r.from_name, handleOf(d.status.accounts.find((a) => a.id === r.account)), r.times, r.got, r.following == null ? "" : r.following ? "yes" : "no", r.last, (r.automations ?? []).join("; ")].map(cell).join(","))].join("\n");
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([out], { type: "text/csv" }));
-    a.download = `auto-dm-contacts-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
+export function InsightsTab({ d }: { d: Overview; reload: () => void }) {
+  const { toast } = useDialog();
+  const [view, setView] = useState<"numbers" | "log">("numbers");
+  const [days, setDays] = useState<"7" | "30" | "90">("30");
+  const [x, setX] = useState<Insights | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => api<Insights>(`publish/autodm/insights?days=${days}`).then(setX).catch((e) => toast((e as Error).message, "bad")), [days, toast]);
+  useEffect(() => { if (view === "numbers") load(); }, [load, view]);
+  const make = async () => { setBusy(true); await api("publish/autodm/report", { body: {} }).then(() => { toast("Report made and sent to your notifications", "ok"); load(); }).catch((e) => toast((e as Error).message, "bad")); setBusy(false); };
+  const best = x?.top[0]?.sent ?? 1;
+
   return (
     <div className="dm-list-wrap">
       <div className="dm-toolbar">
-        <label className="dm-search"><MagnifyingGlass size={15} aria-hidden /><input type="search" aria-label="Search contacts" placeholder="Search usernames" value={q} onChange={(e) => setQ(e.target.value)} /></label>
-        {d.status.accounts.length > 1 && <Select size="sm" label="Account" value={account} onChange={setAccount} options={acctOpts(d)} />}
-        <button className="ghost xs" style={{ marginLeft: "auto" }} disabled={!rows?.length} onClick={csv}><DownloadSimple size={13} />Export CSV</button>
+        <Seg label="View" value={view} set={setView} options={[["numbers", "Numbers"], ["log", "Log"]]} />
+        {view === "numbers" && <span style={{ marginLeft: "auto" }}><Seg label="Period" value={days} set={setDays} options={[["7", "7 days"], ["30", "30 days"], ["90", "90 days"]]} /></span>}
       </div>
-      {err && <p className="err">{err}</p>}
-      {!rows ? <div className="skel" style={{ height: 240 }} /> : !rows.length ? (
-        <Empty icon={<ChatCircle size={22} />} title="No contacts yet">Everyone who comments a keyword or messages one shows here: how often, what they got, and whether they follow.</Empty>
-      ) : (
-        <div className="q-list">
-          {rows.map((r) => (
-            <div key={`${r.account}-${r.from_id}`} className="q-row">
-              <span className="pv-av" aria-hidden>{(r.from_name ?? "?").slice(0, 1).toUpperCase()}</span>
-              <div className="q-main" style={{ cursor: "default" }}>
-                <b className="ellipsis">{r.from_name ? <a href={`https://instagram.com/${r.from_name}`} target="_blank" rel="noreferrer">@{r.from_name}</a> : "Someone (a DM)"}</b>
-                <span className="tiny dim ellipsis">{r.times} time{r.times === 1 ? "" : "s"} · got {r.got} DM{r.got === 1 ? "" : "s"}{r.automations?.length ? ` · ${r.automations.join(", ")}` : ""}{d.status.accounts.length > 1 ? ` · ${handleOf(d.status.accounts.find((a) => a.id === r.account))}` : ""}</span>
-              </div>
-              {r.following != null && <span className={`pill ${r.following ? "ok" : "warn"}`}>{r.following ? "Follows" : "Not following"}</span>}
-              <span className="q-when tiny mono dim">{ago(r.last)}</span>
+      {view === "log" ? <Log d={d} /> : !x ? <div className="skel" style={{ height: 320 }} /> : (
+        <>
+          <section className="card dm-report">
+            <Sparkle size={18} weight="duotone" className="dm-report-ic" aria-hidden />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <span className="tiny dim">{x.report ? `The week ${x.report.from} to ${x.report.to}` : "The weekly report"}</span>
+              <p className="small" style={{ margin: "2px 0 0" }}>{x.report?.text ?? `Every ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d.settings.report.day]} you get the week in one note: sent, opened, emails, the best automation.`}</p>
             </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+            <button className="ghost xs" disabled={busy} onClick={make}>{x.report ? "Make it now" : "Make the first one"}</button>
+          </section>
 
-function Step({ ok, title, children }: { ok: boolean | null; title: string; children?: React.ReactNode }) {
-  return (
-    <li className="dm-step">
-      {ok ? <CheckCircle size={18} weight="fill" className="ok-t" aria-label="Done" /> : <Circle size={18} className={ok === false ? "warn-t" : "faint"} aria-label={ok === false ? "To do" : "Check by hand"} />}
-      <div style={{ minWidth: 0, flex: 1 }}><div className="tr-t">{title}</div>{children && <div className="tr-d">{children}</div>}</div>
-    </li>
-  );
-}
-
-function Tester({ d }: { d: Overview }) {
-  const [text, setText] = useState("");
-  const [kind, setKind] = useState<"comment" | "dm" | "story">("comment");
-  const [account, setAccount] = useState(d.status.accounts[0]?.id ?? "");
-  const [res, setRes] = useState<{ automation: { name: string } | null; keyword: string | null; steps: { to: string; text: string; button: string | null }[]; note: string } | null>(null);
-  const run = () => text.trim() && api("publish/autodm/test", { body: { text, kind, account } }).then(setRes).catch((e) => setRes({ automation: null, keyword: null, steps: [], note: (e as Error).message }));
-  return (
-    <section className="card">
-      <h2 className="row" style={{ gap: 7 }}><Flask size={17} />Try a comment</h2>
-      <p className="small dim" style={{ marginTop: 4 }}>Against every live automation, the way Instagram would deliver it. Nothing is sent.</p>
-      <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-        <Seg label="Kind" value={kind} set={setKind} options={[["comment", "Comment"], ["dm", "DM"], ["story", "Story reply"]]} />
-        {d.status.accounts.length > 1 && <Select size="sm" label="Account" value={account} onChange={setAccount} options={d.status.accounts.map((a) => [a.id, `@${a.handle ?? a.name}`] as [string, string])} />}
-      </div>
-      <div className="row" style={{ gap: 6, marginTop: 8 }}>
-        <input aria-label="Text to try" placeholder="e.g. catch!" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} style={{ flex: 1, minWidth: 0 }} />
-        <button className="sm" onClick={run} disabled={!text.trim()}>Try</button>
-      </div>
-      {res && (
-        <div className="dm-preview" role="status">
-          <b className="small">{res.automation ? `"${res.automation.name}" answers it` : res.note}</b>
-          {res.steps.map((s, i) => (
-            <div key={i} style={{ marginTop: 8 }}><span className="tiny faint">{s.to}</span><p className="small" style={{ whiteSpace: "pre-wrap", margin: "2px 0 0" }}>{s.text}</p>{s.button && <span className="pill outline" style={{ marginTop: 4 }}>{s.button}</span>}</div>
-          ))}
-          {res.automation && <p className="tiny faint" style={{ margin: "8px 0 0" }}>{res.note}</p>}
-        </div>
-      )}
-    </section>
-  );
-}
-
-export function DmSettingsTab({ d, reload }: { d: Overview; reload: () => void }) {
-  const { toast } = useDialog();
-  const s = d.settings, st = d.status;
-  const [def, setDef] = useState({ ...s.defaults, public_replies: s.defaults.public_replies.join("\n") });
-  const [busy, setBusy] = useState(false);
-  const hook = typeof location === "undefined" ? "" : `${location.origin}/api/ig/webhook`;
-  const post = (body: object, msg: string) => api("publish/autodm", { body }).then(() => { toast(msg, "ok"); reload(); }).catch((e) => toast((e as Error).message, "bad"));
-  const subscribe = async (account?: string) => {
-    setBusy(true);
-    await api<{ results: { handle: string | null; ok: boolean; error?: string }[] }>("publish/autodm/subscribe", { body: { account } })
-      .then((r) => r.results.forEach((x) => toast(x.ok ? `@${x.handle} is sending its comments and messages` : `@${x.handle}: ${x.error}`, x.ok ? "ok" : "bad"))).catch((e) => toast((e as Error).message, "bad"));
-    setBusy(false); reload();
-  };
-  const changed = JSON.stringify({ ...s.defaults, public_replies: s.defaults.public_replies.join("\n") }) !== JSON.stringify(def);
-  return (
-    <div className="ap-cols">
-      <div className="ap-main">
-        <section className="card">
-          <h2>Auto-DM</h2>
-          <Toggle on={s.on} set={(v) => post({ on: v }, v ? "Auto-DM is on" : "Auto-DM is off: nothing is sent")} title="Send DMs automatically" about="The master switch. Off stops every automation on every account at once." />
-          {st.accounts.map((a) => (
-            <Toggle key={a.id} on={!s.paused.includes(a.id)} set={(v) => post({ paused: v ? s.paused.filter((x) => x !== a.id) : [...s.paused, a.id] }, v ? `Answering on ${handleOf(a)}` : `Paused on ${handleOf(a)}`)}
-              title={`Answer on ${handleOf(a)}`} about={a.error ? a.error : "Off pauses every automation on this account only."} />
-          ))}
-        </section>
-
-        <section className="card">
-          <h2>Defaults</h2>
-          <p className="small dim" style={{ marginTop: 4 }}>New automations start from these, and an empty follow-gate field uses them. {"{handle}"} is your @, {"{username}"} theirs.</p>
-          <div className="dm-stack">
-            <Field label="Public answers" hint="One per line, picked at random."><textarea className="doc short" value={def.public_replies} onChange={(e) => setDef({ ...def, public_replies: e.target.value })} /></Field>
-            <Field label="Ask non-followers to follow"><textarea className="doc short" value={def.gate_message} onChange={(e) => setDef({ ...def, gate_message: e.target.value })} /></Field>
-            <Field label="Follow button"><input value={def.gate_button} maxLength={20} onChange={(e) => setDef({ ...def, gate_button: e.target.value })} /></Field>
-            <Field label="Tapped but not following yet"><textarea className="doc short" value={def.not_following} onChange={(e) => setDef({ ...def, not_following: e.target.value })} /></Field>
+          <div className="dm-kpis">
+            <Kpi label="DMs sent" n={x.now.sent} p={x.prev.sent} />
+            <Kpi label="Links opened" n={x.now.clicked} p={x.prev.clicked} sub={rate(x.now.clicked, x.now.sent)} />
+            <Kpi label="People" n={x.now.people} p={x.prev.people} />
+            <Kpi label="Emails" n={x.now.leads} p={x.prev.leads} />
+            <Kpi label="AI answers" n={x.now.ai} p={x.prev.ai} />
+            <Kpi label="Comments caught" n={x.now.moderated} p={x.prev.moderated} />
           </div>
-          <div className="row" style={{ gap: 8, marginTop: 12 }}>
-            <button className="sm" disabled={!changed} onClick={() => post({ defaults: { ...def, public_replies: def.public_replies.split("\n") } }, "Defaults saved")}>Save defaults</button>
-            {changed && <button className="ghost sm" onClick={() => setDef({ ...s.defaults, public_replies: s.defaults.public_replies.join("\n") })}>Undo</button>}
+
+          <div className="dm-two">
+            <section className="card"><h2>Every day</h2><Bars daily={x.daily} /></section>
+            <section className="card">
+              <h2>Best automations</h2>
+              {!x.top.length ? <p className="small dim">Nothing sent in this period yet.</p> : (
+                <ol className="dm-top">
+                  {x.top.map((t) => (
+                    <li key={t.automation}>
+                      <div className="row" style={{ justifyContent: "space-between", gap: 8 }}><span className="small ellipsis">{t.name}</span><span className="tiny mono dim">{t.sent} · {rate(t.clicked, t.sent)} opened</span></div>
+                      <span className="fx-hatch" style={{ "--c": "var(--ink)" } as React.CSSProperties}><i style={{ width: `${(t.sent / best) * 100}%` }} /></span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
           </div>
-        </section>
-        <Tester d={d} />
-      </div>
-      <aside className="ap-side">
-        <section className="card">
-          <h2>Set up</h2>
-          <ol className="dm-steps">
-            <Step ok={st.flag} title="Messaging permission in the Meta app">
-              {st.flag ? "On: Instagram sign-in asks for messages." : <>Add <code>instagram_business_manage_messages</code> to the Meta app (App Review → Advanced Access, for anyone who isn&apos;t a tester), then set <code>INSTAGRAM_DM=1</code> on the Worker.</>}
-            </Step>
-            <Step ok={st.verify_token && st.app_secret && !!st.last_event} title="Webhook in the Meta app">
-              <>Instagram → Webhooks: the callback URL below, verify token <code>INSTAGRAM_WEBHOOK_TOKEN</code>{st.verify_token ? " (set)" : " (not set yet)"}. Subscribe to <code>comments</code>, <code>messages</code> and <code>messaging_postbacks</code>.</>
-              <div className="row" style={{ gap: 6, marginTop: 6 }}><code className="ellipsis" style={{ flex: 1 }}>{hook}</code><button className="ghost xs" onClick={() => navigator.clipboard.writeText(hook).then(() => toast("Copied", "ok"))}><Copy size={12} />Copy</button></div>
-              <span className="tiny faint" style={{ display: "block", marginTop: 4 }}>{st.last_event ? `Last heard from Instagram ${ago(st.last_event)}` : "Nothing heard from Instagram yet"}</span>
-            </Step>
-            {st.accounts.length ? st.accounts.map((a) => (
-              <Step key={a.id} ok={a.messages === true && !!a.subscribed} title={handleOf(a)}>
-                {a.error && <span className="bad-t">{a.error} </span>}
-                {a.messages === true ? "Messages allowed. " : <>Reconnect so Instagram asks for messages{a.messages === null ? " (connected before Auto-DM)" : ""}. </>}
-                {a.subscribed ? `Subscribed ${ago(a.subscribed)}.` : "Not subscribed yet."}
-                <div className="row" style={{ gap: 6, marginTop: 6 }}>
-                  {a.messages !== true && <a className="btn ghost xs" href="/api/publish/instagram/connect"><ArrowsClockwise size={13} />Reconnect</a>}
-                  <button className="ghost xs" disabled={busy} onClick={() => subscribe(a.id)}><PaperPlaneTilt size={13} />{a.subscribed ? "Subscribe again" : "Subscribe"}</button>
-                </div>
-              </Step>
-            )) : <Step ok={false} title="Connect Instagram">Posts → Autopilot → Connect (a Creator or Business account). Add as many accounts as you like.</Step>}
-            <Step ok={null} title="On each phone">Instagram → Settings → Messages and story replies → Message controls → Connected tools → Allow access to messages.</Step>
-          </ol>
-          <p className="tiny faint" style={{ margin: "10px 0 0" }}>Instagram&apos;s limits: one private reply per comment, within 7 days of it; after someone messages you or taps a button, 24 hours to answer.</p>
-        </section>
-      </aside>
+
+          {x.ab.length > 0 && (
+            <section className="card">
+              <h2>A/B tests</h2>
+              <p className="small dim" style={{ marginTop: 2 }}>Each DM goes out as A or B. Once one is clearly opened more, everyone gets it.</p>
+              <div className="dm-ab-list">
+                {x.ab.map((t) => {
+                  const ra = t.a.sent ? t.a.clicked / t.a.sent : 0, rb = t.b.sent ? t.b.clicked / t.b.sent : 0, top = Math.max(ra, rb, 0.01);
+                  const left = Math.max(0, t.min - Math.min(t.a.sent, t.b.sent));
+                  return (
+                    <div key={t.id} className="dm-ab">
+                      <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
+                        <b className="small ellipsis">{t.name}</b>
+                        {t.winner ? <span className="pill ok"><Trophy size={12} weight="fill" />{t.winner.toUpperCase()} won</span> : <span className="pill">{left ? `${left} more each to call it` : "Testing"}</span>}
+                      </div>
+                      {(["a", "b"] as const).map((v) => (
+                        <div key={v} className={`dm-ab-row${t.winner === v ? " win" : ""}`}>
+                          <span className="mono tiny">{v.toUpperCase()}</span>
+                          <span className="fx-hatch" style={{ "--c": t.winner === v ? "var(--ok)" : "var(--mute)" } as React.CSSProperties}><i style={{ width: `${((v === "a" ? ra : rb) / top) * 100}%` }} /></span>
+                          <span className="tiny mono dim">{rate(t[v].clicked, t[v].sent)} of {t[v].sent}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+        </>
+      )}
     </div>
   );
 }

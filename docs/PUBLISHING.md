@@ -58,34 +58,67 @@ shape. Long-lived tokens last 60 days and the autopilot renews them from 20 days
 
 ## Auto-DM (the Auto-DM page, `/auto-dm`)
 
-Our own ManyChat-style automations (`mcp/lib/publish/autodm.ts`, history in Postgres `mcp/lib/publish/dmstore.ts` /
-`db/003_autodm.sql`, webhook `mcp/app/api/ig/webhook`, page `mcp/components/autodm/`). Its own page in the sidebar, as
-tabs like Settings:
+Our own ManyChat-style automations. The engine is `mcp/lib/publish/autodm.ts` (flows, sending, the webhook) and
+`autodm-more.ts` (comment rules, AI replies, the held queue, sync, the weekly report, auto-attach, A/B); matching is
+`dmmatch.ts`; history is Postgres (`dmstore.ts`, `db/003_autodm.sql`, `db/004_autodm_more.sql`); the webhook is
+`mcp/app/api/ig/webhook`; link clicks go through `mcp/app/l/[token]`; the page is `mcp/components/autodm/`. Five tabs
+(`?tab=`), each doing one job:
 
-- **Automations**: the list, built for hundreds. Search by name, keyword or post; filter live/off and by account; sort
-  by recent, most sent or name; select many to switch on/off or delete; each row shows its 30-day sends and failures.
-  *New automation* starts from a template (keyword → link, followers only, any comment, story replies, blank).
-  The editor (`?edit=<id>`) has:
-  - **When**: comments, DMs and/or story replies; every account or chosen ones; every post or chosen posts (picked
-    from the account's Instagram grid, a page at a time, or from studio posts, which count once they go live, so
-    an automation can be ready before the post is); only top-level comments if wanted. An automation for chosen
-    posts wins over an every-post one on those posts; otherwise list order.
-  - **Matching**: *Keyword, typos ok* (fuzzy: "cathc", "CATCHHH", "c a t c h"; up to 1 typo for short words, 2 for
-    long, or a set number; the first letter must match so "match" never counts for CATCH), *Has the keyword* (as a
-    word), *Just the keyword*, or *Anything*. Exclude words skip a comment.
-  - **Followers only**: a commenter first gets "follow @you, then tap" with a button; the tap is checked
-    (`is_user_follow_business`) and they get the DM, or a "not following yet" with the button again. People who DM
-    or reply to a story are checked straight away.
-  - **The DM** (`{username}`, `{handle}`), an optional link button; **public answers** (one at random each time);
-    **once per person**. A live preview and *Try it* (nothing is sent) sit beside it.
-- **Activity**: every comment, DM, story reply and tap answered, skipped or failed, with the reason; filters and search.
-- **Contacts**: everyone who triggered one: how often, what they got, whether they follow; CSV export.
-- **Settings**: the master switch, a pause per account, defaults (public answers, follow-gate texts), the setup
-  checklist per account, and *Try a comment* against every live automation.
+- **Automations**: one quiet line of 30-day numbers (live, sent, opened, emails, people), then the list, built for
+  hundreds. Search by name, keyword or post; filter live/off and by account; sort by recent, most sent, best open rate
+  or name; select many to switch on/off or delete. Each row shows its sends, its open rate and short tags for the extra
+  steps (Followers, Email, choices, A/B, AI, Auto). *New* starts from a template (keyword → link, let them choose,
+  collect emails, followers only, thank story mentions, any comment, blank) or **Find them in my captions** (recent
+  posts whose caption says "comment WORD" with nothing answering it; tick them and each becomes an automation).
+  The editor (`?edit=<id>`) is a **flow**: steps down a line, one open at a time, each with a one-line summary:
+  - **When**: comments, DMs, story replies and/or **story mentions**; every account or chosen ones; every post or
+    chosen posts (from the Instagram grid or studio posts, which count once live).
+  - **Match**: *typos ok* (fuzzy: "cathc", "CATCHHH", "c a t c h"; the first letter must match), *has the keyword*,
+    *just the keyword*, or *anything*; words to ignore; top-level comments only.
+  - **Followers only** (optional): "follow, then tap"; the tap is checked (`is_user_follow_business`).
+  - **Email first** (optional): asks for an email before the DM; the address is saved and the DM follows.
+  - **The DM** (`{username}`, `{handle}`) with a link button (**Count opens** on: the link becomes a signed short link
+    `/l/<token>` that counts the open and forwards to the real address, bots and link previews not counted), up to
+    three **choices** (each button answers with its own reply and link), and **Version B** (an A/B test: half get each
+    until one is clearly opened more, a 95% two-proportion test once both have the minimum sends, or the better one
+    after ten times that; the winner then goes to everyone and you get a notification).
+  - **Ask for email after** (optional): the DM ends asking for an email; replies with one are saved to People.
+  - **Public answer** (one at random), **AI follow-ups** (below) and **Limits** (once per person).
+  - Beside it, a phone shows the whole flow as people get it (tap the choices, switch A/B) with a comment box that
+    tries a comment against the draft. Nothing is sent from the editor.
+- **Comments**: **comment rules** run on every new comment before any automation: words (exact or with typos) and/or
+  any link → **hide**, **delete** or **flag**. Rules read as sentences ("Hide comments with “promo”, “crypto” (typos
+  too)"); presets for links and spam. Beside them the review list: flagged, hidden, deleted; show a hidden one again,
+  hide or delete a flagged one, or leave it up.
+- **People**: everyone who triggered an automation (times, DMs, opens, email, follows) and, under *Emails*, every
+  address collected, for a newsletter; CSV for both. **Block** anyone (they never get a DM).
+- **Insights**: the weekly note, six numbers against the period before (7, 30 or 90 days), every day as striped bars
+  (sent, with opened inside), the best automations, A/B tests and their state, and the full **Log** (every comment,
+  DM, story reply, mention and AI answer, with why anything didn't go).
+- **Settings**, a section at a time down the side (`?section=`):
+  - **General**: the master switch and a pause per account.
+  - **Safety**: DMs an hour per account (default 150; Instagram allows about 200) and a day per person (default 5).
+    Past the hourly limit DMs are **held** and sent in a later hour by the sweep (`/api/cron/sweep`), within
+    Instagram's windows; blocked usernames.
+  - **Auto-attach**: when the studio posts a Reel or post whose caption asks for a keyword, an automation is made from
+    the chosen template (`{title}`, `{keyword}`; a link in the caption fills the button), live or off for you to check.
+  - **AI replies**: when someone who got a DM writes back, Claude answers from the post's script and caption, the
+    automation's notes and the persona here; anything it can't answer is handed to you (a notification), and it
+    answers at most N times a person a day. Needs a **Claude key** (Settings → Automation → Keys, kept encrypted like
+    the other tool keys; or `ANTHROPIC_API_KEY` on the Worker). Uses `claude-opus-5-5` with server-side fallbacks on.
+  - **Sync & report**: an https address that gets each new email (and optionally each DM) as JSON: a Google Sheet
+    (the how-to has a 6-line Apps Script `doPost`), Zapier, Make or a CRM; *Send a test* and *Send every email*. The
+    **weekly report** ("Auto-DM this week": sent, opened, emails, AI answers, comments caught, the best automation)
+    goes to your notifications on the day you pick and is kept on Insights.
+  - **Default words**: public answers, the follow-gate texts, the email ask and thanks.
+  - **Set up**: the checklist below per account, and *Try a comment* against every live automation.
 
 Each comment and message is answered at most once (a unique row per account × kind × id), our own comments never
 trigger anything, and the follow button's payload is signed. The MCP tool is `auto_dm` (status, list, get, save,
-switch, delete, settings, test, activity, contacts, subscribe); saving or switching on asks first.
+switch, delete, settings, test, activity, contacts, leads, insights, report, comments, comment_act, suggest,
+create_suggested, ai_test, sync_test, subscribe); saving, switching on, acting on a comment and changing the riskier
+settings ask first (`lib/auto/wrap.ts`). `cd mcp && npx tsx scripts/check-autodm.cts` runs 76 end-to-end checks of
+the engine against a real Postgres in WASM (`npm i --no-save @electric-sql/pglite` first); nothing leaves the machine.
 
 It sends nothing until all of these are done (the view shows each step):
 
@@ -96,7 +129,7 @@ It sends nothing until all of these are done (the view shows each step):
    permission the app doesn't have breaks Instagram sign-in.)
 2. **Webhook.** Pick a long random verify token and `npx wrangler secret put INSTAGRAM_WEBHOOK_TOKEN`. In the Meta app:
    Instagram → Webhooks → callback URL `https://voiceboxstudio.pages.dev/api/ig/webhook` (Copy on the view), the same
-   verify token, Verify and save, then subscribe to `comments`, `messages` and `messaging_postbacks` (the follow button's taps). Deliveries are checked against
+   verify token, Verify and save, then subscribe to `comments`, `messages`, `messaging_postbacks` (button taps) and `mentions` (story mentions). Deliveries are checked against
    `X-Hub-Signature-256` with `INSTAGRAM_APP_SECRET` (or `META_APP_SECRET` if the webhook is on a parent Facebook app).
 3. **Reconnect** each account (Settings tab → Reconnect, or Posts → Autopilot) so it grants messages. Voicebox then
    subscribes it to the webhook by itself; *Subscribe* does it again by hand.
@@ -109,7 +142,8 @@ button DM's text is up to 640 characters (longer, and the link goes in the text 
 
 The webhook is public by design (the owner approved it, 2026-11-01): GET answers Meta's one-time check only with the
 right `INSTAGRAM_WEBHOOK_TOKEN`; POST is refused unless the signature matches the body, and it reads and lists nothing
-for the caller.
+for the caller. The click links `/l/<token>` are public by design too: the token is HMAC-signed, names one sent DM and
+one of its buttons, counts the open once and redirects only to the address stored on that DM; anything else is a 404.
 
 ## Every option
 

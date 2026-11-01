@@ -22,7 +22,10 @@ export const GATES: Record<string, (a: Args) => Gate | Promise<Gate>> = {
   // Scheduled publishing never asked; the publishing rules and schedules that publish still do.
   automation_rules: (a) => (a.set && Object.keys(a.set as object).length ? "publishing_rules" : null),
   // messages to the public in the account's name: switching Auto-DM on or changing what it sends asks first
-  auto_dm: (a) => (a.action === "save" || (a.action === "switch" && a.on === true) || (a.action === "settings" && (a.on === true || !!a.defaults)) ? "publishing_rules" : null),
+  // anything that sends, changes what's sent, touches public comments or sends data out asks first; reading, testing,
+  // blocking someone and making the report don't
+  auto_dm: (a) => (a.action === "save" || (a.action === "switch" && a.on === true) || (a.action === "comment_act" && a.mod_action !== "dismiss")
+    || (a.action === "settings" && (a.on === true || ["defaults", "safety", "unblock", "moderation", "auto_attach", "sync", "ai"].some((k) => a[k] !== undefined))) ? "publishing_rules" : null),
   // the owner's call (2026-10-31): nothing that can be brought back asks first. The trash keeps files and folders 30
   // days (restore_files) and a deleted post is in the nightly database dump (14 days); only what's gone for good asks.
   delete_files: (a) => (a.forever ? "delete" : null), delete_media: () => "delete", empty_trash: () => "delete",
