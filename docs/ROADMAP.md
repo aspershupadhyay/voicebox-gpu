@@ -86,6 +86,7 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
 - [x] Rules: cross-post (live on A → B, N hours later), posting slots, caption footers, default first comment, YouTube defaults
 - [x] MCP tools: `publish_accounts`, `publish_post`, `publish_status`, `automation_rules`
 - [x] Instagram Auto-DM: a keyword comment (or DM, or story reply) gets a DM with a link button and a public answer; `auto_dm` (waits on Meta's messaging permission)
+- [x] Auto-DM round 3: click tracking, auto-attach on publish, multi-step choices, email collection, story mentions, A/B tests, Sheets/CRM sync and a weekly report, hourly and per-person limits with a held queue and a blocklist, AI follow-ups (Claude), comment rules (hide, delete, flag)
 - [ ] Pass YouTube's API audit so uploads can go public straight away (until then they stay private)
 - [x] Analytics back from YouTube and Instagram on each post (the Analytics page and the `analytics` MCP tool)
 - [ ] TikTok (needs its own audit), X (paid API) and LinkedIn publishing; they're hand-offs for now

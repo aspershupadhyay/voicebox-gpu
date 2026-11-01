@@ -12,6 +12,7 @@ export type KeyStatus = { from: "dashboard" | "vercel" | "unreadable" | "none"; 
 const ROWS = [
   { name: "github", title: "GitHub key", hint: "A fine-grained key: Contents, Pull requests and Issues read and write, Checks and Actions read, for the repos above only.", placeholder: "github_pat_…" },
   { name: "search", title: "Search key", hint: "Optional. A Brave Search or Tavily key, for workflows and scripts that search with no chat model.", placeholder: "Brave key or tvly-…" },
+  { name: "anthropic", title: "Claude key", hint: "Optional. An Anthropic API key, so Auto-DM's AI replies can answer follow-up questions in DMs.", placeholder: "sk-ant-…" },
 ] as const;
 
 function where(s: KeyStatus) {

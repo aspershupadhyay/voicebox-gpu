@@ -11,6 +11,9 @@
 //   GET    publish/autodm/activity?automation&account&status&q&before   …/autodm/contacts?account&q
 //   POST   publish/autodm { on?, paused?, defaults? }   …/autodm/automation { automation }   …/autodm/delete|switch|order { ids, on? }
 //   POST   publish/autodm/subscribe { account? }        …/autodm/test { text, media?, kind?, account?, automation? }
+//   GET    publish/autodm/leads?account&q&automation   …/autodm/insights?days   …/autodm/suggest?account   …/autodm/comments?status&q
+//   POST   publish/autodm/comment { id, action: hide|unhide|delete|dismiss }   …/autodm/report (make it now)
+//   POST   publish/autodm/sync { what: test|all }   …/autodm/suggest { items }   …/autodm/ai { automation, question }
 import { captionFor } from "../captions";
 import { after } from "next/server";
 import { getPost } from "../data";
@@ -41,8 +44,14 @@ export async function publishGet(path: string[], query?: URLSearchParams) {
     if (!c) return Response.json(await dm.overview());
     if (c === "media" && path[2] && ID.test(path[2])) return Response.json(await dm.recentMedia(path[2], q("after")));
     if (c === "posts") return Response.json({ posts: await dm.studioPosts() });
-    if (c === "activity") return Response.json({ events: await dm.activity({ automation: q("automation"), account: q("account"), status: q("status"), q: q("q"), before: Number(q("before")) || undefined }) });
+    const kind = ["comment", "dm", "story", "mention", "ai"].includes(q("kind") ?? "") ? q("kind") : undefined;
+    if (c === "activity") return Response.json({ events: await dm.activity({ automation: q("automation"), account: q("account"), status: q("status"), kind, q: q("q"), before: Number(q("before")) || undefined }) });
     if (c === "contacts") return Response.json({ contacts: await dm.contacts({ account: q("account"), q: q("q") }) });
+    if (c === "leads") return Response.json({ leads: await dm.leads({ account: q("account"), q: q("q"), automation: q("automation") }) });
+    const more = await import("./autodm-more");
+    if (c === "insights") return Response.json(await more.insights(Number(q("days")) || 30));
+    if (c === "suggest") return Response.json({ suggestions: await more.suggest(q("account")) });
+    if (c === "comments") return Response.json({ events: await dm.activity({ kind: "mod", status: q("status"), q: q("q"), before: Number(q("before")) || undefined }) });
     return bad("not found", 404);
   }
   if (!b) {
@@ -81,6 +90,16 @@ export async function publishPost(path: string[], body: Record<string, unknown>)
       if (c === "switch") return Response.json({ changed: await dm.switchAutomations(ids(body.ids), body.on === true) });
       if (c === "order") return Response.json({ moved: await dm.reorder(ids(body.ids)) });
       if (c === "subscribe") return Response.json({ results: await dm.subscribe(typeof body.account === "string" && ID.test(body.account) ? body.account : undefined) });
+      const more = await import("./autodm-more");
+      if (c === "comment") {
+        const action = ["hide", "unhide", "delete", "dismiss"].includes(String(body.action)) ? body.action as "hide" : null;
+        if (!action || !Number.isSafeInteger(Number(body.id))) return bad("Give the comment's id and an action: hide, unhide, delete or dismiss");
+        return Response.json(await more.modAct(Number(body.id), action));
+      }
+      if (c === "report") return Response.json({ report: await more.weekly() });
+      if (c === "sync") return Response.json(await more.syncNow(body.what === "all" ? "all" : "test"));
+      if (c === "suggest") return Response.json({ created: await more.createSuggested(Array.isArray(body.items) ? body.items : [], await who()) });
+      if (c === "ai") return Response.json(await more.aiTest(String(body.automation ?? ""), String(body.question ?? "").slice(0, 1000)));
       if (c === "test") return Response.json(await dm.test(String(body.text ?? "").slice(0, 500), { account: typeof body.account === "string" ? body.account : null, media: typeof body.media === "string" ? body.media : null, kind: body.kind === "dm" || body.kind === "story" ? body.kind : "comment", automation: body.automation && typeof body.automation === "object" ? body.automation as Record<string, unknown> : undefined }));
     } catch (e) { return bad((e as Error).message); }
     return bad("not found", 404);

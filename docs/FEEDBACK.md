@@ -6,6 +6,13 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **Auto-DM, round 3 (2026-11-01)**: "do it all and verify each one by one", "UI don't clutter, be creative: the
+  current one feels too cluttered and not structured properly". Every one of the ten features has its own end-to-end
+  checks (`mcp/scripts/check-autodm.cts`) before the next was started. The page was restructured: five tabs that each
+  do one job (Automations, Comments, People, Insights, Settings); one quiet line of numbers instead of a wall of cards;
+  the editor is a flow of steps on a line, one open at a time with a one-line summary each, optional steps added from
+  "+ Add a step" pills rather than shown empty; Settings is a section at a time down the side. Keep it that way: a new
+  Auto-DM capability is a step in the flow or a section in Settings, never another card on an existing view.
 - **Auto-DM, round 2 (2026-11-01)**: "suppose I've 100s of videos: manage it like ManyChat", "it shouldn't trigger on
   just the given text: settings, fuzzy match, or anyone who comments", "only if they're following me, with a switch",
   "its own tab structure, managed like the Settings tab, no clutter in one tab", "it must work on my multiple

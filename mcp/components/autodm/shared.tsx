@@ -1,17 +1,14 @@
 "use client";
 // What the Auto-DM page's tabs share: the data from /api/dash/publish/autodm, small formatters and inputs.
 import { X } from "@phosphor-icons/react";
-import { useState } from "react";
-import type { Automation, DmDefaults, DmSettings } from "@/lib/publish/autodm";
+import { useEffect, useState } from "react";
+import type { Automation, DmDefaults, DmSettings, ModRule } from "@/lib/publish/autodm";
+import type { Stat, Totals } from "@/lib/publish/dmstore";
 
 export type Acct = { id: string; handle: string | null; name: string; avatar: string | null; error: string | null; messages: boolean | null; subscribed: number | null };
-export type Status = { flag: boolean; app_secret: boolean; verify_token: boolean; last_event: number | null; accounts: Acct[] };
-export type Stat = { total: number; sent: number; gated: number; failed: number; last: string | null };
-export type Overview = {
-  settings: DmSettings; status: Status; stats: Record<string, Stat>; defaults: DmDefaults;
-  totals: { total: number; sent: number; gated: number; failed: number; people: number } | null;
-};
-export type { Automation, DmDefaults, DmSettings };
+export type Status = { flag: boolean; app_secret: boolean; verify_token: boolean; last_event: number | null; ai_key: boolean; ai_key_last4: string | null; accounts: Acct[] };
+export type Overview = { settings: DmSettings; status: Status; stats: Record<string, Stat>; defaults: DmDefaults; totals: Totals | null };
+export type { Automation, DmDefaults, DmSettings, ModRule, Stat, Totals };
 
 export const ago = (t: number | string | null | undefined) => {
   if (!t) return "never";
@@ -20,14 +17,44 @@ export const ago = (t: number | string | null | undefined) => {
 };
 export const handleOf = (a?: Acct) => (a ? `@${a.handle ?? a.name}` : "");
 export const compact = (n: number) => Intl.NumberFormat(undefined, { notation: "compact" }).format(n);
+export const rate = (n: number, d: number) => (d ? `${Math.round((n / d) * 100)}%` : "–");
 
-/** What an automation does, in one line: "Comments with CATCH on 2 posts → DM with a button, follow first". */
+/** What starts an automation and what it answers, in a few words: "Comments · CATCH (typos ok) · 2 posts". */
 export function summary(a: Automation, accounts: Acct[]) {
-  const on = [a.triggers.comments && "comments", a.triggers.dms && "DMs", a.triggers.story_replies && "story replies"].filter(Boolean).join(", ") || "nothing";
-  const kw = a.match === "any" ? "anything" : `${a.match === "exact" ? "exactly " : ""}${a.keywords.slice(0, 3).map((k) => k.toUpperCase()).join(" / ")}${a.keywords.length > 3 ? ` +${a.keywords.length - 3}` : ""}${a.match === "fuzzy" ? " (typos ok)" : ""}`;
-  const where = !a.triggers.comments ? "" : a.where === "all" ? " on every post" : ` on ${a.media.length + a.posts.length} post${a.media.length + a.posts.length === 1 ? "" : "s"}`;
-  const who = a.accounts.length ? ` · ${a.accounts.map((id) => handleOf(accounts.find((x) => x.id === id)) || "an account").join(", ")}` : "";
-  return `${on[0].toUpperCase()}${on.slice(1)} with ${kw}${where}${a.follow_gate.on ? " · followers only" : ""}${who}`;
+  const on = [a.triggers.comments && "Comments", a.triggers.dms && "DMs", a.triggers.story_replies && "Story replies", a.triggers.mentions && "Story mentions"].filter(Boolean).join(", ") || "Nothing yet";
+  const kw = a.match === "any" ? "anything" : a.keywords.length ? `${a.keywords.slice(0, 2).map((k) => k.toUpperCase()).join(" / ")}${a.keywords.length > 2 ? ` +${a.keywords.length - 2}` : ""}${a.match === "fuzzy" ? " (typos ok)" : ""}` : "";
+  const where = !a.triggers.comments ? "" : a.where === "all" ? "every post" : `${a.media.length + a.posts.length} post${a.media.length + a.posts.length === 1 ? "" : "s"}`;
+  const who = a.accounts.length && accounts.length > 1 ? a.accounts.map((id) => handleOf(accounts.find((x) => x.id === id)) || "an account").join(", ") : "";
+  return [on, kw && (a.triggers.comments || a.triggers.dms || a.triggers.story_replies) ? kw : "", where, who].filter(Boolean).join(" · ");
+}
+
+/** The flow's extra steps, as short tags for a row. */
+export function features(a: Automation) {
+  return [
+    a.follow_gate.on && "Followers",
+    a.collect.on && "Email",
+    a.choices.length > 0 && `${a.choices.length} choices`,
+    a.ab.on && a.ab.message && (a.ab.winner ? `A/B: ${a.ab.winner.toUpperCase()} won` : "A/B"),
+    a.ai.on && "AI",
+    a.made_from && "Auto",
+  ].filter(Boolean) as string[];
+}
+
+export function useDebounced<T>(v: T, ms = 300) {
+  const [x, setX] = useState(v);
+  useEffect(() => { const t = setTimeout(() => setX(v), ms); return () => clearTimeout(t); }, [v, ms]);
+  return x;
+}
+
+/** Download rows as a CSV file. */
+export function downloadCsv(name: string, head: string[], rows: unknown[][]) {
+  const cell = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const out = [head.join(","), ...rows.map((r) => r.map(cell).join(","))].join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([out], { type: "text/csv" }));
+  a.download = `${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 /** Words as removable chips: type and press Enter or a comma. */

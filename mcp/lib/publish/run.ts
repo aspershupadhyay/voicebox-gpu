@@ -104,6 +104,8 @@ async function finish(p: Plan, rules: Rules) {
   await logActivity({ post_id: p.post, verb: later ? "scheduled on" : "published to", text: `${spaceName(p.space)} ${p.result?.url ?? ""}` }, AUTOPILOT).catch(() => null);
   await crosspost(p, rules).catch((e) => line(p, `Cross-post rule: ${(e as Error).message}`, false));
   if (!later) await import("../auto/flows").then((f) => f.emit("post.live", { post_id: p.post, space: p.space, url: p.result?.url ?? "" }));
+  // Auto-DM's auto-attach: a new Reel or Post whose caption asks for a keyword gets its automation
+  if (!later && (p.space === "ig_reel" || p.space === "ig_post")) await import("./autodm-more").then((m) => m.onPublished(p)).catch((e) => line(p, `Auto-DM: ${(e as Error).message}`, false));
 }
 
 /** The board follows: the target goes to Posted (or Scheduled while YouTube holds it) with its live link. */

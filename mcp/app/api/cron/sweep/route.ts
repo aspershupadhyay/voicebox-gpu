@@ -17,6 +17,7 @@ export async function POST(req: Request) {
     await Promise.race([Promise.all(dl), new Promise((r) => setTimeout(r, 60_000))]); // a runtime start goes on beside the rest
     await (await import("@/lib/pipeline")).advancePipelines(40_000).catch((e) => console.error("pipelines", e)); // post pipelines carry on
     await (await import("@/lib/publish/run")).sweep(170_000).catch((e) => console.error("autopilot", e));
+    await (await import("@/lib/publish/autodm-more")).sweep().catch((e) => console.error("autodm", e)); // DMs held by the hourly limit, the weekly report
     await (await import("@/lib/auto/flows")).sweep(55_000).catch((e) => console.error("workflows", e)); // schedules due, runs carried on
     await (await import("@/lib/auto/tools")).sweepFactory(30_000).catch((e) => console.error("factory", e)); // batches nobody is polling
     await (await import("@/lib/auto/ledger")).nightly().catch((e) => console.error("ledger", e)); // the agents' notes, one PR a night
