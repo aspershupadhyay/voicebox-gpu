@@ -22,7 +22,7 @@ export const DEFAULT_ROLES: Omit<Role, "by" | "at">[] = [
       "repurpose", "video_template", "run", "browse", "list_files", "get_file", "save_file", "add_media", "upload_media", "get_post", "update_post", "attach_voiceover", "carousels", "captions"],
     brief: "Every render gets QA (edit_video does it): fix FAIL lines before handing over. Check 390 px. Captions inside the safe zone. Save results in the post's folder." },
   { name: "publisher", model: "any", purpose: "Packages and schedules posts; never publishes now without the owner.",
-    tools: [...READ, "post_package", "publish_post", "publish_status", "publish_accounts", "auto_post", "automation_rules", "content_calendar", "workspace_board", "get_post",
+    tools: [...READ, "post_package", "publish_post", "publish_status", "publish_accounts", "auto_post", "automation_rules", "auto_dm", "content_calendar", "workspace_board", "get_post",
       "update_post", "captions", "analytics", "list_files", "get_file", "carousels"],
     brief: "Every arm gets the post package first (title, description, hashtags, the credit). Publishing now goes straight out (no approval since 2026-11-01): only when the user asked. Check publish_status after." },
   { name: "auditor", model: "the strongest", purpose: "Reviews the other models' work, writes lessons with evidence, reviews PRs.",

@@ -56,6 +56,39 @@ Limits: about 100 API posts per account per 24 h (the composer shows what's left
 MP4 H.264/AAC; Stories up to 60 s; feed photos 4:5 to 1.91:1; carousels up to 20 items, cropped to the first one's
 shape. Long-lived tokens last 60 days and the autopilot renews them from 20 days out.
 
+## Auto-DM (Posts → Auto-DM)
+
+"Comment CATCH and we'll DM you the link", built in (`mcp/lib/publish/autodm.ts`, webhook `mcp/app/api/ig/webhook`).
+A rule is keywords (or any comment), which post (or every post), the DM (with an optional link button), public answers
+under the comment (one picked at random each time), whether DMs and story replies with the keyword count too, and once
+per person. Rules are checked top to bottom; the first that matches answers. Each comment and message is answered at
+most once, our own comments never trigger anything, and every send (or failure, with the reason) shows under *Sent
+lately*. *Try a comment* is a dry run. The MCP tool is `auto_dm`.
+
+It sends nothing until all of these are done (the view shows each step):
+
+1. **Messaging permission.** In the Meta app (the one with `INSTAGRAM_APP_ID`): Instagram → API setup with Instagram
+   login → permissions → add `instagram_business_manage_messages`. For your own tester accounts that's enough; for
+   anyone else to get DMs the app needs **App Review** for it (Advanced Access) and the app switched to Live.
+   Then `npx wrangler secret put INSTAGRAM_DM` with the value `1`. (Until then sign-in doesn't ask for it: asking for a
+   permission the app doesn't have breaks Instagram sign-in.)
+2. **Webhook.** Pick a long random verify token and `npx wrangler secret put INSTAGRAM_WEBHOOK_TOKEN`. In the Meta app:
+   Instagram → Webhooks → callback URL `https://voiceboxstudio.pages.dev/api/ig/webhook` (Copy on the view), the same
+   verify token, Verify and save, then subscribe to `comments` and `messages`. Deliveries are checked against
+   `X-Hub-Signature-256` with `INSTAGRAM_APP_SECRET` (or `META_APP_SECRET` if the webhook is on a parent Facebook app).
+3. **Reconnect** the account (the view's Reconnect, or Posts → Autopilot) so it grants messages. Voicebox then
+   subscribes it to the webhook by itself; *Subscribe* does it again by hand.
+4. **On the phone:** Instagram → Settings → Messages and story replies → Message controls → Connected tools → Allow
+   access to messages.
+5. Switch **Send DMs automatically** on, and test from a second account.
+
+Instagram's limits: one private reply per comment, within 7 days of it; after someone DMs you, 24 hours to answer. A
+button DM's text is up to 640 characters (longer, and the link goes in the text instead).
+
+The webhook is public by design (the owner approved it, 2026-11-01): GET answers Meta's one-time check only with the
+right `INSTAGRAM_WEBHOOK_TOKEN`; POST is refused unless the signature matches the body, and it reads and lists nothing
+for the caller.
+
 ## Every option
 
 | YouTube | Instagram |

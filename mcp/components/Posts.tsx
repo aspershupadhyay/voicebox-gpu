@@ -19,13 +19,14 @@ import { Avatar, Gate } from "./wsparts";
 import { Empty, PageHeader, StatCard } from "./ui";
 import { Select } from "./pop";
 import { Autopilot } from "./Autopilot";
+import { AutoDm } from "./AutoDm";
 import { Composer } from "./Publish";
 
-type View = "board" | "calendar" | "list" | "gallery" | "autopilot";
+type View = "board" | "calendar" | "list" | "gallery" | "autopilot" | "autodm";
 const VIEWS: { id: View; label: string; Icon: typeof Kanban }[] = [
   { id: "board", label: "Board", Icon: Kanban }, { id: "calendar", label: "Calendar", Icon: CalendarBlank },
   { id: "list", label: "List", Icon: ListBullets }, { id: "gallery", label: "Gallery", Icon: SquaresFour },
-  { id: "autopilot", label: "Autopilot", Icon: Lightning },
+  { id: "autopilot", label: "Autopilot", Icon: Lightning }, { id: "autodm", label: "Auto-DM", Icon: ChatCircleDots },
 ];
 type Entry = { p: Post; t: Target | null; all: Target[] }; // one post as seen from the current scope
 const IDEAS = "none";
@@ -506,6 +507,7 @@ function PostsInner() {
           </aside>
         </>
       )}
+      {view === "autodm" && <AutoDm />}
       {view === "autopilot" && <Autopilot posts={posts} onCompose={(post, space) => setCompose({ post, space })} onOpen={(p) => go({ post: p.$id })} />}
       {compose && <Composer post={posts.find((p) => p.$id === compose.post.$id) ?? compose.post} space={compose.space} onClose={() => setCompose(null)} />}
       {open && (openPost ? <PostDrawer key={open} post={openPost} onClose={() => go({ post: null })} />

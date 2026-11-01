@@ -6,6 +6,10 @@
 //   POST   publish/<post>/<space>/go       { mode: "now" | "arm" | "disarm" }   …/cancel   …/retry
 //   POST   publish/rules                   automation rules                     DELETE publish/accounts/<id>  disconnect
 //   DELETE publish/<post>/<space>          forget the plan
+//   GET    publish/autodm                  Auto-DM: switch, rules, setup checklist, recent DMs (lib/publish/autodm.ts)
+//   GET    publish/autodm/media/<account>  the account's recent posts and reels, to pick one for a rule
+//   POST   publish/autodm                  { on?, rules? }    …/autodm/subscribe { account? }    …/autodm/test { text, media?, kind? }
+//   POST   publish/autodm/reset/<rule>     forget who already got that rule's DM
 import { captionFor } from "../captions";
 import { after } from "next/server";
 import { getPost } from "../data";
@@ -30,6 +34,15 @@ function nudge(p: { post: string; space: string; state: string; run: { lock?: nu
 
 export async function publishGet(path: string[]) {
   const [b, c] = path;
+  if (b === "autodm") {
+    const dm = await import("./autodm");
+    if (!c) {
+      const [settings, log, status] = await Promise.all([dm.getSettings(), dm.readLog(), dm.status()]);
+      return Response.json({ settings, log, status, limits: dm.LIMITS });
+    }
+    if (c === "media" && path[2] && ID.test(path[2])) return Response.json({ media: await dm.recentMedia(path[2]) });
+    return bad("not found", 404);
+  }
   if (!b) {
     const [accounts, plans, rules] = await Promise.all([listAccounts(), listPlans(), getRules()]);
     plans.filter((p) => BUSY.includes(p.state)).forEach(nudge);
@@ -56,6 +69,16 @@ export async function publishGet(path: string[]) {
 
 export async function publishPost(path: string[], body: Record<string, unknown>) {
   const [b, c, d] = path;
+  if (b === "autodm") {
+    const dm = await import("./autodm");
+    try {
+      if (!c) return Response.json({ settings: await dm.setSettings(body, await who()) });
+      if (c === "subscribe") return Response.json({ results: await dm.subscribe(typeof body.account === "string" && ID.test(body.account) ? body.account : undefined) });
+      if (c === "test") return Response.json(await dm.test(String(body.text ?? "").slice(0, 500), { account: typeof body.account === "string" ? body.account : null, media: typeof body.media === "string" ? body.media : null, kind: body.kind === "dm" ? "dm" : "comment" }));
+      if (c === "reset" && d && ID.test(d)) return Response.json(await dm.resetPeople(d));
+    } catch (e) { return bad((e as Error).message); }
+    return bad("not found", 404);
+  }
   if (b === "rules") return Response.json({ rules: await setRules(body.rules as never ?? body) });
   if (b === "sweep") return Response.json(await sweep(240_000)); // run the autopilot now
   if (!b || !c || !ID.test(b) || !spaceOf(c)) return bad("not found", 404);

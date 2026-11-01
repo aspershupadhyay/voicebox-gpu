@@ -1077,6 +1077,32 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
   );
 
   server.registerTool(
+    "auto_dm",
+    {
+      title: "Instagram auto-DM (comment a keyword, get a DM)",
+      description: "Keyword rules that DM people who comment a word on a post or reel (or send it in a DM or story reply), with an optional link button and a public answer under the comment. action: status (the switch, the rules, the setup checklist: INSTAGRAM_DM, webhook, each account's messaging permission and subscription), log (DMs sent lately, with errors), test (text, media?, kind?: dry run, nothing is sent), set (on: the master switch, and/or rules: the WHOLE list, each {id?, name, on, account?, media?: Instagram media id or null for every post, keywords: [], match: word|exact|any, message (up to 1000; 640 with a button), button?: {label, url}, public_replies?: [], dms?: also answer DMs and story replies, once_per_person?: default true}), subscribe (ask Instagram to send an account's comments and messages), reset (rule_id: people who already got it can get it again). Instagram allows one private reply per comment within 7 days of it. Only change rules or switch it on when the user asked. Example: {action: \"set\", rules: [{name: \"Rewind prompt\", on: true, keywords: [\"CATCH\"], message: \"Here's the prompt 🎬\", button: {label: \"Open the prompt\", url: \"https://prompt-motion.com/stephanlivera-df17a2\"}, public_replies: [\"Sent! Check your DMs 📩\"], dms: true}]}, then {action: \"test\", text: \"catch!\"}.",
+      inputSchema: z.object({
+        action: z.enum(["status", "log", "test", "set", "subscribe", "reset"]),
+        on: z.boolean().optional(), rules: z.array(z.record(z.string(), z.unknown())).optional(),
+        text: z.string().max(500).optional(), media: z.string().max(40).optional(), kind: z.enum(["comment", "dm"]).optional(),
+        account: z.string().max(40).optional(), rule_id: z.string().max(64).optional(),
+      }),
+    },
+    async ({ action, on, rules, text, media, kind, account, rule_id }) => ws(async () => {
+      const dm = await import("@/lib/publish/autodm");
+      if (action === "status") { const [settings, status] = await Promise.all([dm.getSettings(), dm.status()]); return { settings, status, limits: dm.LIMITS }; }
+      if (action === "log") return { log: await dm.readLog(40) };
+      if (action === "test") { if (!text) throw new Error("test needs text: the comment to try"); return dm.test(text, { media: media ?? null, kind: kind ?? "comment", account: account ?? null }); }
+      if (action === "subscribe") return { results: await dm.subscribe(account) };
+      if (action === "reset") { if (!rule_id) throw new Error("reset needs rule_id (auto_dm status lists them)"); return dm.resetPeople(rule_id); }
+      if (on === undefined && !rules) throw new Error("set needs on and/or rules (rules replaces the whole list: read status first)");
+      const settings = await dm.setSettings({ on, rules }, "Claude (MCP)");
+      const st = await dm.status();
+      return { settings, next: settings.on && !(st.flag && st.accounts.some((a) => a.messages && a.subscribed)) ? "Saved, but it can't send yet: auto_dm status shows which setup step is missing." : "Saved. auto_dm test tries a comment without sending." };
+    }),
+  );
+
+  server.registerTool(
     "workspace_media",
     {
       title: "Workspace media",
