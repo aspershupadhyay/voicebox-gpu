@@ -35,7 +35,7 @@ jobs:
       - name: Deploy
         working-directory: mcp
         run: npx wrangler deploy
-      - name: Deploy the timer (workers/live-timer.js: the minute knocks, the sweep, the backup)
+      - name: Deploy the timer (workers/live-timer.js, the minute knocks, the sweep and the backup)
         working-directory: mcp
         run: npx wrangler deploy --config ../workers/wrangler.timer.jsonc
       - name: Smoke test
