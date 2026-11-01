@@ -6,6 +6,13 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Remove the post approval, I don't want that"** (2026-11-01): `publish_post go=now` / `share_to_story` and
+  `auto_post go=now` no longer wait for a click (`lib/auto/wrap.ts`; the switch is gone from Settings → Automation).
+  A model still publishes only when the user asked. Scheduled posts never asked; publishing rules still do.
+- **Posting times** (2026-11-01): the owner posts the YouTube Short right away and the Instagram Reel at 7 PM IST.
+  Their numbers: weekday afternoons (2:30-3 PM IST) and early evenings (6-8 PM IST) win; mornings and late nights flop.
+  Titles must stay accurate even when keyword research suggests a bigger search term (it pushed "AI Code Review" for
+  EGM, which reviews plans, not code).
 - **"Use the GPU while rendering instead of leaning on the CPU, on by default"** (2026-11-01), and given the choice,
   **speed over file size** ("go with 1"): `scripts/reels/fast_render.py` makes every Reel render send raw frames and
   encode with NVENC on Colab (278 s -> 59 s for a 76 s Reel); the files come out ~3.5x larger at the same look, which
