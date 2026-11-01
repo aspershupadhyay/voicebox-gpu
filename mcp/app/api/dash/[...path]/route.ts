@@ -46,7 +46,7 @@ export async function GET(req: Request, ctx: Ctx) {
   if (g.deny) return g.deny;
   const [a, b, c] = g.path;
   try {
-    if (a === "publish") return await (await import("@/lib/publish/api")).publishGet(g.path.slice(1));
+    if (a === "publish") return await (await import("@/lib/publish/api")).publishGet(g.path.slice(1), new URL(req.url).searchParams);
     if (a === "pipeline" && b && ID.test(b)) return Response.json(await (await import("@/lib/pipeline")).advance(b)); // the post pipeline, moved along as it's looked at
     if (a === "pack" && b && ID.test(b)) return Response.json({ pack: await (await import("@/lib/postpack")).getPack(b) }); // the post package (lib/postpack.ts)
     if (a === "downloads" && !b) {
