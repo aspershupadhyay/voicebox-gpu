@@ -94,6 +94,10 @@ a 57 s story cut and a ~35 s hype cut). Read this before making any Reel, Short 
    `LD_LIBRARY_PATH=~/libroot/usr/lib/x86_64-linux-gnu` and `CHROME_PATH` (the fast renderer adds `/usr/lib64-nvidia`
    back by itself; without it ffmpeg can't find NVENC and quietly falls back to x264); then `render.js video 11`, `mux`, `verify`,
    copy the MP4 to `out/` with `save_to: "Videos/<topic>"`. The workspace keeps Chrome while the runtime is on.
+7c. **A cover and a Shorts cut** for every Reel: a cover frame drawn by the film at t < 0 (`render.js stills -1`),
+   everything important between y 300 and 1600 so Instagram's grid crop keeps it. Then a ~45 s Shorts cut from the
+   same voice and scenes (`cut.js` says `'short'`; `score.js` keeps the hook, the problem, the steps and the close),
+   because the channel's Shorts are watched about 50% through, while the full cut runs 1-3 minutes on Instagram.
 8. **Deliver**: save to Files (`save_file` → PUT to `put_url` → ticket) in a folder like `Videos/<topic>`, and send it.
 
 ## Costs seen
@@ -102,5 +106,10 @@ a 57 s story cut and a ~35 s hype cut). Read this before making any Reel, Short 
   0.1-0.15 units each run.
 - Render: 1717 frames (57 s at 30 fps) in 265 s on the session's CPU, 32 MB H.264; 1401 frames (47 s) in 215 s
   here and 157 s on the Colab L4 (12 cores, 9.4 fps).
+- Sync check on slides: don't mark slide (push) transitions at all. The picture check reads frame-to-frame change,
+  and every frame of a slide moves nearly every pixel, so it reports the first frame of motion, not the cut. A slide
+  is centred on its line by construction. Never nudge a transition by a guessed offset to make the check pass (tried
+  on the EGM cut: 0.15 s overshot, 0.07 s was only a fudge). Keep the transition table in score.js so the film and
+  the check read the same one.
 - Sync check: with no hit sound effects, mark cuts `sync: 'v'` (picture); Whisper's word starts are only good to
   ~0.1 s, so an 'a' check on a spoken word fails for no visible reason.
