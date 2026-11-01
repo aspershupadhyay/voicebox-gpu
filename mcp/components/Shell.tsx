@@ -3,7 +3,7 @@
 // a top bar with the page name and the GPU's state, the ⌘K command palette, and on phones a bottom tab bar plus the
 // sidebar as a drawer. Create is the studio (voices, audio, images, files); Grow is analytics (everything under
 // /analytics), with its own pages, its own tabs on phones and the rivals you pinned. The switch remembers where you were.
-import {
+import { ChatCircleDots,
   ArrowsClockwise, Broadcast, CalendarDots, Crosshair, SidebarSimple, CaretDown, ChartLineUp, Rows, SquaresFour, Trophy, UsersThree, CaretUpDown, ClosedCaptioning, Cpu, DotsThreeOutline, Fire, GearSix, House, ImageSquare, Kanban, List,
   CloudArrowDown, FileAudio, FileText, FilmStrip, Folder, Folders, MagicWand, MagnifyingGlass, Microphone, Paperclip, PenNib, Plus, Power, SignOut, Star, UserSound, X,
 } from "@phosphor-icons/react";
@@ -30,6 +30,7 @@ export const NAV: Nav[] = [
   { href: "/home", name: "Home", Icon: House, mv: "home", sec: "main" },
   { href: "/voices", name: "Voices", Icon: UserSound, mv: "voices", sec: "main" },
   { href: "/posts", name: "Posts", Icon: Kanban, mv: "posts", sec: "main" },
+  { href: "/auto-dm", name: "Auto-DM", Icon: ChatCircleDots, mv: "posts", sec: "main" },
   { href: "/analytics", name: "Analytics", Icon: ChartLineUp, mv: "chart", sec: "main" },
   { href: "/files", name: "Files", Icon: Folders, mv: "files", sec: "main" },
   { href: "/writing", name: "Writing room", Icon: PenNib, mv: "pen", sec: "create" },

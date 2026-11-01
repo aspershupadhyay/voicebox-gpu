@@ -6,10 +6,11 @@
 //   POST   publish/<post>/<space>/go       { mode: "now" | "arm" | "disarm" }   …/cancel   …/retry
 //   POST   publish/rules                   automation rules                     DELETE publish/accounts/<id>  disconnect
 //   DELETE publish/<post>/<space>          forget the plan
-//   GET    publish/autodm                  Auto-DM: switch, rules, setup checklist, recent DMs (lib/publish/autodm.ts)
-//   GET    publish/autodm/media/<account>  the account's recent posts and reels, to pick one for a rule
-//   POST   publish/autodm                  { on?, rules? }    …/autodm/subscribe { account? }    …/autodm/test { text, media?, kind? }
-//   POST   publish/autodm/reset/<rule>     forget who already got that rule's DM
+//   GET    publish/autodm                  Auto-DM (lib/publish/autodm.ts): settings, automations, setup, 30-day numbers
+//   GET    publish/autodm/media/<account>?after=   the account's posts and reels, a page at a time   …/autodm/posts  studio posts
+//   GET    publish/autodm/activity?automation&account&status&q&before   …/autodm/contacts?account&q
+//   POST   publish/autodm { on?, paused?, defaults? }   …/autodm/automation { automation }   …/autodm/delete|switch|order { ids, on? }
+//   POST   publish/autodm/subscribe { account? }        …/autodm/test { text, media?, kind?, account?, automation? }
 import { captionFor } from "../captions";
 import { after } from "next/server";
 import { getPost } from "../data";
@@ -32,15 +33,16 @@ function nudge(p: { post: string; space: string; state: string; run: { lock?: nu
   if (BUSY.includes(p.state as never) && (!p.run?.lock || Date.now() - p.run.lock > LOCK_MS)) after(() => drive(p.post, p.space, 280_000).then(() => null));
 }
 
-export async function publishGet(path: string[]) {
+export async function publishGet(path: string[], query?: URLSearchParams) {
   const [b, c] = path;
   if (b === "autodm") {
     const dm = await import("./autodm");
-    if (!c) {
-      const [settings, log, status] = await Promise.all([dm.getSettings(), dm.readLog(), dm.status()]);
-      return Response.json({ settings, log, status, limits: dm.LIMITS });
-    }
-    if (c === "media" && path[2] && ID.test(path[2])) return Response.json({ media: await dm.recentMedia(path[2]) });
+    const q = (k: string) => { const v = query?.get(k); return v ? v.slice(0, 100) : undefined; };
+    if (!c) return Response.json(await dm.overview());
+    if (c === "media" && path[2] && ID.test(path[2])) return Response.json(await dm.recentMedia(path[2], q("after")));
+    if (c === "posts") return Response.json({ posts: await dm.studioPosts() });
+    if (c === "activity") return Response.json({ events: await dm.activity({ automation: q("automation"), account: q("account"), status: q("status"), q: q("q"), before: Number(q("before")) || undefined }) });
+    if (c === "contacts") return Response.json({ contacts: await dm.contacts({ account: q("account"), q: q("q") }) });
     return bad("not found", 404);
   }
   if (!b) {
@@ -71,11 +73,15 @@ export async function publishPost(path: string[], body: Record<string, unknown>)
   const [b, c, d] = path;
   if (b === "autodm") {
     const dm = await import("./autodm");
+    const ids = (v: unknown) => (Array.isArray(v) ? v : []).map(String).filter((x) => ID.test(x)).slice(0, 1000);
     try {
-      if (!c) return Response.json({ settings: await dm.setSettings(body, await who()) });
+      if (!c) return Response.json({ settings: await dm.setGeneral(body, await who()) });
+      if (c === "automation") return Response.json(await dm.saveAutomation((body.automation ?? body) as Record<string, unknown>, await who()));
+      if (c === "delete") return Response.json({ deleted: await dm.removeAutomations(ids(body.ids)) });
+      if (c === "switch") return Response.json({ changed: await dm.switchAutomations(ids(body.ids), body.on === true) });
+      if (c === "order") return Response.json({ moved: await dm.reorder(ids(body.ids)) });
       if (c === "subscribe") return Response.json({ results: await dm.subscribe(typeof body.account === "string" && ID.test(body.account) ? body.account : undefined) });
-      if (c === "test") return Response.json(await dm.test(String(body.text ?? "").slice(0, 500), { account: typeof body.account === "string" ? body.account : null, media: typeof body.media === "string" ? body.media : null, kind: body.kind === "dm" ? "dm" : "comment" }));
-      if (c === "reset" && d && ID.test(d)) return Response.json(await dm.resetPeople(d));
+      if (c === "test") return Response.json(await dm.test(String(body.text ?? "").slice(0, 500), { account: typeof body.account === "string" ? body.account : null, media: typeof body.media === "string" ? body.media : null, kind: body.kind === "dm" || body.kind === "story" ? body.kind : "comment", automation: body.automation && typeof body.automation === "object" ? body.automation as Record<string, unknown> : undefined }));
     } catch (e) { return bad((e as Error).message); }
     return bad("not found", 404);
   }

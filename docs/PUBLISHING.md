@@ -56,14 +56,36 @@ Limits: about 100 API posts per account per 24 h (the composer shows what's left
 MP4 H.264/AAC; Stories up to 60 s; feed photos 4:5 to 1.91:1; carousels up to 20 items, cropped to the first one's
 shape. Long-lived tokens last 60 days and the autopilot renews them from 20 days out.
 
-## Auto-DM (Posts → Auto-DM)
+## Auto-DM (the Auto-DM page, `/auto-dm`)
 
-"Comment CATCH and we'll DM you the link", built in (`mcp/lib/publish/autodm.ts`, webhook `mcp/app/api/ig/webhook`).
-A rule is keywords (or any comment), which post (or every post), the DM (with an optional link button), public answers
-under the comment (one picked at random each time), whether DMs and story replies with the keyword count too, and once
-per person. Rules are checked top to bottom; the first that matches answers. Each comment and message is answered at
-most once, our own comments never trigger anything, and every send (or failure, with the reason) shows under *Sent
-lately*. *Try a comment* is a dry run. The MCP tool is `auto_dm`.
+Our own ManyChat-style automations (`mcp/lib/publish/autodm.ts`, history in Postgres `mcp/lib/publish/dmstore.ts` /
+`db/003_autodm.sql`, webhook `mcp/app/api/ig/webhook`, page `mcp/components/autodm/`). Its own page in the sidebar, as
+tabs like Settings:
+
+- **Automations**: the list, built for hundreds. Search by name, keyword or post; filter live/off and by account; sort
+  by recent, most sent or name; select many to switch on/off or delete; each row shows its 30-day sends and failures.
+  *New automation* starts from a template (keyword → link, followers only, any comment, story replies, blank).
+  The editor (`?edit=<id>`) has:
+  - **When**: comments, DMs and/or story replies; every account or chosen ones; every post or chosen posts (picked
+    from the account's Instagram grid, a page at a time, or from studio posts, which count once they go live, so
+    an automation can be ready before the post is); only top-level comments if wanted. An automation for chosen
+    posts wins over an every-post one on those posts; otherwise list order.
+  - **Matching**: *Keyword, typos ok* (fuzzy: "cathc", "CATCHHH", "c a t c h"; up to 1 typo for short words, 2 for
+    long, or a set number; the first letter must match so "match" never counts for CATCH), *Has the keyword* (as a
+    word), *Just the keyword*, or *Anything*. Exclude words skip a comment.
+  - **Followers only**: a commenter first gets "follow @you, then tap" with a button; the tap is checked
+    (`is_user_follow_business`) and they get the DM, or a "not following yet" with the button again. People who DM
+    or reply to a story are checked straight away.
+  - **The DM** (`{username}`, `{handle}`), an optional link button; **public answers** (one at random each time);
+    **once per person**. A live preview and *Try it* (nothing is sent) sit beside it.
+- **Activity**: every comment, DM, story reply and tap answered, skipped or failed, with the reason; filters and search.
+- **Contacts**: everyone who triggered one: how often, what they got, whether they follow; CSV export.
+- **Settings**: the master switch, a pause per account, defaults (public answers, follow-gate texts), the setup
+  checklist per account, and *Try a comment* against every live automation.
+
+Each comment and message is answered at most once (a unique row per account × kind × id), our own comments never
+trigger anything, and the follow button's payload is signed. The MCP tool is `auto_dm` (status, list, get, save,
+switch, delete, settings, test, activity, contacts, subscribe); saving or switching on asks first.
 
 It sends nothing until all of these are done (the view shows each step):
 
@@ -74,9 +96,9 @@ It sends nothing until all of these are done (the view shows each step):
    permission the app doesn't have breaks Instagram sign-in.)
 2. **Webhook.** Pick a long random verify token and `npx wrangler secret put INSTAGRAM_WEBHOOK_TOKEN`. In the Meta app:
    Instagram → Webhooks → callback URL `https://voiceboxstudio.pages.dev/api/ig/webhook` (Copy on the view), the same
-   verify token, Verify and save, then subscribe to `comments` and `messages`. Deliveries are checked against
+   verify token, Verify and save, then subscribe to `comments`, `messages` and `messaging_postbacks` (the follow button's taps). Deliveries are checked against
    `X-Hub-Signature-256` with `INSTAGRAM_APP_SECRET` (or `META_APP_SECRET` if the webhook is on a parent Facebook app).
-3. **Reconnect** the account (the view's Reconnect, or Posts → Autopilot) so it grants messages. Voicebox then
+3. **Reconnect** each account (Settings tab → Reconnect, or Posts → Autopilot) so it grants messages. Voicebox then
    subscribes it to the webhook by itself; *Subscribe* does it again by hand.
 4. **On the phone:** Instagram → Settings → Messages and story replies → Message controls → Connected tools → Allow
    access to messages.

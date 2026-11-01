@@ -1079,26 +1079,32 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
   server.registerTool(
     "auto_dm",
     {
-      title: "Instagram auto-DM (comment a keyword, get a DM)",
-      description: "Keyword rules that DM people who comment a word on a post or reel (or send it in a DM or story reply), with an optional link button and a public answer under the comment. action: status (the switch, the rules, the setup checklist: INSTAGRAM_DM, webhook, each account's messaging permission and subscription), log (DMs sent lately, with errors), test (text, media?, kind?: dry run, nothing is sent), set (on: the master switch, and/or rules: the WHOLE list, each {id?, name, on, account?, media?: Instagram media id or null for every post, keywords: [], match: word|exact|any, message (up to 1000; 640 with a button), button?: {label, url}, public_replies?: [], dms?: also answer DMs and story replies, once_per_person?: default true}), subscribe (ask Instagram to send an account's comments and messages), reset (rule_id: people who already got it can get it again). Instagram allows one private reply per comment within 7 days of it. Only change rules or switch it on when the user asked. Example: {action: \"set\", rules: [{name: \"Rewind prompt\", on: true, keywords: [\"CATCH\"], message: \"Here's the prompt 🎬\", button: {label: \"Open the prompt\", url: \"https://prompt-motion.com/stephanlivera-df17a2\"}, public_replies: [\"Sent! Check your DMs 📩\"], dms: true}]}, then {action: \"test\", text: \"catch!\"}.",
+      title: "Instagram Auto-DM (automations like ManyChat)",
+      description: "Automations that answer a comment, DM or story reply on Instagram with a DM (optionally a link button), on every connected account or chosen ones, optionally only for people who follow (non-followers get a follow-then-tap button first), and can answer the comment in public. action: status (master switch, per-account pauses, defaults, setup checklist, every automation with its 30-day numbers), list (automations, short), get (id), save (automation: one, new without id or changed with id; only the fields you pass change: name, on, accounts [], where: all|some, media [{id: Instagram media id, label}], posts [{id: studio post id, label}] (counts once that post is live on Instagram), triggers {comments, dms, story_replies}, match: fuzzy|word|exact|any, keywords [], exclude [], typos 0-3 (0 = by length), top_level_only, message (≤1000, ≤640 with a button; {username} {handle}), button {label, url}, public_replies [], follow_gate {on, message?, button?, not_following?}, once_per_person), switch (ids, on), delete (ids), settings (on, paused: [account ids], defaults {public_replies, gate_message, gate_button, not_following}), test (text, kind?: comment|dm|story, media?, account?: dry run, nothing sent), activity (automation?, status?, q?), contacts (q?), subscribe (account?). Instagram allows one private reply per comment within 7 days of it. Only switch things on when the user asked. Example: {action: \"save\", automation: {name: \"Rewind: CATCH\", on: true, where: \"some\", posts: [{id: \"01a1969971422a036696\", label: \"Rewind Reel\"}], match: \"fuzzy\", keywords: [\"CATCH\"], triggers: {comments: true, dms: true, story_replies: true}, message: \"Here's the prompt 🎬\", button: {label: \"Open the prompt\", url: \"https://prompt-motion.com/stephanlivera-df17a2\"}, public_replies: [\"Sent! Check your DMs 📩\"]}}, then {action: \"test\", text: \"cathc!\"}.",
       inputSchema: z.object({
-        action: z.enum(["status", "log", "test", "set", "subscribe", "reset"]),
-        on: z.boolean().optional(), rules: z.array(z.record(z.string(), z.unknown())).optional(),
-        text: z.string().max(500).optional(), media: z.string().max(40).optional(), kind: z.enum(["comment", "dm"]).optional(),
-        account: z.string().max(40).optional(), rule_id: z.string().max(64).optional(),
+        action: z.enum(["status", "list", "get", "save", "switch", "delete", "settings", "test", "activity", "contacts", "subscribe"]),
+        id: z.string().max(64).optional(), ids: z.array(z.string().max(64)).max(1000).optional(),
+        automation: z.record(z.string(), z.unknown()).optional(),
+        on: z.boolean().optional(), paused: z.array(z.string().max(40)).max(50).optional(), defaults: z.record(z.string(), z.unknown()).optional(),
+        text: z.string().max(500).optional(), kind: z.enum(["comment", "dm", "story"]).optional(), media: z.string().max(40).optional(),
+        account: z.string().max(40).optional(), status: z.enum(["sent", "gated", "failed", "skipped"]).optional(), q: z.string().max(100).optional(),
       }),
     },
-    async ({ action, on, rules, text, media, kind, account, rule_id }) => ws(async () => {
+    async (x) => ws(async () => {
       const dm = await import("@/lib/publish/autodm");
-      if (action === "status") { const [settings, status] = await Promise.all([dm.getSettings(), dm.status()]); return { settings, status, limits: dm.LIMITS }; }
-      if (action === "log") return { log: await dm.readLog(40) };
-      if (action === "test") { if (!text) throw new Error("test needs text: the comment to try"); return dm.test(text, { media: media ?? null, kind: kind ?? "comment", account: account ?? null }); }
-      if (action === "subscribe") return { results: await dm.subscribe(account) };
-      if (action === "reset") { if (!rule_id) throw new Error("reset needs rule_id (auto_dm status lists them)"); return dm.resetPeople(rule_id); }
-      if (on === undefined && !rules) throw new Error("set needs on and/or rules (rules replaces the whole list: read status first)");
-      const settings = await dm.setSettings({ on, rules }, "Claude (MCP)");
-      const st = await dm.status();
-      return { settings, next: settings.on && !(st.flag && st.accounts.some((a) => a.messages && a.subscribed)) ? "Saved, but it can't send yet: auto_dm status shows which setup step is missing." : "Saved. auto_dm test tries a comment without sending." };
+      const by = "Claude (MCP)";
+      if (x.action === "status") return dm.overview();
+      if (x.action === "list") { const [s, st] = await Promise.all([dm.getSettings(), (await import("@/lib/publish/dmstore")).stats(30).catch(() => ({} as Record<string, { sent: number }>))]);
+        return s.automations.map((a) => ({ id: a.id, name: a.name, on: a.on, triggers: a.triggers, where: a.where, posts: a.media.length + a.posts.length, match: a.match, keywords: a.keywords, follow_gate: a.follow_gate.on, sent_30d: (st as Record<string, { sent: number }>)[a.id]?.sent ?? 0 })); }
+      if (x.action === "get") { const a = (await dm.getSettings()).automations.find((y) => y.id === x.id); if (!a) throw new Error("No automation with that id (auto_dm list)"); return a; }
+      if (x.action === "save") { if (!x.automation) throw new Error("save needs automation"); return dm.saveAutomation(x.automation, by); }
+      if (x.action === "switch") return { changed: await dm.switchAutomations(x.ids ?? (x.id ? [x.id] : []), x.on === true) };
+      if (x.action === "delete") return { deleted: await dm.removeAutomations(x.ids ?? (x.id ? [x.id] : [])) };
+      if (x.action === "settings") return { settings: await dm.setGeneral({ on: x.on, paused: x.paused, defaults: x.defaults }, by) };
+      if (x.action === "test") { if (!x.text) throw new Error("test needs text: the comment to try"); return dm.test(x.text, { media: x.media ?? null, kind: x.kind ?? "comment", account: x.account ?? null }); }
+      if (x.action === "activity") return { events: await dm.activity({ automation: x.id, account: x.account, status: x.status, q: x.q, limit: 40 }) };
+      if (x.action === "contacts") return { contacts: await dm.contacts({ account: x.account, q: x.q, limit: 100 }) };
+      return { results: await dm.subscribe(x.account) };
     }),
   );
 

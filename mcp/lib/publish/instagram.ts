@@ -72,7 +72,7 @@ export async function connect(code: string, redirect: string, by: string): Promi
   };
   await saveAccount(account, { access_token: long.access_token, expires_at, refresh_token: null });
   // with Auto-DM on, Instagram starts sending this account's comments and messages to /api/ig/webhook straight away
-  if (process.env.INSTAGRAM_DM === "1") await subscribeApp(long.access_token, ["comments", "messages"]).then(() => saveAccount({ ...account, dm_subscribed: Date.now() }, { access_token: long.access_token, expires_at, refresh_token: null })).catch(() => null);
+  if (process.env.INSTAGRAM_DM === "1") await subscribeApp(long.access_token, ["comments", "messages", "messaging_postbacks"]).then(() => saveAccount({ ...account, dm_subscribed: Date.now() }, { access_token: long.access_token, expires_at, refresh_token: null })).catch(() => null);
   return account;
 }
 

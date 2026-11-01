@@ -56,7 +56,7 @@ Public reply under the comment (optional, keeps the thread alive): `Sent! Check 
 
 ## The CATCH → DM automation: status and setup
 
-**Update (2026-11-01): built into VoiceBox** (Posts → Auto-DM; setup in `docs/PUBLISHING.md` → Auto-DM). Add one rule:
+**Update (2026-11-01): built into VoiceBox** (the Auto-DM page, automation "Rewind: CATCH"; setup in `docs/PUBLISHING.md` → Auto-DM). Add one rule:
 keyword `CATCH`, the Rewind Reel (or every post), the DM below with the button "Open the prompt", public answer
 `Sent! Check your DMs 📩`, DMs and story replies on. It starts sending once the Meta messaging permission, the webhook and
 the reconnect are done. ManyChat (Option A below) stays the fallback if App Review takes too long.

@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **Auto-DM, round 2 (2026-11-01)**: "suppose I've 100s of videos: manage it like ManyChat", "it shouldn't trigger on
+  just the given text: settings, fuzzy match, or anyone who comments", "only if they're following me, with a switch",
+  "its own tab structure, managed like the Settings tab, no clutter in one tab", "it must work on my multiple
+  accounts", and the CATCH automation for the Rewind Reel. Auto-DM is its own page now (`/auto-dm`, sidebar, tabs
+  Automations / Activity / Contacts / Settings): the owner's call overrides "new capabilities become views, not pages"
+  for this one. Details in `docs/PUBLISHING.md` → Auto-DM.
 - **"Let's build our own instead of relying on someone"** (2026-11-01, on the "comment CATCH, get the prompt" DM for
   the Rewind Reel, instead of ManyChat): Auto-DM is built in (Posts → Auto-DM, MCP `auto_dm`, `docs/PUBLISHING.md` →
   Auto-DM) and sends nothing until Meta grants the messaging permission.
