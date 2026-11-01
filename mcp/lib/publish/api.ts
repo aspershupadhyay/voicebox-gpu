@@ -22,18 +22,18 @@ import { spaceOf, type SpaceId } from "../spaces";
 import { configured, getAccount, listAccounts, removeAccount } from "./accounts";
 import * as IG from "./instagram";
 import { dropPlan, editPlan, getPlan, getRules, listPlans, putPlan, setRules } from "./plans";
-import { drive, liveTwin, readiness, sweep } from "./run";
-import { BUSY, networkOf } from "./shared";
+import { AFTER_MS, drive, liveTwin, lockHeld, readiness, sweep } from "./run";
+import { BUSY, networkOf, type Plan } from "./shared";
 import * as YT from "./youtube";
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
 const who = async () => (await currentUser())?.name ?? "Claude (MCP)";
-const LOCK_MS = 290_000;
 
-/** An unfinished run with nobody driving it (the last one stopped at its time limit): carry on, after the response. */
-function nudge(p: { post: string; space: string; state: string; run: { lock?: number | null } | null }) {
-  if (BUSY.includes(p.state as never) && (!p.run?.lock || Date.now() - p.run.lock > LOCK_MS)) after(() => drive(p.post, p.space, 280_000).then(() => null));
+/** An unfinished run with nobody driving it (the last one stopped at its time limit): carry on, after the response
+ * (AFTER_MS: Cloudflare stops after() work 30 s after the response; the minute timer carries on from there). */
+function nudge(p: Plan) {
+  if (BUSY.includes(p.state) && !lockHeld(p)) after(() => drive(p.post, p.space, AFTER_MS).then(() => null));
 }
 
 export async function publishGet(path: string[], query?: URLSearchParams) {
@@ -189,7 +189,7 @@ export async function publishPost(path: string[], body: Record<string, unknown>)
     cur.when = "now"; cur.state = "queued"; cur.step = "Starting"; cur.run = null;
     cur.log.push({ at: Date.now(), text: `Publish now, by ${await who()}` });
     await putPlan(cur);
-    after(() => drive(b, c, 280_000).then(() => null));
+    after(() => drive(b, c, AFTER_MS).then(() => null)); // the minute timer carries on from there
     return Response.json({ plan: cur, problems: [] }, { status: 202 });
   }
   if (d === "cancel") {
@@ -203,7 +203,7 @@ export async function publishPost(path: string[], body: Record<string, unknown>)
     cur.state = "queued"; cur.error = null; cur.next_try = null; cur.step = "Starting";
     cur.log.push({ at: Date.now(), text: `Retry, by ${await who()}` });
     await putPlan(cur);
-    after(() => drive(b, c, 280_000).then(() => null));
+    after(() => drive(b, c, AFTER_MS).then(() => null)); // the minute timer carries on from there
     return Response.json({ plan: cur }, { status: 202 });
   }
   return bad("not found", 404);

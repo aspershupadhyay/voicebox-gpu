@@ -2,10 +2,13 @@
 // and workspace/publish/rules.json. One file per plan, so the runner and a person editing another post never collide.
 import { getJson, listObjs, putJson, delObjs } from "../store";
 import { spaceOf, type SpaceId } from "../spaces";
-import { DEFAULT_RULES, LIMITS, networkOf, type IgOptions, type Plan, type Rules, type YtOptions } from "./shared";
+import { BUSY, DEFAULT_RULES, LIMITS, networkOf, type IgOptions, type Plan, type Rules, type YtOptions } from "./shared";
 
 const DIR = "workspace/publish/plans/";
 const RULES = "workspace/publish/rules.json";
+/** Written while a plan is on its way out (queued, uploading, processing): the Cloudflare timer (workers/live-timer.js)
+ * reads it every minute and knocks /api/cron/publish to carry the plan on; that route deletes it once nothing is busy. */
+export const ACTIVE = "workspace/publish/active.json";
 const keyOf = (post: string, space: string) => `${DIR}${post}--${space}.json`;
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -17,6 +20,7 @@ export async function putPlan(p: Plan) {
   p.updated = Date.now();
   p.log = p.log.slice(-60);
   await putJson(keyOf(p.post, p.space), p);
+  if (BUSY.includes(p.state)) await putJson(ACTIVE, { at: p.updated, plan: `${p.post}--${p.space}` }).catch(() => null);
   return p;
 }
 export async function dropPlan(post: string, space: string) {
