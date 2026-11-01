@@ -175,7 +175,7 @@ function buildWorld(){
   D.ml=[...'MOTION'].map(ch=>{const w=E('span',D.motw,'');w.className='w';const i=E('span',w,'',ch);return {w,i};});
   // sentence (after rewind)
   D.sen=box(fr,0,0,1920,1080,'display:flex;align-items:center;justify-content:center;font-size:118px;font-weight:600;letter-spacing:-.045em');
-  const sl=E('div',D.sen,'white-space:nowrap;position:relative');D.sw=words(sl,'Every video starts as a sentence.');D.senLine=sl;
+  const sl=E('div',D.sen,'white-space:nowrap;position:relative');D.sw=words(sl,'Every video starts with a prompt.');D.senLine=sl;
   D.under=E('div',sl,'position:absolute;height:8px;background:#111;bottom:-6px;transform-origin:0 50%');
   // clones + ghost (orange, the object itself inside the video)
   const tri=(parent)=>{const d=box(parent,0,0,100,100,'transform-origin:0 0');d.innerHTML=`<svg viewBox="0 0 100 100" width="100" height="100" style="overflow:visible;display:block"><polygon points="0,0 0,100 71.43,50" fill="${OR}"/></svg>`;return d;};
