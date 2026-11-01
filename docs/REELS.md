@@ -1,4 +1,4 @@
-# Making Reels and Shorts (what works, learned on the EGM explainer, 2026-10-31)
+# Making Reels and Shorts (what works, learned on the EGM explainer, 2026-10-31, updated 2026-11-01)
 
 The owner's rules for short videos, and the pipeline that made the first two (the Elephant-Goldfish Model explainer:
 a 57 s story cut and a ~35 s hype cut). Read this before making any Reel, Short or TikTok. Newer owner feedback in
@@ -10,7 +10,8 @@ a 57 s story cut and a ~35 s hype cut). Read this before making any Reel, Short 
    commands, what each part does, the numbers labelled as estimates). No stamps, no shaking, no white flashes, no
    cartoon crawling bugs or smug robots, no record-scratch or cartoon sound effects. Text rises in cleanly (fade +
    ~24 px, no overshoot, no tilt); emphasis is colour, not a box. Sound: soft whooshes on section changes, light
-   ticks on cuts, one gentle chime where a verdict lands; the voice clearly leads (drums ~12 dB under it).
+   ticks on cuts, one gentle chime where a verdict lands; the voice clearly leads (no drum loop since round 3: a pad
+   bed ~16 dB under the voice, booms on reveals, UI sounds on what appears).
 0b. **Keep the house look** (the owner liked v1): warm paper backgrounds with a dot grid, navy for the big title and
    number scenes, Inter 800 headlines with Caveat hand notes, sticky notes and paper docs, the hand-drawn elephant
    and goldfish, big 1-2 word captions in a dark pill. A new video changes the script and the pacing, not the art.
@@ -26,12 +27,36 @@ a 57 s story cut and a ~35 s hype cut). Read this before making any Reel, Short 
 4. **B-roll between the story beats**: the real thing on screen (terminals typing the real command, the repo card,
    the workflow), not filler.
 5. **Big captions, 1-2 words**, the current word lit, inside the safe area, on every line (most people watch muted).
-6. **End on a loop**: the last half second fades into the hook's first frame, so a rewatch is seamless; a "Follow
-   for more" beat before it.
+6. **End on an end card, not a loop** (superseded on 2026-11-01, rule 10): a "Follow for more" beat, then a still
+   end card.
 7. **One video** unless asked for more: the hype script's hook and pace with the story version's clarity.
 8. **Facts are checked against the source** (the repo, the docs) before they go in. A viral post can be wrong (the
    one we learned from said EGM runs only in Antigravity and has no security reviewer; the repo shows Claude Code and
    Codex installs and a design critic that checks security). Estimates are labelled as estimates on screen.
+
+## Round 3: explain it like a system-design diagram (the owner, 2026-11-01)
+
+9. **Layout is checked, not hoped for.** Centre headlines and diagrams on the frame's true centre (x = 540), not the
+   safe area's centre (500: that reads as off-centre). The app's buttons only cover the lower right, so anything below
+   ~y 1100 stays inside x 60…940; diagrams stay above ~y 1330 so the captions (≈ y 1500) never collide. Place a
+   character by its real extent (the EGM elephant spans about -215…+410 × its scale around x), so nothing is cut off.
+10. **The last frame is not the first.** No "loop" that crossfades the end into the hook (the owner saw a ghosted,
+   transparent overlap). End on an end card (name, one line, where to get it, Follow / Send to a friend) that holds
+   still for ~2 s.
+11. **Explain like ByteByteGo**, not like a slideshow: one visual system for the whole film. A persistent header (topic
+   in mono) and a breadcrumb ("STEP 2 · THE GOLDFISH"), a stepper that shows the whole workflow with the current step
+   lit (the recurring map), crisp diagram cards with a coloured accent and an icon, arrows that draw on and carry
+   packets, numbered stages that light up on their word, highlights on a document that turn into finding cards, and
+   the real details (commands, file names, report names) in mono. Bold sans for statements, a serif italic
+   (Instrument Serif) for the idea word. Hand-drawn characters on top of the crisp diagrams.
+12. **What the two reference Reels taught** (devmonk.preetam's Uber heatmap, 300k+ views; kallawaymarketing's
+   storytelling framework): open on a concrete situation and the question it raises, then authority ("asked in
+   Uber's interview"); explain in numbered steps, each with a trap (what goes wrong) and its fix; reveal the term
+   ("this is called…") after the viewer understands it; keep one continuous world (devmonk has no hard cuts at all:
+   things morph and the camera moves); a recurring framework map that lights up step by step (Kallaway); end on a
+   share-driven call to action ("send this to the friend who…"). Sound: **no drum loop**. devmonk is voice only, with
+   real silences and tiny UI sounds tied to on-screen events (pings, ticks, a low hit); Kallaway adds deep sub booms
+   on the reveals, a soft drone and whooshes as graphics enter. The voice is always on top.
 
 ## The pipeline (all in the cloud, ~20 min of work, ~0.3 Colab units)
 

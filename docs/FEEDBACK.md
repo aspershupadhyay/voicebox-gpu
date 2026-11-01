@@ -6,6 +6,14 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **The EGM Reel, round 3 (2026-11-01)**: "alignment issues", "the last and first slide are the same, and it goes
+  transparent at the end", "the elephant is cut off", "the visuals are too simple: explain it like ByteByteGo", and
+  "learn from these two Reels (hook, sound effects, transitions, how they explain), don't copy". Now: every element sits
+  in the safe area and centres on the frame's true centre; characters are placed by their real extents (never cropped);
+  the film ends on its own end card that holds still (no ghosted crossfade back into the hook); the explaining is a
+  system-design diagram (header, stepper, numbered steps, cards, arrows carrying packets, the real commands and files);
+  the sound is voice-led with booms on reveals and UI sounds tied to what appears (no drum loop). The rules and what
+  the two Reels taught are in `docs/REELS.md`.
 - **Videos (the EGM Reel)**: "hook it like the posts that go viral" (authority + news + stakes: "Google just
   open-sourced…"), "triple hook, fast paced, attention spans are short", "keep the v1 visuals, they were perfect",
   "nothing that looks like AI slop: informative, no stamps and all that", "one video that can go viral". All of it,
