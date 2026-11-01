@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Read this tweet and make a video on it, like the Fable 5.1 launch video: fast paced"** (2026-11-01, on Karpathy's
+  HackerTube post): a news Reel can take a launch-film look instead of the paper house look when the owner names it:
+  ivory and near-black scenes cut hard on spoken words, a serif for the idea words, mono for the real details, counters
+  and checklists built from the post's own facts, the source's screenshot credited on screen. Still voiced in a trained
+  voice with a ducked bed and on-screen SFX (rule 13). The owner makes the thumbnail in ChatGPT: hand them a prompt
+  (`promo/hackertube/POSTING.md`).
 - **Auto-DM, round 3 (2026-11-01)**: "do it all and verify each one by one", "UI don't clutter, be creative: the
   current one feels too cluttered and not structured properly". Every one of the ten features has its own end-to-end
   checks (`mcp/scripts/check-autodm.cts`) before the next was started. The page was restructured: five tabs that each
