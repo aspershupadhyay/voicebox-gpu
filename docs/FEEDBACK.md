@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Use the GPU while rendering instead of leaning on the CPU, on by default"** (2026-11-01), and given the choice,
+  **speed over file size** ("go with 1"): `scripts/reels/fast_render.py` makes every Reel render send raw frames and
+  encode with NVENC on Colab (278 s -> 59 s for a 76 s Reel); the files come out ~3.5x larger at the same look, which
+  the owner accepted. Details in `docs/REELS.md` step 6b.
 - **The EGM Reel, round 3 (2026-11-01)**: "alignment issues", "the last and first slide are the same, and it goes
   transparent at the end", "the elephant is cut off", "the visuals are too simple: explain it like ByteByteGo", and
   "learn from these two Reels (hook, sound effects, transitions, how they explain), don't copy". Now: every element sits
