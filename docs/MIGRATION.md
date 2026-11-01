@@ -11,7 +11,7 @@ to switch off by hand.
 | Files, trained voices, settings, logs | R2 bucket `voicebox` (the Worker reads it through its `BUCKET` binding) |
 | Posts, comments, activity, file rows, accounts | Postgres on Neon (`plain-unit-11439440`), live board through Neon Realtime |
 | Backups | Neon object storage `uploads` (nightly database dump, `models/` and `datasets/` copied) |
-| Timer (Live, sweep, backup) | Cloudflare Worker `voicebox-live-timer`, every minute |
+| Timer (Live, publishing, sweep, backup) | Cloudflare Worker `voicebox-live-timer`, every minute, deployed with the studio (`workers/wrangler.timer.jsonc`) |
 | Deploys | GitHub Actions `deploy.yml` with `CLOUDFLARE_API_TOKEN` |
 
 The owner's call (2026-10-30): stay on free tiers without the hectic. Files all go to R2, data goes to CockroachDB, the

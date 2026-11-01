@@ -12,7 +12,12 @@ upload page, mark it posted. Code: `mcp/lib/publish/` (server), `mcp/components/
 2. **Publish now** sends it at once. **Set to go** hands it to the autopilot for the target's publish time (the date on
    the board and calendar). For a public YouTube video, "Let YouTube publish it on the minute" uploads it up to 6 h early
    as private with `publishAt`, and YouTube makes it public exactly then.
-3. The autopilot runs every 10 minutes (`.github/workflows/sweep.yml` → `/api/cron/sweep`, after the GPU sweep). It
+3. **Publish now** starts at once and gets about 22 s after the click (on Cloudflare, work after a response is stopped
+   30 s later); whatever is left, such as Instagram still processing a Reel, is carried on every minute by the Cloudflare
+   timer (`workers/live-timer.js` → `/api/cron/publish`, while `workspace/publish/active.json` says a plan is busy),
+   inside that request. A run's lock lasts only as long as the run was given, so a run that's cut off never blocks the
+   next one for minutes.
+4. The autopilot runs every 10 minutes (the same timer → `/api/cron/sweep`, after the GPU sweep, inside the request). It
    starts what's due, carries on a big upload where the last run stopped (YouTube resumable upload, 32 MB pieces),
    waits for Instagram to finish processing, retries failures (5 min, 20 min, 1 h, 3 h …), moves the target to Posted
    with its live link, pushes to your phone (the ntfy topic from GPU & engines), and applies the rules: cross-post,

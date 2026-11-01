@@ -1,6 +1,8 @@
 // The publishing runner. drive() moves one plan along as far as the time it's given allows (a big YouTube upload goes
-// up 32 MB at a time and the next run picks up at YouTube's offset); sweep() is the autopilot, run every 10 min by
-// .github/workflows/sweep.yml: it starts plans whose time has come, carries on unfinished ones, retries failures with
+// up 32 MB at a time and the next run picks up at YouTube's offset). On Cloudflare, work done after the response
+// (after()) is stopped 30 s later, so a run started by a click gets AFTER_MS and hands over cleanly; the minute timer
+// (workers/live-timer.js → /api/cron/publish → carryOn) carries every unfinished plan on inside its own request.
+// sweep() is the autopilot, run every 10 min by the same timer: it starts plans whose time has come, carries on unfinished ones, retries failures with
 // backoff, refreshes Instagram tokens, gives Scheduled posts without a time the next posting slot, and marks posts live.
 import { captionFor } from "../captions";
 import { logActivity } from "../data";
@@ -9,13 +11,20 @@ import { spaceName, targetsOf, type SpaceId, type Target } from "../spaces";
 import { getTargets, setTargets } from "../spacestore";
 import { getAccount, listAccounts, type Account, type Tokens } from "./accounts";
 import * as IG from "./instagram";
-import { getPlan, getRules, listPlans, putPlan } from "./plans";
+import { ACTIVE, getPlan, getRules, listPlans, putPlan } from "./plans";
+import { delObjs } from "../store";
 import { BUSY, networkOf, planProblems, type Plan, type Rules } from "./shared";
 import { jpegUrl, range, resolve, sizeOf, type Source } from "./sources";
 import * as YT from "./youtube";
 
 const AUTOPILOT = { name: "Voicebox autopilot" };
 const LOCK_MS = 290_000;
+/** A run started after the response (after()): Cloudflare stops that work 30 s after the response, so it stops itself
+ * well before, saves where it got to and lets go of the lock (it used to be given 280 s, was cut off mid-wait with the
+ * lock still held, and an Instagram Reel sat at "processing" until a sweep came by). */
+export const AFTER_MS = 22_000;
+/** Held by a run that's still inside the time it was given. */
+export const lockHeld = (p: Plan, now = Date.now()) => !!p.run?.lock && now - p.run.lock < (p.run.lock_for ?? LOCK_MS);
 const YT_LEAD = 6 * 3600_000; // YouTube-scheduled uploads start this long before the publish time
 const BACKOFF = [5, 20, 60, 180, 360, 720, 1440, 1440].map((m) => m * 60_000);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -62,9 +71,9 @@ export async function drive(post: string, space: string, budgetMs = 270_000): Pr
   let p = await getPlan(post, space);
   if (!p) return null;
   if (!BUSY.includes(p.state) && !["armed", "failed"].includes(p.state)) return p;
-  if (p.run?.lock && Date.now() - p.run.lock < LOCK_MS) return p; // another run has it
+  if (lockHeld(p)) return p; // another run has it
   const rules = await getRules();
-  p.run = { started: Date.now(), ...(p.run ?? {}), lock: Date.now() };
+  p.run = { started: Date.now(), ...(p.run ?? {}), lock: Date.now(), lock_for: budgetMs + 8_000 };
   if (!BUSY.includes(p.state)) { p.state = "queued"; p.step = "Starting"; p.error = null; line(p, p.attempts ? `Trying again (attempt ${p.attempts + 1})` : "Started"); }
   await putPlan(p);
   try {
@@ -176,7 +185,7 @@ async function runYoutube(p: Plan, acc: Account & { tokens: Tokens }, deadline: 
     }
     p.state = "uploading";
     while (!video && (run.offset ?? 0) < size) {
-      if (Date.now() > deadline - 30_000) { await putPlan(p); throw new Budget(); }
+      if (Date.now() > deadline - 12_000) { await putPlan(p); throw new Budget(); } // room for one 32 MB chunk
       await checkStop(p);
       const from = run.offset ?? 0, to = Math.min(size, from + YT.CHUNK) - 1;
       const bytes = await range(src, from, to);
@@ -240,10 +249,10 @@ async function waitFinished(p: Plan, token: string, id: string, deadline: number
     if (s.status_code === "FINISHED" || s.status_code === "PUBLISHED") return s.status_code;
     if (s.status_code === "ERROR") throw new IG.IgError(`Instagram couldn't process ${what}${s.status ? `: ${s.status}` : ""}. Check the format (MP4 H.264/AAC, JPEG photos, 4:5 to 1.91:1 for feed).`);
     if (s.status_code === "EXPIRED") { p.run!.ig_container = null; p.run!.ig_children = []; throw new IG.IgError("Instagram's draft expired (24 h); it starts over on the next try", 0, 0, true); }
-    if (Date.now() > deadline - 15_000) throw new Budget();
+    if (Date.now() > deadline - 5_000) throw new Budget();
     await checkStop(p);
     p.step = `Instagram is processing ${what}`;
-    await sleep(5000);
+    await sleep(3000);
   }
 }
 
@@ -400,7 +409,7 @@ export async function sweep(budgetMs = 250_000) {
   for (const p of plans) {
     const t = (map[p.post] ?? []).find((x) => x.space === p.space);
     const at = t?.due_at ? Date.parse(t.due_at) : null;
-    const lockFree = !p.run?.lock || now - p.run.lock > LOCK_MS;
+    const lockFree = !lockHeld(p, now);
     if (BUSY.includes(p.state) && lockFree) due.push([p, "continued"]);
     else if (p.state === "armed" && rules.autopilot && at && t?.status !== "posted") {
       const lead = p.network === "youtube" && p.yt?.youtube_schedules && p.yt.privacy === "public" ? YT_LEAD : 0;
@@ -420,4 +429,21 @@ export async function sweep(budgetMs = 250_000) {
     (out[kind] as string[]).push(`${p.post}/${p.space}:${r?.state}`);
   }
   return out;
+}
+
+/** The minute knock (/api/cron/publish): carry on every plan that's on its way out, inside this request, so nothing
+ * waits for the 10-minute sweep. Reads only the plans in R2; once none is busy it drops the marker the timer reads. */
+export async function carryOn(budgetMs = 50_000) {
+  const deadline = Date.now() + budgetMs;
+  const out: string[] = [];
+  const busy = (ps: Plan[]) => ps.filter((p) => BUSY.includes(p.state));
+  for (const p of busy(await listPlans()).sort((a, b) => a.updated - b.updated)) {
+    if (lockHeld(p)) { out.push(`${p.post}/${p.space}:held`); continue; }
+    if (Date.now() > deadline - 15_000) break;
+    const r = await drive(p.post, p.space, deadline - Date.now() - 3_000);
+    out.push(`${p.post}/${p.space}:${r?.state}`);
+  }
+  const left = busy(await listPlans());
+  if (!left.length) await delObjs([ACTIVE]).catch(() => null);
+  return { carried: out, busy: left.length };
 }

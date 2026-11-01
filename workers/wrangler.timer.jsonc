@@ -1,0 +1,12 @@
+// The Voicebox timer (workers/live-timer.js), deployed with the studio by .github/workflows/deploy.yml. Its settings stay
+// on the Worker: LIVE_SECRET is a secret (never here) and keep_vars keeps TARGET as it was set in Cloudflare.
+{
+  "$schema": "../mcp/node_modules/wrangler/config-schema.json",
+  "name": "voicebox-live-timer",
+  "main": "live-timer.js",
+  "compatibility_date": "2026-10-01",
+  "keep_vars": true,
+  "triggers": { "crons": ["* * * * *"] },
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "voicebox" }],
+  "observability": { "enabled": true }
+}

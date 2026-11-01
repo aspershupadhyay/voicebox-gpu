@@ -87,7 +87,7 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   leaves it). `/api/login` checks email and password against Postgres (`lib/users.ts`: scrypt hashes, the same lockout
   and invite list); the password is never stored, only its hash. Settings → Security sets a password (signed-in only):
   your own with the current one, or a teammate's that has none yet, never replacing someone else's. `/api/cron/sweep`,
-  `/api/cron/backup` and `/api/cron/live` take `WORKER_SECRET`, `CRON_SECRET`, the Cloudflare timer's secret (kept as a
+  `/api/cron/backup`, `/api/cron/publish` and `/api/cron/live` take `WORKER_SECRET`, `CRON_SECRET`, the Cloudflare timer's secret (kept as a
   SHA-256), or GitHub's OIDC token for `sweep.yml` on main
   (`lib/cronauth.ts`: signed by GitHub, audience `voicebox-cron`, this repository's workflow only).
 - Never loosen the allow-list, the same-origin check or the session expiry.

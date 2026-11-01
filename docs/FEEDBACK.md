@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Check the root cause, it's taking too long"** (2026-11-02, the HackerTube Reel sat at "processing" on Instagram
+  for 6 minutes after Publish now): on Cloudflare, `after()` work is stopped 30 s after the response, but publishing
+  gave itself 280 s there, so the run died mid-wait with its lock held, and only the next sweep (itself cut at 30 s)
+  finished it. Now a click's run takes 22 s and hands over, the timer carries busy posts on every minute inside its
+  own request (`/api/cron/publish`), the sweep does its work inside the request, and a lock lasts only as long as its
+  run. Anything long on the Worker runs inside a request the timer waits for, never in `after()` (docs/PUBLISHING.md).
 - **"Read this tweet and make a video on it, like the Fable 5.1 launch video: fast paced"** (2026-11-01, on Karpathy's
   HackerTube post): a news Reel can take a launch-film look instead of the paper house look when the owner names it:
   ivory and near-black scenes cut hard on spoken words, a serif for the idea words, mono for the real details, counters

@@ -54,6 +54,8 @@ export type LogLine = { at: number; text: string; ok?: boolean };
 /** Progress kept between runs, so a big upload carries on where the last run stopped. */
 export type RunState = {
   started: number; lock?: number | null;
+  /** how long the run holding the lock was given (a run cut off by the platform lets go after this, not 5 min) */
+  lock_for?: number | null;
   yt_session?: string | null; offset?: number; size?: number; video_id?: string | null;
   ig_children?: string[]; ig_container?: string | null; ig_media?: string | null;
   /** a video story being built on the GPU worker, and where it lands */
