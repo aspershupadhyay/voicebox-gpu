@@ -6,6 +6,14 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"I want the video with complete voiceover and scripts… just music feels like BS. Music shouldn't be too loud, use
+  cool SFX related to the video"**, then **"generate two voices, one from Harsh and another from Sparsh"** (2026-11-01,
+  on the Prompt Motion "Rewind" brand film): every video we make, promos and brand films included, ships with a full
+  written script voiced in the creators' own trained voices (`myvoice`, `harsh` / `sparsh`; one version per voice when
+  asked), never music alone. Captions on the lines the screen doesn't already say. Music is a bed about 12 dB under the
+  voice and ducked under every word; sound effects belong to what's on screen (a click on each click, keys on typing, a
+  tape whirr on a rewind, pops on landings, swishes on page changes). The rule and the mix numbers are in
+  `docs/REELS.md` rule 13.
 - **"Remove the post approval, I don't want that"** (2026-11-01): `publish_post go=now` / `share_to_story` and
   `auto_post go=now` no longer wait for a click (`lib/auto/wrap.ts`; the switch is gone from Settings → Automation).
   A model still publishes only when the user asked. Scheduled posts never asked; publishing rules still do.

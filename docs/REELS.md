@@ -58,6 +58,18 @@ a 57 s story cut and a ~35 s hype cut). Read this before making any Reel, Short 
    real silences and tiny UI sounds tied to on-screen events (pings, ticks, a low hit); Kallaway adds deep sub booms
    on the reveals, a soft drone and whooshes as graphics enter. The voice is always on top.
 
+13. **Always a voiceover, never music alone** (the owner, 2026-11-01, on the Prompt Motion "Rewind" film: "just music
+   feels like BS"). Write the script first, one line per beat, each line given its slot on the timeline; voice it in
+   `harsh` and/or `sparsh` (`voice_lines`, `engine: myvoice`, `style: hype`, `platform: raw`, `subtitles: true`,
+   `takes: 2`). Read every result's `heard`/`match`: anything under 1.0 gets re-voiced with `takes: 3` (Rewind needed
+   two: "Front motion" for "Prompt Motion", "how is it made"). Lines run longer than the beat you hoped for (~2.5
+   words a second in hype): when a line runs late, cut words before you speed the voice up. Mix: voice -15 LUFS, music
+   -27 LUFS and side-chain ducked by the voice (ffmpeg `sidechaincompress`, threshold 0.015, ratio 4, release 350 ms),
+   sound effects -23 LUFS, master -14 LUFS. Sound effects follow what's on screen: clicks, keyboard thocks under typing,
+   a tape whirr under a rewind, pops when things land, soft swishes on page changes. Captions (dark pill, the current
+   word lit) only on lines the picture doesn't already show in big type. The Rewind kit (`promo/prompt-motion-rewind/`:
+   `assemble.py` lays the lines and mixes, `audio.html` renders music and SFX as separate stems) is the template.
+
 ## The pipeline (all in the cloud, ~20 min of work, ~0.3 Colab units)
 
 1. **Script**: one line per beat, written to be said. Put it in `assets/script.json`.
