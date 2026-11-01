@@ -113,3 +113,30 @@ a 57 s story cut and a ~35 s hype cut). Read this before making any Reel, Short 
   the check read the same one.
 - Sync check: with no hit sound effects, mark cuts `sync: 'v'` (picture); Whisper's word starts are only good to
   ~0.1 s, so an 'a' check on a spoken word fails for no visible reason.
+
+## Mistakes made on the EGM Reel (so the next session doesn't repeat them)
+
+- **Layout:** centred on the safe area's centre (x 500), not the frame's (540), so everything looked off; the elephant
+  was placed by its feet and its body ran off the left edge. Place characters by their real extents.
+- **Ending:** a "loop" crossfaded the end into the hook, so the last frame was the first one, ghosted and transparent.
+  End on a still end card.
+- **Visuals too simple:** slides of big words and a few doodles. Explain with a diagram system (rule 11).
+- **Sound:** a four-on-the-floor drum loop under an explainer. The good explainers use none (rule 12).
+- **Facts:** a viral X post said EGM runs only in Antigravity and has no security reviewer; the repo says otherwise.
+  "Thousands of Google engineers" is the README's own claim: label it as that on screen and in captions.
+- **Tuning to pass a check:** slides were nudged by 0.15 s, then 0.07 s, to make the sync check pass. That's a fudge.
+  The check can't measure slides; it skips them now and the transitions stay where they belong.
+- **Whisper splits words:** "open" + "source(d)", "2" + ".0", "Anti" + "-Gravity". `tools/mkvo.py` merges the pieces
+  back into the script's words; check the word counts match before trusting captions.
+- **Colab:** setting `LD_LIBRARY_PATH` to the Chrome libraries hid `/usr/lib64-nvidia`, so NVENC quietly fell back to
+  x264 (the fast renderer adds it back). `cp out/*.mp4 one-name.mp4` with two matches fails: name the file. A run's
+  workspace is lost when the runtime stops (Chrome too): reinstall from the recipe.
+- **Files:** a Files link redirects: `curl -L`, or you save an empty file. `save_file` needs the exact byte count
+  (`stat -c %s`), or the PUT is refused.
+- **Renders:** `render.js sheet` always writes `out/sheet.png`: rename it before the next one. Write long-render logs
+  inside the project or home folder (a background job's `/tmp` log didn't show up once).
+- **Titles:** keyword research suggested "AI Code Review (2026)"; EGM reviews plans before code, so it would mislead.
+  Use the accurate terms that also trend (AI agents, Claude Code, spec-driven development).
+- **What the owner chose:** speed over file size (NVENC, ~3.5x bigger files), no approval before publishing, the full
+  cut for Instagram, a ~45 s cut for Shorts, YouTube right away and Instagram at 7 PM IST.
+

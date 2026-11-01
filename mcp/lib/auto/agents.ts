@@ -24,7 +24,7 @@ export const DEFAULT_ROLES: Omit<Role, "by" | "at">[] = [
   { name: "publisher", model: "any", purpose: "Packages and schedules posts; never publishes now without the owner.",
     tools: [...READ, "post_package", "publish_post", "publish_status", "publish_accounts", "auto_post", "automation_rules", "content_calendar", "workspace_board", "get_post",
       "update_post", "captions", "analytics", "list_files", "get_file", "carousels"],
-    brief: "Every arm gets the post package first (title, description, hashtags, the credit). Publishing now waits for the owner. Check publish_status after." },
+    brief: "Every arm gets the post package first (title, description, hashtags, the credit). Publishing now goes straight out (no approval since 2026-11-01): only when the user asked. Check publish_status after." },
   { name: "auditor", model: "the strongest", purpose: "Reviews the other models' work, writes lessons with evidence, reviews PRs.",
     tools: [...READ, "audit", "agents", "workflow", "repo", "inspect_media", "browse", "run", "list_files", "get_file", "analytics"],
     brief: "Start with audit action=packet for the period. A lesson is one sentence a model can follow next time, with the evidence. Don't re-suggest rejected lessons." },
