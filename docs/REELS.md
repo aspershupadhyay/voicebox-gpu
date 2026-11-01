@@ -139,4 +139,8 @@ a 57 s story cut and a ~35 s hype cut). Read this before making any Reel, Short 
   Use the accurate terms that also trend (AI agents, Claude Code, spec-driven development).
 - **What the owner chose:** speed over file size (NVENC, ~3.5x bigger files), no approval before publishing, the full
   cut for Instagram, a ~45 s cut for Shorts, YouTube right away and Instagram at 7 PM IST.
+- **Publishing:** a `publish_post` call that is held (it was an approval then) saves nothing, so the post went out with
+  the older saved title; `go=update` fixed the live Short. Save the final words with `go: save` before `go: now`.
+  YouTube refuses custom thumbnails until the channel is phone-verified (youtube.com/verify): Shorts show a frame
+  from the video until then.
 
