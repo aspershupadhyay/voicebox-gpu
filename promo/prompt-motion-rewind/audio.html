@@ -1,5 +1,5 @@
 <!doctype html><meta charset="utf-8"><script>
-const SR=48000, DUR=40.5, B=0.5;
+const SR=48000, DUR=42.5, B=0.5;
 const mtof=m=>440*Math.pow(2,(m-69)/12);
 // deterministic noise
 function rng(seed){let s=seed>>>0;return()=>{s=(s*1664525+1013904223)>>>0;return s/4294967296;};}
@@ -61,7 +61,7 @@ async function music(){
   // risers into 4, 14, 32
   riser(ctx,master,NZ,3.0,1.0,0.12);riser(ctx,master,NZ,13.0,1.0,0.14);riser(ctx,master,NZ,30.0,2.0,0.22);
   // logo chord at 36: big, ringing
-  for(const m of [41,53,56,60,63,67,72]){pad(ctx,master,36,4.4,mtof(m),0.032,2600,true);}
+  for(const m of [41,53,56,60,63,67,72]){pad(ctx,master,36,6.2,mtof(m),0.032,2600,true);}
   for(const m of [72,79,84])bell(ctx,master,rev,36,mtof(m),0.12,3.5);
   return ctx.startRendering();
 }
@@ -89,6 +89,8 @@ function riser(ctx,out,NZ,t,dur,v){const s=ctx.createBufferSource();s.buffer=NZ;
   const g=ctx.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(v,t+dur-0.02);g.gain.linearRampToValueAtTime(0,t+dur);s.connect(f);f.connect(g);g.connect(out);s.start(t);s.stop(t+dur);}
 function whoosh(ctx,out,NZ,t,dur,v,f0,f1){const s=ctx.createBufferSource();s.buffer=NZ;s.loop=true;const f=ctx.createBiquadFilter();f.type='bandpass';f.Q.value=1.4;f.frequency.setValueAtTime(f0,t);f.frequency.exponentialRampToValueAtTime(f1,t+dur);
   const g=ctx.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.linearRampToValueAtTime(v,t+dur*0.5);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);s.connect(f);f.connect(g);g.connect(out);s.start(t);s.stop(t+dur+0.02);}
+function pop(ctx,out,t,v){const o=ctx.createOscillator();o.frequency.setValueAtTime(320,t);o.frequency.exponentialRampToValueAtTime(85,t+0.06);const g=ctx.createGain();g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.12);o.connect(g);g.connect(out);o.start(t);o.stop(t+0.13);}
+function thock(ctx,out,t,v){const o=ctx.createOscillator();o.frequency.setValueAtTime(190,t);o.frequency.exponentialRampToValueAtTime(95,t+0.03);const g=ctx.createGain();g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.045);o.connect(g);g.connect(out);o.start(t);o.stop(t+0.05);}
 function blip(ctx,out,t,fr,v,dur=0.09,type='sine'){const o=ctx.createOscillator();o.type=type;o.frequency.setValueAtTime(fr,t);const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(v,t+0.002);g.gain.exponentialRampToValueAtTime(0.0008,t+dur);o.connect(g);g.connect(out);o.start(t);o.stop(t+dur+0.01);}
 function tick(ctx,out,NZ,t,v,hp=2500,dur=0.012){const s=ctx.createBufferSource();s.buffer=NZ;const f=ctx.createBiquadFilter();f.type='highpass';f.frequency.value=hp;const g=ctx.createGain();g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(0.001,t+dur);s.connect(f);f.connect(g);g.connect(out);s.start(t,(t*11.7)%1.5,dur+0.01);}
 function uiClick(ctx,out,NZ,t,v=0.35){tick(ctx,out,NZ,t,v*0.8,1800,0.018);blip(ctx,out,t,1900,v*0.5,0.03,'triangle');tick(ctx,out,NZ,t+0.075,v*0.35,2600,0.012);}
@@ -96,11 +98,12 @@ function hit(ctx,out,rev,NZ,t,v=1){const o=ctx.createOscillator(),g=ctx.createGa
   const s=ctx.createBufferSource();s.buffer=NZ;const f=ctx.createBiquadFilter();f.type='bandpass';f.frequency.value=2400;f.Q.value=0.6;const ng=ctx.createGain();ng.gain.setValueAtTime(0.28*v,t);ng.gain.exponentialRampToValueAtTime(0.001,t+0.22);s.connect(f);f.connect(ng);ng.connect(out);const rg=ctx.createGain();rg.gain.value=0.8;ng.connect(rg);rg.connect(rev);s.start(t,0.3,0.3);}
 
 // ---------------- PASS 2: edit + sound design ----------------
-async function full(){
+async function full(mode){const MUSIC=mode!=='sfx',SFX=mode!=='music';
   const mus=await music();
   const ctx=new OfflineAudioContext(2,Math.ceil(DUR*SR),SR);const {master,rev,dIn}=busses(ctx);
   const NZ=noiseBuf(ctx,2,5);
   const mg=ctx.createGain();mg.gain.value=1.0;mg.connect(master);
+  if(MUSIC){
   // music 0..10
   const a=ctx.createBufferSource();a.buffer=mus;a.connect(mg);a.start(0,0,10.0);
   // tape stop at 10
@@ -111,9 +114,11 @@ async function full(){
   const rg=ctx.createGain();rg.gain.setValueAtTime(0,10.25);rg.gain.linearRampToValueAtTime(0.85,10.4);rg.gain.setValueAtTime(0.85,11.55);rg.gain.linearRampToValueAtTime(0,11.75);
   rs.playbackRate.setValueAtTime(1.6,10.25);rs.playbackRate.linearRampToValueAtTime(3.6,11.75);rs.connect(rf);rf.connect(rg);rg.connect(mg);rs.start(10.25,0,4);
   // soft kicks keep the pulse under the rewind
-  [10.5,11.0,11.5].forEach(t=>kick(ctx,master,t,0.45,500));
+  [10.5,11.0,11.5].forEach(t=>kick(ctx,mg,t,0.45,500));
   // music from 12
   const b=ctx.createBufferSource();b.buffer=mus;b.connect(mg);b.start(12,12,DUR-12);
+  }
+  if(SFX){
 
   // --- scene hits ---
   [2,4,6,8,14,16,18,20,24,27,30].forEach(t=>hit(ctx,master,rev,NZ,t,0.75));
@@ -164,13 +169,25 @@ async function full(){
   // logo build
   tick(ctx,master,NZ,36.08,0.12,3000,0.02);tick(ctx,master,NZ,36.25,0.1,3500,0.02);tick(ctx,master,NZ,36.32,0.1,3800,0.02);whoosh(ctx,master,NZ,36.5,0.4,0.12,800,3000);
   [37.0,37.5,38.0].forEach(t=>tick(ctx,master,NZ,t,0.07,4000,0.012));uiClick(ctx,master,NZ,38.5,0.25);
+  // --- extra foley tied to the picture ---
+  // tile landings: soft pops
+  [2.32,2.82,3.32].forEach(t=>pop(ctx,master,t,0.22));
+  // the rewind: a tape whirr that speeds up
+  {const o=ctx.createOscillator();o.type='sawtooth';o.frequency.setValueAtTime(140,10.1);o.frequency.exponentialRampToValueAtTime(950,11.7);const l=ctx.createOscillator();l.frequency.value=23;const lg=ctx.createGain();lg.gain.value=40;l.connect(lg);lg.connect(o.frequency);
+   const f=ctx.createBiquadFilter();f.type='bandpass';f.frequency.value=1400;f.Q.value=0.8;const g=ctx.createGain();g.gain.setValueAtTime(0,10.1);g.gain.linearRampToValueAtTime(0.05,10.3);g.gain.setValueAtTime(0.05,11.5);g.gain.linearRampToValueAtTime(0,11.72);o.connect(f);f.connect(g);g.connect(master);o.start(10.1);l.start(10.1);o.stop(11.75);l.stop(11.75);
+   const r=rng(7);for(let t=10.15;t<11.7;t+=0.06+r()*0.05)tick(ctx,master,NZ,t,0.05,6000,0.008);}
+  // keyboard thocks under the typing
+  {const r=rng(43);for(let t=18.25;t<19.75;t+=0.08+r()*0.05)thock(ctx,master,t,0.09);for(let t=27.62;t<28.57;t+=0.07+r()*0.04)thock(ctx,master,t,0.1);}
+  // page changes: soft paper swishes
+  [14.0,16.0,26.6,29.5].forEach(t=>whoosh(ctx,master,NZ,t,0.5,0.12,900,250));
+  }
   // fade the very end
-  master.gain.setValueAtTime(0.9,39.2);master.gain.linearRampToValueAtTime(0.0,40.4);
+  master.gain.setValueAtTime(0.9,41.0);master.gain.linearRampToValueAtTime(0.0,42.4);
   return ctx.startRendering();
 }
 function wav(buf){const n=buf.length,ch=2,bytes=44+n*ch*2,ab=new ArrayBuffer(bytes),v=new DataView(ab);let o=0;const W=s=>{for(const c of s)v.setUint8(o++,c.charCodeAt(0));};
   W('RIFF');v.setUint32(o,bytes-8,true);o+=4;W('WAVEfmt ');v.setUint32(o,16,true);o+=4;v.setUint16(o,1,true);o+=2;v.setUint16(o,ch,true);o+=2;v.setUint32(o,SR,true);o+=4;v.setUint32(o,SR*ch*2,true);o+=4;v.setUint16(o,ch*2,true);o+=2;v.setUint16(o,16,true);o+=2;W('data');v.setUint32(o,n*ch*2,true);o+=4;
   const L=buf.getChannelData(0),R=buf.getChannelData(1);let pk=0;for(let i=0;i<n;i++)pk=Math.max(pk,Math.abs(L[i]),Math.abs(R[i]));const k=pk>0.98?0.98/pk:1;
   for(let i=0;i<n;i++){v.setInt16(o,Math.max(-1,Math.min(1,L[i]*k))*32767,true);o+=2;v.setInt16(o,Math.max(-1,Math.min(1,R[i]*k))*32767,true);o+=2;}return new Uint8Array(ab);}
-window.renderWav=async()=>{const b=await full();const u=wav(b);let s='';for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s);};
+window.renderWav=async(mode)=>{const b=await full(mode);const u=wav(b);let s='';for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s);};
 </script>

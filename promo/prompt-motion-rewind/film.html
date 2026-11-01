@@ -394,7 +394,7 @@ function pointerPose(t,c){ // orange triangle as a pointer (tip = hotspot)
 const CONCEPT='one triangle becomes everything';
 function setConcept(t){const C=D.cus_;const n=Math.floor(CONCEPT.length*clamp((t-27.62)/0.95));const s=CONCEPT.slice(0,n);
   C.ctext.textContent=s;C.concept.phs.style.display=n>0?'none':'inline';C.cmark.textContent=n>0?s:'your pick (e.g. "ink becomes type becomes architecture")';}
-function ovPush(t){if(t<32)return 1;if(t<36)return 1+0.04*clamp((t-32)/4);return 1.04+0.04*clamp((t-36)/4);}
+function ovPush(t){if(t<32)return 1;if(t<36)return 1+0.04*clamp((t-32)/4);return 1.04+0.04*clamp((t-36)/6);}
 function lockup(t){const a=sp(t,36.5,2.0,.85),b=sp(t,37.0,2.0,.85);const s=lerp(1,0.66,a);const total=280*s+40+M.wm.w;
   const x=lerp(820,960-total/2,a);const cy=lerp(540,345,b);return {x,y:cy-140*s,s};}
 
@@ -531,9 +531,24 @@ window.seek=function(t){
     D.c3w.forEach((o,i)=>{const p=clamp(sp(t,38.0,2.6,.82),0,1.15);rise(o.inner,p);});}
   // ---------- hero + cursor ----------
   CUR_CAM=c;setTri(D.tri,hp,c,'fb0g');
+  drawCaps(t);
   cursor(t,c);
 };
-let PW0={x:0,y:0};
+let PW0={x:0,y:0};let CAPS=[];
+function buildCaps(data){D.cap=box(st,0,0,1920,1080,'pointer-events:none');
+  D.capP=box(D.cap,0,0,null,74,'background:#111;border-radius:999px;padding:0 34px;display:flex;align-items:center;gap:14px;font-size:42px;font-weight:600;letter-spacing:-.02em;color:#fff;transform-origin:50% 50%');
+  const SHOW=new Set(data.captioned||[]);
+  for(const ln of data.lines){if(!SHOW.has(ln.id))continue;const ws=ln.words;let cur=[];
+    const flush=(end)=>{if(cur.length){CAPS.push({t0:cur[0].s,t1:end,words:cur});cur=[];}};
+    ws.forEach((w,i)=>{cur.push(w);const brk=/[.,?!:]$/.test(w.w)||cur.length>=3;if(brk||i===ws.length-1){const nx=ws[i+1];flush(nx?nx.s:ln.end+0.25);}});}
+  CAPS.forEach((c,i)=>{const n=CAPS[i+1];if(n&&n.t0<c.t1)c.t1=n.t0;});}
+function drawCaps(t){if(!D.cap)return;const c=CAPS.find(c=>t>=c.t0-0.04&&t<c.t1);if(!c){D.capP.style.visibility='hidden';return;}
+  D.capP.style.visibility='visible';const key=c.t0.toFixed(3);
+  if(D.capP.dataset.k!==key){D.capP.innerHTML='';c.words.forEach(w=>{const e=E('span',D.capP,'',w.w);e.dataset.s=w.s;});D.capP.dataset.k=key;}
+  [...D.capP.children].forEach(e=>e.style.color=t>=+e.dataset.s-0.03?'#fff':'rgba(255,255,255,.38)');
+  const w=D.capP.offsetWidth;const p=clamp(sp(t,c.t0-0.04,3.0,.85),0,1.05);const q=seg(t,c.t1-0.1,0.1,expoIn);
+  D.capP.style.left=px(960-w/2);D.capP.style.top=px(964);D.capP.style.transform=`scale(${(0.9+0.1*p-0.06*q).toFixed(4)})`;
+  const ins=(1-clamp(p))*50+q*50;D.capP.style.clipPath=`inset(0 ${ins}% 0 ${ins}% round 999px)`;}
 function drawFx(t){const fx=D.det_.fx;fx.innerHTML='';
   // timeline ticks under "15-second" (measured live)
   const wi=PROMPT.split(' ').indexOf('15-second');const c=CUR_CAM;
@@ -558,6 +573,7 @@ window.ready=(async()=>{
   await document.fonts.load('600 100px Geist');await document.fonts.load('400 20px GMono');await document.fonts.ready;
   await Promise.all([...document.images].map(i=>i.decode().catch(()=>{})));
   measure();buildCam();
+  const vo=new URLSearchParams(location.search).get('vo');if(vo){const data=await (await fetch('vo_'+vo+'.json')).json();buildCaps(data);}
   // starting position of the flying "prompt." (screen coords of the final big word)
   D.bd.style.visibility='visible';D.l2.style.visibility='visible';D.l2.style.top='540px';D.pwo.inner.style.transform='none';
   const r=D.pwo.inner.getBoundingClientRect();PW0={x:r.left,y:r.top};D.l2.style.visibility='hidden';D.bd.style.visibility='hidden';
