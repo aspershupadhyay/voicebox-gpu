@@ -3649,3 +3649,17 @@ html.cur-custom :is(input:not([type="range"]):not([type="checkbox"]):not([type="
 .au-log { max-height: 460px; overflow-y: auto; }
 .au-log td { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { .au-ask { grid-template-columns: auto minmax(0, 1fr); } .au-ask > .row { grid-column: 2; } }
+
+/* Posts → Auto-DM (components/AutoDm.tsx) */
+.dm-steps { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; }
+.dm-step { display: flex; gap: 10px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--line); min-width: 0; }
+.dm-step:first-child { border-top: 0; }
+.dm-step > svg { flex: none; margin-top: 1px; }
+.dm-step .tr-t { font-weight: 500; font-size: 14px; }
+.dm-step .tr-d { font-size: 13px; color: var(--mute); margin-top: 2px; overflow-wrap: anywhere; }
+.dm-step code { font-size: 11.5px; }
+.dm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.dm-rule .dm-name { flex: 1; min-width: 0; font-weight: 600; font-size: 15px; background: transparent; border-color: transparent; padding-left: 0; }
+.dm-rule .dm-name:hover, .dm-rule .dm-name:focus { border-color: var(--line2); padding-left: 10px; }
+.dm-preview { margin-top: 10px; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); }
+.dm-side { display: flex; flex-direction: column; gap: 16px; }

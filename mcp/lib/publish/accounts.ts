@@ -15,6 +15,10 @@ export type Account = {
   expires_at?: number | null;
   /** last problem talking to the network ("reconnect"), cleared on the next success */
   error?: string | null;
+  /** Instagram: the permissions the person granted when connecting (Auto-DM needs instagram_business_manage_messages) */
+  scopes?: string[] | null;
+  /** Instagram: when Voicebox last asked Instagram to send this account's comments and messages to its webhook */
+  dm_subscribed?: number | null;
 };
 export type Tokens = { access_token: string; refresh_token?: string | null; expires_at: number; scope?: string };
 type Stored = { account: Account; sealed: string };

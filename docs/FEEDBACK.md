@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Let's build our own instead of relying on someone"** (2026-11-01, on the "comment CATCH, get the prompt" DM for
+  the Rewind Reel, instead of ManyChat): Auto-DM is built in (Posts → Auto-DM, MCP `auto_dm`, `docs/PUBLISHING.md` →
+  Auto-DM) and sends nothing until Meta grants the messaging permission.
+
 - **"I want the video with complete voiceover and scripts… just music feels like BS. Music shouldn't be too loud, use
   cool SFX related to the video"**, then **"generate two voices, one from Harsh and another from Sparsh"** (2026-11-01,
   on the Prompt Motion "Rewind" brand film): every video we make, promos and brand films included, ships with a full

@@ -7,7 +7,11 @@ import type { IgOptions } from "./shared";
 
 const V = "v24.0";
 const GRAPH = `https://graph.instagram.com/${V}`;
-export const SCOPES = ["instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_comments", "instagram_business_manage_insights"];
+const BASE_SCOPES = ["instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_comments", "instagram_business_manage_insights"];
+/** Auto-DM (lib/publish/autodm.ts) adds the messaging permission once the Meta app has it (INSTAGRAM_DM=1): asking for a
+ *  permission the app doesn't have breaks the whole sign-in, so it's off until then. */
+export const scopes = () => (process.env.INSTAGRAM_DM === "1" ? [...BASE_SCOPES, "instagram_business_manage_messages"] : BASE_SCOPES);
+export const SCOPES = BASE_SCOPES;
 
 export class IgError extends Error {
   constructor(message: string, public status = 0, public code = 0, public transient_ = false) { super(message); }
@@ -44,7 +48,7 @@ export const igGet = <T>(path: string, token: string, params: Record<string, str
 
 export function authUrl(redirect: string, state: string) {
   const u = new URL("https://www.instagram.com/oauth/authorize");
-  u.search = new URLSearchParams({ client_id: process.env.INSTAGRAM_APP_ID ?? "", redirect_uri: redirect, response_type: "code", scope: SCOPES.join(","), state, enable_fb_login: "0", force_reauth: "true" }).toString();
+  u.search = new URLSearchParams({ client_id: process.env.INSTAGRAM_APP_ID ?? "", redirect_uri: redirect, response_type: "code", scope: scopes().join(","), state, enable_fb_login: "0", force_reauth: "true" }).toString();
   return u.toString();
 }
 
@@ -54,7 +58,7 @@ export async function connect(code: string, redirect: string, by: string): Promi
   const short = await fetch("https://api.instagram.com/oauth/access_token", {
     method: "POST", cache: "no-store", headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: process.env.INSTAGRAM_APP_ID ?? "", client_secret: process.env.INSTAGRAM_APP_SECRET ?? "", grant_type: "authorization_code", redirect_uri: redirect, code: code.replace(/#_$/, "") }),
-  }).then((r) => r.json() as Promise<{ access_token?: string; error_message?: string; error?: { message?: string } }>);
+  }).then((r) => r.json() as Promise<{ access_token?: string; permissions?: string | string[]; error_message?: string; error?: { message?: string } }>);
   if (!short.access_token) throw new IgError(short.error_message ?? short.error?.message ?? "Instagram sign-in failed");
   const long = await ig<{ access_token: string; expires_in: number }>(`https://graph.instagram.com/access_token`, short.access_token, { params: { grant_type: "ig_exchange_token", client_secret: process.env.INSTAGRAM_APP_SECRET } });
   const me = await ig<Me>("/me", long.access_token, { params: { fields: "user_id,username,name,profile_picture_url,account_type,followers_count" } });
@@ -64,8 +68,11 @@ export async function connect(code: string, redirect: string, by: string): Promi
   const account: Account = {
     id: me.user_id, network: "instagram", name: me.name || me.username, handle: me.username, avatar: me.profile_picture_url ?? null,
     connected_at: Date.now(), by, kind: me.account_type ?? null, subscribers: me.followers_count ?? null, expires_at, error: null,
+    scopes: short.permissions ? (Array.isArray(short.permissions) ? short.permissions : short.permissions.split(",")).map((x) => x.trim()).filter(Boolean) : null,
   };
   await saveAccount(account, { access_token: long.access_token, expires_at, refresh_token: null });
+  // with Auto-DM on, Instagram starts sending this account's comments and messages to /api/ig/webhook straight away
+  if (process.env.INSTAGRAM_DM === "1") await subscribeApp(long.access_token, ["comments", "messages"]).then(() => saveAccount({ ...account, dm_subscribed: Date.now() }, { access_token: long.access_token, expires_at, refresh_token: null })).catch(() => null);
   return account;
 }
 
@@ -140,3 +147,11 @@ export const permalink = (token: string, media: string) =>
 
 export const comment = (token: string, media: string, message: string) =>
   ig<{ id: string }>(`/${media}/comments`, token, { method: "POST", params: { message } });
+
+/** A public answer under a comment (Auto-DM's "Sent! Check your DMs"). */
+export const reply = (token: string, comment: string, message: string) =>
+  ig<{ id: string }>(`/${comment}/replies`, token, { method: "POST", params: { message } });
+
+/** Ask Instagram to send this account's events (comments, messages) to the app's webhook. */
+export const subscribeApp = (token: string, fields: string[]) =>
+  ig<{ success?: boolean }>("/me/subscribed_apps", token, { method: "POST", params: { subscribed_fields: fields.join(",") } });
