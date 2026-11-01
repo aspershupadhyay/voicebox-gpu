@@ -77,14 +77,22 @@ a 57 s story cut and a ~35 s hype cut). Read this before making any Reel, Short 
 6. **Review like a director before rendering**: `render.js sheet 0 <dur> 18 6`, `board`, `stills` at the hits. Look
    for text over characters, text past the right edge (the app's buttons live there), captions colliding with
    on-screen text, and anything misleading. Fix and re-check the same times.
-7. **Render**: `render.js video` (background, ~4-5 min for 57 s), `mux`, `check`, `verify` (sync at every marker).
+6b. **Make the renderer fast first** (the owner's call, on by default): `python3 scripts/reels/fast_render.py <project>`
+   right after copying the engine. Frames go out as raw RGBA instead of PNGs (bit-identical video; PNG-encoding a frame
+   cost ~75 ms against ~14 ms to draw it), and on an NVIDIA GPU ffmpeg encodes with NVENC for both the frames and the
+   mux. Measured on the 76 s EGM explainer: Colab L4 render + mux 278 s -> 59 s (raw frames alone: 215 s -> 89 s);
+   a 4-core session 336 s -> 118 s. The owner chose speed over file size: NVENC files are ~3.5x larger than x264 at
+   the same look (116 MB vs 33 MB; SSIM 0.992, PSNR 48 dB against the x264 cut), so save them with `upload_url`
+   (R2, up to 2 GB) when they pass 95 MB. `RENDER_RAW=0` / `RENDER_GPU=0` turn either part off for one render.
+7. **Render**: `render.js video` (background), `mux`, `check`, `verify` (sync at every marker).
 7b. **Or render on Colab** (the L4's 12 cores: 157 s vs 215 s on a 4-core session for 47 s of video; worth it for
    batches, about even for one video once boot is counted). Pack the project (engine, scripts, assets, out/music.wav;
    ~22 MB) and `save_file` it (PUT to `put_url`); then `run` in bash in a named workspace with `files: [m:<id>]`:
    Node is `/opt/vb-node/bin`; install Chrome once with `npx -y @puppeteer/browsers install chrome-headless-shell@stable
    --path ~/chs`; the sandbox has no root, so fetch its four missing libraries with `apt-get download libatk1.0-0t64
    libatk-bridge2.0-0t64 libxcomposite1 libatspi2.0-0t64`, `dpkg -x` them into `~/libroot` and set
-   `LD_LIBRARY_PATH=~/libroot/usr/lib/x86_64-linux-gnu` and `CHROME_PATH`; then `render.js video 11`, `mux`, `verify`,
+   `LD_LIBRARY_PATH=~/libroot/usr/lib/x86_64-linux-gnu` and `CHROME_PATH` (the fast renderer adds `/usr/lib64-nvidia`
+   back by itself; without it ffmpeg can't find NVENC and quietly falls back to x264); then `render.js video 11`, `mux`, `verify`,
    copy the MP4 to `out/` with `save_to: "Videos/<topic>"`. The workspace keeps Chrome while the runtime is on.
 8. **Deliver**: save to Files (`save_file` → PUT to `put_url` → ticket) in a folder like `Videos/<topic>`, and send it.
 
