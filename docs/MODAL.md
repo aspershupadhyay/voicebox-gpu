@@ -69,7 +69,8 @@ The same as Modal on a second cloud (`cerebrium_app/`: `cerebrium.toml` and `voi
 job wakes it, billed by the second, its own monthly hour cap (default 15), Stop, and the same fallback. The order is
 Colab, Modal, Cerebrium after whichever goes first. It runs the gateway as a custom web server on port 8000, auth off at
 Cerebrium (the gateway checks the cloud key itself), engines and weights on `/persistent-storage`, one replica,
-asleep 10 min after the last request. GPU: the first free of L4 and L40.
+asleep 10 min after the last request. GPU: the first free of L4 and L40. It runs on **protected** capacity (2x the
+interruptible rate): on interruptible, Cerebrium started a second container mid-job and the job's polls went to it.
 
 Setting it up: Settings → GPU & engines → Cerebrium → **Set up Cerebrium**, then paste the four commands (Mac or
 Linux): the CLI and sign-in, the two files from the studio (`/api/modal/app?f=…`), `voicebox.env` with the cloud key

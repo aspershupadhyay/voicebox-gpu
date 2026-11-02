@@ -25,6 +25,10 @@ max_replicas = 1          # one container: the gateway keeps each job's state in
 replica_concurrency = 100 # progress polls arrive while a job runs
 cooldown = 600            # asleep ten minutes after the last request
 response_grace_period = 900
+# "interruptible" (the default) runs on preemptible capacity that Cerebrium also moves "during consolidation": it
+# started a second container mid-job and sent the job's progress polls to the new one ("not found"). Protected is
+# never preempted or moved (2x the rate): a job finishes on the container that took it.
+compute_tier = "protected"
 
 [cerebrium.dependencies.apt]
 ca-certificates = "latest"

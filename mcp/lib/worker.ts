@@ -91,7 +91,14 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
   const job = path.match(/^\/jobs\/([A-Za-z0-9_-]+)/)?.[1];
   if (job) {
     const b = await jobBackend(job);
-    return callOn<T>(b, target(s, b, method, true), path, init, method);
+    try {
+      return await callOn<T>(b, target(s, b, method, true), path, init, method);
+    } catch (e) {
+      // a cloud GPU that answers but doesn't know the job: its container was replaced mid-job (the job went with it)
+      if (isCloud(b) && /^worker 404/.test((e as Error).message))
+        throw new WorkerOffline(`the ${NAME[b]} container that ran job ${job} was replaced mid-job, and the job went with it: send it again`);
+      throw e;
+    }
   }
   if (path === "/jobs" && method === "GET") {
     // every job on every GPU that's up (the cloud ones only while awake)
