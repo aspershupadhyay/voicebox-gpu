@@ -6,6 +6,13 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Use the Colab GPU, Modal is not working"** and **"create a video on it… cool animation, fast transitions, 120 BPM,
+  fast-paced speech, not too fast, just like the Karpathy one"** (2026-11-02, on Adam Zinebi's Cyclon post): Modal sat
+  "loading whisper into memory" for 4+ minutes on its A10, so the owner switched to Colab (L4: online in ~2 min, the
+  15 lines voiced in 2.5 min). When a cloud GPU stalls on its first load, stop it and start Colab right away rather
+  than wait. The Reel is `promo/cyclon/`: the HackerTube kit with every line on a 120 BPM 8th-note grid, voice at
+  1.10x, fast transitions (push, zoom-through, a pixel wipe, hard cuts with a punch-in), a beat-stepped accent, and
+  the source's demos redrawn in code and labelled as redrawn.
 - **"Turn it off and don't mark it in any future video"** (2026-11-02, on the AI-content label): never set YouTube's
   altered/synthetic flag (`publish_post youtube.synthetic`) or Instagram's `ai_generated` on any post: always false,
   the owner's call (the voice is Sparsh's own trained voice, used with his consent on his channel). It was switched on
