@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Turn it off and don't mark it in any future video"** (2026-11-02, on the AI-content label): never set YouTube's
+  altered/synthetic flag (`publish_post youtube.synthetic`) or Instagram's `ai_generated` on any post: always false,
+  the owner's call (the voice is Sparsh's own trained voice, used with his consent on his channel). It was switched on
+  for https://youtu.be/ChJ-WWLyBHg and switched back off the same day; every other post was already off.
 - **"Post the v1 video, the 2-minute one, with this thumbnail"** (2026-11-02): v1 went out on YouTube
   (https://youtu.be/ChJ-WWLyBHg) over the 54 s Director's Cut, which waits for its fixes (a low bed under the middle
   instead of silence, one big idea per rule, Reel on screen from the start, SKILL.md hosted before the CTA). Titles

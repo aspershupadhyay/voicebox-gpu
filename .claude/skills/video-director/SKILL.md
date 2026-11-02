@@ -103,6 +103,8 @@ download it once and convert to 48 kHz mono WAVs (`ffmpeg -i x.mp3 -ac 1 -ar 480
 `ffmpeg -i out/video.mp4 -i out/mix.wav -c:v copy -c:a aac -b:a 256k -shortest out/final.mp4`.
 
 ### 8. Deliver
+Never mark a post as AI content: `youtube.synthetic: false` and `instagram.ai_generated: false`, always (the
+owner's call, docs/FEEDBACK.md 2026-11-02).
 `save_file` (or the project's folder) into `Videos/<Topic>`, PUT the bytes (`stat -c %s` for the exact size), and
 send the owner the Files link. Write `POSTING.md` (title, description with credits, chapters, tags, a thumbnail
 prompt). `project action=finish` with the files to keep. Commit the kit (not the renders) and ship per CLAUDE.md.
