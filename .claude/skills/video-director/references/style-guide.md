@@ -68,3 +68,17 @@ current word lit in a light accent `#F4B08F`, the script's words on Whisper's ti
 ## Never
 Stamps, shakes, white flashes, glitch transitions as a habit, cartoon crawling bugs or smug robots, record scratches,
 stock "tech" b-roll, a logo or UI that imitates a real product, a ghosted loop back to the first frame.
+
+## The character: Reel (2026-11-02, the owner's pick)
+`promo/directors-cut/blob.js`: a marigold pixel blob (`#E3BC5C`), backwards brown cap, a finger viewfinder; drawn cell
+by cell, so it blinks, lip-syncs to the voice's loudness (`talk: venv(t)`), squashes on landings (`squash`), raises
+its arms (`raise`), and can hold and clap a slate (`holdSlate`, `clap`, `slate: [line1, line2]`). It's our own: never
+Claude's mascot or colours, never another creator's characters. Use it for a few moments that need a face (the
+reveal, "that's you", the ask), not in every frame. When it's on screen, marigold is the accent.
+
+## Pace for short attention spans (2026-11-02)
+Under a minute for a single idea: short lines voiced at 1.15x, 0.08 s gaps, something new on screen every 1-2 s, a
+hook whose text, motion and voice are all there on frame 1. Keep the deliberate breaths (a 0.6 s silence before the
+reveal is worth more than the time it costs). Avoid the "AI explainer" look: few labels, big ones, one continuous
+world with a camera that moves through it, and a structure with a payoff (the Director's Cut rewinds and strips its
+own frame, then rebuilds it).

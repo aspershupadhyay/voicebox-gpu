@@ -6,6 +6,16 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Make it more faster, based on the user's attention span… don't you think it looks like AI slop?"**, **"keep that
+  yellow one, the REEL"**, **"don't copy the colour of Claude, make our unique blob"**, **"in the end ask them to comment
+  for the skill.md, in a creative way"** (2026-11-02, on the v2 plan: a Nolan-style rewind cut): v2 is
+  `promo/directors-cut/` (1920×1080, 54 s, was 2:11). Our character is **Reel**, a marigold pixel blob with a backwards
+  cap and a finger viewfinder (`blob.js`, drawn in code; the three sketches are `sketch.html`), and its marigold is the
+  accent, never Claude's clay orange. What reads as AI slop: the generic dark-cards-and-tiny-mono-labels look, so keep
+  labels few and big, show one continuous world, and give every video a structure with a payoff. Fast means short
+  lines voiced at 1.15x with 0.08 s gaps and something new every 1-2 s, but the breaths that carry the story stay (the
+  silence before the reveal). The CTA is a scene, not a card: the character holds a slate reading SKILL.md / TAKE:
+  YOURS, the comment box types SKILL, the character replies with the file. Details in the skill (`video-director`).
 - **"Make a tutorial video and a skill to create such videos… use the voice Sparsh, Modal for GPU… use the SFX folder
   properly… analyse each and everything granularly and make it the best landscape video"** (2026-11-02, with two
   references: an Opus 5.5 editing tutorial on YouTube and miftahul_islam_efaz's "it's not the prompt, it's the skill"
