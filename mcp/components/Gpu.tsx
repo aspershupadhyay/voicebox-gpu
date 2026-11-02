@@ -1,5 +1,5 @@
 "use client";
-// GPU & engines: start or stop the Colab GPU, what's on it right now, every engine (warm it up, unload it, read its
+// GPU & engines: which GPU takes the work (Colab or Modal, GpuChoice), start or stop the Colab GPU, what's on it right now, every engine (warm it up, unload it, read its
 // logs, free its disk), then the machine, the worker and how each engine has been doing.
 import { Broom, Cpu, Fire, Gauge, Power, Terminal, Timer, Waveform, X } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
@@ -8,6 +8,7 @@ import { Info } from "./Info";
 import { useDialog } from "./Dialog";
 import FetchBar, { MODEL_NAMES } from "./FetchBar";
 import GpuCard from "./GpuCard";
+import GpuChoice from "./GpuChoice";
 import Health from "./Health";
 import { fmtUptime, useStatus } from "./Shell";
 import { PageHeader, StatCard } from "./ui";
@@ -67,10 +68,13 @@ export default function Gpu({ embedded }: { embedded?: boolean }) {
   const active = jobs.filter((j) => ["queued", "running"].includes(j.status));
   const warm = Object.values(st?.engines ?? {}).filter((s) => s === "ready").length;
   const gpu = st?.gpu?.name?.replace("NVIDIA ", "");
+  const lead = !st ? "Checking on the GPU…" : st.asleep ? "Colab is off. Modal is asleep and wakes for the next job, in about a minute."
+    : !st.online ? (st.reason === "heartbeat stale" ? "The Colab GPU stopped. Start it below." : "The GPU is off. Start it below; engines load on first use.")
+    : `${gpu ?? "GPU"} is on${st.backend === "modal" ? " (Modal)" : ""} with ${warm} engine${warm === 1 ? "" : "s"} warm.`;
 
   return (
     <>
-      {embedded ? <p className="set-lead">{!st ? "Checking on the GPU…" : !st.online ? (st.reason === "heartbeat stale" ? "The Colab GPU stopped. Start it below." : "The GPU is off. Start it below; engines load on first use.") : `${gpu ?? "GPU"} is on with ${warm} engine${warm === 1 ? "" : "s"} warm.`}</p> : <PageHeader title="GPU & engines" sub={!st ? "Checking on the GPU…" : !st.online ? (st.reason === "heartbeat stale" ? "The Colab GPU stopped. Start it below." : "The GPU is off. Start it below; engines load on first use.") : `${gpu ?? "GPU"} is on with ${warm} engine${warm === 1 ? "" : "s"} warm.`} />}
+      {embedded ? <p className="set-lead">{lead}</p> : <PageHeader title="GPU & engines" sub={lead} />}
 
       <div className="stats-row">
         <StatCard icon={<Gauge size={17} weight="bold" />} value={st?.gpu ? <>{st.gpu.used_gb}<small>/ {st.gpu.total_gb} GB</small></> : "—"} label="GPU memory in use">
@@ -81,6 +85,7 @@ export default function Gpu({ embedded }: { embedded?: boolean }) {
         <StatCard icon={<Waveform size={17} weight="bold" />} value={st?.online ? active.length : "—"} label={st?.queue ? `Jobs running · ${st.queue} queued` : "Jobs running"} />
       </div>
 
+      <GpuChoice />
       <GpuCard />
 
       <section className="section">

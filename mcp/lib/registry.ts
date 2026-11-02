@@ -1,4 +1,5 @@
-// Where the MCP server remembers the Colab worker's current tunnel URL.
+// Where the MCP server remembers each GPU worker: the Colab one's current tunnel URL, and (lib/gpus.ts) the Modal one,
+// which heartbeats the same way while its container is awake.
 // Prefers Upstash Redis (KV_REST_API_* / UPSTASH_REDIS_REST_*) when configured, else the R2 bucket.
 import { getJson, putJson } from "./store";
 import { promises as fs } from "node:fs";
@@ -14,7 +15,8 @@ export type WorkerRecord = {
   last_seen: number;
 };
 
-const KEY = "voicebox/worker.json";
+export type Backend = "colab" | "modal";
+const KEYS: Record<Backend, string> = { colab: "voicebox/worker.json", modal: "voicebox/worker-modal.json" };
 export const STALE_MS = 4 * 60 * 1000; // heartbeat is every 60s
 
 const redisUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -33,28 +35,30 @@ async function redis(cmd: string[]) {
   return (await r.json()).result;
 }
 
-export async function saveWorker(rec: WorkerRecord) {
+export async function saveWorker(rec: WorkerRecord, backend: Backend = "colab") {
   const body = JSON.stringify(rec);
-  if (devFile) return fs.writeFile(devFile, body);
+  if (devFile) return fs.writeFile(devFile + (backend === "colab" ? "" : `.${backend}`), body);
   if (redisUrl && redisToken) {
-    await redis(["SET", KEY, body, "EX", "86400"]);
+    await redis(["SET", KEYS[backend], body, "EX", "86400"]);
     return;
   }
-  await putJson(KEY, rec);
-  cache = { at: Date.now(), rec };
+  await putJson(KEYS[backend], rec);
+  cache[backend] = { at: Date.now(), rec };
 }
 
 // Every open dashboard tab polls status; a few seconds of reuse inside a warm function saves storage reads.
-let cache: { at: number; rec: WorkerRecord | null } | null = null;
+const cache: Partial<Record<Backend, { at: number; rec: WorkerRecord | null }>> = {};
 
-export async function loadWorker(): Promise<WorkerRecord | null> {
-  if (devFile) return fs.readFile(devFile, "utf8").then((t) => JSON.parse(t) as WorkerRecord, () => null);
+/** A worker's last heartbeat (the Colab one unless named). */
+export async function loadWorker(backend: Backend = "colab"): Promise<WorkerRecord | null> {
+  if (devFile) return fs.readFile(devFile + (backend === "colab" ? "" : `.${backend}`), "utf8").then((t) => JSON.parse(t) as WorkerRecord, () => null);
   if (redisUrl && redisToken) {
-    const v = await redis(["GET", KEY]);
+    const v = await redis(["GET", KEYS[backend]]);
     return v ? (JSON.parse(v) as WorkerRecord) : null;
   }
-  if (cache && Date.now() - cache.at < 4000) return cache.rec;
-  const rec = await getJson<WorkerRecord>(KEY);
-  cache = { at: Date.now(), rec };
+  const c = cache[backend];
+  if (c && Date.now() - c.at < 4000) return c.rec;
+  const rec = await getJson<WorkerRecord>(KEYS[backend]);
+  cache[backend] = { at: Date.now(), rec };
   return rec;
 }

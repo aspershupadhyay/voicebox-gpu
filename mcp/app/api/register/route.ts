@@ -1,4 +1,4 @@
-// Heartbeat from the Colab worker: POST {url, version, gpu, engines, loaded, queue, started_at, running, last_active}.
+// Heartbeat from a GPU worker (Colab, or Modal with backend: "modal"): POST {url, version, gpu, engines, loaded, queue, started_at, running, last_active}.
 import { after } from "next/server";
 import { saveWorker } from "@/lib/registry";
 import { safeEqual } from "@/lib/worker";
@@ -13,6 +13,17 @@ export async function POST(req: Request) {
   if (secret.length < 24 || !safeEqual(token, secret)) return Response.json({ error: "unauthorized" }, { status: 401 });
 
   const b = await req.json().catch(() => null);
+  if (b?.backend === "modal") {
+    // the Modal GPU (modal/voicebox_modal.py) beats only while its container is awake: that time counts toward its
+    // monthly cap (lib/gpus.ts). None of Colab's start / stop / reminder bookkeeping applies to it
+    const { MODAL_URL, countModal } = await import("@/lib/gpus");
+    if (typeof b.url !== "string" || !MODAL_URL.test(b.url)) return Response.json({ error: "url must be an https modal.run origin" }, { status: 400 });
+    await saveWorker({ url: b.url, version: String(b.version ?? ""), gpu: b.gpu, engines: b.engines, loaded: b.loaded,
+      queue: Number(b.queue ?? 0), started_at: Number(b.started_at ?? 0), last_seen: Date.now() }, "modal");
+    await countModal(Number(b.started_at ?? 0) || Date.now() / 1000);
+    await import("@/lib/downloads").then((d) => d.refresh((f) => after(f), { name: "Download" })).catch((e) => console.error("downloads", e));
+    return Response.json({ ok: true });
+  }
   const allowed = process.env.WORKER_URL_PATTERN ? new RegExp(process.env.WORKER_URL_PATTERN) : TUNNEL;
   if (!b || typeof b.url !== "string" || !allowed.test(b.url))
     return Response.json({ error: "url must be an https trycloudflare.com origin" }, { status: 400 });

@@ -106,20 +106,27 @@ export async function GET(req: Request, ctx: Ctx) {
       return Response.json(liveView(s, rivals));
     }
     if (a === "status") {
-      const rec = await loadWorker();
-      if (!rec) return Response.json({ online: false, reason: "never registered" });
-      const age = Date.now() - rec.last_seen;
-      if (age > STALE_MS) return Response.json({ online: false, reason: "heartbeat stale", last_seen: rec.last_seen });
+      // the GPU that would take the next job: Colab or Modal (lib/gpus.ts). A sleeping Modal counts as online (a job
+      // wakes it) but is never asked for /health here: every open tab polls this
+      const g = await import("@/lib/gpus");
+      const s = await g.gpuState();
+      const gpus = g.describe(s);
+      const up = g.order(s).find((b) => (b === "colab" ? s.colab.online : s.modal.awake)) ?? g.order(s).find((b) => b === "modal" && s.modal.available);
+      const rec = s.colab.rec;
+      if (!up) return Response.json({ online: false, reason: !rec ? "never registered" : "heartbeat stale", last_seen: rec?.last_seen, gpus });
+      if (up === "modal" && !s.modal.awake) return Response.json({ online: true, backend: "modal", asleep: true, engines: {}, queue: 0, gpus });
       try {
-        return Response.json({ online: true, last_seen: rec.last_seen, ...(await call<object>("/health", { timeoutMs: 8000 })) });
+        const h = await call<object>("/health", { timeoutMs: 8000 });
+        return Response.json({ online: true, backend: up, last_seen: (up === "colab" ? rec : s.modal.rec)?.last_seen, ...h, gpus });
       } catch (e) {
-        return Response.json({ online: false, reason: (e as Error).message, last_seen: rec.last_seen });
+        return Response.json({ online: false, reason: (e as Error).message, last_seen: rec?.last_seen, gpus });
       }
     }
     if (a === "voices") return Response.json(await call("/voices"));
     if (a === "samples") return Response.json(await getSamples());
     if (a === "myvoices") return Response.json({ voices: await listMyVoices() });
     if (a === "settings") return Response.json(settingsFor(await getSettings(), (await currentUser())?.id));
+    if (a === "gpus" && !b) { const g = await import("@/lib/gpus"); const s = await g.gpuState(); return Response.json({ ...g.describe(s), modal_url: s.prefs.modal_url }); }
     if (a === "ratings" && b && c) {
       const job = new URL(req.url).searchParams.get("job") ?? undefined;
       const { ratingsOf } = await import("@/lib/ratings");
@@ -268,6 +275,13 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     let body = await req.json().catch(() => ({}));
     if (a === "publish") return await (await import("@/lib/publish/api")).publishPost(g.path.slice(1), body);
+    if (a === "gpus" && !b) {
+      // Settings → GPU & engines: which GPU goes first, falling back to the other, Modal's address and monthly cap
+      const gp = await import("@/lib/gpus");
+      await gp.setPrefs(body);
+      const s = await gp.gpuState();
+      return Response.json({ ...gp.describe(s), modal_url: s.prefs.modal_url });
+    }
     if (a === "radar") {
       // Grow → Radar: watch / unwatch a keyword, the lane (seeds and countries), a title's SEO score
       const rd = await import("@/lib/radar-data");

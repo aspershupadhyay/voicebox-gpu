@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Set up Modal so we don't just rely on Colab… both should be options in the MCP and the UI, and if one fails it
+  should fall back to the other"** (2026-11-02): Modal is a second GPU running the same worker (`modal_app/`,
+  `docs/MODAL.md`). Settings → GPU & engines → Which GPU and the MCP `gpu` tool (action `backend`) pick which goes first;
+  fallback is on by default, both ways, and never sends a job twice. Modal sleeps until work wakes it, has a monthly
+  hour cap, and keeps training and video on Colab unless switched on. Any new GPU path goes through `lib/worker.ts`
+  `call()`, never straight to one worker's address.
 - **"Fix this 'upload failed (network or storage CORS)'… it took me 18 mins, make sure it doesn't get lost"** (2026-11-02,
   adding a read-along session to a trained voice's dataset): studio uploads (`uploadFile`: datasets, clones, revoice,
   subtitles, images) PUT straight to the R2 hostname, which the bucket's CORS refused. Now they go through our own
