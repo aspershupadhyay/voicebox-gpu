@@ -56,7 +56,8 @@ many agents at once), in order. A new tool goes in
 
 Done moving (2026-10-31, `docs/MIGRATION.md`): the app on a Cloudflare Worker, files in R2 (the Worker reads it through its
 `BUCKET` binding, `lib/store.ts`), posts, comments, activity, file rows and accounts in Postgres on Neon (`lib/db.ts`,
-`lib/data.ts`, `lib/users.ts`), backups in Neon storage, deploys from GitHub. Appwrite and Vercel are not used by any
+`lib/data.ts`, `lib/users.ts`), backups in Neon storage, deploys from GitHub. The GPU is Colab or Modal (`docs/MODAL.md`: same worker, `lib/gpus.ts` picks one and
+falls back to the other; every call goes through `lib/worker.ts`). Appwrite and Vercel are not used by any
 code. The trained voices in R2 (`models/`, `datasets/`) are never touched.
 
 ## Inference work

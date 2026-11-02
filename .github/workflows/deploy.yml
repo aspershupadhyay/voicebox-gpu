@@ -7,7 +7,7 @@ name: Deploy
 on:
   push:
     branches: [main]
-    paths: [mcp/**, worker/**, workers/**, docs/**, CLAUDE.md, notebook/build_notebook.py, scripts/build_playbook.py, .github/workflows/deploy.yml]
+    paths: [mcp/**, worker/**, workers/**, modal_app/**, docs/**, CLAUDE.md, notebook/build_notebook.py, scripts/build_playbook.py, .github/workflows/deploy.yml]
   workflow_dispatch:
 concurrency: { group: deploy, cancel-in-progress: false }
 jobs:
@@ -17,6 +17,9 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: 057fb7340dca399cea8eaf0071aa5760
       SITE: https://voiceboxstudio.pages.dev # the short address: a Pages front door that hands requests to the Worker
+      # optional: Modal's GPU (modal_app/voicebox_modal.py) deploys too once these two repository secrets are set
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -42,6 +45,10 @@ jobs:
         working-directory: mcp
         continue-on-error: true # a token without R2 edit rights only skips this; uploads up to 95 MB don't need it
         run: npx wrangler r2 bucket cors set voicebox --file ../workers/r2-cors.json --force
+      - name: Modal GPU (skipped until the MODAL_TOKEN_ID and MODAL_TOKEN_SECRET secrets are set)
+        if: env.MODAL_TOKEN_ID != ''
+        continue-on-error: true # Colab keeps working whatever happens here
+        run: pip install -q modal && modal deploy modal_app/voicebox_modal.py
       - name: Smoke test
         run: |
           sleep 5
