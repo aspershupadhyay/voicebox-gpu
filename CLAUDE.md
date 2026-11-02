@@ -19,7 +19,9 @@ request as the change, so the next session doesn't repeat the mistake.
 ## Videos
 
 Reels and Shorts follow `docs/REELS.md` (the owner's rules: a viral-style hook, informative not slop, the house look,
-and the voice → animation → Files pipeline).
+and the voice → animation → Files pipeline). Any video (landscape tutorials too) goes through the
+`video-director` skill (`.claude/skills/video-director/`: workflow, style guide, planning sheet, the SFX library map,
+review checklist); `promo/claude-video-rules/` is its landscape kit.
 
 ## Design
 

@@ -156,3 +156,19 @@ a 57 s story cut and a ~35 s hype cut). Read this before making any Reel, Short 
   YouTube refuses custom thumbnails until the channel is phone-verified (youtube.com/verify): Shorts show a frame
   from the video until then.
 
+
+## Landscape tutorials and the video-director skill (2026-11-02)
+
+14. **Landscape is a format too.** YouTube tutorials go 1920×1080 with the same rules: voice first, every word and
+   cut on Whisper's stamps, captions only where the screen doesn't say it, SFX tied to what's on screen. Content
+   between y 120 and 870 centred on x 960, captions in the band y 880-990, a header at y 44 and a stepper at y 1022.
+   The kit is `promo/claude-video-rules/`; the method is the `video-director` skill (`.claude/skills/video-director/`).
+15. **The SFX folder is the library.** VoiceBox Files → SFX (92 files). `references/sfx-library.json` in the skill
+   maps every sound to its job (whoosh, pop, click, UI, notify, riser, hit, foley, music) with its measured peak, so
+   a cue lands the loudest moment on the frame it scores. `whoosh-end` is a sub boom (the hit), not a whoosh; the
+   riser is `shine-6` reversed.
+16. **What the two references taught** (an Opus 5.5 editing tutorial and a "the prompt isn't the trick, the skill
+   is" Reel): train the look and the sound once and keep them as a skill; plan every line with one of four scene
+   types (captions, captions + UI, half screen, full screen) before building; words pop up one by one in under
+   1.5 s; the three-object rule for full screens; make elements 25% smaller and colours duller; sound emphasises
+   motion, one impact per scene, the whoosh peak on the fastest frame. Details: the skill's `references/learned-from.md`.
