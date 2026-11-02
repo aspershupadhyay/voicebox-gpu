@@ -10,7 +10,8 @@ stills at every hit (`node tools/render.js stills 0.02 17.5 …`). Look at each 
 - [ ] Nothing cut off at the edges (characters and cards placed by their real extents).
 - [ ] Every phrase lands in under 1.5 s; no bounce, tilt or overshoot.
 - [ ] Something new every 2-3 s; no dead air longer than ~3 s.
-- [ ] Colours: one accent, dull tones, no pure black/white/red/blue.
+- [ ] Colours: `python3 scripts/reels/check_colors.py film.html` prints "clean" (no purple / violet / lavender, no
+  Tailwind defaults, no neon, no gradients, no pure black or white: style guide → "Banned colours"); one dull accent.
 - [ ] Captions only where the screen doesn't already say it; the script's words, not Whisper's mishearing.
 - [ ] Nothing imitates a real product's UI or logo; a generic chat box is fine.
 - [ ] The end card holds still for ≥ 2 s; the last frame isn't the first.

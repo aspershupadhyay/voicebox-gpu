@@ -22,6 +22,9 @@ Reels and Shorts follow `docs/REELS.md` (the owner's rules: a viral-style hook, 
 and the voice → animation → Files pipeline). Any video (landscape tutorials too) goes through the
 `video-director` skill (`.claude/skills/video-director/`: workflow, style guide, planning sheet, the SFX library map,
 review checklist); `promo/claude-video-rules/` is its landscape kit.
+Hard rule: no slop colours in any video or design (no purple / violet / indigo / lavender, no purple-blue gradients, no
+Tailwind defaults, no neon, no pure black or white): the list is in the skill's style guide → "Banned colours", and
+`python3 scripts/reels/check_colors.py <file>` must pass before a render.
 
 ## Design
 
