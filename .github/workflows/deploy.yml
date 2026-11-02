@@ -38,6 +38,10 @@ jobs:
       - name: Deploy the timer (workers/live-timer.js, the minute knocks, the sweep and the backup)
         working-directory: mcp
         run: npx wrangler deploy --config ../workers/wrangler.timer.jsonc
+      - name: Storage CORS (the browser PUTs files over 95 MB straight to R2; workers/r2-cors.json)
+        working-directory: mcp
+        continue-on-error: true # a token without R2 edit rights only skips this; uploads up to 95 MB don't need it
+        run: npx wrangler r2 bucket cors set voicebox --file ../workers/r2-cors.json --force
       - name: Smoke test
         run: |
           sleep 5

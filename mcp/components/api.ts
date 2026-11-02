@@ -25,22 +25,51 @@ export async function api<T = any>(path: string, init?: { method?: string; body?
   return data as T;
 }
 
-/** Upload a file straight to storage (presigned PUT) with progress; resolves to its storage key. */
+/** PUT a blob with progress. Rejects with `status` 0 for a dropped connection (or a refused cross-site PUT). */
+function put(url: string, file: Blob, onProgress?: (f: number) => void) {
+  return new Promise<void>((ok, bad) => {
+    const x = new XMLHttpRequest();
+    x.open("PUT", url);
+    if (file.type) x.setRequestHeader("Content-Type", file.type);
+    x.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
+    x.onload = () => {
+      if (x.status < 300) return ok();
+      let msg = ""; try { msg = JSON.parse(x.responseText).error ?? ""; } catch {}
+      bad(Object.assign(new Error(`upload failed (${x.status}${msg ? `: ${msg}` : ""})`), { status: x.status }));
+    };
+    x.onerror = () => bad(Object.assign(new Error("upload failed: the connection dropped"), { status: 0 }));
+    x.send(file);
+  });
+}
+
+/** Upload a file into storage with progress; resolves to its storage key. Up to 95 MB the bytes go through our own
+ *  domain (/api/upload/put: same origin, so the bucket's CORS never matters), with a few tries if the line drops;
+ *  bigger files, or if those tries all fail, straight to the bucket's presigned address. A failure never touches the
+ *  recording itself: takes stay on this device (takes.ts) until a batch is safely in the dataset. */
 export async function uploadFile(file: Blob, name: string, onProgress?: (f: number) => void): Promise<string> {
   const r = await fetch("/api/upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, type: file.type }) });
   const t = await r.json().catch(() => ({}));
+  if (r.status === 401) { location.href = "/login"; throw new Error("signed out: sign in again (your recording is still saved here)"); }
   if (!r.ok) throw new Error(t.error || `upload HTTP ${r.status}`);
-  await new Promise<void>((ok, bad) => {
-    const x = new XMLHttpRequest();
-    x.open("PUT", t.url);
-    if (file.type) x.setRequestHeader("Content-Type", file.type);
-    x.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
-    x.onload = () => (x.status < 300 ? ok() : bad(new Error(`upload failed (${x.status})`)));
-    x.onerror = () => bad(new Error("upload failed (network or storage CORS)"));
-    x.send(file);
-  });
+  const key = t.key as string;
+  let last: Error | null = null;
+  if (file.size <= 95e6) {
+    for (let i = 0; i < 3; i++) {
+      try { await put(`/api/upload/put?key=${encodeURIComponent(key)}`, file, onProgress); onProgress?.(1); return key; }
+      catch (e) {
+        const s = (e as { status?: number }).status ?? 0;
+        if (s === 409) { onProgress?.(1); return key; } // it's stored already
+        last = e as Error;
+        if (s === 400 || s === 401 || s === 411) break; // retrying won't change the answer
+        onProgress?.(0);
+        await new Promise((w) => setTimeout(w, 1500 * (i + 1)));
+      }
+    }
+  }
+  try { await put(t.url, file, onProgress); }
+  catch (e) { throw last && (e as { status?: number }).status === 0 ? last : (e as Error); }
   onProgress?.(1);
-  return t.key as string;
+  return key;
 }
 
 export const fmtS = (s: number) => {
