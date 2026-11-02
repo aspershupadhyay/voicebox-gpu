@@ -131,6 +131,10 @@ export async function rememberJob(c: Cloud, id: string) {
   jobsCache[c] = { at: Date.now(), v };
 }
 export const rememberModalJob = (id: string) => rememberJob("modal", id);
+/** Whether a cloud GPU took a job in the last `ms` (the job list asks it only then, or while its heartbeat says it's busy). */
+export async function recentJob(c: Cloud, ms: number) {
+  return Object.values(await jobMap(c)).some((t) => Date.now() - t < ms);
+}
 export async function jobBackend(id: string): Promise<Backend> {
   for (const c of CLOUDS) if ((await jobMap(c))[id]) return c;
   return "colab";

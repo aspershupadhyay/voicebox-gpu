@@ -17,6 +17,9 @@ The studio has two GPUs that run the same worker code (`worker/`):
 - A job's follow-ups (progress, push, cancel) go to the GPU that has it: Modal's job ids are noted in R2
   (`voicebox/modal-jobs.json`); every other id is Colab's.
 - A sleeping Modal is woken only by work (a POST), never by a read: every open tab polls status and lists.
+- An awake cloud GPU never gets those polls either (status, metrics, the job list): every request restarts its sleep
+  timer, so an open dashboard would keep it awake for ever. Status comes from its heartbeat; the job list asks it only
+  while it's busy or took a job in the last 30 minutes. It gets work, its own jobs' follow-ups and explicit tests.
 - **Cap**: hours of Modal a month (default 30; 0 = Modal off), counted from its heartbeats (`voicebox/modal-usage.json`).
   Past it Modal takes no new work until the month turns. A job that runs longer than 4 hours is let go (the container's
   own backstop, `VOICEBOX_MODAL_MAX_BUSY_H`).

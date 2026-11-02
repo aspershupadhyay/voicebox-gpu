@@ -2,7 +2,12 @@
 // every call picks one (lib/gpus.ts): a job's follow-ups go to the GPU that has it, new work to the preferred GPU and,
 // when that one is off or can't be reached, to the other.
 import { loadWorker, saveWorker, STALE_MS, type WorkerRecord } from "./registry";
-import { authFor, CLOUD_NAME, CLOUDS, gpuState, isCloud, jobBackend, order, rememberJob, setPrefs, type Backend, type Cloud, type GpuState } from "./gpus";
+import { authFor, CLOUD_NAME, CLOUDS, gpuState, isCloud, jobBackend, order, recentJob, rememberJob, setPrefs, type Backend, type Cloud, type GpuState } from "./gpus";
+
+/** Reads every open tab repeats (status, metrics, the job list): never sent to a cloud GPU, whose sleep timer restarts
+ *  on every request, so an open dashboard would keep it awake (and billing) for ever. The studio answers them from the
+ *  GPU's own heartbeat instead. */
+const POLLED = /^\/(health|metrics|jobs)(\?|$)/;
 
 export class WorkerOffline extends Error {}
 /** The worker is registered (it heartbeats) but a request to it didn't get through: a tunnel that's seconds old and
@@ -38,7 +43,7 @@ type Init = { method?: string; body?: unknown; timeoutMs?: number };
 
 /** Where one GPU answers, or why it can't take this call. A sleeping Modal is woken only by work (a POST), never by a
  *  read: every open tab asks for status and lists, and each would otherwise start a GPU. */
-function target(s: GpuState, b: Backend, method: string, isJob: boolean): string {
+function target(s: GpuState, b: Backend, method: string, isJob: boolean, path = ""): string {
   if (b === "colab") {
     if (!s.colab.rec) throw new WorkerOffline("Colab is off: no Colab worker has registered (start it in Settings → GPU & engines, or run the notebook).");
     if (!s.colab.online) throw new WorkerOffline(`Colab is off: last seen ${Math.round((Date.now() - s.colab.rec.last_seen) / 60000)} min ago (start it in Settings → GPU & engines).`);
@@ -49,6 +54,7 @@ function target(s: GpuState, b: Backend, method: string, isJob: boolean): string
   if (isJob && !c.awake) throw new WorkerOffline(`the ${n} GPU that ran this job has gone to sleep; its results are in Files if it finished`);
   if (!c.awake && c.over) throw new WorkerOffline(`${n} has used its ${c.cap_h} h for this month (raise the cap in Settings → GPU & engines).`);
   if (!c.awake && method === "GET") throw new WorkerOffline(`${n} is asleep (it wakes for the next job).`);
+  if (!isJob && method === "GET" && POLLED.test(path)) throw new WorkerOffline(`${n} isn't asked for ${path.split("?")[0]} (it would never fall asleep); its heartbeat answers instead`);
   return c.url;
 }
 
@@ -101,8 +107,10 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
     }
   }
   if (path === "/jobs" && method === "GET") {
-    // every job on every GPU that's up (the cloud ones only while awake)
-    const up = (["colab", ...CLOUDS] as Backend[]).filter((b) => (isCloud(b) ? s[b].awake : s.colab.online));
+    // every job on every GPU that's up; a cloud one only while it has work (busy at its last heartbeat, or a job sent
+    // to it in the last 30 min), so the job list never keeps an idle one awake
+    const busy = await Promise.all(CLOUDS.map(async (c) => s[c].awake && ((s[c].rec?.running ?? 0) > 0 || (s[c].rec?.queue ?? 0) > 0 || (await recentJob(c, 30 * 60_000)))));
+    const up = (["colab", ...CLOUDS] as Backend[]).filter((b) => (isCloud(b) ? busy[CLOUDS.indexOf(b)] : s.colab.online));
     if (!up.length) throw new WorkerOffline(offline(s));
     const all = await Promise.allSettled(up.map((b) => callOn<{ jobs?: unknown[] }>(b, isCloud(b) ? s[b].url : s.colab.rec!.url, path, init, method)));
     const ok = all.filter((r): r is PromiseFulfilledResult<{ jobs?: unknown[] }> => r.status === "fulfilled").map((r) => r.value);
@@ -114,7 +122,7 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
   const why: string[] = [];
   for (const b of tries) {
     let url: string;
-    try { url = target(s, b, method, false); } catch (e) { why.push((e as Error).message); continue; }
+    try { url = target(s, b, method, false, path); } catch (e) { why.push((e as Error).message); continue; }
     try {
       if (isCloud(b) && s.prefs[`${b}_stop_at`]) await setPrefs({ stop: false, cloud: b }); // new work: Stop no longer applies
       if (isCloud(b) && !s[b].awake) {

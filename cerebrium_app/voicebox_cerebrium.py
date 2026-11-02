@@ -123,12 +123,13 @@ def heartbeat(register_url, secret, url, version):
 
 
 def broken(why):
-    """Answer every request with why the start failed (HTTP 424), so the studio's Test shows it."""
+    """Answer every request with why the start failed (HTTP 424), so the studio's Test shows it. Also what a stopped
+    container serves while Cerebrium winds it down."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class H(BaseHTTPRequestHandler):
         def _send(self):
-            body = json.dumps({"error": f"the Cerebrium worker didn't start: {why}"}).encode()
+            body = json.dumps({"error": why if why.startswith("stopped") else f"the Cerebrium worker didn't start: {why}"}).encode()
             self.send_response(424)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -185,10 +186,13 @@ def serve():
                 gw = spawn()
                 continue
             h, stop = heartbeat(register_url, secret, url, version)
-            if stop:  # Stop in Settings → GPU & engines (or the MCP): shut down now, billing ends with the container
-                log("stop asked by the studio: shutting down")
+            if stop:  # Stop in Settings → GPU & engines (or the MCP)
+                # never exit: Cerebrium takes an exit for a crash and starts a new container (it did, on another
+                # provider). Go quiet instead: no gateway, no heartbeats, no self-knocks, and Cerebrium puts the idle
+                # container to sleep after its cooldown
+                log("stop asked by the studio: going quiet until Cerebrium puts this container to sleep")
                 gw.kill()
-                os._exit(0)
+                return broken("stopped from the studio; it wakes again for the next job")
             working = bool(h.get("running")) or int(h.get("queue") or 0) > 0
             busy_since = (busy_since or time.time()) if working else None
             if working and time.time() - busy_since < MAX_BUSY_H * 3600:

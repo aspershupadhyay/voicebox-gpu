@@ -23,7 +23,7 @@ memory = 32.0 # a voice job peaks near 26 GB of RAM (engines parked in RAM betwe
 min_replicas = 0
 max_replicas = 1          # one container: the gateway keeps each job's state in memory
 replica_concurrency = 100 # progress polls arrive while a job runs
-cooldown = 600            # asleep ten minutes after the last request
+cooldown = 300            # asleep five minutes after the last request (the studio's status checks never count: lib/worker.ts)
 response_grace_period = 900
 # "interruptible" (the default) runs on preemptible capacity that Cerebrium also moves "during consolidation": it
 # started a second container mid-job and sent the job's progress polls to the new one ("not found"). Protected is

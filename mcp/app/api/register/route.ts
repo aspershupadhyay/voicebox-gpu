@@ -26,7 +26,7 @@ export async function POST(req: Request) {
     // Stop was pressed after this container started: it shuts itself down (the app's watch loop)
     if (await g.shouldStop(boot, cloud)) { await g.countCloud(cloud, boot); return Response.json({ ok: true, stop: true }); }
     await saveWorker({ url: b.url, version: String(b.version ?? ""), gpu: b.gpu, engines: b.engines, loaded: b.loaded,
-      queue: Number(b.queue ?? 0), started_at: Number(b.started_at ?? 0), last_seen: Date.now() }, cloud);
+      queue: Number(b.queue ?? 0), running: Number(b.running ?? 0), started_at: Number(b.started_at ?? 0), last_seen: Date.now() }, cloud);
     await g.countCloud(cloud, boot);
     await import("@/lib/downloads").then((d) => d.refresh((f) => after(f), { name: "Download" })).catch((e) => console.error("downloads", e));
     return Response.json({ ok: true });

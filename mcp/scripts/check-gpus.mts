@@ -135,5 +135,18 @@ ok(gp.URL_RE.cerebrium.test("https://api.cerebrium.ai/v4/p-abc12345/voicebox-wor
   && !gp.URL_RE.cerebrium.test("https://evil.com/api.cerebrium.ai/v4/p-abc12345/x"), "Cerebrium addresses: the real form passes, look-alikes don't");
 const cc = gp.setupCommands(key2, "https://studio.example", "cerebrium");
 ok(cc.length === 4 && cc.some((c) => c.includes("cerebrium deploy")) && !cc.join("").includes(process.env.WORKER_SECRET!), "Cerebrium's setup commands carry the cloud key, never WORKER_SECRET");
+// 14. an open dashboard never keeps a cloud GPU awake: status, metrics and the job list never reach an idle one
+await prefs({ prefer: "colab", fallback: true });
+await beat("colab", 10 * 60_000); await beat("modal");
+mem.delete("voicebox/modal-jobs.json"); mem.delete("voicebox/cerebrium-jobs.json");
+await reg.saveWorker({ url: cere.url, started_at: Date.now() / 1000 - 600, last_seen: Date.now(), running: 0, queue: 0 }, "cerebrium");
+await new Promise((r) => setTimeout(r, 3100)); // job notes are cached 3 s
+reset(); cere.hits = [];
+for (const p of ["/health", "/metrics", "/jobs"]) await call(p).catch(() => null);
+ok(!modal.hits.length && !cere.hits.length, "status, metrics and the job list never reach an awake but idle cloud GPU");
+await reg.saveWorker({ url: modal.url, started_at: Date.now() / 1000 - 600, last_seen: Date.now(), running: 1, queue: 0 }, "modal");
+reset();
+await call("/jobs").catch(() => null);
+ok(modal.hits.includes("GET /jobs") && !cere.hits.includes("GET /jobs"), "the job list asks a cloud GPU only while it's busy");
 console.log(fails ? `${fails} FAILED` : "all passed");
 process.exit(fails ? 1 : 0);
