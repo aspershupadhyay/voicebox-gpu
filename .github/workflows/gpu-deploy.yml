@@ -1,0 +1,81 @@
+# Deploys a cloud GPU (Modal or Cerebrium) when Settings → GPU & engines → Deploy is pressed (mcp/lib/clouddeploy.ts):
+# the studio starts this with a one-time deploy id; the run proves itself with GitHub's OIDC token (audience
+# voicebox-deploy, this file on main), turns the id in for the cloud's tokens and the cloud key, masks them, deploys,
+# connects the address, and reports back. No secret is stored in GitHub: they stay sealed in the studio's storage.
+name: Deploy a cloud GPU
+run-name: Deploy ${{ inputs.cloud }} · ${{ inputs.deploy }}
+on:
+  workflow_dispatch:
+    inputs:
+      cloud: { description: "modal or cerebrium", required: true, type: choice, options: [modal, cerebrium] }
+      deploy: { description: "the studio's one-time deploy id", required: true, type: string }
+concurrency: { group: "gpu-deploy-${{ inputs.cloud }}", cancel-in-progress: false }
+permissions:
+  id-token: write # GitHub's OIDC token proves the run is this workflow (mcp/lib/cronauth.ts githubOidc)
+  contents: read
+env:
+  SITE: https://voiceboxstudio.pages.dev
+  CLOUD: ${{ inputs.cloud }}
+  DEPLOY: ${{ inputs.deploy }}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Get the keys from the studio (masked)
+        run: |
+          case "$CLOUD" in modal|cerebrium) ;; *) echo "::error::bad cloud"; exit 1;; esac
+          [[ "$DEPLOY" =~ ^[a-f0-9]{18}$ ]] || { echo "::error::bad deploy id"; exit 1; }
+          oidc=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=voicebox-deploy" | jq -r .value)
+          code=$(curl -s -o keys.json -w '%{http_code}' -X POST -H "Authorization: Bearer $oidc" -H "Content-Type: application/json" \
+            -d "{\"cloud\":\"$CLOUD\",\"deploy\":\"$DEPLOY\"}" "$SITE/api/gpus/deploy-keys")
+          [ "$code" = 200 ] || { echo "::error::the studio said $code: $(jq -r .error keys.json 2>/dev/null)"; rm -f keys.json; exit 1; }
+          python3 - <<'PY'
+          import json, os
+          k = json.load(open("keys.json"))
+          names = {"cloud_key": "CLOUD_KEY", "studio": "STUDIO", "register_url": "REGISTER_URL", "modal_token_id": "MODAL_TOKEN_ID",
+                   "modal_token_secret": "MODAL_TOKEN_SECRET", "cerebrium_token": "CEREBRIUM_SERVICE_ACCOUNT_TOKEN", "cerebrium_project": "CEREBRIUM_PROJECT_ID"}
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              for key, name in names.items():
+                  if key in k:
+                      if key not in ("studio", "register_url", "cerebrium_project"):
+                          print(f"::add-mask::{k[key]}")
+                      env.write(f"{name}={k[key]}\n")
+          PY
+          rm -f keys.json
+      - name: Deploy to Modal
+        if: inputs.cloud == 'modal'
+        run: |
+          pip install -q --upgrade modal
+          modal secret create voicebox WORKER_SECRET="$CLOUD_KEY" REGISTER_URL="$REGISTER_URL" --force > /dev/null
+          VOICEBOX_KEY="$CLOUD_KEY" VOICEBOX_STUDIO="$STUDIO" modal deploy modal_app/voicebox_modal.py
+          python3 modal_app/voicebox_modal.py "$CLOUD_KEY" "$STUDIO" | tee connect.log
+          grep -o 'https://[^ ]*modal\.run' connect.log | head -1 > url.txt || true
+      - name: Deploy to Cerebrium
+        if: inputs.cloud == 'cerebrium'
+        working-directory: cerebrium_app
+        run: |
+          pip install -q --upgrade cerebrium
+          printf 'WORKER_SECRET=%s\nREGISTER_URL=%s\n' "$CLOUD_KEY" "$REGISTER_URL" > voicebox.env
+          cerebrium project set "$CEREBRIUM_PROJECT_ID"
+          cerebrium deploy -y
+          rm -f voicebox.env
+          url="https://api.cerebrium.ai/v4/$CEREBRIUM_PROJECT_ID/voicebox-worker"
+          curl -sS -f -X POST -H "Authorization: Bearer $CLOUD_KEY" -H "Content-Type: application/json" -H "User-Agent: voicebox-deploy" \
+            -d "{\"backend\":\"cerebrium\",\"hello\":true,\"url\":\"$url\"}" "$STUDIO/api/register"
+          echo "$url" > ../url.txt
+      - name: Report to the studio
+        if: always()
+        env:
+          STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          oidc=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=voicebox-deploy" | jq -r .value)
+          url=$(cat url.txt 2>/dev/null || true)
+          ok=false; [ "$STATUS" = success ] && ok=true
+          jq -n --arg d "$DEPLOY" --argjson ok "$ok" --arg url "$url" --arg run "$RUN_URL" --arg note "$STATUS" \
+            '{deploy:$d, ok:$ok, url:$url, run_url:$run, note:$note}' > report.json
+          curl -sS -X POST -H "Authorization: Bearer $oidc" -H "Content-Type: application/json" -d @report.json "$SITE/api/gpus/deploy-report"

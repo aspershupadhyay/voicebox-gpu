@@ -126,6 +126,11 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "samples") return Response.json(await getSamples());
     if (a === "myvoices") return Response.json({ voices: await listMyVoices() });
     if (a === "settings") return Response.json(settingsFor(await getSettings(), (await currentUser())?.id));
+    if (a === "gpus" && b === "deploys") {
+      // Settings → GPU & engines → Deploy: which clouds have their tokens saved (never the tokens) and the recent deploys
+      const cd = await import("@/lib/clouddeploy");
+      return Response.json({ tokens: await cd.tokensStatus(), deploys: await cd.listDeploys() });
+    }
     if (a === "gpus" && !b) { const g = await import("@/lib/gpus"); const s = await g.gpuState(); return Response.json({ ...g.describe(s), modal_url: s.prefs.modal_url, cerebrium_url: s.prefs.cerebrium_url }); }
     if (a === "ratings" && b && c) {
       const job = new URL(req.url).searchParams.get("job") ?? undefined;
@@ -275,10 +280,20 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     let body = await req.json().catch(() => ({}));
     if (a === "publish") return await (await import("@/lib/publish/api")).publishPost(g.path.slice(1), body);
-    const cl = a === "gpus" ? b?.match(/^(modal|cerebrium)-(stop|test|setup)$/) : null;
+    const cl = a === "gpus" ? b?.match(/^(modal|cerebrium)-(stop|test|setup|tokens|deploy)$/) : null;
     if (cl) {
       const cloud = cl[1] as "modal" | "cerebrium";
       const gp = await import("@/lib/gpus");
+      if (cl[2] === "tokens" || cl[2] === "deploy") {
+        // deploy from the website (lib/clouddeploy.ts): the cloud's tokens are saved and deploys started by a signed-in
+        // person in the browser only, never a model or a token caller
+        if (req.headers.get("authorization") || !(await currentUser()) && !(await sessionInfo())) return Response.json({ error: "do this from the dashboard" }, { status: 403 });
+        const cd = await import("@/lib/clouddeploy");
+        const by = (await currentUser())?.name ?? "dashboard";
+        if (cl[2] === "tokens") return Response.json({ tokens: await cd.setTokens(cloud, body ?? {}, by) });
+        const d = await cd.startDeploy(cloud, by);
+        return Response.json({ deploy: { id: d.id, cloud: d.cloud, at: d.at, status: d.status } });
+      }
       if (cl[2] === "stop") { await gp.stopCloud(cloud); return Response.json({ ok: true }); } // shuts down within a minute
       if (cl[2] === "test") return Response.json(await (await import("@/lib/worker")).testModal(undefined, cloud)); // wake it: proof it works
       // Set up: the commands to paste, with the cloud key in them (Modal and Cerebrium share it, so it's made once and

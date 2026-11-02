@@ -79,6 +79,10 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   upload key, which can save files and arrange carousels and nothing else: no reading other files, no deleting). The
   share page `/s/<token>` is public by design (lib/shares.ts): it shows only what one unexpired, unrevoked link names,
   read-only; the token is kept only as a SHA-256 and files are served by hour-long R2 links made on each visit.
+  `/api/gpus/deploy-keys` and `/api/gpus/deploy-report` take only GitHub's OIDC token for `gpu-deploy.yml` on main
+  (audience `voicebox-deploy`, `lib/cronauth.ts` `githubOidc`): the keys route hands a cloud's deploy tokens and the
+  cloud key out once per one-time deploy id that a signed-in person started in the dashboard, within 30 minutes
+  (`lib/clouddeploy.ts`). The tokens are saved only by a signed-in person and never returned to the browser or a model.
   `/api/files/put/<ticket>` is public by design too: the ticket (HMAC-signed, one hour, one file, its size and type)
   is the claim; it takes one PUT of that file's bytes into its R2 key and reads or lists nothing.
   An upload link `/u/<token>` (and `/api/u/<token>`, lib/auto/uplinks.ts) is public by design too: a signed, expiring

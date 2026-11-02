@@ -12,6 +12,8 @@ const ISSUER = "https://token.actions.githubusercontent.com";
 export const CRON_AUDIENCE = "voicebox-cron";
 const REPO = process.env.CRON_GITHUB_REPO || "aspershupadhyay/voicebox-gpu";
 const WORKFLOW = `${REPO}/.github/workflows/sweep.yml@refs/heads/main`;
+export const workflowRef = (file: string) => `${REPO}/.github/workflows/${file}@refs/heads/main`;
+export const GITHUB_REPO = REPO;
 
 let jwks: { at: number; keys: Jwk[] } | null = null;
 async function keys(fresh = false) {
@@ -25,7 +27,11 @@ async function keys(fresh = false) {
 const b64 = (s: string) => Buffer.from(s, "base64url");
 
 /** The claims of a GitHub Actions OIDC token from sweep.yml on main, or null for anything else. */
-export async function githubCron(token: string) {
+export const githubCron = (token: string) => githubOidc(token, CRON_AUDIENCE, WORKFLOW);
+
+/** The claims of a GitHub Actions OIDC token for `audience` from one workflow (`<repo>/.github/workflows/<file>@refs/heads/main`)
+ *  of this repository on main, or null for anything else. */
+export async function githubOidc(token: string, audience: string, workflow: string) {
   const [h, p, s] = token.split(".");
   if (!h || !p || !s) return null;
   try {
@@ -37,7 +43,7 @@ export async function githubCron(token: string) {
     if (!verify("RSA-SHA256", Buffer.from(`${h}.${p}`), createPublicKey({ key: jwk as never, format: "jwk" }), b64(s))) return null;
     const c = JSON.parse(b64(p).toString()) as Record<string, unknown>;
     const now = Date.now() / 1000;
-    const ok = c.iss === ISSUER && c.aud === CRON_AUDIENCE && c.repository === REPO && c.job_workflow_ref === WORKFLOW && c.ref === "refs/heads/main"
+    const ok = c.iss === ISSUER && c.aud === audience && c.repository === REPO && c.job_workflow_ref === workflow && c.ref === "refs/heads/main"
       && typeof c.exp === "number" && c.exp > now && (typeof c.nbf !== "number" || c.nbf <= now + 60);
     return ok ? c : null;
   } catch {

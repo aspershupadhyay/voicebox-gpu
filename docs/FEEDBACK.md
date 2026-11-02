@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Can we run it as a GUI in our website?"** → "Deploy from the website" (2026-11-02): no terminal for the cloud
+  GPUs. Their tokens are pasted once on their tab, and Deploy is one button; GitHub runs the deploy
+  (`gpu-deploy.yml`) and the card follows it (`docs/MODAL.md` → Deploying from the website). Anything the owner had
+  to run in a terminal should become a button the website can do, with the terminal as the fallback.
 - **Cerebrium's first job: "worker 404: not found"** (2026-11-02): Cerebrium ran two containers at once (the log had
   two gateways starting, two self-checks) and sent the job's progress to the one that didn't have it. Interruptible
   capacity (Cerebrium's default) is preempted and moved "during consolidation"; the wrapper ignored SIGTERM, so the

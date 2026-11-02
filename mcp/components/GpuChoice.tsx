@@ -198,6 +198,8 @@ export function CloudPanel({ cloud }: { cloud: Cloud }) {
         )}
       </div>
 
+      <DeployCard cloud={cloud} />
+
       <div className="card">
         <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
           {m.url_from !== "env" && (
@@ -221,3 +223,77 @@ export function CloudPanel({ cloud }: { cloud: Cloud }) {
 
 /** Modal's tab (kept for imports elsewhere). */
 export const ModalPanel = () => <CloudPanel cloud="modal" />;
+
+type DeployRow = { id: string; cloud: Cloud; by: string; at: number; status: "starting" | "running" | "done" | "failed"; finished?: number; note?: string; url?: string | null; run_url?: string | null };
+type Deploys = { tokens: Record<Cloud, { saved: boolean; last4?: string; project?: string; at?: number }>; deploys: DeployRow[] };
+const ago = (t: number) => { const m = Math.round((Date.now() - t) / 60_000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
+
+/** Deploy a cloud GPU from here (lib/clouddeploy.ts): its tokens once, then one button; GitHub runs the deploy. */
+export function DeployCard({ cloud }: { cloud: Cloud }) {
+  const { toast } = useDialog();
+  const [d, setD] = useState<Deploys | null>(null);
+  const [f, setF] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const load = useCallback(() => { api<Deploys>("gpus/deploys").then(setD).catch((e) => setErr((e as Error).message)); }, []);
+  const last = d?.deploys.find((x) => x.cloud === cloud);
+  const live = !!last && (last.status === "starting" || last.status === "running");
+  useEffect(() => { load(); const t = setInterval(load, live ? 5000 : 30_000); return () => clearInterval(t); }, [load, live]);
+  if (!d) return <div className="card"><p className="dim small" style={{ margin: 0 }}>{err || "Loading…"}</p></div>;
+  const tok = d.tokens[cloud];
+  const n = NAME[cloud];
+  const fields: [string, string, string][] = cloud === "modal"
+    ? [["token_id", "Token id", "ak-…"], ["token_secret", "Token secret", "as-…"]]
+    : [["project", "Project id", "p-xxxxxxxx"], ["token", "Service account key", "eyJ…"]];
+  const where = cloud === "modal" ? "modal.com → Settings → API Tokens → New token" : "dashboard.cerebrium.ai → API Keys → Create Service Account (the project id is at the top left)";
+
+  async function saveTokens() {
+    setErr(""); setBusy("save");
+    try { await api(`gpus/${cloud}-tokens`, { body: f }); setF({}); setEditing(false); toast(`${n}'s tokens saved`, "ok"); load(); }
+    catch (e) { setErr((e as Error).message); }
+    setBusy("");
+  }
+  async function deploy() {
+    setErr(""); setBusy("deploy");
+    try { await api(`gpus/${cloud}-deploy`, { body: {} }); toast(`Deploying ${n}: GitHub runs it, a few minutes`, "ok"); load(); }
+    catch (e) { setErr((e as Error).message); }
+    setBusy("");
+  }
+  const state = !last ? null : last.status === "done" ? ["Deployed", "ok"] : last.status === "failed" ? ["Failed", "bad"] : last.status === "running" ? ["Deploying…", "warn"] : ["Starting…", "warn"];
+
+  return (
+    <div className="card">
+      <div className="row between" style={{ gap: 12, flexWrap: "wrap" }}>
+        <div><b className="small">Deploy from the website</b>
+          <div className="tiny dim">{tok.saved ? `Tokens saved (…${tok.last4}${tok.project ? ` · ${tok.project}` : ""}). Deploy rebuilds ${n} with the newest code and connects it.` : `Paste ${n}'s tokens once and deploys are one button, no terminal.`}</div></div>
+        <div className="row" style={{ gap: 8 }}>
+          {tok.saved && !editing && <button className="ghost sm" onClick={() => setEditing(true)}>Change tokens</button>}
+          {tok.saved && <button className="sm" disabled={!!busy || live} onClick={deploy}>{live ? "Deploying…" : busy === "deploy" ? "Starting…" : "Deploy"}</button>}
+        </div>
+      </div>
+      {(!tok.saved || editing) && (
+        <div className="stack" style={{ gap: 10, marginTop: 12 }}>
+          <span className="tiny dim">From {where}. Kept encrypted here and only handed to the deploy run; never shown again.</span>
+          <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+            {fields.map(([k, label, ph]) => (
+              <Field key={k} label={label} style={{ flex: "1 1 200px", margin: 0 }}>
+                <input type={k === "project" || k === "token_id" ? "text" : "password"} autoComplete="off" spellCheck={false} placeholder={ph} value={f[k] ?? ""}
+                  onChange={(e) => setF((x) => ({ ...x, [k]: e.target.value }))} />
+              </Field>
+            ))}
+            <button className="sm" disabled={!!busy || fields.some(([k]) => !(f[k] ?? "").trim())} onClick={saveTokens}>{busy === "save" ? "Saving…" : "Save"}</button>
+            {editing && <button className="ghost sm" onClick={() => { setEditing(false); setF({}); }}>Cancel</button>}
+          </div>
+        </div>
+      )}
+      {last && state && (
+        <div className="row between small" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          <span><span className={`pill ${state[1]}`}>{state[0]}</span> <span className="dim">{ago(last.finished ?? last.at)} · {last.by}{last.status === "failed" && last.note ? ` · ${last.note}` : ""}</span></span>
+          {last.run_url && <a className="small" href={last.run_url} target="_blank" rel="noopener noreferrer">See the run on GitHub</a>}
+        </div>
+      )}
+      {err && <p className="err small" style={{ marginBottom: 0 }}>{err}</p>}
+    </div>
+  );
+}

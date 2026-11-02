@@ -194,13 +194,13 @@ export function describe(s: GpuState) {
 // sealed with AES-256-GCM under a key derived from WORKER_SECRET.
 const KEYFILE = "voicebox/modal-key.json";
 const boxKey = () => createHash("sha256").update(`voicebox-modal-key-v1:${process.env.WORKER_SECRET ?? ""}:${process.env.MCP_TOKEN ?? ""}`).digest();
-function seal(s: string) {
+export function seal(s: string) {
   const iv = randomBytes(12);
   const c = createCipheriv("aes-256-gcm", boxKey(), iv);
   const body = Buffer.concat([c.update(s, "utf8"), c.final()]);
   return Buffer.concat([iv, c.getAuthTag(), body]).toString("base64");
 }
-function unseal(e: string): string | null {
+export function unseal(e: string): string | null {
   try {
     const b = Buffer.from(e, "base64");
     const d = createDecipheriv("aes-256-gcm", boxKey(), b.subarray(0, 12));
