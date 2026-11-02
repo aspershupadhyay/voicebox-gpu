@@ -23,7 +23,9 @@ export type GpuPrefs = {
 };
 
 export const DEFAULT_PREFS: GpuPrefs = { prefer: "colab", fallback: true, modal_url: "", modal_cap_h: 30, modal_heavy: false };
-export const MODAL_URL = /^https:\/\/[a-z0-9-]+\.modal\.run$/;
+/** A Modal web address: <workspace>--<app>-<function>.modal.run, with a region when the app runs in one
+ *  (…gateway.us-east.modal.run): what `modal deploy` prints. */
+export const MODAL_URL = /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)?\.modal\.run$/;
 /** Jobs that hold a GPU for an hour or more. */
 export const HEAVY = new Set(["train", "eagle", "video"]);
 
@@ -48,7 +50,7 @@ export async function setPrefs(patch: Record<string, unknown>): Promise<GpuPrefs
   if (typeof patch.modal_cap_h === "number" && isFinite(patch.modal_cap_h)) next.modal_cap_h = Math.max(0, Math.min(500, Math.round(patch.modal_cap_h)));
   if (typeof patch.modal_url === "string") {
     const u = patch.modal_url.trim().replace(/\/+$/, "");
-    if (u && !MODAL_URL.test(u)) throw new Error("the Modal address looks like https://<workspace>--voicebox-worker-gateway.modal.run");
+    if (u && !MODAL_URL.test(u)) throw new Error("the Modal address is the one modal deploy prints, like https://<workspace>--voicebox-worker-gateway.us-east.modal.run");
     next.modal_url = u;
   }
   if (patch.hello === true) next.modal_hello_at = Date.now();
