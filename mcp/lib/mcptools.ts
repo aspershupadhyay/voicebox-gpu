@@ -113,6 +113,13 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       const sleeper = !gs.colab.online && !awakeCloud ? gp.order(gs).find((b) => gp.isCloud(b) && gs[b].available) : undefined;
       if (sleeper) return text({ online: true, backend: sleeper, asleep: true, gpus, latest_worker_version: WORKER_VERSION, colab, hint: `Colab is off; the ${gp.CLOUD_NAME[sleeper]} GPU is asleep and wakes for the next job (about a minute).` });
       if (!rec) return text({ online: false, gpus, latest_worker_version: WORKER_VERSION, colab, hint: "No worker has registered: gpu action start, or run the Colab notebook (or set up Modal: gpu action backend)." });
+      if (!gs.colab.online && awakeCloud) {
+        // an awake cloud GPU: its heartbeat (a minute old at most), not a request that would keep it from sleeping;
+        // a log is read only when asked for
+        const log = want ? await call<{ text: string }>(`/logs/${want}?n=${lines ?? 80}`).then((r) => r.text.slice(-12000)).catch((e: Error) => e.message) : undefined;
+        return text({ online: true, backend: awakeCloud, from_heartbeat: true, gpus, last_seen_s_ago: Math.round((Date.now() - rec.last_seen) / 1000), version: rec.version,
+          gpu: rec.gpu, engines: rec.engines, loaded: rec.loaded, queue: rec.queue, running: rec.running, latest_worker_version: WORKER_VERSION, colab, ...(log ? { engine_logs: { [want!]: log } } : {}) });
+      }
       const age = Math.round((Date.now() - rec.last_seen) / 1000);
       if (age * 1000 > STALE_MS) return text({ online: false, gpus, last_seen_s_ago: age, latest_worker_version: WORKER_VERSION, colab, hint: "Colab runtime stopped: gpu action start, or re-run the notebook." });
       try {

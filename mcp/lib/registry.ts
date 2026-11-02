@@ -11,6 +11,8 @@ export type WorkerRecord = {
   engines?: Record<string, string>;
   loaded?: string[];
   queue?: number;
+  /** Jobs running at the last heartbeat (the cloud GPUs: the job list asks them only while they have work). */
+  running?: number;
   started_at?: number;
   last_seen: number;
 };

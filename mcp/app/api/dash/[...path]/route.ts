@@ -115,9 +115,16 @@ export async function GET(req: Request, ctx: Ctx) {
       const rec = s.colab.rec;
       if (!up) return Response.json({ online: false, reason: !rec ? "never registered" : "heartbeat stale", last_seen: rec?.last_seen, gpus });
       if (g.isCloud(up) && !s[up].awake) return Response.json({ online: true, backend: up, asleep: true, engines: {}, queue: 0, gpus });
+      if (g.isCloud(up)) {
+        // an awake cloud GPU is answered from its heartbeat (a minute old at most): asking it would restart its sleep
+        // timer on every tab's poll, and it would never fall asleep
+        const r = s[up].rec!;
+        return Response.json({ online: true, backend: up, last_seen: r.last_seen, version: r.version, gpu: r.gpu, engines: r.engines ?? {}, loaded: r.loaded ?? [],
+          queue: r.queue ?? 0, running: [], uptime_s: r.started_at ? Math.max(0, Math.round(Date.now() / 1000 - r.started_at)) : undefined, from_heartbeat: true, gpus });
+      }
       try {
         const h = await call<object>("/health", { timeoutMs: 8000 });
-        return Response.json({ online: true, backend: up, last_seen: (g.isCloud(up) ? s[up].rec : rec)?.last_seen, ...h, gpus });
+        return Response.json({ online: true, backend: up, last_seen: rec?.last_seen, ...h, gpus });
       } catch (e) {
         return Response.json({ online: false, reason: (e as Error).message, last_seen: rec?.last_seen, gpus });
       }

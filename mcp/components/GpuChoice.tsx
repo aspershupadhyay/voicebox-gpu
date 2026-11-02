@@ -177,7 +177,7 @@ export function CloudPanel({ cloud }: { cloud: Cloud }) {
       <div className="card">
         <div className="row between" style={{ gap: 12, flexWrap: "wrap" }}>
           <div><b className="small">{m.configured ? (m.awake ? `On · ${gpuName(m.gpu) ?? "GPU"}` : m.over_cap ? "Monthly cap reached" : "Asleep: wakes for the next job") : "Not set up yet"}</b>
-            <div className="tiny dim">{m.configured ? `${m.used_h} of ${m.cap_h} h used this month · sleeps 10 min after the last job` : `A free ${SIGNUP[cloud]} account and four commands in a terminal`}</div></div>
+            <div className="tiny dim">{m.configured ? `${m.used_h} of ${m.cap_h} h used this month · sleeps ${cloud === "cerebrium" ? 5 : 10} min after the last job` : `A free ${SIGNUP[cloud]} account and four commands in a terminal`}</div></div>
           <div className="row" style={{ gap: 8 }}>
             {m.configured && (m.awake
               ? <button className="ghost sm" disabled={!!a.busy} onClick={a.stop}><Stop size={13} weight="fill" /> {a.busy === "stop" ? "Stopping…" : "Stop now"}</button>

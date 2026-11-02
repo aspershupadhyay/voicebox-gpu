@@ -6,6 +6,13 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Check why Cerebrium is running on its own even when I turn it off"** (2026-11-02, two containers running on two
+  providers, two terminating): an open dashboard kept every cloud GPU awake (each tab's status poll, metrics and job
+  list reached it, and every request restarts its sleep timer), and Stop exited the container, which Cerebrium takes
+  for a crash and replaces. Now the studio answers those polls from the GPU's own heartbeat and never sends them to a
+  cloud GPU (the job list only while it has work), and a stopped Cerebrium container goes quiet and is put to sleep
+  by Cerebrium (cooldown 5 min) instead of exiting. A cloud GPU only ever gets work, its own jobs' follow-ups and
+  explicit tests.
 - **"Can we run it as a GUI in our website?"** → "Deploy from the website" (2026-11-02): no terminal for the cloud
   GPUs. Their tokens are pasted once on their tab, and Deploy is one button; GitHub runs the deploy
   (`gpu-deploy.yml`) and the card follows it (`docs/MODAL.md` → Deploying from the website). Anything the owner had
