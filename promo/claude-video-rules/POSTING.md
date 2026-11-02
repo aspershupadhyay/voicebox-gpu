@@ -1,5 +1,11 @@
 # Posting: 7 rules for directing Claude
 
+**Live (2026-11-02)**: https://youtu.be/ChJ-WWLyBHg on CatchtheError, public, with the owner's thumbnail
+(Files → Videos/Claude video rules/thumbnail-v1-you-only-see-the-result.jpg: "YOU ONLY SEE THE RESULT." over
+storyboard → result → timeline). Title from Radar: **Claude Code Video Editing: Can You Tell It's AI?** (keyword
+"claude code video", opportunity 60 Strong; title score 84: search 82, click 87). Altered/synthetic content is
+disclosed (the voice is a trained model of Sparsh's voice, which the video itself says).
+
 **Where**: YouTube (landscape, 1920×1080). Post right away (the owner's call for YouTube); weekday afternoons
 2:30-3 PM IST or early evening 6-8 PM IST do best on this channel.
 

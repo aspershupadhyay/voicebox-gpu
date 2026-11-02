@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Post the v1 video, the 2-minute one, with this thumbnail"** (2026-11-02): v1 went out on YouTube
+  (https://youtu.be/ChJ-WWLyBHg) over the 54 s Director's Cut, which waits for its fixes (a low bed under the middle
+  instead of silence, one big idea per rule, Reel on screen from the start, SKILL.md hosted before the CTA). Titles
+  come from Radar (`keyword_research` → `seo_score` → `title_lab`): on this channel, under 50 characters and a
+  question win, numbers lose (-16), and the keyword goes first as a phrase. Thumbnails: the owner makes them in
+  ChatGPT and picks the final one; a real celebrity's face (Nolan) is out, since it implies they're involved.
 - **"Make it more faster, based on the user's attention span… don't you think it looks like AI slop?"**, **"keep that
   yellow one, the REEL"**, **"don't copy the colour of Claude, make our unique blob"**, **"in the end ask them to comment
   for the skill.md, in a creative way"** (2026-11-02, on the v2 plan: a Nolan-style rewind cut): v2 is
