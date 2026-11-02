@@ -4,7 +4,7 @@
 // Settings → GPU & engines and the MCP `gpu` tool (action backend) change the preferences.
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { getJson, putJson } from "./store";
-import { loadWorker, STALE_MS, type Backend, type WorkerRecord } from "./registry";
+import { loadWorker, saveWorker, STALE_MS, type Backend, type WorkerRecord } from "./registry";
 
 export type { Backend };
 export type GpuPrefs = {
@@ -20,6 +20,8 @@ export type GpuPrefs = {
   modal_heavy: boolean;
   /** When Modal's setup last connected its address (the end of the setup commands). */
   modal_hello_at?: number;
+  /** Stop pressed: a Modal container that started before this shuts itself down at its next heartbeat. */
+  modal_stop_at?: number;
 };
 
 export const DEFAULT_PREFS: GpuPrefs = { prefer: "colab", fallback: true, modal_url: "", modal_cap_h: 30, modal_heavy: false };
@@ -54,6 +56,8 @@ export async function setPrefs(patch: Record<string, unknown>): Promise<GpuPrefs
     next.modal_url = u;
   }
   if (patch.hello === true) next.modal_hello_at = Date.now();
+  if (patch.stop === true) next.modal_stop_at = Date.now();
+  if (patch.stop === false) delete next.modal_stop_at;
   await putJson(PREFS, next);
   prefsCache = { at: Date.now(), v: next };
   return next;
@@ -118,6 +122,18 @@ export async function gpuState(): Promise<GpuState> {
     colab: { rec: colab, online: !!colab && Date.now() - colab.last_seen < STALE_MS },
     modal: { url, rec: modal, configured: !!url, awake, used_h, cap_h: prefs.modal_cap_h, over, available: !!url && !over },
   };
+}
+
+/** Stop Modal now: its container shuts down at its next heartbeat (within a minute), and it shows asleep at once. */
+export async function stopModal() {
+  await setPrefs({ stop: true });
+  const rec = await loadWorker("modal").catch(() => null);
+  if (rec) await saveWorker({ ...rec, last_seen: 0 }, "modal");
+}
+/** Whether a heartbeat from a container that booted at startedAt (seconds) should shut down: Stop was pressed after. */
+export async function shouldStop(startedAt: number) {
+  const at = (await getPrefs()).modal_stop_at;
+  return !!at && startedAt * 1000 < at;
 }
 
 /** The GPUs to try for new work, in order. */

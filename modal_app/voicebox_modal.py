@@ -144,8 +144,9 @@ def heartbeat(register_url, secret, url, version):
     req = urllib.request.Request(register_url, data=body, method="POST",
                                  headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json",
                                           "User-Agent": "voicebox-worker-modal"})
-    urllib.request.urlopen(req, timeout=20).close()
-    return h
+    with urllib.request.urlopen(req, timeout=20) as r:
+        said = json.loads(r.read() or b"{}")
+    return h, bool(said.get("stop"))
 
 
 def watch(register_url, secret, version, spawn):
@@ -170,7 +171,14 @@ def watch(register_url, secret, version, spawn):
                 except Exception as e:  # noqa: BLE001
                     log(f"own address unknown yet: {e}")
                     continue
-            h = heartbeat(register_url, secret, url, version)
+            h, stop = heartbeat(register_url, secret, url, version)
+            if stop:  # Stop in Settings → GPU & engines (or the MCP): shut down now, billing ends with the container
+                log("stop asked by the studio: shutting down")
+                gw.kill()
+                try:
+                    vol.commit()
+                finally:
+                    os._exit(0)
             working = bool(h.get("running")) or int(h.get("queue") or 0) > 0
             busy_since = (busy_since or time.time()) if working else None
             if working and time.time() - busy_since < MAX_BUSY_H * 3600:
@@ -299,7 +307,7 @@ def doctor():
     else:
         print("5. gateway didn't answer in 90 s", flush=True)
     try:
-        print("6. studio heartbeat:", heartbeat(register_url, secret, "https://doctor.modal.run", "doctor") and "accepted", flush=True)
+        print("6. studio heartbeat:", heartbeat(register_url, secret, "https://doctor.modal.run", "doctor") and "accepted", flush=True)  # noqa: E501
     except Exception as e:  # noqa: BLE001
         print("6. studio heartbeat FAILED:", e, flush=True)
     p.kill()

@@ -275,6 +275,7 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     let body = await req.json().catch(() => ({}));
     if (a === "publish") return await (await import("@/lib/publish/api")).publishPost(g.path.slice(1), body);
+    if (a === "gpus" && b === "modal-stop") { await (await import("@/lib/gpus")).stopModal(); return Response.json({ ok: true }); } // shuts down within a minute
     if (a === "gpus" && b === "modal-test") return Response.json(await (await import("@/lib/worker")).testModal()); // wake Modal: proof it works
     if (a === "gpus" && b === "modal-setup") {
       // Settings → GPU & engines → Set up Modal: a new key for Modal (replacing any old one) inside the commands to

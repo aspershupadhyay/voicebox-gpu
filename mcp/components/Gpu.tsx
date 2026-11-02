@@ -1,5 +1,6 @@
 "use client";
-// GPU & engines: which GPU takes the work (Colab or Modal, GpuChoice), start or stop the Colab GPU, what's on it right now, every engine (warm it up, unload it, read its
+// GPU & engines, one job per tab: Overview (the two GPUs, start / stop, which goes first), Colab, Modal, Engines and
+// Machine. Before the tabs it was: which GPU takes the work (Colab or Modal, GpuChoice), start or stop the Colab GPU, what's on it right now, every engine (warm it up, unload it, read its
 // logs, free its disk), then the machine, the worker and how each engine has been doing.
 import { Broom, Cpu, Fire, Gauge, Power, Terminal, Timer, Waveform, X } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
@@ -8,7 +9,7 @@ import { Info } from "./Info";
 import { useDialog } from "./Dialog";
 import FetchBar, { MODEL_NAMES } from "./FetchBar";
 import GpuCard from "./GpuCard";
-import GpuChoice from "./GpuChoice";
+import { GpuOverview, ModalPanel } from "./GpuChoice";
 import Health from "./Health";
 import { fmtUptime, useStatus } from "./Shell";
 import { PageHeader, StatCard } from "./ui";
@@ -23,6 +24,8 @@ const ENGINES: Record<string, { role: string; lang: string; mem: string }> = {
   zimage: { role: "Photoreal images in about 2 s. Commercial use OK.", lang: "1K images", mem: "≈22 GB" },
   qwenimage: { role: "2K images, sharp text, edits and transparent PNGs. Non-commercial.", lang: "2K images · edit", mem: "≈33 GB" },
 };
+type View = "overview" | "colab" | "modal" | "engines" | "machine";
+const VIEWS: [View, string][] = [["overview", "Overview"], ["colab", "Colab"], ["modal", "Modal"], ["engines", "Engines"], ["machine", "Machine"]];
 const STATE: Record<string, [string, string]> = { ready: ["Warm", "ok"], parked: ["In RAM", "blue"], loading: ["Loading", "warn"], installing: ["Installing", "warn"], busy: ["Busy", "warn"], error: ["Error", "bad"], idle: ["Off", ""] };
 
 export default function Gpu({ embedded }: { embedded?: boolean }) {
@@ -31,6 +34,9 @@ export default function Gpu({ embedded }: { embedded?: boolean }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [busy, setBusy] = useState("");
   const [logs, setLogs] = useState<{ name: string; text: string } | null>(null);
+  const [view, setView] = useState<View>("overview");
+  useEffect(() => { try { const v = localStorage.getItem("vb-gpu-view") as View | null; if (v && VIEWS.some(([k]) => k === v)) setView(v); } catch {} }, []);
+  const go = (v: View) => { setView(v); try { localStorage.setItem("vb-gpu-view", v); } catch {} };
   async function showLogs(name: string) {
     setLogs({ name, text: "Loading…" });
     const r = await api<{ text: string }>(`logs/${name}`).catch((e) => ({ text: String(e.message) }));
@@ -76,19 +82,24 @@ export default function Gpu({ embedded }: { embedded?: boolean }) {
     <>
       {embedded ? <p className="set-lead">{lead}</p> : <PageHeader title="GPU & engines" sub={lead} />}
 
-      <div className="stats-row">
+      <div className="tabs" role="tablist" aria-label="GPU & engines">
+        {VIEWS.map(([k, label]) => <button key={k} role="tab" aria-selected={view === k} className={view === k ? "on" : ""} onClick={() => go(k)}>{label}</button>)}
+      </div>
+
+      {view === "overview" && <GpuOverview open={go} />}
+      {view === "colab" && <GpuCard />}
+      {view === "modal" && <ModalPanel />}
+
+      {view === "machine" && <div className="stats-row">
         <StatCard icon={<Gauge size={17} weight="bold" />} value={st?.gpu ? <>{st.gpu.used_gb}<small>/ {st.gpu.total_gb} GB</small></> : "—"} label="GPU memory in use">
           <div className="meter-line"><i style={{ width: `${Math.round(vram * 100)}%` }} /></div>
         </StatCard>
         <StatCard icon={<Cpu size={17} weight="bold" />} value={st?.online ? gpu?.split("-")[0] ?? "GPU" : "Off"} label={st?.mode ? { voice: "Voice mode", visual: "Image mode", idle: "Idle · GPU free", mixed: "Switching" }[st.mode] ?? st.mode : "GPU"} />
         <StatCard icon={<Timer size={17} weight="bold" />} value={st?.online ? fmtUptime(st.uptime_s) : "—"} label="Up for" />
         <StatCard icon={<Waveform size={17} weight="bold" />} value={st?.online ? active.length : "—"} label={st?.queue ? `Jobs running · ${st.queue} queued` : "Jobs running"} />
-      </div>
+      </div>}
 
-      <GpuChoice />
-      <GpuCard />
-
-      <section className="section">
+      {view === "engines" && <section className="section" style={{ marginTop: 0 }}>
         <div className="section-h"><h2>Engines <Info label="Engines">Engines load on first use and swap out when GPU memory runs short. Voice and image engines take turns on the GPU; a model that steps aside is parked in RAM and comes back in seconds.</Info></h2></div>
         <div className="erows">
           {Object.keys(ENGINES).map((name) => {
@@ -119,12 +130,12 @@ export default function Gpu({ embedded }: { embedded?: boolean }) {
             );
           })}
         </div>
-      </section>
+      </section>}
 
-      <section className="section">
+      {view === "machine" && <section className="section">
         <div className="section-h"><h2>Machine &amp; worker</h2></div>
         <Health />
-      </section>
+      </section>}
 
       {logs && (
         <>

@@ -20,8 +20,10 @@ export async function POST(req: Request) {
   if (b?.backend === "modal") {
     // the Modal GPU (modal/voicebox_modal.py) beats only while its container is awake: that time counts toward its
     // monthly cap (lib/gpus.ts). None of Colab's start / stop / reminder bookkeeping applies to it
-    const { MODAL_URL, countModal } = await import("@/lib/gpus");
+    const { MODAL_URL, countModal, shouldStop } = await import("@/lib/gpus");
     if (typeof b.url !== "string" || !MODAL_URL.test(b.url)) return Response.json({ error: "url must be an https modal.run origin" }, { status: 400 });
+    // Stop was pressed after this container started: it shuts itself down (modal_app/voicebox_modal.py watch)
+    if (await shouldStop(Number(b.started_at ?? 0))) { await countModal(Number(b.started_at ?? 0) || Date.now() / 1000); return Response.json({ ok: true, stop: true }); }
     await saveWorker({ url: b.url, version: String(b.version ?? ""), gpu: b.gpu, engines: b.engines, loaded: b.loaded,
       queue: Number(b.queue ?? 0), started_at: Number(b.started_at ?? 0), last_seen: Date.now() }, "modal");
     await countModal(Number(b.started_at ?? 0) || Date.now() / 1000);
