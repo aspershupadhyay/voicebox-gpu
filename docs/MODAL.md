@@ -58,7 +58,9 @@ Optional: add `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` (from `modal token new`)
 that changes `modal_app/` redeploys it. The worker code itself needs no redeploy: each start fetches the newest from
 `/api/bundle`, like the Colab notebook.
 
-The GPU type is L4 by default (`VOICEBOX_MODAL_GPU=A100 modal deploy …` for another). Check https://modal.com/pricing for
+The GPU is the first of L4, A10G, A100 40 GB and L40S that Modal has free (L4 alone queued for 8+ minutes with no
+capacity); `VOICEBOX_MODAL_GPU=L4 modal deploy …` (or a comma list) pins it. To see a start step by step:
+`python3 -m modal run voicebox_modal.py::doctor`. Check https://modal.com/pricing for
 what an hour costs and how much credit the free plan includes; set the cap to match.
 
 ## Checks

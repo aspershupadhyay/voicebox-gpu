@@ -6,6 +6,9 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **Modal's doctor: "waiting to be scheduled on a GPU_L4 worker… Time in queue: 0:08:00"** (2026-11-02): the reason
+  Modal never started: no L4 free for the account. Modal now takes the first free of L4, A10G, A100 40 GB, L40S
+  (`VOICEBOX_MODAL_GPU` pins one). A cloud GPU is never asked for as one card type only.
 - **"the studio said 400: the Modal address looks like…"** (2026-11-02): `modal deploy` prints a regional address
   (`…gateway.us-east.modal.run`) and the check only took `…gateway.modal.run`, so the setup couldn't connect, Modal's
   heartbeats would have been refused, and the guessed address answered "still starting" for ever. Never guess an
