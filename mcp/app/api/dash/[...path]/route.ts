@@ -275,6 +275,16 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     let body = await req.json().catch(() => ({}));
     if (a === "publish") return await (await import("@/lib/publish/api")).publishPost(g.path.slice(1), body);
+    if (a === "gpus" && b === "modal-setup") {
+      // Settings → GPU & engines → Set up Modal: a new key for Modal (replacing any old one) inside the commands to
+      // paste. A signed-in person in the browser only: never handed to a model or a token caller
+      if (req.headers.get("authorization")) return Response.json({ error: "set Modal up from the dashboard" }, { status: 403 });
+      const gp = await import("@/lib/gpus");
+      const by = (await currentUser())?.name ?? "dashboard";
+      const key = await gp.newModalKey(by);
+      const origin = (await import("@/lib/colab")).appOrigin(new URL(req.url).origin) || new URL(req.url).origin;
+      return Response.json({ commands: gp.setupCommands(key, origin) }, { headers: { "Cache-Control": "no-store" } });
+    }
     if (a === "gpus" && !b) {
       // Settings → GPU & engines: which GPU goes first, falling back to the other, Modal's address and monthly cap
       const gp = await import("@/lib/gpus");

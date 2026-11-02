@@ -72,7 +72,9 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   (`vbmk_`, `lib/auto/keys.ts`, made and revoked only by a signed-in person, MCP only) and code-mode run keys.
 - Tool keys (GitHub, search) pasted in Settings → Automation → Keys live encrypted in R2 (`lib/auto/secrets.ts`): never
   return one to the browser or a model, and only a signed-in person sets them.
-- Never add a route without `isAuthed(req)` (worker routes use `WORKER_SECRET`; `/api/cron/live` also takes the
+- Never add a route without `isAuthed(req)` (worker routes use `WORKER_SECRET`, or Modal's own key from Settings → GPU &
+  engines (`lib/gpus.ts` `workerCaller`: it opens the worker routes and `/api/modal/app`, never the Colab worker's
+  record or the cron routes); `/api/cron/live` also takes the
   Cloudflare live timer's secret, kept only as a SHA-256; `/api/files/upload`, `/complete` and `/api/files/carousels` also take an
   upload key, which can save files and arrange carousels and nothing else: no reading other files, no deleting). The
   share page `/s/<token>` is public by design (lib/shares.ts): it shows only what one unexpired, unrevoked link names,

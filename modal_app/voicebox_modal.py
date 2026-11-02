@@ -6,15 +6,19 @@ quiet month costs nothing; the studio caps the hours a month (Settings → GPU &
 use it (mcp/lib/gpus.ts): first or as the fallback when Colab is off, whichever you choose.
 
 What it runs is the newest worker code, fetched from the studio at each start (/api/bundle, like the Colab notebook), so
-a merge to main reaches it with no redeploy. This file only needs deploying when it changes:
+a merge to main reaches it with no redeploy.
 
-  pip install modal && modal setup                   # once, signs this machine in to your Modal account
-  modal secret create voicebox WORKER_SECRET=<the WORKER_SECRET on the Worker> \\
-      REGISTER_URL=https://voiceboxstudio.pages.dev/api/register
-  modal deploy modal_app/voicebox_modal.py           # prints the address: paste it in Settings → GPU & engines
+Setting it up: Settings → GPU & engines → Set up Modal prints four commands to paste in a terminal (they carry a key
+the studio makes for Modal, so nothing has to be looked up), and the last one connects the address by itself. The same
+by hand (docs/MODAL.md):
 
-(The Deploy workflow runs the last step on every merge when the MODAL_TOKEN_ID / MODAL_TOKEN_SECRET repository
-secrets are set.) Engines and weights are kept on a Modal Volume (voicebox-home), so they download once, not per start.
+  python3 -m pip install modal && python3 -m modal setup
+  python3 -m modal secret create voicebox WORKER_SECRET=<Modal's key, or the Worker's WORKER_SECRET> \\
+      REGISTER_URL=https://voiceboxstudio.pages.dev/api/register --force
+  python3 -m modal deploy voicebox_modal.py && python3 voicebox_modal.py <that key> https://voiceboxstudio.pages.dev
+
+(The Deploy workflow redeploys it on every merge when the MODAL_TOKEN_ID / MODAL_TOKEN_SECRET repository secrets are
+set.) Engines and weights are kept on a Modal Volume (voicebox-home), so they download once, not per start.
 """
 import io
 import json
@@ -24,6 +28,7 @@ import sys
 import tarfile
 import threading
 import time
+import urllib.error
 import urllib.request
 
 import modal
@@ -139,7 +144,7 @@ def gateway():
     secret = os.environ["WORKER_SECRET"]
     register_url = os.environ["REGISTER_URL"]
     if len(secret) < 24:
-        raise RuntimeError("the voicebox secret's WORKER_SECRET must be the Worker's (24+ characters)")
+        raise RuntimeError("the voicebox secret's WORKER_SECRET must be Modal's key from Settings → GPU & engines (24+ characters)")
     os.makedirs(os.path.join(HOME, "logs"), exist_ok=True)
     version = fetch_code(register_url, secret)
     env = {**os.environ, **worker_env(register_url, secret), "WORKER_SECRET": secret, "REGISTER_URL": register_url}
@@ -152,3 +157,20 @@ def gateway():
 
     threading.Thread(target=watch, args=(register_url, secret, version, spawn), daemon=True).start()
     # web_server waits for the port to answer before the first request goes through
+
+
+if __name__ == "__main__":
+    # The last setup step, run on your machine right after `modal deploy`: tell the studio where this GPU answers, so
+    # its address never has to be pasted.   python3 voicebox_modal.py <the Modal key> <the studio's address>
+    if len(sys.argv) != 3:
+        sys.exit("usage: python3 voicebox_modal.py <key> <https://your-studio>  (Settings → GPU & engines → Set up Modal prints it)")
+    key, origin = sys.argv[1], sys.argv[2].rstrip("/")
+    url = modal.Function.from_name(APP, "gateway").get_web_url().rstrip("/")
+    req = urllib.request.Request(origin + "/api/register", method="POST",
+                                 data=json.dumps({"backend": "modal", "hello": True, "url": url}).encode(),
+                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "voicebox-modal-setup"})
+    try:
+        urllib.request.urlopen(req, timeout=30).close()
+    except urllib.error.HTTPError as e:
+        sys.exit(f"Deployed at {url}, but the studio said {e.code}: {e.read().decode()[:200]}. Paste the address in Settings → GPU & engines.")
+    print(f"\nModal GPU connected: {url}\nThe studio uses it now (Settings → GPU & engines). It sleeps until a job wakes it.")

@@ -2,7 +2,7 @@
 // every call picks one (lib/gpus.ts): a job's follow-ups go to the GPU that has it, new work to the preferred GPU and,
 // when that one is off or can't be reached, to the other.
 import { loadWorker, saveWorker, STALE_MS, type WorkerRecord } from "./registry";
-import { gpuState, jobBackend, order, rememberModalJob, type Backend, type GpuState } from "./gpus";
+import { authFor, gpuState, jobBackend, order, rememberModalJob, type Backend, type GpuState } from "./gpus";
 
 export class WorkerOffline extends Error {}
 /** The worker is registered (it heartbeats) but a request to it didn't get through: a tunnel that's seconds old and
@@ -55,13 +55,14 @@ function target(s: GpuState, b: Backend, method: string, isJob: boolean): string
  *  while it installs). Only that wait is waited out: an address that doesn't resolve, refuses or resets, or an answer
  *  that says it isn't ours (not deployed, wrong secret), gives up in seconds, so the other GPU can take the job. */
 async function wake(url: string) {
+  const auth = await authFor("modal");
   const until = Date.now() + 8 * 60_000;
   let last = "", drops = 0;
   while (Date.now() < until) {
     try {
-      const r = await fetch(`${url}/health`, { headers: { Authorization: `Bearer ${process.env.WORKER_SECRET}` }, signal: AbortSignal.timeout(140_000), cache: "no-store" });
+      const r = await fetch(`${url}/health`, { headers: { Authorization: `Bearer ${auth}` }, signal: AbortSignal.timeout(140_000), cache: "no-store" });
       if (r.ok) return;
-      if (r.status < 500) throw new WorkerUnreachable(`Modal answered ${r.status}: ${r.status === 404 ? "the app isn't deployed at that address (modal deploy modal_app/voicebox_modal.py)" : r.status === 401 ? "its WORKER_SECRET isn't the Worker's" : "it isn't the voicebox worker"}`, true);
+      if (r.status < 500) throw new WorkerUnreachable(`Modal answered ${r.status}: ${r.status === 404 ? "the app isn't deployed at that address (modal deploy modal_app/voicebox_modal.py)" : r.status === 401 ? "its key doesn't match (Settings → GPU & engines → Set up Modal again)" : "it isn't the voicebox worker"}`, true);
       last = `HTTP ${r.status}`;
     } catch (e) {
       if (e instanceof WorkerUnreachable) throw e;
@@ -134,12 +135,13 @@ async function callOn<T>(b: Backend, base: string, path: string, init: Init, met
   // Cloudflare answers for the worker when it can't reach it (restarting, tunnel reconnecting) with an HTML page:
   // 530 / 1033 = the tunnel isn't connected (the request never reached the worker), 502-504 = it didn't answer.
   // Reads try again briefly; a POST only on 530, where it certainly never arrived (no job is ever sent twice).
+  const auth = await authFor(b);
   for (let attempt = 0; ; attempt++) {
     let r: Response;
     try {
       r = await fetch(base + path, {
         method,
-        headers: { Authorization: `Bearer ${process.env.WORKER_SECRET}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${auth}`, "Content-Type": "application/json" },
         body: init.body ? JSON.stringify(init.body) : undefined,
         signal: AbortSignal.timeout(init.timeoutMs ?? (b === "modal" ? 60_000 : 25_000)),
         cache: "no-store",

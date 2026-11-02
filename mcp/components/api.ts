@@ -103,7 +103,7 @@ export type Status = {
 export type Gpus = {
   prefer: "colab" | "modal"; fallback: boolean; modal_heavy: boolean;
   colab: { online: boolean; last_seen: number | null; gpu: string | null };
-  modal: { configured: boolean; awake: boolean; available: boolean; used_h: number; cap_h: number; over_cap: boolean; gpu: string | null; url_from: "env" | "settings" | null };
+  modal: { configured: boolean; awake: boolean; available: boolean; used_h: number; cap_h: number; over_cap: boolean; gpu: string | null; connected_at: number | null; url_from: "env" | "settings" | null };
 };
 /** Live download / load progress of an engine that's warming up (worker measures its weights landing on disk). */
 export type Fetch = { phase: "installing" | "downloading" | "loading"; gb: number; total_gb: number; mbps: number; eta_s: number | null; elapsed_s: number };

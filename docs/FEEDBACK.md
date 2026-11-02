@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Where will I get this worker secret, that's BS, give me an option for that"** (2026-11-02, on Modal's setup): the
+  owner shouldn't have to dig up a secret. Set up Modal (Settings → GPU & engines) makes Modal its own key and prints
+  four commands with it inside, and the last one connects Modal's address by itself (`docs/MODAL.md`). Any setup that
+  needs a value the studio already has should hand it over in the commands, never ask for it.
 - **"Set up Modal so we don't just rely on Colab… both should be options in the MCP and the UI, and if one fails it
   should fall back to the other"** (2026-11-02): Modal is a second GPU running the same worker (`modal_app/`,
   `docs/MODAL.md`). Settings → GPU & engines → Which GPU and the MCP `gpu` tool (action `backend`) pick which goes first;

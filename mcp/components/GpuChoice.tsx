@@ -17,6 +17,8 @@ export default function GpuChoice() {
   const [url, setUrl] = useState("");
   const [cap, setCap] = useState("");
   const [err, setErr] = useState("");
+  const [setup, setSetup] = useState<{ commands: string[]; at: number } | null>(null);
+  const [making, setMaking] = useState(false);
   const load = useCallback(() => {
     api<Answer>("gpus").then((a) => { setG(a); setUrl((u) => u || a.modal_url); setCap((c) => c || String(a.modal.cap_h)); }).catch((e) => setErr((e as Error).message));
   }, []);
@@ -27,6 +29,19 @@ export default function GpuChoice() {
     try { setG(await api<Answer>("gpus", { body: patch })); if (ok) toast(ok, "ok"); refresh(); }
     catch (e) { setErr((e as Error).message); }
   }
+  async function makeSetup() {
+    setErr(""); setMaking(true);
+    try { setSetup({ commands: (await api<{ commands: string[] }>("gpus/modal-setup", { body: {} })).commands, at: Date.now() }); }
+    catch (e) { setErr((e as Error).message); }
+    setMaking(false);
+  }
+  async function copy() {
+    try { await navigator.clipboard.writeText(setup!.commands.join("\n")); toast("Copied: paste it in a terminal", "ok"); }
+    catch { toast("Couldn't copy: select the commands and copy them", "bad"); }
+  }
+  // the setup's last command connects the address: once it does, the commands have done their job
+  useEffect(() => { if (setup && (g?.modal.connected_at ?? 0) > setup.at - 60_000) { setSetup(null); toast("Modal is connected", "ok"); } }, [setup, g?.modal.connected_at, toast]);
+  useEffect(() => { if (!setup) return; const t = setInterval(load, 5000); return () => clearInterval(t); }, [setup, load]);
   if (!g) return <div className="card"><div className="card-head"><h2>Which GPU</h2></div><p className="dim small" style={{ margin: 0 }}>{err || "Loading…"}</p></div>;
 
   const m = g.modal;
@@ -63,9 +78,27 @@ export default function GpuChoice() {
       <Toggle on={g.modal_heavy} set={(v) => save({ modal_heavy: v })} title="Training and video on Modal too"
         about="Off: voice training, Orpheus drafts and video stay on Colab (they take hours of GPU). Voiceovers, subtitles, clean-up and images use either." />
 
+      {!m.configured && !setup && (
+        <div className="row between" style={{ gap: 12, flexWrap: "wrap", marginTop: 12, padding: 12, border: "1px solid var(--line)", borderRadius: 12 }}>
+          <span className="small" style={{ flex: "1 1 240px" }}>Set up Modal once: make a free account at modal.com, then paste four commands in a terminal. Nothing to look up, the key is in them.</span>
+          <button className="sm" onClick={makeSetup} disabled={making}>{making ? "Making…" : "Set up Modal"}</button>
+        </div>
+      )}
+      {setup && (
+        <div className="stack" style={{ gap: 8, marginTop: 12, padding: 12, border: "1px solid var(--line)", borderRadius: 12 }}>
+          <div className="row between" style={{ gap: 8, flexWrap: "wrap" }}>
+            <b className="small">Paste this in a terminal (Mac or Linux; on Windows, WSL)</b>
+            <div className="row" style={{ gap: 6 }}><button className="sm" onClick={copy}>Copy</button><button className="ghost sm" onClick={() => setSetup(null)}>Close</button></div>
+          </div>
+          <pre className="card inset mono" aria-label="Modal setup commands" style={{ fontSize: 12, whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>{setup.commands.join("\n")}</pre>
+          <span className="tiny dim">The first line opens modal.com to sign in. The last one deploys the GPU and connects it here; this card turns green by
+            itself. The commands hold a key only for Modal: don&apos;t share them. Pressing Set up Modal again makes a new key and the old one stops working.</span>
+        </div>
+      )}
+
       <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginTop: 12 }}>
         {m.url_from !== "env" && (
-          <Field label="Modal address" style={{ flex: "1 1 260px", margin: 0 }} hint="Printed by modal deploy (modal_app/voicebox_modal.py)">
+          <Field label="Modal address" style={{ flex: "1 1 260px", margin: 0 }} hint="Filled in by the setup; or paste what modal deploy printed">
             <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://you--voicebox-worker-gateway.modal.run" spellCheck={false} />
           </Field>
         )}
@@ -75,6 +108,7 @@ export default function GpuChoice() {
         <button className="sm" onClick={() => save({ ...(m.url_from !== "env" ? { modal_url: url } : {}), modal_cap_h: Number(cap) || 0 }, "Saved")}
           disabled={(m.url_from === "env" || url === g.modal_url) && Number(cap) === m.cap_h}>Save</button>
       </div>
+      {m.configured && !setup && <button className="ghost xs" style={{ marginTop: 10 }} onClick={makeSetup} disabled={making}>Set up Modal again (new key)</button>}
       {err && <p className="err small" style={{ marginBottom: 0 }}>{err}</p>}
     </div>
   );
