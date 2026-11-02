@@ -81,7 +81,25 @@ other (`new_key: true` on `gpus/<cloud>-setup` replaces it; then both need their
 The MCP: `gpu` action `backend` with `prefer: "cerebrium"`, `cerebrium_url`, `cerebrium_cap_h`, and `cloud:
 "cerebrium"` with `test_modal` / `stop_modal`.
 
+## Deploying from the website (no terminal)
+
+Settings → GPU & engines → Modal / Cerebrium → **Deploy from the website** (`lib/clouddeploy.ts`):
+
+1. Paste the cloud's tokens once: Modal's token id and secret (modal.com → Settings → API Tokens → New token), or
+   Cerebrium's Service Account key and project id (dashboard.cerebrium.ai → API Keys → Create Service Account). They're
+   sealed in R2 like the cloud key; the page shows only their last 4 characters, and no model ever gets them.
+2. **Deploy** starts `.github/workflows/gpu-deploy.yml` with the studio's GitHub key (Settings → Automation → Keys; it
+   needs **Actions: read and write** on this repository) and a one-time deploy id.
+3. The run proves itself with GitHub's OIDC token (audience `voicebox-deploy`, that workflow on main), turns the id in
+   once (within 30 minutes) for the tokens and the cloud key (`/api/gpus/deploy-keys`), masks them, deploys the
+   cloud's app from this repository, connects its address, and reports (`/api/gpus/deploy-report`). The card shows
+   Deploying… / Deployed / Failed with a link to the run. Nothing is stored in GitHub.
+
 ## Checks
+
+`cd mcp && npx -y tsx scripts/check-clouddeploy.mts`: deploying from the website against a fake GitHub (tokens sealed,
+the start, the one-time id, the report, the GitHub-only routes).
+
 
 `cd mcp && npx -y tsx scripts/check-gpus.mts`: the routing against two fake GPUs (preference, fallback both ways, job
 follow-ups, a read never waking Modal, the cap, heavy jobs, Modal's own key, Cerebrium as the third GPU).
