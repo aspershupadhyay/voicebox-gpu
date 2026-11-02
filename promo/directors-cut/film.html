@@ -1,0 +1,356 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Serif;src:url(fonts/serif.woff2) format("woff2")}
+@font-face{font-family:Serif;font-style:italic;src:url(fonts/serif-i.woff2) format("woff2")}
+@font-face{font-family:Geist;src:url(fonts/geist.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:Mono;src:url(fonts/mono.woff2) format("woff2");font-weight:100 900}
+html,body{margin:0;background:#000;overflow:hidden}
+#stage{position:relative;width:1920px;height:1080px;overflow:hidden;font-family:Geist,sans-serif;-webkit-font-smoothing:antialiased;color:#fff}
+#cam{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0}
+#over,#hud,#cap{position:absolute;inset:0;pointer-events:none}
+.a{position:absolute;box-sizing:border-box}
+.c{left:0;width:1920px;text-align:center}
+.mono{font-family:Mono}
+.w{display:inline-block;white-space:pre}
+.card{border-radius:18px;border:1px solid #2A2A31;background:#16161A}
+.pill{display:inline-flex;align-items:center;gap:10px;border-radius:999px;padding:8px 18px;font-family:Mono;font-size:20px}
+#cap .box{position:absolute;left:0;width:1920px;top:892px;text-align:center;font-family:Geist;font-weight:700;font-size:48px;letter-spacing:-0.01em}
+#cap .box span.b{display:inline-block;background:rgba(10,10,12,.88);border-radius:16px;padding:8px 24px 12px}
+svg{position:absolute;overflow:visible}
+</style></head>
+<body><div id="stage"><div id="cam"></div><div id="over"></div><div id="hud"></div><div id="cap"></div></div>
+<script src="vo.js"></script>
+<script src="blob.js"></script>
+<script>
+// ---------- palette: Reel's marigold is the accent (not Claude's clay), a dull blue the second voice ----------
+const DK='#0C0C0E', DK2='#16161A', DKL='#2A2A31', IV='#EFEDE8', INK='#15151A', MID='#6D6A72', DMID='#9B98A3',
+      AC='#E3BC5C', ACL='#F3DA94', SAND='#8FA8D8', MINT='#86C9A8', RED='#D2665A', TXT='#ECEAF2';
+const W=1920, H=1080, CX=960;
+// ---------- math ----------
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const lerp=(a,b,p)=>a+(b-a)*p;
+const eo=x=>x<=0?0:x>=1?1:1-Math.pow(2,-10*x);
+const sio=x=>x<=0?0:x>=1?1:-(Math.cos(Math.PI*x)-1)/2;
+const back=x=>{x=clamp(x);const c=1.4;return 1+(c+1)*Math.pow(x-1,3)+c*Math.pow(x-1,2);}; // Cue's landing only
+const seg=(t,t0,d,e=eo)=>e(clamp((t-t0)/d));
+function hash(n){let x=Math.sin(n*127.1+311.7)*43758.5453;return x-Math.floor(x);}
+// ---------- voice timing ----------
+const LINES={};for(const l of VO.lines)LINES[l.id]=l;
+const S=id=>LINES[id].start, E=id=>LINES[id].end;
+const norm=s=>s.toLowerCase().replace(/[^a-z0-9]/g,'');
+function wt(id,i){const l=LINES[id];const w=l.words[Math.min(i,l.words.length-1)];return w?w.s:l.start;}
+function wordIdx(id,word,from=0){const l=LINES[id];const k=l.words.findIndex((w,i)=>i>=from&&norm(w.w).startsWith(word));if(k<0)console.warn('no word',id,word);return k<0?0:k;}
+const at=(id,word,from=0)=>wt(id,wordIdx(id,word,from));
+function venv(t){for(const l of VO.lines){if(t>=l.start&&t<l.end)return l.env[Math.min(l.env.length-1,Math.floor((t-l.start)*30))]||0;}return 0;}
+// ---------- text motion ----------
+function rise(t,t0,d=.34,dy=22){const p=seg(t,t0,d);return `opacity:${p.toFixed(3)};transform:translateY(${((1-p)*dy).toFixed(1)}px)`;}
+function wrise(t,t0){const p=seg(t,t0,.3);return `opacity:${p.toFixed(3)};transform:translateY(${((1-p)*20).toFixed(1)}px);filter:blur(${((1-p)*5).toFixed(2)}px)`;}
+function ws(t,words,times,style=''){return words.map((w,i)=>`<span class="w" style="${wrise(t,times[i]??times[times.length-1])};${typeof style==='function'?style(i,w):style}">${w}${i<words.length-1?' ':''}</span>`).join('');}
+function spoken(t,id,words,k=0,style=''){return ws(t,words,words.map((_,i)=>wt(id,k+i)-.05),style);}
+function A(x,y,css,html){return `<div class="a" style="left:${x}px;top:${y}px;${css}">${html??''}</div>`;}
+function C(y,css,html){return `<div class="a c" style="top:${y}px;${css}">${html??''}</div>`;}
+function dotgrid(col,o=1){return `<div class="a" style="left:0;top:0;width:1920px;height:1080px;opacity:${o};background-image:radial-gradient(${col} 1.5px,transparent 1.5px);background-size:48px 48px;background-position:24px 24px"></div>`;}
+const it=(s,c=AC)=>`<span style="font-family:Serif;font-style:italic;font-weight:400;color:${c}">${s}</span>`;
+const ICON={check:'<path d="M20 6 9 17l-5-5"/>',x:'<path d="M6 6l12 12M18 6 6 18"/>',file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
+ send:'<path d="M5 12h14M13 6l6 6-6 6"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',pen:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+ rew:'<path d="M11 6 3 12l8 6zM21 6l-8 6 8 6z"/>',play:'<path d="M7 4l13 8-13 8z"/>',down:'<path d="M12 4v14M6 12l6 6 6-6"/>'};
+function icon(n,s,c,sw=2,fill='none'){return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" style="position:static;fill:${fill};stroke:${c};stroke-width:${sw};stroke-linecap:round;stroke-linejoin:round;vertical-align:middle">${ICON[n]}</svg>`;}
+
+// ---------- the story's clock ----------
+const T_REW=at('l03','take')-.05, T_REW_END=S('l04')-.08;                // the rewind
+const STRIP={sound:at('l04','sound'),motion:at('l06','motion'),timing:at('l08','timing'),plan:at('l10','plan'),style:at('l12','style')};
+const T_VOID=S('l14')-.35;                                               // everything gone: black and silence
+const T_REB=at('l18','start')-.04, T_HIT=at('l18','directing')-.04;     // the rebuild, the hit
+const T_CTA=S('l19')-.2;
+const LAYERS=['sound','motion','timing','plan','style','script'];
+// how present each layer is (1 there, 0 stripped)
+function pres(name,t){
+  if(t>=T_REB){const k=['style','plan','timing','motion','sound','script'].indexOf(name);return name==='script'?1:seg(t,T_REB+k*.09,.18);}
+  if(name==='script')return t<T_VOID?1:0;
+  if(t>=T_VOID)return 0;
+  return 1-seg(t,STRIP[name]-.05,.35);
+}
+// world time: forward from frame 0, scrubbed back to 0 in the rewind, paused while it's stripped, forward again after the rebuild
+function tau(t){if(t<T_REW)return t;if(t<T_REW_END)return lerp(T_REW,0,sio(clamp((t-T_REW)/(T_REW_END-T_REW))));if(t<T_REB)return 0;return t-T_REB;}
+
+// ---------- the world: one composite frame, six layers ----------
+const REG={plan:[110,140,500,250],title:[680,150,1140,320],cue:[120,380,520,320],timing:[140,690,1640,80],sound:[140,780,1640,70],all:[0,0,1920,1080]};REG.motion=REG.title;REG.style=[560,240,800,520];
+const L1=['Everything','you\'re','watching','was','made','by','Claude.'];
+function world(t){
+  const ta=tau(t), P={};LAYERS.forEach(n=>P[n]=pres(n,t));
+  const ugly=P.style<.5;  // stripped style: default serif, pure primaries, white page
+  const F=ugly?'font-family:"Times New Roman",Times,serif;font-weight:400;letter-spacing:0':'';
+  const col=(a,b)=>ugly?b:a;
+  let h=ugly?`<div class="a" style="left:0;top:0;width:1920px;height:1080px;background:#fff"></div>`:dotgrid('#1d1d22');
+  const mo=P.motion, bob=(k,amp=6)=>mo*amp*Math.sin(ta*2.1+k*1.3);
+  // the plan card
+  if(P.plan>0){const p=P.plan;
+    const rows=[['01','the hook','CAPTIONS'],['02','the rewind','FULL SCREEN'],['03','the reveal','HALF SCREEN']];
+    h+=A(110,140+(1-p)*-30,`width:500px;opacity:${p};transform:rotate(${(1-p)*-6}deg) translateY(${bob(1,4)}px);${F}`,
+      `<div style="background:${col(DK2,'#fff')};border:${ugly?'2px solid #000':'1px solid '+DKL};border-radius:${ugly?0:16}px;padding:20px 24px">
+      <div class="mono" style="font-size:18px;color:${col(DMID,'#000')};letter-spacing:.12em;${F}">PLAN.md</div>
+      ${rows.map(([n,l,tp],i)=>`<div style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:24px;color:${col(TXT,'#000')}"><span class="mono" style="font-size:16px;color:${col(DMID,'#000')}">${n}</span><span style="flex:1">${l}</span><span class="mono" style="font-size:15px;padding:5px 10px;border-radius:${ugly?0:6}px;background:${col(i===1?AC:'#26262d',['#FF0000','#00FF00','#0000FF'][i])};color:${col(i===1?'#141318':TXT,'#fff')}">${tp}</span></div>`).join('')}</div>`);}
+  // the title: rises word by word while motion lives; frozen with keyframe diamonds when it's stripped
+  const tw1=['Stop','prompting.'], tw2=['Start','directing.'];
+  // on screen from frame 0; it only un-rises while the rewind runs it backwards
+  const tr=(i)=>(t>=T_REW&&t<T_REW_END)?wrise(ta<2.5?ta:2.5,.15+i*.12):'opacity:1';
+  h+=A(680,150+bob(2,5),`width:1140px;${F}`,`<div style="font-size:${ugly?84:92}px;font-weight:${ugly?400:700};letter-spacing:${ugly?0:-.035}em;line-height:1.05;color:${col(TXT,'#000')};${F}">${tw1.map((w,i)=>`<span class="w" style="${tr(i)}">${w} </span>`).join('')}</div>
+    <div style="font-size:${ugly?92:132}px;line-height:1.05;${ugly?'color:#FF0000;'+F:'font-family:Serif;font-style:italic;color:'+AC}">${tw2.map((w,i)=>`<span class="w" style="${tr(i+2)}">${w} </span>`).join('')}</div>`);
+  if(mo<1){const q=1-mo;  // what motion was: keyframes and dotted paths, frozen
+    for(let i=0;i<4;i++){const x=690+i*240, y=i<2?178:300;h+=A(x,y,`opacity:${q*.9}`,`<div style="width:14px;height:14px;transform:rotate(45deg);background:${ugly?'#0000FF':SAND}"></div>`);}
+    h+=`<svg class="a" style="left:0;top:0;opacity:${q}" width="1920" height="1080"><path d="M300 700 Q 360 600 380 520" stroke="${ugly?'#0000FF':SAND}" stroke-dasharray="6 8" stroke-width="3" fill="none"/></svg>`;}
+  // the hook, said and shown: each line replaces the last, word by word on the voice
+  if(P.script>0&&t<S('l04')){const id=t<S('l02')-.05?'l01':t<S('l03')-.05?'l02':'l03';const l=LINES[id];
+    const tt=t>=T_REW?Math.max(lerp(T_REW,S('l03'),sio(clamp((t-T_REW)/(T_REW_END-T_REW)))),S('l03')-.01)+0*(t):t;
+    const words=l.text.split(' ');
+    h+=A(700,500,`width:1100px;font-size:62px;font-weight:700;letter-spacing:-.03em;line-height:1.1;color:${TXT};${F}`,spoken(t,id,words,0,(i,w)=>/Claude|code|purpose|apart/.test(w)?`font-family:Serif;font-weight:400;font-style:italic;color:${AC}`:''));}
+  // Cue on the stage
+  if(P.script>0){
+    const talk=clamp(venv(t)*1.6), bl=(Math.floor((ta+.3)/3.1)!==Math.floor((ta+.18)/3.1));
+    h+=A(150,560,`width:520px;height:130px;border-radius:50%;background:radial-gradient(ellipse at center, ${ugly?'#FFFF00':'rgba(227,188,92,.16)'} 0%, transparent 70%)`,'');
+    h+=A(150,338+bob(3,8),``,blob({variant:'C',px:13,talk:mo?talk:0,blink:mo?bl:false,look:Math.sin(ta*.7),clap:mo*Math.max(0,Math.sin(ta*1.4))*.6,slate:['SCENE 01','TAKE '+(1+Math.floor(ta/4))]}));
+  }
+  // timing: the hook's own words at their own times
+  if(P.timing>0){const p=P.timing, l=LINES['l01'];const x0=140,w=1640,span=l.end-l.start+.3;const X=tt=>x0+(tt-l.start+.15)/span*w;
+    h+=A(x0,700,`width:${w}px;height:2px;background:${col(DKL,'#000')};opacity:${p}`,'');
+    l.words.forEach((wd,i)=>{const on=ta>=wd.s-.04;h+=A(X(wd.s),710+(1-p)*40,`opacity:${p};${F}`,`<div style="border-left:2px solid ${col(i===6?AC:'#4a4855','#000')};padding-left:8px"><div style="font-size:24px;font-weight:600;color:${col(on?TXT:'#5a5862','#000')};${F}">${wd.w.replace(/[.,]/g,'')}</div><div class="mono" style="font-size:15px;color:${col(DMID,'#000')}">${wd.s.toFixed(2)}s</div></div>`);});
+    if(mo>0)h+=A(X(clamp(ta,l.start,l.end)),690,`width:2px;height:80px;background:${AC};opacity:${p*mo}`,'');}
+  // sound: a live waveform of the voice, with its cues
+  if(P.sound>0){const p=P.sound;let b='';const N=150;for(let k=0;k<N;k++){const v=venv(t-(N-k)*.012)*p;b+=`<div style="width:5px;border-radius:2px;height:${(3+v*60).toFixed(1)}px;background:${k>N-6?AC:col('#8c8a96','#000')}"></div>`;}
+    h+=A(140,785,`width:1640px;height:70px;display:flex;align-items:center;gap:6px;opacity:${p}`,b);
+    [['whoosh',.18],['pop',.42],['hit',.66],['pop',.83]].forEach(([n,u],i)=>{h+=A(140+u*1640,768,`opacity:${p};${F}`,`<div class="mono" style="font-size:14px;color:${col(SAND,'#FF0000')};${F}">◆ ${n}</div>`);});}
+  else{h+=A(140,820,`width:1640px;height:2px;background:${col('#3a3943','#000')}`,'');}
+  return h;
+}
+// the layer stack at the bottom: what's left of the film
+function stack(t){if(t>=T_VOID&&t<T_REB)return '';if(t>=T_CTA)return '';
+  let s='';LAYERS.forEach((n,i)=>{const p=pres(n,t);s+=`<span class="pill" style="margin:0 6px;border:1px solid ${p>.5?AC:'#33323b'};color:${p>.5?TXT:'#5d5b66'};background:${p>.5?'rgba(227,188,92,.12)':'transparent'};${p>.5?'':'text-decoration:line-through'}">${n}</span>`;});
+  return `<div class="a c" style="top:1012px">${s}</div>`;}
+function hud(t){if(t>=T_VOID&&t<T_REB)return '';
+  const ta=tau(t), f=Math.floor(ta*30), tc=`${String(Math.floor(ta/60)).padStart(2,'0')}:${String(Math.floor(ta)%60).padStart(2,'0')}:${String(f%30).padStart(2,'0')}`;
+  const rew=t>=T_REW&&t<T_REW_END, paused=t>=T_REW_END&&t<T_REB;
+  const ugly=pres('style',t)<.5&&t<T_REB;const c=ugly?'#000':DMID;
+  let h=`<div class="a" style="left:72px;top:44px;font-family:Mono;font-size:20px;letter-spacing:.16em;color:${c}">DIRECTOR'S CUT</div>`;
+  h+=`<div class="a" style="right:72px;top:40px;font-family:Mono;font-size:24px;letter-spacing:.08em;color:${rew?AC:c};display:flex;gap:14px;align-items:center">${rew?icon('rew',22,AC,0,AC):paused?'<span style="font-size:18px;letter-spacing:.16em">PAUSED</span>':icon('play',18,c,0,c)} ${tc}</div>`;
+  return h+stack(t);}
+
+// ---------- the explainers: each grows out of its layer (a match cut, not a slide) ----------
+function panelBox(t,t0,t1,reg,html,light){
+  const pin=seg(t,t0-.12,.34), pout=seg(t,t1-.1,.2);const p=pin*(1-pout);if(p<=0)return '';
+  const [rx,ry,rw,rh]=REG[reg]; const ox=rx+rw/2, oy=ry+rh/2; const s=lerp(.35,1,pin)*(1-.05*pout);
+  return `<div class="a" style="left:150px;top:130px;width:1620px;height:740px;opacity:${p.toFixed(3)};transform-origin:${ox-150}px ${oy-130}px;transform:scale(${s.toFixed(4)})">
+    <div class="a" style="left:0;top:0;width:1620px;height:740px;border-radius:24px;background:${light?IV:DK2};border:1px solid ${light?'#d8d3c8':DKL};box-shadow:0 40px 80px rgba(0,0,0,.45)"></div>${html}</div>`;}
+function P_sound(t){const id='l05', t0=S(id), wf=at(id,'fastest'), one=at(id,'one'), nv=at(id,'nothing');let h='';
+  h+=A(60,46,`${rise(t,t0)};font-family:Mono;font-size:24px;letter-spacing:.12em;color:${DMID}`,'01 · PEAK ON THE FASTEST FRAME');
+  const pts=[],env=[];for(let k=0;k<=60;k++){const u=k/60;pts.push(`${60+u*620},${470-Math.exp(-Math.pow((u-.5)/.16,2))*300}`);env.push(`${60+u*620},${470-Math.exp(-Math.pow((u-.5)/.11,2))*260}`);}
+  h+=`<svg class="a" style="left:0;top:0" width="1620" height="740"><polyline points="${pts.join(' ')}" fill="none" stroke="${TXT}" stroke-width="4" stroke-dasharray="1600" stroke-dashoffset="${(1-seg(t,t0+.1,.7))*1600}"/>
+    <polyline points="${env.join(' ')}" fill="none" stroke="${AC}" stroke-width="5" stroke-dasharray="1600" stroke-dashoffset="${(1-seg(t,wf-.35,.5))*1600}"/>
+    <line x1="370" y1="140" x2="370" y2="500" stroke="${SAND}" stroke-width="3" stroke-dasharray="8 8" opacity="${seg(t,wf,.25)}"/></svg>`;
+  h+=A(386,150,`${rise(t,wf)};font-family:Mono;font-size:20px;color:${SAND}`,'fastest frame');
+  h+=A(60,520,`${rise(t,t0+.3)};font-family:Mono;font-size:18px;color:${DMID}`,`<span style="color:${TXT}">—</span> speed on screen &nbsp; <span style="color:${AC}">—</span> whoosh loudness`);
+  h+=A(780,46,`${rise(t,one-.1)};font-family:Mono;font-size:24px;letter-spacing:.12em;color:${DMID}`,'02 · ONE BIG HIT');
+  let bars='';[.2,.28,.16,.24,1,.2,.26].forEach((v,k)=>{bars+=`<div style="width:38px;border-radius:6px;background:${k===4?AC:'#34333c'};height:${(v*300*seg(t,one-.05+k*.03,.25)).toFixed(1)}px"></div>`;});
+  h+=A(780,170,`width:380px;height:330px;display:flex;align-items:flex-end;gap:14px`,bars);
+  h+=A(1230,46,`${rise(t,nv-.1)};font-family:Mono;font-size:24px;letter-spacing:.12em;color:${DMID}`,'03 · THE VOICE ON TOP');
+  [['VOICE',300,TXT],['MUSIC',150,'#6E79A8'],['SFX',120,MINT]].forEach(([n,w,c],i)=>{h+=A(1230,170+i*90,`${rise(t,nv+i*.1)}`,`<div class="mono" style="font-size:18px;color:${DMID};margin-bottom:8px">${n}</div><div style="width:${w}px;height:26px;border-radius:6px;background:${c}"></div>`);});
+  h+=A(1230,450,`${rise(t,nv+.4)};font-family:Mono;font-size:18px;color:${SAND}`,'SFX held ≥ 6 dB under the voice');
+  h+=C(620-130,`width:1620px;font-size:46px;font-weight:700;letter-spacing:-.02em`,spoken(t,id,['Nothing','covers','the','voice.'],wordIdx(id,'nothing'),(i)=>i===3?`font-family:Serif;font-weight:400;font-style:italic;color:${AC}`:''));
+  return h;}
+function P_motion(t){const id='l07', t0=S(id), u=at(id,'under'), c=at(id,'cut');let h='';
+  h+=C(110,`width:1620px;font-size:100px;font-weight:700;letter-spacing:-.035em`,spoken(t,id,['Words','rise','one','at','a','time.'],0,(i)=>i===1?`font-family:Serif;font-weight:400;font-style:italic;color:${AC}`:''));
+  h+=C(270,`width:1620px;${rise(t,u-.1)}`,`<span class="pill" style="background:#1e1e24;border:1px solid ${DKL};color:${TXT}">${icon('clock',20,AC)} under 1.5 s · fade + 20 px + a little blur · no bounce</span>`);
+  const p=seg(t,c-.1,1.0,sio);let r=`<div class="a" style="left:0;top:54px;width:${p*1320}px;height:2px;background:#4a4855"></div>`;
+  for(let i=0;i<=6;i++){const x=i/6*1320, on=p*1320>=x-1;r+=`<div class="a" style="left:${x-1}px;top:18px;width:3px;height:72px;background:${on?AC:'#26252c'}"></div>`;if(i)r+=`<div class="a mono" style="left:${x-130}px;top:96px;width:120px;text-align:center;font-size:18px;color:${on?DMID:'transparent'}">2.0 s</div>`;}
+  h+=A(150,400,`width:1320px;height:130px`,r);
+  h+=C(590,`width:1620px;font-size:52px;font-weight:700;letter-spacing:-.03em;color:#cfcdd8`,spoken(t,id,['A','cut','every','two','seconds.'],wordIdx(id,'cut')-1));
+  return h;}
+function P_timing(t){const id='l09', l=LINES[id], t0=S(id);let h='';
+  h+=A(60,46,`${rise(t,t0-.1)};font-family:Mono;font-size:20px;letter-spacing:.14em;color:${DMID}`,'THIS SENTENCE, TIMED BY WHISPER · word starts in seconds');
+  const x0=60,w=1500,span=l.end-l.start+.2,X=tt=>x0+(tt-l.start+.1)/span*w;let wv='';
+  for(let k=0;k<l.env.length;k++){const x=X(l.start+k/30);wv+=`<div class="a" style="left:${x.toFixed(1)}px;top:${(250-l.env[k]*110).toFixed(1)}px;width:4px;height:${(l.env[k]*220+2).toFixed(1)}px;border-radius:2px;background:${(l.start+k/30)<t?TXT:'#34333c'}"></div>`;}
+  h+=wv+A(X(clamp(t,l.start-.1,l.end+.1)),110,`width:3px;height:290px;background:${AC}`,'');
+  const CUT=['cut','word','voice'];
+  l.words.forEach((wd,i)=>{const x=X(wd.s), on=t>=wd.s-.04, c=CUT.includes(norm(wd.w));
+    h+=A(x,430+(i%2)*84,`${wrise(t,wd.s-.05)}`,`<div style="border-left:2px solid ${c?AC:'#4a4855'};padding-left:9px"><div style="font-size:28px;font-weight:600;color:${on?TXT:'#5a5862'}">${wd.w.replace(/[.,]/g,'')}</div><div class="mono" style="font-size:16px;color:${DMID}">${wd.s.toFixed(2)}</div></div>`);
+    if(c)h+=A(x-1,110,`width:2px;height:290px;background:${AC};opacity:${(.55*seg(t,wd.s-.04,.15)).toFixed(2)}`,'');});
+  h+=C(640,`width:1620px;${rise(t,at(id,'because')-.05)};font-size:40px;font-weight:600;color:${TXT}`,`the voice came ${it('first')}`);
+  return h;}
+function P_plan(t){const id='l11', t0=S(id), sc=at(id,'scene'), fr=at(id,'frame');let h='';
+  h+=A(70,50,`${rise(t,t0-.1)}`,`<span style="font-size:40px;font-weight:700;color:${INK};letter-spacing:-.02em">PLAN.md</span><span class="mono" style="font-size:18px;color:${MID};margin-left:24px">one row per line of the script</span>`);
+  const rows=[['Everything you\'re watching was made by Claude.','CAPTIONS',0],['Watch. I\'ll take it apart.','FULL SCREEN',3],['Strip the sound.','CAPTIONS + UI',1],['One line of script. And a director.','HALF SCREEN',2]];
+  rows.forEach(([line,type,k],i)=>{const y=140+i*122, d=sc-.1+i*.14;
+    h+=A(70,y,`width:1480px;${rise(t,t0+.08+i*.08)}`,`<div style="display:flex;align-items:center;background:#fff;border:1px solid #d8d3c8;border-radius:14px;height:104px;padding:0 28px">
+      <span class="mono" style="width:56px;font-size:18px;color:${MID}">${String(i+1).padStart(2,'0')}</span><span style="flex:1;font-size:30px;color:${INK}">${line}</span>
+      <span class="mono" style="font-size:20px;padding:8px 14px;border-radius:8px;background:${i===1?AC:IV};color:${i===1?'#141318':INK};${wrise(t,d)}">${type}</span></div>`);});
+  h+=A(70,650,`${rise(t,fr-.15)};font-family:Mono;font-size:22px;color:${MID}`,`${icon('pen',22,AC)} &nbsp;decided before frame 1 exists`);
+  return h;}
+function P_style(t){const id='l13', t0=S(id), T=[at(id,'fonts'),at(id,'colours'),at(id,'motion'),at(id,'skill')];let h='';
+  h+=A(70,40,`${wrise(t,t0-.05)}`,`<span style="font-family:'Times New Roman',serif;font-size:64px;color:#FF0000">Ugly, right?</span>`);
+  const row=(i,k,v)=>`<div style="display:flex;gap:28px;align-items:center;padding:18px 0;border-top:1px solid #dcd7cc;${wrise(t,T[i]-.05)}"><div class="mono" style="width:200px;font-size:20px;color:${MID}">${k}</div><div style="flex:1">${v}</div></div>`;
+  let d=`<div class="mono" style="font-size:18px;color:${MID};letter-spacing:.12em">STYLE.md</div>`;
+  d+=row(0,'fonts',`<span style="font-size:34px;font-weight:700;color:${INK}">Geist Bold</span> <span style="font-family:Serif;font-style:italic;font-size:42px;color:${INK}">Instrument Serif</span> <span class="mono" style="font-size:26px;color:${INK}">Mono</span>`);
+  d+=row(1,'colours',[DK,IV,AC,SAND,MINT].map(c=>`<span style="display:inline-block;width:60px;height:40px;border-radius:8px;background:${c};border:1px solid #cfc9bd;margin-right:10px;vertical-align:middle"></span>`).join('')+`<span class="mono" style="font-size:18px;color:${MID}">one accent, dull tones</span>`);
+  const dm=((t-T[2])%1.4+1.4)%1.4;
+  d+=row(2,'motion',`<span style="font-size:32px;font-weight:700;color:${INK}">${['rise','in','one','by','one'].map((w,i)=>`<span class="w" style="${wrise(dm,.08+i*.14)}">${w} </span>`).join('')}</span>`);
+  const fold=seg(t,T[3]-.2,.45,sio);
+  h+=A(70,150,`width:1000px;transform:scale(${lerp(1,.8,fold)});transform-origin:0 0;${rise(t,T[0]-.2)}`,`<div style="background:#fff;border:1px solid #d8d3c8;border-radius:16px;padding:30px 40px 20px">${d}</div>`);
+  const s=seg(t,T[3]-.05,.35);
+  h+=A(1060,230,`width:480px;opacity:${s};transform:translateY(${(1-s)*24}px)`,`<div style="background:${INK};border-radius:18px;padding:30px 32px;color:#fff">
+    <div style="display:flex;gap:14px;align-items:center">${icon('file',38,AC)}<span class="mono" style="font-size:32px">SKILL.md</span></div>
+    <div class="mono" style="font-size:18px;color:${DMID};margin:14px 0 18px">.claude/skills/video-director/</div>
+    <div class="mono" style="font-size:20px;color:#d8d6e0;line-height:1.7">written once ·<br>used on every video</div></div>`);
+  return h;}
+const PANELS=[['l05','sound',P_sound,false],['l07','motion',P_motion,false],['l09','timing',P_timing,false],['l11','plan',P_plan,true],['l13','style',P_style,true]];
+
+// the strip command: big, centred, over a dimmed world
+function stripCmd(t){for(const [id,k] of [['l04','sound'],['l06','motion'],['l08','timing'],['l10','plan'],['l12','style']]){
+  const t0=S(id)-.1, t1=E(id)+.12;if(t<t0||t>t1)continue;const p=seg(t,t0,.2)*(1-seg(t,t1-.12,.12));
+  const words=LINES[id].text.split(' ');
+  return `<div class="a" style="left:0;top:0;width:1920px;height:1080px;background:rgba(8,8,10,${(.62*p).toFixed(3)})"></div>`+
+    C(420,`font-size:140px;font-weight:700;letter-spacing:-.04em;opacity:${p}`,spoken(t,id,words,0,(i)=>i===2?`font-family:Serif;font-weight:400;font-style:italic;color:${AC}`:'')); }
+  return '';}
+
+// ---------- the void, the reveal, the rebuild, the ask ----------
+function voidScene(t){let h='';
+  if(t<S('l15')){h+=C(470,'font-size:84px;font-weight:700;letter-spacing:-.03em',spoken(t,'l14',['And','under','all','of','it?'],0,(i)=>i===4?`font-family:Serif;font-weight:400;font-style:italic;color:${AC}`:''));return h;}
+  const id='l15', t0=S(id), dir=at(id,'director');
+  const line='Everything you\'re watching was made by Claude.';const n=Math.floor(clamp((t-t0)/.9)*line.length);
+  const caret=(Math.floor(t*2.4)%2===0)?`<span style="display:inline-block;width:3px;height:1em;background:${AC};vertical-align:-.12em;margin-left:3px"></span>`:'';
+  const up=seg(t,dir-.3,.5,sio);
+  h+=C(lerp(500,300,up),`font-family:Mono;font-size:44px;color:${TXT}`,`<span class="mono" style="color:${DMID};font-size:26px;margin-right:18px">l01</span>${line.slice(0,n)}${caret}`);
+  // Cue drops in on "director"
+  const d=clamp((t-dir+.12)/.45), y=lerp(-420,470,back(d)), sq=d>=1?0:(d>.62?Math.sin((d-.62)/.38*Math.PI)*.8:0);
+  if(t>=dir-.12)h+=A(700,y,'',blob({variant:'C',px:14,squash:sq,talk:0,look:0,blink:false}));
+  h+=C(940,`${rise(t,dir+.25)};font-family:Mono;font-size:20px;letter-spacing:.18em;color:${DMID}`,'REEL · THE DIRECTOR');
+  return h;}
+function youScene(t){const id='l16', t0=S(id), most=at(id,'most'), ta=at(id,'taste'), you=at(id,'that');let h=dotgrid('#1d1d22');
+  h+=C(140,'font-size:62px;font-weight:700;letter-spacing:-.03em',spoken(t,id,['Claude','does','most','of','the','work.'],0,(i)=>i===2?`color:${AC}`:''));
+  const p=seg(t,most,.7,sio), q=seg(t,ta-.1,.5,sio);
+  h+=A(560,340,`width:1240px;height:130px;border-radius:18px;background:${DK2};border:1px solid ${DKL};overflow:hidden`,
+    `<div class="a" style="left:0;top:0;height:130px;width:${(p*74).toFixed(2)}%;background:#2a2a31"></div><div class="a" style="right:0;top:0;height:130px;width:${(q*26).toFixed(2)}%;background:${AC}"></div>`);
+  ['script','frames','voice','sound','mix'].forEach((s,i)=>{h+=A(590+i*170,385,`${rise(t,most+.1+i*.08)};font-family:Mono;font-size:22px;color:#d8d6e0`,s);});
+  ['taste','notes','final cut'].forEach((s,i)=>{h+=A(1500,358+i*30,`${rise(t,at(id,['taste','notes','final'][i])-.05)};font-family:Mono;font-size:20px;font-weight:700;color:#141318`,s);});
+  h+=A(560,490,`${rise(t,most+.2)};font-family:Mono;font-size:20px;color:${DMID}`,'CLAUDE');h+=A(1700,490,`${rise(t,ta)};font-family:Mono;font-size:20px;color:${AC}`,'YOU');
+  const talk=clamp(venv(t)*1.6);
+  h+=A(120,330,'',blob({variant:'C',px:10,talk,look:1,raise:seg(t,you-.1,.25),blink:Math.floor(t/3.1)%2===1&&(t%3.1)<.12,clap:0,slate:['SCENE 01','TAKE 2']}));
+  h+=C(680,'font-size:84px;font-weight:700;letter-spacing:-.035em',`<span class="w" style="${wrise(t,you-.05)}">That's</span> <span class="w" style="${wrise(t,at(id,'you',wordIdx(id,'that'))-.05)};font-family:Serif;font-weight:400;font-style:italic;color:${AC}">you.</span>`);
+  return h;}
+function promptScene(t){const id='l17', t0=S(id), pr=at(id,'prompt');let h=dotgrid('#1d1d22');
+  const txt='make me a viral video, cinematic, trending';const n=Math.floor(clamp((t-t0+.15)/.8)*txt.length);
+  h+=A(CX-560,250,'width:1120px',`<div class="card" style="padding:26px 30px 20px"><div style="font-size:40px;color:${TXT};min-height:54px">${txt.slice(0,n)}</div>
+    <div style="display:flex;justify-content:space-between;margin-top:16px"><span class="mono" style="font-size:18px;color:${DMID}">+ attach</span><span style="width:46px;height:46px;border-radius:12px;background:#34333c;display:inline-flex;align-items:center;justify-content:center">${icon('send',24,DMID,2.4)}</span></div></div>`);
+  const s=seg(t,pr+.05,.3);h+=A(CX-580,330,`width:${1160*s}px;height:6px;background:${RED};border-radius:3px`,'');
+  h+=C(560,'font-size:84px;font-weight:700;letter-spacing:-.035em',spoken(t,id,['So','stop','asking','for','the','prompt.'],0,(i)=>i===5?`color:${RED}`:''));
+  return h;}
+function rebuildTitle(t){if(t<T_REB||t>=T_CTA)return '';const p=seg(t,T_HIT-.05,.25), f=1-seg(t,E('l18')+.25,.3);if(f<=0)return '';
+  return `<div class="a" style="left:0;top:0;width:1920px;height:1080px;background:rgba(8,8,10,${(.82*p*f).toFixed(3)})"></div>`+C(380,`opacity:${f};font-size:200px;line-height:1`,`<span class="w" style="${wrise(t,at('l18','start')-.05)};font-weight:700;letter-spacing:-.04em">Start </span><span class="w" style="${wrise(t,T_HIT)};font-family:Serif;font-style:italic;color:${AC}">directing.</span>`);}
+function ctaScene(t){const t0=S('l19'), sk=at('l19','skill',wordIdx('l19','comment')), rep=at('l20','repl'), nx=at('l20','your');let h=dotgrid('#1d1d22');
+  h+=A(120,110,`${rise(t,T_CTA)};width:900px;font-size:64px;font-weight:700;letter-spacing:-.035em;line-height:1.08`,spoken(t,'l19',['Want','the','skill','file','behind','this','video?'],0,(i)=>i===2||i===3?`font-family:Serif;font-weight:400;font-style:italic;color:${AC}`:''));
+  // the comment box types SKILL on the word
+  const ty=Math.floor(clamp((t-sk+.15)/.45)*5), sent=t>=sk+.45;
+  h+=A(120,380,`width:860px;${rise(t,at('l19','comment')-.2)}`,`<div class="card" style="padding:22px 26px;display:flex;align-items:center;gap:20px">
+    <span style="width:54px;height:54px;border-radius:50%;background:#2a2a31;display:inline-flex;align-items:center;justify-content:center;font-family:Mono;font-size:22px;color:${DMID}">you</span>
+    <span style="flex:1;font-size:40px;font-weight:700;letter-spacing:.04em;color:${TXT}">${sent?'':'SKILL'.slice(0,ty)}${!sent&&Math.floor(t*2.4)%2===0?`<span style="display:inline-block;width:3px;height:.9em;background:${AC};vertical-align:-.1em;margin-left:3px"></span>`:''}</span>
+    <span class="mono" style="font-size:20px;padding:10px 18px;border-radius:10px;background:${ty>=5?AC:'#2a2a31'};color:${ty>=5?'#141318':DMID}">Comment</span></div>`);
+  if(sent){const p=seg(t,sk+.45,.3);h+=A(120,500+(1-p)*16,`width:860px;opacity:${p}`,`<div style="display:flex;gap:18px;align-items:center;padding:6px 26px"><span class="mono" style="font-size:18px;color:${DMID}">@you · now</span><span style="font-size:36px;font-weight:700;letter-spacing:.04em">SKILL</span></div>`);}
+  // Cue replies with the file
+  const rp=seg(t,rep-.1,.35);
+  if(rp>0)h+=A(190,590+(1-rp)*18,`width:790px;opacity:${rp}`,`<div style="display:flex;gap:16px;align-items:center;padding:16px 22px;border-left:3px solid ${AC};background:rgba(227,188,92,.08);border-radius:0 14px 14px 0">
+    <span class="mono" style="font-size:18px;color:${AC}">@reel</span><span style="font-size:28px;color:${TXT}">here's the file</span>
+    <span class="pill" style="background:${INK};border:1px solid ${DKL};color:${TXT}">${icon('file',20,AC)} SKILL.md ${icon('down',18,DMID)}</span></div>`);
+  // Cue holds the slate, claps it on SKILL, and again on "next"
+  const clap=t<sk-.35?1:t<sk?1-seg(t,sk-.35,.32):t<nx-.4?seg(t,sk+.1,.4):1-seg(t,nx-.32,.3);
+  const talk=clamp(venv(t)*1.6);
+  h+=A(1060,260,'',blob({variant:'C',px:17,talk,look:-1,clap,raise:.6,blink:false,holdSlate:true,slate:['SKILL.md','TAKE: YOURS']}));
+  h+=A(1090,700,`${rise(t,nx-.05)};font-size:66px;font-weight:700;letter-spacing:-.03em`,`Your take is ${it('next.')}`);
+  return h;}
+
+// ---------- camera: pushes into the layer each strip names, eases back out (no hard cuts in the world) ----------
+function camera(t){
+  const keys=[[0,960,540,1.0]];
+  for(const [id,k] of [['l04','sound'],['l06','motion'],['l08','timing'],['l10','plan'],['l12','style']]){const r=REG[k];const cx=r[0]+r[2]/2, cy=r[1]+r[3]/2;keys.push([S(id)-.15,960,540,1],[S(id)+.35,lerp(960,cx,.18),lerp(540,cy,.18),1.06],[E(id)+.1,960,540,1.0]);}
+  keys.sort((a,b)=>a[0]-b[0]);
+  let k=0;while(k+1<keys.length&&keys[k+1][0]<=t)k++;const a=keys[k], b=keys[k+1]||a;const u=b===a?0:sio(clamp((t-a[0])/(b[0]-a[0])));
+  let x=lerp(a[1],b[1],u), y=lerp(a[2],b[2],u), s=lerp(a[3],b[3],u);
+  s*=1+.012*Math.sin(t*.45);   // never fully still
+  if(t>=T_HIT)s*=1+.05*(1-seg(t,T_HIT,.35));  // the punch on the hit
+  return `translate(${(960-x*s).toFixed(2)}px,${(540-y*s).toFixed(2)}px) scale(${s.toFixed(5)})`;
+}
+// ---------- captions: only where the picture doesn't already say it ----------
+const CAPS=['l11','l13'];
+function caption(t){for(const id of CAPS){const l=LINES[id];if(t<l.start-.05||t>l.end+.2)continue;
+  const Wd=l.words;let k=Wd.findIndex(w=>t<w.e+.04);if(k<0)k=Wd.length-1;const g=Math.floor(k/3)*3, grp=Wd.slice(g,g+3);
+  return `<div class="box"><span class="b">${grp.map((w,i)=>`<span style="color:${g+i===k?ACL:'#fff'}">${w.w}</span>`).join(' ')}</span></div>`;}return '';}
+
+// ---------- every sound, tied to what it scores (read by tools/audio.py) ----------
+function cues(){const q=[];const add=(t,f,db=0,o={})=>q.push({t:+t.toFixed(3),f,db,...o});
+  // hook: the world is alive
+  add(0,'shine-6-268910',-14,{len:1.4,fade:.7});
+  L1.forEach((w,i)=>{});
+  add(at('l02','every')-.05,'App_Click_1',-10);add(at('l02','every',2)-.05,'soft-pop-sfx-433612',-10);
+  // the rewind: timecode ticks backwards, a spin and a reversed whoosh
+  add(T_REW,'victorabdo-spin-232536',-6,{reverse:true,len:1.4});
+  add(T_REW,'whoosh-velocity-383019',-8,{reverse:true,len:1.4});
+  for(let i=0;i<10;i++)add(T_REW+i*(T_REW_END-T_REW)/10,'immersivecontrol-button-click-sound-463065',-10);
+  // each strip: a hard "off" switch on the word; the world goes quieter
+  for(const k of Object.keys(STRIP))add(STRIP[k]-.03,'ui-sound-off-270300',-6,{len:.6,fade:.3});
+  add(S('l04')-.1,'swoosh-014-383768',-8,{peak:true,at:S('l04')+.3});
+  // the sound explainer plays its own examples
+  add(at('l05','whoosh'),'woosh-230554',-4,{peak:true,at:at('l05','fastest')});
+  add(at('l05','one')-.02,'whoosh-end-384629',-6,{peak:true,len:1.4,fade:.7});
+  // later explainers: dry, just the textures
+  add(at('l07','under')-.1,'new-notification-013-363676',-16);
+  for(let i=0;i<=6;i++)add(at('l07','cut')-.1+i/6,'App_Click_1',-16);
+  LINES['l09'].words.forEach(w=>add(w.s-.05,'immersivecontrol-button-click-sound-463065',-18));
+  for(let i=0;i<4;i++)add(at('l11','scene')-.1+i*.14,'soft-pop-sfx-433612',-14);
+  add(at('l13','ugly')-.05,'sfx-erreur-363728',-14);
+  [at('l13','fonts'),at('l13','colours'),at('l13','motion')].forEach(x=>add(x-.05,'soft-subtle-ui-pop-sfx-348820',-14));
+  add(at('l13','skill')-.05,'pop-402324',-10);
+  // the reveal: the script line types, Cue lands
+  add(S('l15'),'keyboard-typing-fast-371229',-14,{len:.9,fade:.2});
+  add(at('l15','director')+.12,'creatorshome-sharp-pop-328170',-4);add(at('l15','director')+.14,'whoosh-end-384629',-10,{peak:true,len:1.2,fade:.6});
+  // you
+  add(at('l16','most'),'swoosh-06-351021',-10,{peak:true});add(at('l16','taste')-.1,'benkirb-shine-1-268902',-12,{len:1.2,fade:.6});
+  add(at('l16','that')-.1,'pop-402324',-8);
+  // the prompt, crossed out
+  add(S('l17')-.1,'keyboard-typing-fast-371229',-12,{len:.8,fade:.2});add(at('l17','prompt')+.05,'sfx-erreur-363728',-8);
+  // the rebuild: a riser into the hit, the layers snap back, the music returns (audio.py: MUSIC)
+  add(T_HIT-.9,'shine-6-268910',-6,{reverse:true,len:.9});
+  for(let k=0;k<5;k++)add(T_REB+k*.09,'ui-pop-up-2-197887',-10);
+  add(T_HIT,'whoosh-end-384629',0,{peak:true,len:2.6,fade:1.2});add(T_HIT,'simple-whoosh-02-433006',-6,{peak:true,len:1.6,fade:.6});
+  // the ask
+  add(T_CTA,'swoosh-2-359826',-8,{peak:true,at:T_CTA+.2});
+  add(at('l19','skill',wordIdx('l19','comment'))-.15,'iphone-keyboard-typing-sound-effect-336778',-6,{len:.5,fade:.1});
+  add(at('l19','skill',wordIdx('l19','comment'))-.02,'creatorshome-sharp-pop-328170',-4);   // the slate claps
+  add(at('l19','skill',wordIdx('l19','comment'))+.45,'message-envoye-iphone-apple-391098',-12);
+  add(at('l20','repl')-.1,'new-notification-09-352705',-8);
+  add(at('l20','your')-.02,'creatorshome-sharp-pop-328170',-4);add(at('l20','next')+.1,'marimba-bloop-3-188151',-10);
+  return q.sort((a,b)=>a.t-b.t);}
+// the music: full under the hook, cut dead on "Strip the sound", back on the hit; a Shepard tone under the strips
+window.MUSIC=()=>[{t0:0,t1:STRIP.sound-.02,offset:44,fadein:.05,fadeout:.03},{t0:T_HIT-.02,t1:VO.duration,offset:66,fadein:.02,fadeout:3}];
+window.SHEPARD=()=>[{t0:T_REW,t1:T_REW_END+.15,db:-6,rate:1.2},{t0:STRIP.sound+.4,t1:T_VOID,db:-14,rate:.08}];
+
+// ---------- seek ----------
+const cam=document.getElementById('cam'), over=document.getElementById('over'), hudEl=document.getElementById('hud'), cap=document.getElementById('cap'), stage=document.getElementById('stage');
+window.DURATION=VO.duration;
+window.seek=function(t){
+  let bg=DK, c='', o='';
+  const inWorld=t<T_VOID||(t>=T_REB&&t<T_CTA);
+  if(inWorld){c=world(t);
+    for(const [id,reg,fn,light] of PANELS){const t0=S(id)-.05, t1=E(id)+.12;if(t>=t0-.15&&t<=t1+.1){const dim=seg(t,t0-.15,.25)*(1-seg(t,t1-.1,.2));o+=`<div class="a" style="left:0;top:0;width:1920px;height:1080px;background:rgba(8,8,10,${(.72*dim).toFixed(3)})"></div>`+panelBox(t,t0,t1,reg,fn(t),light);}}
+    o+=stripCmd(t)+rebuildTitle(t);
+    if(pres('style',t)<.5&&t<T_REB)bg='#fff';
+  } else if(t<S('l16'))c=voidScene(t);
+  else if(t<S('l17'))c=youScene(t);
+  else if(t<T_REB)c=promptScene(t);
+  else c=ctaScene(t);
+  stage.style.background=bg;
+  cam.style.transform=inWorld?camera(t):(t>=T_CTA?`scale(${(1+.015*clamp((t-T_CTA)/8)).toFixed(5)})`:`scale(${(1+.02*Math.sin(t*.4)+.015).toFixed(5)})`);
+  if(t>=E('l20')+.3)cam.style.transform='scale(1.015)';  // the end card holds still
+  cam.innerHTML=c; over.innerHTML=o; hudEl.innerHTML=hud(t); cap.innerHTML=caption(t);
+};
+window.CUTS=[0,T_REW,...Object.values(STRIP),T_VOID,S('l15'),S('l16'),S('l17'),T_REB,T_CTA];
+window.SFX=cues();
+window.ready=document.fonts.ready;
+</script></body></html>

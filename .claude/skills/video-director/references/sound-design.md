@@ -59,3 +59,13 @@ add(at('l20','risers')-.02, 'whoosh-end-384629', -3, {peak:true, len:2, fade:1})
 add(T-.12, 'swoosh-014-383768', -1, {peak:true});                              // wipe: peak on the cut
 ```
 `t` is when the clip starts, or with `peak: true` where its loudest moment lands (`at:` overrides that time).
+
+## Tension and release (learned on the Director's Cut, 2026-11-02)
+- **Music as a story beat, not wallpaper**: `MUSIC()` in film.html lists segments of the bed (where it plays, from which
+  point of the track). The Director's Cut plays it under the hook, cuts it dead on "Strip the sound", and slams it back
+  on the hit ("Start directing"), from a later, stronger point of the track.
+- **The Shepard tone**: `SHEPARD()` in film.html, synthesized by `tools/audio.py` (seven sine octaves gliding up under
+  a fixed bell curve: it rises for ever without getting higher). Fast (rate ~1.2 octaves/s, short) for a rewind; very
+  slow (~0.08) and quiet as a drone that holds tension under a long stretch. It lives in the SFX stem, so the voice
+  guard holds it under the voice.
+- **Silence is the biggest hit**: cut everything (music, drone, SFX) ~0.4 s before the reveal line, then land it.

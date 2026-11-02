@@ -9,7 +9,9 @@ You are the editor, motion designer and sound designer. The owner is the directo
 `docs/FEEDBACK.md` win over anything here. Read `docs/REELS.md` (the owner's video rules) before you start; this skill
 is how to apply them, plus what we learned from two reference videos on 2026-11-02 (`references/learned-from.md`).
 
-The working kit to copy is `promo/claude-video-rules/` (a 2:11 landscape tutorial made this way). It has the film
+The working kit to copy is `promo/claude-video-rules/` (a 2:11 landscape tutorial made this way); the faster,
+story-shaped v2 is `promo/directors-cut/` (54 s: the rewind and strip structure, Reel the pixel director, music
+segments and a Shepard tone). It has the film
 engine (`film.html`), the timeline builder (`tools/mkvo.py`), the renderer (`tools/render.js`), the SFX placer
 (`tools/audio.py`) and the mix (`tools/mix.py`). For vertical Reels, `promo/hackertube/` is the same kit at 1080×1920.
 
