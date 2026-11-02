@@ -189,7 +189,8 @@ function Collect({ name, open, onClose, onAdded, script }: { name: string; open:
       start(j);
     } catch (e) {
       setUp(null);
-      setErr((e as Error).message);
+      // the takes stay in the list (and on this device) until a batch is in the dataset: nothing to record again
+      setErr(`${(e as Error).message}. Your recordings are safe here: press Add again.`);
     }
   }
   const busy = !!job && ["queued", "running"].includes(job.status);

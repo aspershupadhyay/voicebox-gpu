@@ -6,6 +6,13 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Fix this 'upload failed (network or storage CORS)'… it took me 18 mins, make sure it doesn't get lost"** (2026-11-02,
+  adding a read-along session to a trained voice's dataset): studio uploads (`uploadFile`: datasets, clones, revoice,
+  subtitles, images) PUT straight to the R2 hostname, which the bucket's CORS refused. Now they go through our own
+  domain first (`/api/upload/put`, same origin, signed-in, only into the `uploads/` key just handed out, up to 95 MB),
+  with retries, and the presigned address only as the fallback; the deploy sets the bucket's CORS too
+  (`workers/r2-cors.json`). A failed upload never loses a recording: takes stay on the device until a batch is in the
+  dataset, and the error says so. Never make an upload depend on cross-site CORS when the Worker can carry it.
 - **"Check the root cause, it's taking too long"** (2026-11-02, the HackerTube Reel sat at "processing" on Instagram
   for 6 minutes after Publish now): on Cloudflare, `after()` work is stopped 30 s after the response, but publishing
   gave itself 280 s there, so the run died mid-wait with its lock held, and only the next sweep (itself cut at 30 s)
