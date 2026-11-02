@@ -2,7 +2,7 @@
 // every call picks one (lib/gpus.ts): a job's follow-ups go to the GPU that has it, new work to the preferred GPU and,
 // when that one is off or can't be reached, to the other.
 import { loadWorker, saveWorker, STALE_MS, type WorkerRecord } from "./registry";
-import { authFor, gpuState, jobBackend, order, rememberModalJob, type Backend, type GpuState } from "./gpus";
+import { authFor, gpuState, jobBackend, order, rememberModalJob, setPrefs, type Backend, type GpuState } from "./gpus";
 
 export class WorkerOffline extends Error {}
 /** The worker is registered (it heartbeats) but a request to it didn't get through: a tunnel that's seconds old and
@@ -107,6 +107,7 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
     let url: string;
     try { url = target(s, b, method, false); } catch (e) { why.push((e as Error).message); continue; }
     try {
+      if (b === "modal" && s.prefs.modal_stop_at) await setPrefs({ stop: false }); // new work: Stop no longer applies
       if (b === "modal" && !s.modal.awake) {
         await wake(url);
         // awake from now: the job's progress polls go to it before its first heartbeat lands
@@ -132,6 +133,7 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
  *  Costs a minute or two of Modal GPU; it sleeps again 10 minutes later. */
 export async function testModal(budgetMs?: number) {
   const s = await gpuState();
+  if (s.prefs.modal_stop_at) await setPrefs({ stop: false });
   const url = target(s, "modal", "POST", false);
   const t = Date.now();
   if (!s.modal.awake) {

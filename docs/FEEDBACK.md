@@ -6,6 +6,11 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"The GPU page is so cluttered… how will I stop it… UI & UX needs to be simple"** (2026-11-02): Settings → GPU &
+  engines is tabs that each do one job: Overview (Colab and Modal side by side, each with its state and one button:
+  Start / Stop, Wake / Stop; then "goes first" and the fallback switch, nothing else), Colab, Modal, Engines, Machine.
+  Modal has a real Stop (its next heartbeat shuts the container down, within a minute; MCP `gpu` backend
+  `stop_modal`). Keep the overview to those two cards: anything new goes in its GPU's tab.
 - **Modal's doctor: "waiting to be scheduled on a GPU_L4 worker… Time in queue: 0:08:00"** (2026-11-02): the reason
   Modal never started: no L4 free for the account. Modal now takes the first free of L4, A10G, A100 40 GB, L40S
   (`VOICEBOX_MODAL_GPU` pins one). A cloud GPU is never asked for as one card type only.

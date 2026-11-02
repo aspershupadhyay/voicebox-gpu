@@ -1,130 +1,203 @@
 "use client";
-// Which GPU takes the work: Colab or Modal first, the other as the fallback, Modal's address and its monthly cap.
-// Server side: lib/gpus.ts (lib/worker.ts routes every call through it); the MCP's `gpu` tool, action backend, does the same.
+// The two GPUs, simply. GpuOverview: Colab and Modal side by side, each with its state and one button (start / stop,
+// wake / stop), then which goes first and the fallback switch. ModalPanel: setting Modal up, its address and monthly
+// cap, heavy jobs, test and stop. Server side: lib/gpus.ts (lib/worker.ts routes every call through it); the MCP's
+// `gpu` tool, action backend, does the same.
+import { Lightning, Play, Power, Stop } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { api, type Gpus } from "./api";
-import { Info } from "./Info";
 import { useDialog } from "./Dialog";
 import { useStatus } from "./Shell";
 import { Field, Toggle } from "./ui";
 
 type Answer = Gpus & { modal_url: string };
+type Colab = { connected: boolean; runtimes?: { endpoint: string; accelerator: string }[] | { error: string }; config?: { voice_gpu: string } };
 
-export default function GpuChoice() {
+/** The GPU choice, kept fresh (every 30 s, every 5 s while something is changing). */
+function useGpus(fast = false) {
   const { refresh } = useStatus();
   const { toast } = useDialog();
   const [g, setG] = useState<Answer | null>(null);
-  const [url, setUrl] = useState("");
-  const [cap, setCap] = useState("");
   const [err, setErr] = useState("");
-  const [setup, setSetup] = useState<{ commands: string[]; at: number } | null>(null);
-  const [making, setMaking] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const load = useCallback(() => {
-    api<Answer>("gpus").then((a) => { setG(a); setUrl((u) => u || a.modal_url); setCap((c) => c || String(a.modal.cap_h)); }).catch((e) => setErr((e as Error).message));
-  }, []);
-  useEffect(() => { load(); const t = setInterval(load, 30_000); return () => clearInterval(t); }, [load]);
-
+  const load = useCallback(() => { api<Answer>("gpus").then((a) => { setG(a); setErr(""); }).catch((e) => setErr((e as Error).message)); }, []);
+  useEffect(() => { load(); const t = setInterval(load, fast ? 5000 : 30_000); return () => clearInterval(t); }, [load, fast]);
   async function save(patch: Record<string, unknown>, ok?: string) {
     setErr("");
     try { setG(await api<Answer>("gpus", { body: patch })); if (ok) toast(ok, "ok"); refresh(); }
     catch (e) { setErr((e as Error).message); }
   }
+  return { g, err, setErr, load, save, toast, refresh };
+}
+
+const gpuName = (s?: string | null) => s?.replace("NVIDIA ", "").replace("-SXM4", "") ?? null;
+
+/** Modal's two actions, shared by the overview and its own tab. */
+function useModalActions(load: () => void, refresh: () => void, toast: (m: string, t?: "ok" | "bad") => void, setErr: (e: string) => void) {
+  const [busy, setBusy] = useState<"" | "wake" | "stop">("");
+  async function wake() {
+    setErr(""); setBusy("wake");
+    try {
+      const r = await api<{ gpu: string | null; gpu_gb: number | null; woke_in_s: number; was_awake: boolean }>("gpus/modal-test", { body: {} });
+      toast(`Modal is on: ${gpuName(r.gpu) ?? "GPU"}${r.gpu_gb ? ` · ${r.gpu_gb} GB` : ""}${r.was_awake ? "" : ` (woke in ${r.woke_in_s} s)`}`, "ok");
+    } catch (e) { setErr((e as Error).message); }
+    setBusy(""); load(); refresh();
+  }
+  async function stop() {
+    setErr(""); setBusy("stop");
+    try { await api("gpus/modal-stop", { body: {} }); toast("Modal is shutting down (within a minute)", "ok"); }
+    catch (e) { setErr((e as Error).message); }
+    setBusy(""); load(); refresh();
+  }
+  return { busy, wake, stop };
+}
+
+export function GpuOverview({ open }: { open: (tab: "colab" | "modal") => void }) {
+  const { g, err, setErr, load, save, toast, refresh } = useGpus();
+  const { confirm } = useDialog();
+  const { status } = useStatus();
+  const [c, setC] = useState<Colab | null>(null);
+  const [cBusy, setCBusy] = useState(false);
+  const loadColab = useCallback(() => { api<Colab>("colab").then(setC).catch(() => setC(null)); }, []);
+  useEffect(() => { loadColab(); const t = setInterval(loadColab, 30_000); return () => clearInterval(t); }, [loadColab]);
+  const modal = useModalActions(load, refresh, toast, setErr);
+  if (!g) return <div className="card"><p className="dim small" style={{ margin: 0 }}>{err || "Loading…"}</p></div>;
+
+  const m = g.modal;
+  const runtimes = c && Array.isArray(c.runtimes) ? c.runtimes : [];
+  const colabOn = g.colab.online || runtimes.length > 0;
+  async function colabStart() {
+    setErr(""); setCBusy(true);
+    try { const r = await api<{ gpu: string }>("colab/start", { body: { purpose: "voice" } }); toast(`${r.gpu} starting: on in about 2 minutes`, "ok"); }
+    catch (e) { setErr((e as Error).message); }
+    setCBusy(false); loadColab(); refresh();
+  }
+  async function colabStop() {
+    const r = runtimes[0];
+    if (!r || !(await confirm({ title: `Stop the ${r.accelerator}?`, body: "Jobs on it stop and billing ends now.", confirm: "Stop", danger: true }))) return;
+    setErr(""); setCBusy(true);
+    try { await api("colab/stop", { body: { endpoint: r.endpoint } }); toast("Colab stopped", "ok"); }
+    catch (e) { setErr((e as Error).message); }
+    setCBusy(false); loadColab(); refresh();
+  }
+
+  const colabPill = g.colab.online ? ["On", "ok"] : runtimes.length ? ["Starting", "warn"] : ["Off", ""];
+  const modalPill = !m.configured ? ["Not set up", ""] : m.over_cap ? ["Monthly cap reached", "bad"] : m.awake ? ["On", "ok"] : ["Asleep", "blue"];
+  const first = g.prefer === "colab" ? "Colab" : "Modal";
+  const other = g.prefer === "colab" ? "Modal" : "Colab";
+  const serving = status?.backend === "colab" && g.colab.online ? "colab" : status?.backend === "modal" ? "modal" : null;
+
+  return (
+    <>
+      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(260px, 100%), 1fr))", marginBottom: 16 }}>
+        <section className="card" aria-label="Colab">
+          <div className="row between" style={{ gap: 8 }}>
+            <h2 style={{ margin: 0 }}>Colab</h2>
+            <span className={`pill ${colabPill[1]}`}>{colabPill[0]}</span>
+          </div>
+          <p className="dim small" style={{ margin: "6px 0 14px" }}>
+            {g.colab.online ? `${gpuName(g.colab.gpu) ?? "GPU"}${serving === "colab" ? " · taking the work" : ""}` : "Cheapest by the hour. Runs while it's on."}</p>
+          {!c?.connected ? <button className="ghost sm" onClick={() => open("colab")}>Connect Colab</button>
+            : colabOn ? <button className="ghost sm" disabled={cBusy || !runtimes.length} onClick={colabStop}><Stop size={13} weight="fill" /> Stop</button>
+            : <button className="sm" disabled={cBusy} onClick={colabStart}><Play size={13} weight="fill" /> {cBusy ? "Starting…" : `Start${c.config?.voice_gpu ? ` · ${c.config.voice_gpu}` : ""}`}</button>}
+        </section>
+
+        <section className="card" aria-label="Modal">
+          <div className="row between" style={{ gap: 8 }}>
+            <h2 style={{ margin: 0 }}>Modal</h2>
+            <span className={`pill ${modalPill[1]}`}>{modalPill[0]}</span>
+          </div>
+          <p className="dim small" style={{ margin: "6px 0 14px" }}>
+            {!m.configured ? "On demand: wakes for a job, sleeps after." : m.awake ? `${gpuName(m.gpu) ?? "GPU"}${serving === "modal" ? " · taking the work" : ""} · ${m.used_h} of ${m.cap_h} h this month`
+              : `Wakes for the next job · ${m.used_h} of ${m.cap_h} h this month`}</p>
+          {!m.configured ? <button className="sm" onClick={() => open("modal")}><Lightning size={13} weight="fill" /> Set up Modal</button>
+            : m.awake ? <button className="ghost sm" disabled={!!modal.busy} onClick={modal.stop}><Stop size={13} weight="fill" /> {modal.busy === "stop" ? "Stopping…" : "Stop"}</button>
+            : <button className="ghost sm" disabled={!!modal.busy || m.over_cap} onClick={modal.wake}><Power size={13} /> {modal.busy === "wake" ? "Waking… about a minute" : "Wake"}</button>}
+        </section>
+      </div>
+
+      <div className="card">
+        <div className="row between" style={{ gap: 12, flexWrap: "wrap" }}>
+          <div><b className="small">Goes first</b><div className="tiny dim">New jobs go to this GPU</div></div>
+          <div className="seg" role="group" aria-label="GPU that goes first">
+            <button className={g.prefer === "colab" ? "on" : ""} aria-pressed={g.prefer === "colab"} onClick={() => save({ prefer: "colab" }, "Colab goes first")}>Colab</button>
+            <button className={g.prefer === "modal" ? "on" : ""} aria-pressed={g.prefer === "modal"} disabled={!m.configured} title={!m.configured ? "Set up Modal first" : undefined}
+              onClick={() => save({ prefer: "modal" }, "Modal goes first")}>Modal</button>
+          </div>
+        </div>
+        <Toggle on={g.fallback} set={(v) => save({ fallback: v })} title={`Use ${other} when ${first} is off`}
+          about="A job is never sent twice." />
+      </div>
+      {err && <p className="err small">{err}</p>}
+    </>
+  );
+}
+
+export function ModalPanel() {
+  const [setup, setSetup] = useState<{ commands: string[]; at: number } | null>(null);
+  const { g, err, setErr, load, save, toast, refresh } = useGpus(!!setup);
+  const [url, setUrl] = useState<string | null>(null);
+  const [cap, setCap] = useState<string | null>(null);
+  const [making, setMaking] = useState(false);
+  const modal = useModalActions(load, refresh, toast, setErr);
+  // the setup's last command connects the address: once it does, the commands have done their job
+  useEffect(() => { if (setup && (g?.modal.connected_at ?? 0) > setup.at - 60_000) { setSetup(null); toast("Modal is connected", "ok"); } }, [setup, g?.modal.connected_at, toast]);
+  if (!g) return <div className="card"><p className="dim small" style={{ margin: 0 }}>{err || "Loading…"}</p></div>;
+  const m = g.modal;
+  const urlV = url ?? g.modal_url, capV = cap ?? String(m.cap_h);
+
   async function makeSetup() {
     setErr(""); setMaking(true);
     try { setSetup({ commands: (await api<{ commands: string[] }>("gpus/modal-setup", { body: {} })).commands, at: Date.now() }); }
     catch (e) { setErr((e as Error).message); }
     setMaking(false);
   }
-  async function test() {
-    setErr(""); setTesting(true);
-    try {
-      const r = await api<{ gpu: string | null; gpu_gb: number | null; woke_in_s: number; was_awake: boolean }>("gpus/modal-test", { body: {} });
-      toast(`Modal works: ${r.gpu?.replace("NVIDIA ", "") ?? "GPU"}${r.gpu_gb ? ` · ${r.gpu_gb} GB` : ""}${r.was_awake ? " (it was awake)" : `, awake in ${r.woke_in_s} s`}`, "ok");
-      load(); refresh();
-    } catch (e) { setErr((e as Error).message); }
-    setTesting(false);
-  }
   async function copy() {
     try { await navigator.clipboard.writeText(setup!.commands.join("\n")); toast("Copied: paste it in a terminal", "ok"); }
     catch { toast("Couldn't copy: select the commands and copy them", "bad"); }
   }
-  // the setup's last command connects the address: once it does, the commands have done their job
-  useEffect(() => { if (setup && (g?.modal.connected_at ?? 0) > setup.at - 60_000) { setSetup(null); toast("Modal is connected", "ok"); } }, [setup, g?.modal.connected_at, toast]);
-  useEffect(() => { if (!setup) return; const t = setInterval(load, 5000); return () => clearInterval(t); }, [setup, load]);
-  if (!g) return <div className="card"><div className="card-head"><h2>Which GPU</h2></div><p className="dim small" style={{ margin: 0 }}>{err || "Loading…"}</p></div>;
-
-  const m = g.modal;
-  const modalState = !m.configured ? ["Not set up", ""] : m.over_cap ? ["Cap reached", "bad"] : m.awake ? ["Awake", "ok"] : ["Asleep · wakes for a job", "blue"];
-  const colabState = g.colab.online ? ["On", "ok"] : ["Off", ""];
-  const other = g.prefer === "colab" ? "Modal" : "Colab";
 
   return (
-    <div className="card">
-      <div className="card-head"><h2>Which GPU <Info label="Which GPU">Two GPUs can take the studio&apos;s work. Colab runs while its runtime is on. Modal sleeps and wakes
-        for a job in about a minute (longer the very first time, while it installs), bills by the second and goes back to sleep 10 minutes after the last job.</Info></h2>
-        <div className="seg" role="group" aria-label="GPU that goes first">
-          <button className={g.prefer === "colab" ? "on" : ""} aria-pressed={g.prefer === "colab"} onClick={() => save({ prefer: "colab" }, "Colab goes first")}>Colab first</button>
-          <button className={g.prefer === "modal" ? "on" : ""} aria-pressed={g.prefer === "modal"} disabled={!m.configured} title={!m.configured ? "Add Modal's address below first" : undefined}
-            onClick={() => save({ prefer: "modal" }, "Modal goes first")}>Modal first</button>
-        </div>
-      </div>
-
-      <div className="erows" style={{ marginBottom: 12 }}>
-        <div className="erow">
-          <span className={`dot ${g.colab.online ? "ok" : "off"}`} aria-hidden />
-          <div className="erow-name"><b>Colab</b><span>{g.colab.gpu?.replace("NVIDIA ", "") ?? "Started here or from the notebook"}</span></div>
-          <span><span className={`pill ${colabState[1]}`}>{colabState[0]}</span></span>
-        </div>
-        <div className="erow">
-          <span className={`dot ${m.awake ? "ok" : m.over_cap ? "bad" : m.configured ? "park" : "off"}`} aria-hidden />
-          <div className="erow-name"><b>Modal</b><span>{m.configured ? `${m.used_h} of ${m.cap_h} h used this month${m.gpu ? ` · ${m.gpu.replace("NVIDIA ", "")}` : ""}` : "Free monthly credit, on demand"}</span></div>
-          <span><span className={`pill ${modalState[1]}`}>{modalState[0]}</span></span>
-        </div>
-      </div>
-
-      <Toggle on={g.fallback} set={(v) => save({ fallback: v }, v ? `${other} takes over when ${g.prefer === "colab" ? "Colab" : "Modal"} can't` : "No fallback")}
-        title={`Fall back to ${other}`} about={`When ${g.prefer === "colab" ? "Colab" : "Modal"} is off or can't be reached, the job goes to ${other} instead. A job that may have arrived is never sent twice.`} />
-      <Toggle on={g.modal_heavy} set={(v) => save({ modal_heavy: v })} title="Training and video on Modal too"
-        about="Off: voice training, Orpheus drafts and video stay on Colab (they take hours of GPU). Voiceovers, subtitles, clean-up and images use either." />
-
-      {!m.configured && !setup && (
-        <div className="row between" style={{ gap: 12, flexWrap: "wrap", marginTop: 12, padding: 12, border: "1px solid var(--line)", borderRadius: 12 }}>
-          <span className="small" style={{ flex: "1 1 240px" }}>Set up Modal once: make a free account at modal.com, then paste four commands in a terminal. Nothing to look up, the key is in them.</span>
-          <button className="sm" onClick={makeSetup} disabled={making}>{making ? "Making…" : "Set up Modal"}</button>
-        </div>
-      )}
-      {setup && (
-        <div className="stack" style={{ gap: 8, marginTop: 12, padding: 12, border: "1px solid var(--line)", borderRadius: 12 }}>
-          <div className="row between" style={{ gap: 8, flexWrap: "wrap" }}>
-            <b className="small">Paste this in a terminal (Mac or Linux; on Windows, WSL)</b>
-            <div className="row" style={{ gap: 6 }}><button className="sm" onClick={copy}>Copy</button><button className="ghost sm" onClick={() => setSetup(null)}>Close</button></div>
+    <div className="stack" style={{ gap: 16 }}>
+      <div className="card">
+        <div className="row between" style={{ gap: 12, flexWrap: "wrap" }}>
+          <div><b className="small">{m.configured ? (m.awake ? `On · ${gpuName(m.gpu) ?? "GPU"}` : m.over_cap ? "Monthly cap reached" : "Asleep: wakes for the next job") : "Not set up yet"}</b>
+            <div className="tiny dim">{m.configured ? `${m.used_h} of ${m.cap_h} h used this month · sleeps 10 min after the last job` : "A free modal.com account and four commands in a terminal"}</div></div>
+          <div className="row" style={{ gap: 8 }}>
+            {m.configured && (m.awake
+              ? <button className="ghost sm" disabled={!!modal.busy} onClick={modal.stop}><Stop size={13} weight="fill" /> {modal.busy === "stop" ? "Stopping…" : "Stop now"}</button>
+              : <button className="ghost sm" disabled={!!modal.busy || m.over_cap} onClick={modal.wake}><Power size={13} /> {modal.busy === "wake" ? "Waking… about a minute" : "Wake"}</button>)}
+            {!setup && <button className={m.configured ? "ghost sm" : "sm"} onClick={makeSetup} disabled={making}>{making ? "Making…" : m.configured ? "Set up again" : "Set up Modal"}</button>}
           </div>
-          <pre className="card inset mono" aria-label="Modal setup commands" style={{ fontSize: 12, whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>{setup.commands.join("\n")}</pre>
-          <span className="tiny dim">The first line opens modal.com to sign in. The last one deploys the GPU and connects it here; this card turns green by
-            itself. The commands hold a key only for Modal: don&apos;t share them. Pressing Set up Modal again makes a new key and the old one stops working.</span>
         </div>
-      )}
-
-      <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginTop: 12 }}>
-        {m.url_from !== "env" && (
-          <Field label="Modal address" style={{ flex: "1 1 260px", margin: 0 }} hint="Filled in by the setup; or paste what modal deploy printed">
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://you--voicebox-worker-gateway.us-east.modal.run" spellCheck={false} />
-          </Field>
+        {setup && (
+          <div className="stack" style={{ gap: 8, marginTop: 14 }}>
+            <div className="row between" style={{ gap: 8, flexWrap: "wrap" }}>
+              <span className="small">Paste in a terminal (Mac or Linux; on Windows, WSL)</span>
+              <div className="row" style={{ gap: 6 }}><button className="sm" onClick={copy}>Copy</button><button className="ghost sm" onClick={() => setSetup(null)}>Close</button></div>
+            </div>
+            <pre className="card inset mono" aria-label="Modal setup commands" style={{ fontSize: 12, whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>{setup.commands.join("\n")}</pre>
+            <span className="tiny dim">The last line connects Modal here by itself. The commands hold Modal&apos;s own key: don&apos;t share them. A new setup makes a new key.</span>
+          </div>
         )}
-        <Field label="Modal hours a month" style={{ flex: "0 1 150px", margin: 0 }} hint="0 turns Modal off">
-          <input type="number" min={0} max={500} value={cap} onChange={(e) => setCap(e.target.value)} />
-        </Field>
-        <button className="sm" onClick={() => save({ ...(m.url_from !== "env" ? { modal_url: url } : {}), modal_cap_h: Number(cap) || 0 }, "Saved")}
-          disabled={(m.url_from === "env" || url === g.modal_url) && Number(cap) === m.cap_h}>Save</button>
       </div>
-      {m.configured && !setup && (
-        <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-          <button className="ghost xs" onClick={test} disabled={testing || m.over_cap} title="Starts Modal (a minute or two of its GPU) and checks it answers">{testing ? "Waking Modal… about a minute" : "Test Modal"}</button>
-          <button className="ghost xs" onClick={makeSetup} disabled={making}>Set up Modal again (new key)</button>
+
+      <div className="card">
+        <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+          {m.url_from !== "env" && (
+            <Field label="Address" style={{ flex: "1 1 260px", margin: 0 }} hint="Filled in by the setup">
+              <input value={urlV} onChange={(e) => setUrl(e.target.value)} placeholder="https://you--voicebox-worker-gateway.us-east.modal.run" spellCheck={false} />
+            </Field>
+          )}
+          <Field label="Hours a month" style={{ flex: "0 1 140px", margin: 0 }} hint="0 turns Modal off">
+            <input type="number" min={0} max={500} value={capV} onChange={(e) => setCap(e.target.value)} />
+          </Field>
+          <button className="sm" disabled={(m.url_from === "env" || urlV === g.modal_url) && Number(capV) === m.cap_h}
+            onClick={async () => { await save({ ...(m.url_from !== "env" ? { modal_url: urlV } : {}), modal_cap_h: Number(capV) || 0 }, "Saved"); setUrl(null); setCap(null); }}>Save</button>
         </div>
-      )}
-      {err && <p className="err small" style={{ marginBottom: 0 }}>{err}</p>}
+        <Toggle on={g.modal_heavy} set={(v) => save({ modal_heavy: v })} title="Training and video on Modal too"
+          about="Off: they stay on Colab (they take hours of GPU)." />
+      </div>
+      {err && <p className="err small" style={{ margin: 0 }}>{err}</p>}
     </div>
   );
 }
