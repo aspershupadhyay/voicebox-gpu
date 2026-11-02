@@ -75,9 +75,15 @@ def _bake(image):
     if not (key and studio):
         return image
     import tempfile
-    req = urllib.request.Request(studio + "/api/bundle", headers={"Authorization": "Bearer " + key})
-    with urllib.request.urlopen(req, timeout=60, context=_ssl_context()) as r:
-        data, version = r.read(), r.headers.get("X-Worker-Version", "?")
+    # the User-Agent on the request itself: urlopen with a context= ignores the opener installed above, and Cloudflare
+    # refuses Python's own (HTTP 403, error code 1010)
+    req = urllib.request.Request(studio + "/api/bundle", headers={"Authorization": "Bearer " + key, "User-Agent": "voicebox-worker-modal"})
+    try:
+        with urllib.request.urlopen(req, timeout=60, context=_ssl_context()) as r:
+            data, version = r.read(), r.headers.get("X-Worker-Version", "?")
+    except Exception as e:  # noqa: BLE001  not fatal: each start fetches the code from the studio too
+        print(f"warning: couldn't bake the worker code in ({e}); each start fetches it from the studio instead")
+        return image
     d = tempfile.mkdtemp(prefix="voicebox-worker-")
     tarfile.open(fileobj=io.BytesIO(data), mode="r:gz").extractall(d, filter="data")
     print(f"worker {version} baked into the image")
