@@ -40,7 +40,10 @@ _opener.addheaders = [("User-Agent", "voicebox-worker-modal")]
 urllib.request.install_opener(_opener)
 
 APP = "voicebox-worker"
-GPU = os.environ.get("VOICEBOX_MODAL_GPU", "L4")  # read at deploy time: L4 (24 GB) by default, A100 / H100 work too
+# Modal takes the first of these it has free (read at deploy time). L4 alone can queue for many minutes ("waiting to be
+# scheduled on a GPU_L4 worker"), so the next-closest cards follow: A10G (24 GB, same price range), then A100 40 GB and
+# L40S (48 GB), which cost more an hour. VOICEBOX_MODAL_GPU=L4 (or a comma list) at deploy pins it.
+GPU = [g.strip() for g in os.environ.get("VOICEBOX_MODAL_GPU", "L4,A10G,A100-40GB,L40S").split(",") if g.strip()]
 HOME = "/vol/voicebox"
 CODE = "/root/worker"
 BAKED = "/root/baked"  # the worker code as it was at deploy time: the start never depends on reaching the studio
