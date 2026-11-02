@@ -43,7 +43,7 @@ MAX_BUSY_H = float(os.environ.get("VOICEBOX_MODAL_MAX_BUSY_H", "4"))  # a job th
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install("ffmpeg", "sox", "git", "curl", "libsndfile1", "build-essential")
+    .apt_install("ca-certificates", "ffmpeg", "sox", "git", "curl", "libsndfile1", "build-essential")
     .pip_install("numpy", "scipy", "soundfile", "pillow", "librosa", "yt-dlp", "curl_cffi", "uv")
     .env({"UV_LINK_MODE": "copy", "PYTHONUNBUFFERED": "1", "VOICEBOX_HOME": HOME, "VOICEBOX_BACKEND": "modal",
           # a container starts for a job: nothing is fetched or loaded ahead of it (the Volume keeps what's been used)
@@ -166,11 +166,21 @@ if __name__ == "__main__":
         sys.exit("usage: python3 voicebox_modal.py <key> <https://your-studio>  (Settings → GPU & engines → Set up Modal prints it)")
     key, origin = sys.argv[1], sys.argv[2].rstrip("/")
     url = modal.Function.from_name(APP, "gateway").get_web_url().rstrip("/")
+    # certifi's certificates (it comes with modal): the python.org Python on a Mac trusts none of its own until its
+    # "Install Certificates" step runs, and every HTTPS request fails with CERTIFICATE_VERIFY_FAILED
+    try:
+        import certifi
+        import ssl
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ctx = None
     req = urllib.request.Request(origin + "/api/register", method="POST",
                                  data=json.dumps({"backend": "modal", "hello": True, "url": url}).encode(),
                                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "voicebox-modal-setup"})
     try:
-        urllib.request.urlopen(req, timeout=30).close()
+        urllib.request.urlopen(req, timeout=30, context=ctx).close()
     except urllib.error.HTTPError as e:
         sys.exit(f"Deployed at {url}, but the studio said {e.code}: {e.read().decode()[:200]}. Paste the address in Settings → GPU & engines.")
+    except urllib.error.URLError as e:
+        sys.exit(f"Deployed at {url}, but couldn't reach the studio ({e.reason}). Paste that address in Settings → GPU & engines → Modal address.")
     print(f"\nModal GPU connected: {url}\nThe studio uses it now (Settings → GPU & engines). It sleeps until a job wakes it.")

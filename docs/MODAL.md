@@ -23,7 +23,7 @@ The studio has two GPUs that run the same worker code (`worker/`):
 - **Heavy jobs** (training, Orpheus drafts, video) stay on Colab unless "Training and video on Modal too" is on.
 
 Change it in Settings → GPU & engines → Which GPU, or with the MCP: `gpu` action `backend` (`prefer`, `fallback`,
-`modal_cap_h`, `modal_heavy`). `worker_status` and the dashboard's status show both GPUs (`gpus`).
+`modal_cap_h`, `modal_heavy`, `modal_url`, and `test_modal: true` to wake it and see its GPU). `worker_status` and the dashboard's status show both GPUs (`gpus`).
 
 ## Setting it up (once)
 
@@ -40,6 +40,12 @@ looked up: Modal never needs `WORKER_SECRET`. It's the password between the stud
 worker routes (heartbeat, bundle, settings, weight cache) and `/api/modal/app`, nothing else; it can't stand in for
 the Colab worker's record. Pressing Set up Modal again makes a new key and the old one stops working (run the commands
 again). The key is made only for a signed-in person in the browser, never for the MCP or a model.
+
+If the last step says it couldn't reach the studio (on a Mac with the python.org Python, `CERTIFICATE_VERIFY_FAILED`
+before 2026-11-02: that Python trusts no certificates until its "Install Certificates" step; the script now uses
+certifi's), the GPU is deployed anyway: run the last command again, or paste the address it printed in the card.
+Then press **Test Modal** (or the MCP: `gpu` action `backend` with `test_modal: true`): it wakes Modal and answers with
+its GPU.
 
 By hand instead: the same commands with the Worker's `WORKER_SECRET` as the key work too, and the address can be pasted
 in the card (or set on the Worker: `npx wrangler secret put MODAL_WORKER_URL`).

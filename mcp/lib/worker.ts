@@ -126,6 +126,21 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
   throw new WorkerOffline(why.length > 1 ? `No GPU could take it. ${why.join(" · ")}` : why[0] ?? offline(s));
 }
 
+/** Wake Modal (even with Colab on, even past nothing but a read) and ask its /health: proof it works, end to end.
+ *  Costs a minute or two of Modal GPU; it sleeps again 10 minutes later. */
+export async function testModal() {
+  const s = await gpuState();
+  const url = target(s, "modal", "POST", false);
+  const t = Date.now();
+  if (!s.modal.awake) {
+    await wake(url);
+    await saveWorker({ ...(s.modal.rec ?? {}), url, started_at: Date.now() / 1000, last_seen: Date.now() }, "modal").catch(() => {});
+  }
+  const h = await callOn<{ gpu?: { name?: string; total_gb?: number }; version?: string; engines?: Record<string, string> }>("modal", url, "/health", {}, "GET");
+  return { ok: true, woke_in_s: Math.round((Date.now() - t) / 1000), was_awake: s.modal.awake, gpu: h.gpu?.name ?? null, gpu_gb: h.gpu?.total_gb ?? null,
+    worker_version: h.version ?? null, engines: h.engines ?? {}, url };
+}
+
 function offline(s: GpuState) {
   const parts = [s.colab.online ? null : "Colab is off", !s.modal.configured ? "Modal isn't set up" : s.modal.over ? "Modal is past its monthly cap" : "Modal is asleep"].filter(Boolean);
   return `No GPU is on (${parts.join(", ")}). Start Colab in Settings → GPU & engines, or send a job and Modal wakes for it.`;
