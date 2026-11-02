@@ -264,3 +264,40 @@ if __name__ == "__main__":
     except urllib.error.URLError as e:
         sys.exit(f"Deployed at {url}, but couldn't reach the studio ({e.reason}). Paste that address in Settings → GPU & engines → Modal address.")
     print(f"\nModal GPU connected: {url}\nThe studio uses it now (Settings → GPU & engines). It sleeps until a job wakes it.")
+
+
+@app.function(image=image, gpu=GPU, volumes={"/vol": vol}, secrets=[modal.Secret.from_name("voicebox")], timeout=900)
+def doctor():
+    """Every step of a start, printed as it goes:   python3 -m modal run voicebox_modal.py::doctor
+    (the same GPU, secret, Volume and code as the real one, so whatever stops the real start shows here)."""
+    print("1. container is running", flush=True)
+    print("2. GPU:", subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], capture_output=True, text=True).stdout.strip() or "none!", flush=True)
+    secret, register_url = os.environ.get("WORKER_SECRET", ""), os.environ.get("REGISTER_URL", "")
+    print(f"3. secret 'voicebox': WORKER_SECRET {'ok (' + secret[:5] + '…)' if len(secret) >= 24 else 'MISSING or too short'}, REGISTER_URL {register_url or 'MISSING'}", flush=True)
+    try:
+        print("4. worker code:", code_for(register_url, secret), flush=True)
+    except Exception as e:  # noqa: BLE001
+        print("4. worker code FAILED:", e, flush=True)
+        return
+    os.makedirs(os.path.join(HOME, "logs"), exist_ok=True)
+    env = {**os.environ, **worker_env(register_url, secret), "WORKER_SECRET": secret, "REGISTER_URL": register_url}
+    p = subprocess.Popen([sys.executable, os.path.join(CODE, "gateway.py"), "--host", "0.0.0.0", "--port", str(PORT)],
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=CODE, text=True)
+    for _ in range(90):
+        time.sleep(1)
+        if p.poll() is not None:
+            print("5. gateway EXITED:\n" + (p.stdout.read() or "")[-3000:], flush=True)
+            return
+        try:
+            print("5. gateway answers:", json.dumps(health(secret))[:300], flush=True)
+            break
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        print("5. gateway didn't answer in 90 s", flush=True)
+    try:
+        print("6. studio heartbeat:", heartbeat(register_url, secret, "https://doctor.modal.run", "doctor") and "accepted", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print("6. studio heartbeat FAILED:", e, flush=True)
+    p.kill()
+    print("done: every step above passed unless one says FAILED / MISSING / EXITED", flush=True)
