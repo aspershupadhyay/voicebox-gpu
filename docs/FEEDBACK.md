@@ -6,6 +6,11 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **Cerebrium's first job: "worker 404: not found"** (2026-11-02): Cerebrium ran two containers at once (the log had
+  two gateways starting, two self-checks) and sent the job's progress to the one that didn't have it. Interruptible
+  capacity (Cerebrium's default) is preempted and moved "during consolidation"; the wrapper ignored SIGTERM, so the
+  old one lingered. Now `compute_tier = "protected"` (2x the rate: a job finishes where it started), SIGTERM shuts the
+  container down, and a cloud job lost that way says so ("send it again") instead of a bare 404.
 - **Cerebrium's setup: "Failed to download checksums: CERTIFICATE_VERIFY_FAILED"** (2026-11-02, a Mac): the
   `cerebrium` pip package downloads its real CLI with the system Python, which on the python.org build trusts no
   certificates. The setup's first line now exports `SSL_CERT_FILE` from certifi before `cerebrium login`. Every setup

@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -161,6 +162,18 @@ def serve():
     url = own_url()
     log(f"worker {version} at {url}")
     gw = spawn()
+
+    def on_term(*_):
+        # Cerebrium is replacing or stopping this container: go now, so an old copy never lingers next to the new one
+        # (it would keep heartbeating, and hold a job nobody can reach)
+        log("SIGTERM from Cerebrium: shutting down")
+        try:
+            gw.terminate()
+            gw.wait(timeout=10)
+        except Exception:  # noqa: BLE001
+            gw.kill()
+        os._exit(0)
+    signal.signal(signal.SIGTERM, on_term)
     busy_since = None
     first = True
     while True:
