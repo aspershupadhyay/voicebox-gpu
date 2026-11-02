@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"the studio said 400: the Modal address looks like…"** (2026-11-02): `modal deploy` prints a regional address
+  (`…gateway.us-east.modal.run`) and the check only took `…gateway.modal.run`, so the setup couldn't connect, Modal's
+  heartbeats would have been refused, and the guessed address answered "still starting" for ever. Never guess an
+  address a tool prints: take what it prints, and check it against real output before shipping.
 - **The deploy step's "HTTP Error 403: Forbidden"** (2026-11-02): Cloudflare refusing Python's own user agent again
   (error 1010): `urlopen(..., context=)` builds its own opener and drops the installed one's User-Agent. Every request
   a script sends to the studio sets User-Agent on the Request itself, and a step that's only an optimisation (baking

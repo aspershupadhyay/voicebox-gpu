@@ -109,7 +109,7 @@ export default function GpuChoice() {
       <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginTop: 12 }}>
         {m.url_from !== "env" && (
           <Field label="Modal address" style={{ flex: "1 1 260px", margin: 0 }} hint="Filled in by the setup; or paste what modal deploy printed">
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://you--voicebox-worker-gateway.modal.run" spellCheck={false} />
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://you--voicebox-worker-gateway.us-east.modal.run" spellCheck={false} />
           </Field>
         )}
         <Field label="Modal hours a month" style={{ flex: "0 1 150px", margin: 0 }} hint="0 turns Modal off">
