@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **Cerebrium's setup: "Failed to download checksums: CERTIFICATE_VERIFY_FAILED"** (2026-11-02, a Mac): the
+  `cerebrium` pip package downloads its real CLI with the system Python, which on the python.org build trusts no
+  certificates. The setup's first line now exports `SSL_CERT_FILE` from certifi before `cerebrium login`. Every setup
+  command that runs Python on the owner's Mac gets certifi's certificates.
 - **"Let's set up Cerebrium quickly"** (2026-11-02): a third GPU, the same pattern as Modal (`cerebrium_app/`,
   `docs/MODAL.md` → Cerebrium): its own card on the Overview, its own tab, the same four-command setup, cap, Wake and
   Stop, and the fallback runs down Colab, Modal, Cerebrium. A new cloud GPU is one more entry in `lib/gpus.ts` CLOUDS

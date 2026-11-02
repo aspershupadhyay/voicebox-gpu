@@ -247,7 +247,9 @@ export function setupCommands(key: string, origin: string, cloud: Cloud = "modal
   if (cloud === "cerebrium") {
     const get = (f: string) => `curl -fsSL -H "Authorization: Bearer ${key}" "${origin}/api/modal/app?f=${f}" -o ${f}`;
     return [
-      "python3 -m pip install -q --upgrade cerebrium certifi && cerebrium login",
+      // the pip package downloads the real CLI with Python: on the python.org Python for a Mac that fails
+      // (CERTIFICATE_VERIFY_FAILED) unless Python is pointed at certifi's certificates first
+      'python3 -m pip install -q --upgrade cerebrium certifi && export SSL_CERT_FILE="$(python3 -m certifi)" && cerebrium login',
       `mkdir -p voicebox-cerebrium && cd voicebox-cerebrium && ${get("cerebrium.toml")} && ${get("voicebox_cerebrium.py")}`,
       `printf 'WORKER_SECRET=${key}\\nREGISTER_URL=${origin}/api/register\\n' > voicebox.env`,
       `cerebrium deploy -y 2>&1 | tee deploy.log; python3 voicebox_cerebrium.py connect ${key} ${origin} deploy.log`,
