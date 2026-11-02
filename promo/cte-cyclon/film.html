@@ -333,7 +333,7 @@ scene(S('l16'),INK,(t)=>{
   const t0=S('l16');let h=grain(1);
   const st=at('l16','stop'), ja=at('l16','just');
   let g='';for(let i=0;i<20;i++){const c=i%4,r=Math.floor(i/4);const fall=seg(t,st+hash(i+40)*.9,.65,ei);
-    g+=A(150+c*200,330+r*190+fall*1700,`opacity:${(1-fall*.6).toFixed(3)};transform:rotate(${(fall*(hash(i)-.5)*140).toFixed(1)}deg)`,appLA(i,140,ONINK2,2));}
+    g+=A(150+c*200,620+r*190+fall*1700,`opacity:${(1-fall*.6).toFixed(3)};transform:rotate(${(fall*(hash(i)-.5)*140).toFixed(1)}deg)`,appLA(i,140,ONINK2,2));}
   h+=g;
   h+=C(330,`font-size:92px;line-height:1.05;font-weight:500;color:${ONINK};letter-spacing:-0.03em;padding:0 90px;box-sizing:border-box;opacity:${(1-seg(t,ja-.3,.3)).toFixed(3)}`,spoken(t,'l16',['But','if','it','works,',"you'll",'stop','opening','apps.'],0));
   h+=C(800,`font-size:170px;line-height:1;color:${ONINK}`,`<span class="serif" style="font-style:italic">${spoken(t,'l16',["You'll",'just','ask.'],8)}</span>`);
