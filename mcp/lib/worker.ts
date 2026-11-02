@@ -54,14 +54,16 @@ function target(s: GpuState, b: Backend, method: string, isJob: boolean): string
 /** Wake a sleeping Modal GPU: its first answer waits on a container starting (about a minute; longer the first time,
  *  while it installs). Only that wait is waited out: an address that doesn't resolve, refuses or resets, or an answer
  *  that says it isn't ours (not deployed, wrong secret), gives up in seconds, so the other GPU can take the job. */
-async function wake(url: string) {
+async function wake(url: string, budgetMs = 8 * 60_000) {
   const auth = await authFor("modal");
-  const until = Date.now() + 8 * 60_000;
+  const until = Date.now() + budgetMs;
   let last = "", drops = 0;
   while (Date.now() < until) {
     try {
-      const r = await fetch(`${url}/health`, { headers: { Authorization: `Bearer ${auth}` }, signal: AbortSignal.timeout(140_000), cache: "no-store" });
+      const r = await fetch(`${url}/health`, { headers: { Authorization: `Bearer ${auth}` }, signal: AbortSignal.timeout(Math.max(1000, Math.min(140_000, until - Date.now()))), cache: "no-store" });
       if (r.ok) return;
+      const said = r.status < 500 ? await r.json().then((j: { error?: string }) => j.error, () => null).catch(() => null) : null;
+      if (r.status === 424 && said) throw new WorkerUnreachable(said, true); // the worker's own start failed: it says why
       if (r.status < 500) throw new WorkerUnreachable(`Modal answered ${r.status}: ${r.status === 404 ? "the app isn't deployed at that address (modal deploy modal_app/voicebox_modal.py)" : r.status === 401 ? "its key doesn't match (Settings → GPU & engines → Set up Modal again)" : "it isn't the voicebox worker"}`, true);
       last = `HTTP ${r.status}`;
     } catch (e) {
@@ -72,7 +74,7 @@ async function wake(url: string) {
     }
     await new Promise((res) => setTimeout(res, 3000));
   }
-  throw new WorkerUnreachable(`the Modal GPU didn't wake up in 8 min (${last})`, true);
+  throw new WorkerUnreachable(`the Modal GPU didn't wake up in ${Math.round(budgetMs / 60_000) || "<1"} min (${last})`, true);
 }
 
 export async function call<T = unknown>(path: string, init: Init = {}) {
@@ -128,12 +130,17 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
 
 /** Wake Modal (even with Colab on, even past nothing but a read) and ask its /health: proof it works, end to end.
  *  Costs a minute or two of Modal GPU; it sleeps again 10 minutes later. */
-export async function testModal() {
+export async function testModal(budgetMs?: number) {
   const s = await gpuState();
   const url = target(s, "modal", "POST", false);
   const t = Date.now();
   if (!s.modal.awake) {
-    await wake(url);
+    try { await wake(url, budgetMs); } catch (e) {
+      // out of time but nothing went wrong: the container is starting (the knock reached Modal), ask again shortly
+      if (budgetMs && /didn't wake up in/.test((e as Error).message)) return { ok: false, starting: true, waited_s: Math.round((Date.now() - t) / 1000), url,
+        next: "Modal is still starting (the first start downloads its image): ask again in a minute; it heartbeats once it's up" };
+      throw e;
+    }
     await saveWorker({ ...(s.modal.rec ?? {}), url, started_at: Date.now() / 1000, last_seen: Date.now() }, "modal").catch(() => {});
   }
   const h = await callOn<{ gpu?: { name?: string; total_gb?: number }; version?: string; engines?: Record<string, string> }>("modal", url, "/health", {}, "GET");

@@ -401,7 +401,7 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
           const gp = await import("@/lib/gpus");
           const patch = Object.fromEntries(Object.entries({ prefer, fallback, modal_cap_h, modal_heavy, modal_url }).filter(([, v]) => v !== undefined));
           if (Object.keys(patch).length) await gp.setPrefs(patch);
-          const test = test_modal ? await (await import("@/lib/worker")).testModal().catch((e: Error) => ({ ok: false, error: e.message })) : undefined;
+          const test = test_modal ? await (await import("@/lib/worker")).testModal(45_000).catch((e: Error) => ({ ok: false, error: e.message })) : undefined;
           return text({ ...gp.describe(await gp.gpuState()), ...(test ? { modal_test: test } : {}) });
         }
         if (action === "start") return text({ ...(await colab.start(colab.appOrigin(), gpu, { purpose, high_ram })), next: "The worker comes online in about 2 min: check worker_status." });
