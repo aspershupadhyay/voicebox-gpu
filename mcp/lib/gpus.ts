@@ -192,6 +192,7 @@ export function setupCommands(key: string, origin: string) {
     "python3 -m pip install -q --upgrade modal && python3 -m modal setup",
     `curl -fsSL -H "Authorization: Bearer ${key}" ${origin}/api/modal/app -o voicebox_modal.py`,
     `python3 -m modal secret create voicebox WORKER_SECRET=${key} REGISTER_URL=${origin}/api/register --force`,
-    `python3 -m modal deploy voicebox_modal.py && python3 voicebox_modal.py ${key} ${origin}`,
+    // the key and the studio at deploy bake the worker code into the image, so a start never depends on the studio
+    `VOICEBOX_KEY=${key} VOICEBOX_STUDIO=${origin} python3 -m modal deploy voicebox_modal.py && python3 voicebox_modal.py ${key} ${origin}`,
   ];
 }

@@ -28,15 +28,23 @@ import sys
 import tarfile
 import threading
 import time
+import shutil
 import urllib.error
 import urllib.request
 
 import modal
 
+# Cloudflare turns away Python's own user agent ("error code: 1010"): every request here says what it is
+_opener = urllib.request.build_opener()
+_opener.addheaders = [("User-Agent", "voicebox-worker-modal")]
+urllib.request.install_opener(_opener)
+
 APP = "voicebox-worker"
 GPU = os.environ.get("VOICEBOX_MODAL_GPU", "L4")  # read at deploy time: L4 (24 GB) by default, A100 / H100 work too
 HOME = "/vol/voicebox"
 CODE = "/root/worker"
+BAKED = "/root/baked"  # the worker code as it was at deploy time: the start never depends on reaching the studio
+SAVED = f"{HOME}/app"  # the last code fetched at a start, on the Volume
 PORT = 8000
 IDLE_S = 600  # asleep ten minutes after the last request
 MAX_BUSY_H = float(os.environ.get("VOICEBOX_MODAL_MAX_BUSY_H", "4"))  # a job that runs longer is let go (the cap's backstop)
@@ -49,6 +57,35 @@ image = (
           # a container starts for a job: nothing is fetched or loaded ahead of it (the Volume keeps what's been used)
           "VOICEBOX_PREFETCH": "", "VOICEBOX_PRELOAD": ""})
 )
+
+
+def _ssl_context():
+    """certifi's certificates when there are any: the python.org Python on a Mac trusts none of its own."""
+    try:
+        import certifi
+        import ssl
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return None
+
+
+def _bake(image):
+    """At deploy, on your machine: the worker code goes into the image (setup passes VOICEBOX_KEY and VOICEBOX_STUDIO)."""
+    key, studio = os.environ.get("VOICEBOX_KEY"), os.environ.get("VOICEBOX_STUDIO", "").rstrip("/")
+    if not (key and studio):
+        return image
+    import tempfile
+    req = urllib.request.Request(studio + "/api/bundle", headers={"Authorization": "Bearer " + key})
+    with urllib.request.urlopen(req, timeout=60, context=_ssl_context()) as r:
+        data, version = r.read(), r.headers.get("X-Worker-Version", "?")
+    d = tempfile.mkdtemp(prefix="voicebox-worker-")
+    tarfile.open(fileobj=io.BytesIO(data), mode="r:gz").extractall(d, filter="data")
+    print(f"worker {version} baked into the image")
+    return image.add_local_dir(d, BAKED)
+
+
+if modal.is_local():
+    image = _bake(image)
 vol = modal.Volume.from_name("voicebox-home", create_if_missing=True)
 app = modal.App(APP)
 
@@ -72,7 +109,7 @@ def worker_env(register_url, secret):
     """HF_TOKEN and the trained-voice settings, from the studio (as the Colab launcher gets them)."""
     env = {}
     try:
-        req = urllib.request.Request(register_url.rsplit("/api/", 1)[0] + "/api/worker-env", headers={"Authorization": "Bearer " + secret})
+        req = urllib.request.Request(register_url.rsplit("/api/", 1)[0] + "/api/worker-env", headers={"Authorization": "Bearer " + secret, "User-Agent": "voicebox-worker-modal"})
         with urllib.request.urlopen(req, timeout=15) as r:
             got = json.loads(r.read())
         env = {k: v for k, v in got.items() if k in ("HF_TOKEN", "MY_VOICE_MODEL", "MY_VOICE_SPEAKER", "MY_VOICE_ADAPTER_URL") and v}
@@ -141,12 +178,38 @@ def watch(register_url, secret, version, spawn):
 @modal.concurrent(max_inputs=200)
 @modal.web_server(PORT, startup_timeout=600)
 def gateway():
-    secret = os.environ["WORKER_SECRET"]
-    register_url = os.environ["REGISTER_URL"]
-    if len(secret) < 24:
-        raise RuntimeError("the voicebox secret's WORKER_SECRET must be Modal's key from Settings → GPU & engines (24+ characters)")
+    try:
+        start()
+    except Exception as e:  # noqa: BLE001  a start that fails says why, instead of Modal retrying it for ever
+        log(f"start failed: {type(e).__name__}: {e}")
+        broken(f"{type(e).__name__}: {e}")
+
+
+def code_for(register_url, secret):
+    """The newest worker code from the studio; else the last one fetched (on the Volume); else the one baked in at deploy."""
+    try:
+        version = fetch_code(register_url, secret)
+        shutil.rmtree(SAVED, ignore_errors=True)
+        shutil.copytree(CODE, SAVED)
+        return version
+    except Exception as e:  # noqa: BLE001
+        log(f"couldn't fetch the worker code from the studio ({type(e).__name__}: {e})")
+        for src, what in ((SAVED, "the last fetched"), (BAKED, "the deployed")):
+            if os.path.exists(os.path.join(src, "gateway.py")):
+                shutil.rmtree(CODE, ignore_errors=True)
+                shutil.copytree(src, CODE)
+                log(f"using {what} worker code")
+                return "cached"
+        raise RuntimeError(f"couldn't get the worker code from the studio ({type(e).__name__}: {e}) and none was baked in at deploy") from e
+
+
+def start():
+    secret = os.environ.get("WORKER_SECRET", "")
+    register_url = os.environ.get("REGISTER_URL", "")
+    if len(secret) < 24 or not register_url.startswith("https://"):
+        raise RuntimeError("the Modal secret 'voicebox' needs WORKER_SECRET (Modal's key from Settings → GPU & engines) and REGISTER_URL")
     os.makedirs(os.path.join(HOME, "logs"), exist_ok=True)
-    version = fetch_code(register_url, secret)
+    version = code_for(register_url, secret)
     env = {**os.environ, **worker_env(register_url, secret), "WORKER_SECRET": secret, "REGISTER_URL": register_url}
     log(f"worker {version} on {GPU}")
 
@@ -156,7 +219,26 @@ def gateway():
                                 stdout=logf, stderr=subprocess.STDOUT, env=env, cwd=CODE)
 
     threading.Thread(target=watch, args=(register_url, secret, version, spawn), daemon=True).start()
-    # web_server waits for the port to answer before the first request goes through
+
+
+def broken(why):
+    """Answer every request with why the start failed (HTTP 424), so the studio's Test Modal shows it."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class H(BaseHTTPRequestHandler):
+        def _send(self):
+            body = json.dumps({"error": f"the Modal worker didn't start: {why}"}).encode()
+            self.send_response(424)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        do_GET = do_POST = _send
+
+        def log_message(self, *a):
+            pass
+    threading.Thread(target=ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever, daemon=True).start()
+# web_server waits for the port to answer before the first request goes through
 
 
 if __name__ == "__main__":
@@ -166,19 +248,11 @@ if __name__ == "__main__":
         sys.exit("usage: python3 voicebox_modal.py <key> <https://your-studio>  (Settings → GPU & engines → Set up Modal prints it)")
     key, origin = sys.argv[1], sys.argv[2].rstrip("/")
     url = modal.Function.from_name(APP, "gateway").get_web_url().rstrip("/")
-    # certifi's certificates (it comes with modal): the python.org Python on a Mac trusts none of its own until its
-    # "Install Certificates" step runs, and every HTTPS request fails with CERTIFICATE_VERIFY_FAILED
-    try:
-        import certifi
-        import ssl
-        ctx = ssl.create_default_context(cafile=certifi.where())
-    except ImportError:
-        ctx = None
     req = urllib.request.Request(origin + "/api/register", method="POST",
                                  data=json.dumps({"backend": "modal", "hello": True, "url": url}).encode(),
                                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "voicebox-modal-setup"})
     try:
-        urllib.request.urlopen(req, timeout=30, context=ctx).close()
+        urllib.request.urlopen(req, timeout=30, context=_ssl_context()).close()
     except urllib.error.HTTPError as e:
         sys.exit(f"Deployed at {url}, but the studio said {e.code}: {e.read().decode()[:200]}. Paste the address in Settings → GPU & engines.")
     except urllib.error.URLError as e:

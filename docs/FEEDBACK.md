@@ -6,6 +6,11 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Check if it's working or not"** (2026-11-02, after the owner deployed Modal): it wasn't: the container never came
+  up (Modal answered "still starting" for 9+ minutes) and nothing said why. Now a Modal start never depends on the
+  studio (the worker code is baked in at deploy and kept on the Volume), a start that fails answers every request with
+  its reason (HTTP 424, shown by Test Modal), Cloudflare's block on Python's user agent can't hit it, and the MCP's
+  test answers within its 60 s. A thing that runs out of sight must say why it isn't working, never hang.
 - **"Got this error, also make sure MCP can use this"** (2026-11-02, the setup's last step failing with
   CERTIFICATE_VERIFY_FAILED on a Mac after `modal deploy` succeeded): setup scripts that run on the owner's machine use
   certifi's certificates, never the system Python's, and a failed last step says the GPU is deployed and what to do.

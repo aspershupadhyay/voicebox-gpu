@@ -35,6 +35,10 @@ Change it in Settings → GPU & engines → Which GPU, or with the MCP: `gpu` ac
    - give Modal its key and the studio's address (`modal secret create voicebox …`),
    - deploy, then `python3 voicebox_modal.py <key> <studio>`, which tells the studio Modal's address. The card turns green.
 
+A start never depends on reaching the studio: the deploy step bakes the worker code into the image (`VOICEBOX_KEY` and
+`VOICEBOX_STUDIO` in the command), each start fetches the newest and keeps it on the Volume, and falls back to the last
+one. A start that fails anyway answers every request with why (HTTP 424), which Test Modal shows.
+
 The commands carry **Modal's own key**, made by the studio for this (`lib/gpus.ts`, kept sealed in R2). Nothing has to be
 looked up: Modal never needs `WORKER_SECRET`. It's the password between the studio and the Modal worker and opens the
 worker routes (heartbeat, bundle, settings, weight cache) and `/api/modal/app`, nothing else; it can't stand in for
