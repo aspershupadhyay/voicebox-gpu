@@ -6,6 +6,16 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Make a tutorial video and a skill to create such videos… use the voice Sparsh, Modal for GPU… use the SFX folder
+  properly… analyse each and everything granularly and make it the best landscape video"** (2026-11-02, with two
+  references: an Opus 5.5 editing tutorial on YouTube and miftahul_islam_efaz's "it's not the prompt, it's the skill"
+  Reel): the video is `promo/claude-video-rules/` (1920×1080, "7 rules for directing Claude"), and the skill is
+  `.claude/skills/video-director/` (the workflow, the style guide, the planning sheet, the sound guide mapped onto the
+  SFX library with each sound's measured peak, the review checklist, and what both references taught). Landscape
+  videos are now a format we make, with the same rules as Reels (voice-led, word-timed, SFX tied to what's on screen).
+  The SFX folder (92 files, ~82 distinct) is the sound library for every video; music beds come from it too. The
+  first myvoice load on a fresh Modal container hung importing from the Volume for 15+ minutes, so the voice was
+  made on a Colab L4 instead: check `worker_status logs=myvoice` early and fall back rather than wait.
 - **"Check why Cerebrium is running on its own even when I turn it off"** (2026-11-02, two containers running on two
   providers, two terminating): an open dashboard kept every cloud GPU awake (each tab's status poll, metrics and job
   list reached it, and every request restarts its sleep timer), and Stop exited the container, which Cerebrium takes

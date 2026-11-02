@@ -1,0 +1,662 @@
+{
+ "library": "VoiceBox Files \u2192 SFX (92 files; the ones named \"(1)\", \"(2)\" are duplicates and left out)",
+ "how": "file = the name + .mp3 (App Click 1.wav is App_Click_1). peak_s = where the loudest 50 ms sits: put it ON the moment (a whoosh on the fastest frame).",
+ "sounds": {
+  "App_Click_1": {
+   "family": "click",
+   "use": "clicks: cursor clicks, ticks on a ruler or each word, toggles (immersivecontrol is a 50 ms tick)",
+   "dur_s": 0.698,
+   "peak_s": 0.09,
+   "rms_db": -19.8,
+   "centroid_hz": 8781
+  },
+  "button-202966": {
+   "family": "click",
+   "use": "clicks: cursor clicks, ticks on a ruler or each word, toggles (immersivecontrol is a 50 ms tick)",
+   "dur_s": 1.344,
+   "peak_s": 0.1,
+   "rms_db": -29.9,
+   "centroid_hz": 7380
+  },
+  "immersivecontrol-button-click-sound-463065": {
+   "family": "click",
+   "use": "clicks: cursor clicks, ticks on a ruler or each word, toggles (immersivecontrol is a 50 ms tick)",
+   "dur_s": 0.048,
+   "peak_s": 0.03,
+   "rms_db": -27.1,
+   "centroid_hz": 1781
+  },
+  "tiktok_drop_sample_click3_kofi_by_miraclei-360034": {
+   "family": "click",
+   "use": "clicks: cursor clicks, ticks on a ruler or each word, toggles (immersivecontrol is a 50 ms tick)",
+   "dur_s": 1.593,
+   "peak_s": 0.19,
+   "rms_db": -36.9,
+   "centroid_hz": 708
+  },
+  "universfield-computer-mouse-click-352734": {
+   "family": "click",
+   "use": "clicks: cursor clicks, ticks on a ruler or each word, toggles (immersivecontrol is a 50 ms tick)",
+   "dur_s": 0.648,
+   "peak_s": 0.16,
+   "rms_db": -40.4,
+   "centroid_hz": 7518
+  },
+  "flipcard-91468": {
+   "family": "foley",
+   "use": "a card flip / page turn: rows of a table, pages of a doc",
+   "dur_s": 0.967,
+   "peak_s": 0.53,
+   "rms_db": -36.0,
+   "centroid_hz": 4121
+  },
+  "flowing-water-sound-effect-418728": {
+   "family": "foley",
+   "use": "diegetic only: something on screen creaks or flows",
+   "dur_s": 15.864,
+   "peak_s": 9.79,
+   "rms_db": -44.2,
+   "centroid_hz": 5902
+  },
+  "iphone-keyboard-typing-sound-effect-336778": {
+   "family": "foley",
+   "use": "typing: under any text that types itself (keyboard-typing-fast for a chat box; iPhone keys for a phone)",
+   "dur_s": 22.7,
+   "peak_s": 21.22,
+   "rms_db": -38.9,
+   "centroid_hz": 2158
+  },
+  "keyboard-typing-fast-371229": {
+   "family": "foley",
+   "use": "typing: under any text that types itself (keyboard-typing-fast for a chat box; iPhone keys for a phone)",
+   "dur_s": 8.046,
+   "peak_s": 1.49,
+   "rms_db": -25.9,
+   "centroid_hz": 4724
+  },
+  "mensaje-de-texto-iphone-218138": {
+   "family": "foley",
+   "use": "typing: under any text that types itself (keyboard-typing-fast for a chat box; iPhone keys for a phone)",
+   "dur_s": 52.032,
+   "peak_s": 6.55,
+   "rms_db": -34.2,
+   "centroid_hz": 2770
+  },
+  "rope-creak-01-sound-effect-340131": {
+   "family": "foley",
+   "use": "diegetic only: something on screen creaks or flows",
+   "dur_s": 1.28,
+   "peak_s": 0.54,
+   "rms_db": -30.2,
+   "centroid_hz": 5047
+  },
+  "text-sound-4-30218": {
+   "family": "foley",
+   "use": "typing: under any text that types itself (keyboard-typing-fast for a chat box; iPhone keys for a phone)",
+   "dur_s": 16.562,
+   "peak_s": 0.15,
+   "rms_db": -32.6,
+   "centroid_hz": 6141
+  },
+  "whoosh-end-384629": {
+   "family": "hit",
+   "use": "SUB BOOM, not a whoosh (centroid ~130 Hz): the one big hit of a scene, the reveal; trim with len and fade",
+   "dur_s": 8.04,
+   "peak_s": 0.58,
+   "rms_db": -21.0,
+   "centroid_hz": 133
+  },
+  "88300": {
+   "family": "music",
+   "use": "music bed, ~150 BPM, 2:59, steady energy",
+   "dur_s": 179.017,
+   "peak_s": 74.98,
+   "rms_db": -11.6,
+   "centroid_hz": 1590
+  },
+  "gorila-315977": {
+   "family": "music",
+   "use": "music bed, ~105 BPM, 1:55, punchy",
+   "dur_s": 115.488,
+   "peak_s": 7.63,
+   "rms_db": -10.0,
+   "centroid_hz": 1523
+  },
+  "nightfall-future-bass-music-228100": {
+   "family": "music",
+   "use": "music bed, ~134 BPM, 2:21: quiet intro, a breakdown ~60-90 s, clean end; -27 LUFS, ducked under the voice",
+   "dur_s": 141.636,
+   "peak_s": 134.46,
+   "rms_db": -15.8,
+   "centroid_hz": 779
+  },
+  "04_handy-mitteilung-2-473883": {
+   "family": "notify",
+   "use": "notifications: a message, a checklist item, a tip pill; message-envoye is a \"sent\" whoosh-blip (very loud: -9 dB RMS); sonar for a voice or signal",
+   "dur_s": 1.344,
+   "peak_s": 0.08,
+   "rms_db": -27.9,
+   "centroid_hz": 2942
+  },
+  "bright-notification-352449": {
+   "family": "notify",
+   "use": "notifications: a message, a checklist item, a tip pill; message-envoye is a \"sent\" whoosh-blip (very loud: -9 dB RMS); sonar for a voice or signal",
+   "dur_s": 3.072,
+   "peak_s": 0.34,
+   "rms_db": -33.8,
+   "centroid_hz": 7274
+  },
+  "game-start-317318": {
+   "family": "notify",
+   "use": "notifications: a message, a checklist item, a tip pill; message-envoye is a \"sent\" whoosh-blip (very loud: -9 dB RMS); sonar for a voice or signal",
+   "dur_s": 1.437,
+   "peak_s": 0.61,
+   "rms_db": -29.7,
+   "centroid_hz": 1745
+  },
+  "message-envoye-iphone-apple-391098": {
+   "family": "notify",
+   "use": "notifications: a message, a checklist item, a tip pill; message-envoye is a \"sent\" whoosh-blip (very loud: -9 dB RMS); sonar for a voice or signal",
+   "dur_s": 0.504,
+   "peak_s": 0.26,
+   "rms_db": -9.2,
+   "centroid_hz": 1273
+  },
+  "new-notification-012-363675": {
+   "family": "notify",
+   "use": "notifications: a message, a checklist item, a tip pill; message-envoye is a \"sent\" whoosh-blip (very loud: -9 dB RMS); sonar for a voice or signal",
+   "dur_s": 1.056,
+   "peak_s": 0.17,
+   "rms_db": -22.5,
+   "centroid_hz": 5381
+  },
+  "new-notification-013-363676": {
+   "family": "notify",
+   "use": "notifications: a message, a checklist item, a tip pill; message-envoye is a \"sent\" whoosh-blip (very loud: -9 dB RMS); sonar for a voice or signal",
+   "dur_s": 1.08,
+   "peak_s": 0.14,
+   "rms_db": -24.9,
+   "centroid_hz": 3303
+  },
+  "new-notification-08-352461": {
+   "family": "notify",
+   "use": "notifications: a message, a checklist item, a tip pill; message-envoye is a \"sent\" whoosh-blip (very loud: -9 dB RMS); sonar for a voice or signal",
+   "dur_s": 1.128,
+   "peak_s": 0.14,
+   "rms_db": -26.3,
+   "centroid_hz": 2854
+  },
+  "new-notification-09-352705": {
+   "family": "notify",
+   "use": "notifications: a message, a checklist item, a tip pill; message-envoye is a \"sent\" whoosh-blip (very loud: -9 dB RMS); sonar for a voice or signal",
+   "dur_s": 1.152,
+   "peak_s": 0.2,
+   "rms_db": -22.4,
+   "centroid_hz": 1564
+  },
+  "notification-pluck-off-269290": {
+   "family": "notify",
+   "use": "notifications: a message, a checklist item, a tip pill; message-envoye is a \"sent\" whoosh-blip (very loud: -9 dB RMS); sonar for a voice or signal",
+   "dur_s": 1.75,
+   "peak_s": 0.03,
+   "rms_db": -34.7,
+   "centroid_hz": 832
+  },
+  "pop-up-notify-smooth-modern-332448_2_": {
+   "family": "notify",
+   "use": "notifications: a message, a checklist item, a tip pill; message-envoye is a \"sent\" whoosh-blip (very loud: -9 dB RMS); sonar for a voice or signal",
+   "dur_s": 3.082,
+   "peak_s": 0.06,
+   "rms_db": -30.0,
+   "centroid_hz": 1138
+  },
+  "sonar-ping-95840": {
+   "family": "notify",
+   "use": "notifications: a message, a checklist item, a tip pill; message-envoye is a \"sent\" whoosh-blip (very loud: -9 dB RMS); sonar for a voice or signal",
+   "dur_s": 3.553,
+   "peak_s": 0.1,
+   "rms_db": -27.7,
+   "centroid_hz": 1274
+  },
+  "bubble-254777": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 0.679,
+   "peak_s": 0.47,
+   "rms_db": -23.7,
+   "centroid_hz": 2346
+  },
+  "bubble-pops-272427": {
+   "family": "pop",
+   "use": "a run of bubble pops over ~7 s: a grid filling up (trim with len)",
+   "dur_s": 6.949,
+   "peak_s": 6.22,
+   "rms_db": -34.2,
+   "centroid_hz": 1468
+  },
+  "bubble_pop_1-476367": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 0.104,
+   "peak_s": 0.07,
+   "rms_db": -28.7,
+   "centroid_hz": 1517
+  },
+  "creatorshome-sharp-pop-328170": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 1.019,
+   "peak_s": 0.03,
+   "rms_db": -24.0,
+   "centroid_hz": 1308
+  },
+  "marimba-bloop-2-188149": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 2.28,
+   "peak_s": 0.3,
+   "rms_db": -28.3,
+   "centroid_hz": 1601
+  },
+  "marimba-bloop-3-188151": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 2.04,
+   "peak_s": 0.09,
+   "rms_db": -26.3,
+   "centroid_hz": 1160
+  },
+  "pop-2-269283": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 0.549,
+   "peak_s": 0.03,
+   "rms_db": -35.9,
+   "centroid_hz": 1782
+  },
+  "pop-331049": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 0.993,
+   "peak_s": 0.26,
+   "rms_db": -23.5,
+   "centroid_hz": 1133
+  },
+  "pop-402324": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 0.72,
+   "peak_s": 0.2,
+   "rms_db": -21.0,
+   "centroid_hz": 1019
+  },
+  "simple-pop-noise-383737": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 2.136,
+   "peak_s": 0.23,
+   "rms_db": -25.8,
+   "centroid_hz": 533
+  },
+  "soft-pop-sfx-433612": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 0.192,
+   "peak_s": 0.06,
+   "rms_db": -31.9,
+   "centroid_hz": 2880
+  },
+  "soft-subtle-ui-pop-sfx-348820": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 0.575,
+   "peak_s": 0.12,
+   "rms_db": -21.2,
+   "centroid_hz": 820
+  },
+  "ui-pop-sound-316482": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 1.358,
+   "peak_s": 0.07,
+   "rms_db": -35.5,
+   "centroid_hz": 929
+  },
+  "ui-pop-up-2-197887": {
+   "family": "pop",
+   "use": "pops: a card, chip, tile or word landing; soft-pop for rows of small things, sharp-pop for a number landing, marimba for a friendly answer",
+   "dur_s": 0.456,
+   "peak_s": 0.03,
+   "rms_db": -17.1,
+   "centroid_hz": 1012
+  },
+  "benkirb-shine-1-268902": {
+   "family": "riser",
+   "use": "shimmer: a glint on a reveal; REVERSED (reverse:true, len 0.5-0.9) it is the riser into a hit",
+   "dur_s": 4.128,
+   "peak_s": 0.19,
+   "rms_db": -41.4,
+   "centroid_hz": 5455
+  },
+  "freesound_community-appearance-effect-6733": {
+   "family": "riser",
+   "use": "soft magical appear: an icon or idea arriving",
+   "dur_s": 3.912,
+   "peak_s": 0.81,
+   "rms_db": -30.3,
+   "centroid_hz": 1146
+  },
+  "shine-6-268910": {
+   "family": "riser",
+   "use": "shimmer: a glint on a reveal; REVERSED (reverse:true, len 0.5-0.9) it is the riser into a hit",
+   "dur_s": 6.744,
+   "peak_s": 0.41,
+   "rms_db": -25.2,
+   "centroid_hz": 1608
+  },
+  "ui-processing-data-sequence-modern-interface-progress-02-230495": {
+   "family": "riser",
+   "use": "data processing build: counters, progress bars, loading (trim with len)",
+   "dur_s": 12.072,
+   "peak_s": 6.16,
+   "rms_db": -32.3,
+   "centroid_hz": 12568
+  },
+  "glitch-fx-transitions-8-311809": {
+   "family": "scifi",
+   "use": "glitch: only for a deliberate glitch move (the owner dislikes glitchy slop: rare)",
+   "dur_s": 2.4,
+   "peak_s": 0.23,
+   "rms_db": -19.0,
+   "centroid_hz": 4919
+  },
+  "sci-fi-sfx-1-350830": {
+   "family": "scifi",
+   "use": "sci-fi blips (bright, ~8 kHz): HUD elements, data, AI \"thinking\"; use sparingly, they read as tech",
+   "dur_s": 1.698,
+   "peak_s": 0.19,
+   "rms_db": -29.1,
+   "centroid_hz": 8345
+  },
+  "sci-fi-sfx-13-350839": {
+   "family": "scifi",
+   "use": "sci-fi blips (bright, ~8 kHz): HUD elements, data, AI \"thinking\"; use sparingly, they read as tech",
+   "dur_s": 1.724,
+   "peak_s": 0.2,
+   "rms_db": -30.1,
+   "centroid_hz": 8201
+  },
+  "sci-fi-sfx-2-350831": {
+   "family": "scifi",
+   "use": "sci-fi blips (bright, ~8 kHz): HUD elements, data, AI \"thinking\"; use sparingly, they read as tech",
+   "dur_s": 1.698,
+   "peak_s": 0.19,
+   "rms_db": -29.1,
+   "centroid_hz": 8345
+  },
+  "sci-fi-sfx-4-350829": {
+   "family": "scifi",
+   "use": "sci-fi blips (bright, ~8 kHz): HUD elements, data, AI \"thinking\"; use sparingly, they read as tech",
+   "dur_s": 1.776,
+   "peak_s": 0.2,
+   "rms_db": -28.6,
+   "centroid_hz": 8026
+  },
+  "sci-fi-sfx-7-350834": {
+   "family": "scifi",
+   "use": "sci-fi blips (bright, ~8 kHz): HUD elements, data, AI \"thinking\"; use sparingly, they read as tech",
+   "dur_s": 1.829,
+   "peak_s": 0.19,
+   "rms_db": -26.4,
+   "centroid_hz": 7695
+  },
+  "ui_sci-fi-sound-36061": {
+   "family": "scifi",
+   "use": "sci-fi blips (bright, ~8 kHz): HUD elements, data, AI \"thinking\"; use sparingly, they read as tech",
+   "dur_s": 2.04,
+   "peak_s": 1.33,
+   "rms_db": -37.5,
+   "centroid_hz": 983
+  },
+  "47313572-ui-sounds-pack-2-sound-7-358894": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 1.959,
+   "peak_s": 0.29,
+   "rms_db": -21.1,
+   "centroid_hz": 582
+  },
+  "47313572-ui-sounds-pack-2-sound-8-358892": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 0.94,
+   "peak_s": 0.34,
+   "rms_db": -18.1,
+   "centroid_hz": 584
+  },
+  "interface-digital-de-texto-text-digital-interface-218128_1_": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 1.536,
+   "peak_s": 1.34,
+   "rms_db": -34.4,
+   "centroid_hz": 10742
+  },
+  "sfx-acceptation-363730": {
+   "family": "ui",
+   "use": "UI success: a check mark, \"skill loaded\", a fact that holds",
+   "dur_s": 2.456,
+   "peak_s": 0.29,
+   "rms_db": -28.7,
+   "centroid_hz": 4112
+  },
+  "sfx-erreur-363728": {
+   "family": "ui",
+   "use": "UI fail: a cross, a wrong number, the slop result",
+   "dur_s": 0.888,
+   "peak_s": 0.22,
+   "rms_db": -27.4,
+   "centroid_hz": 5324
+  },
+  "soft-ui-pop-light-minimal-click-451232": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 5.042,
+   "peak_s": 0.19,
+   "rms_db": -31.0,
+   "centroid_hz": 733
+  },
+  "ui-interface-sound-26-299883": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 6.024,
+   "peak_s": 0.19,
+   "rms_db": -27.8,
+   "centroid_hz": 10049
+  },
+  "ui-sound-2-374229": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 1.296,
+   "peak_s": 0.09,
+   "rms_db": -17.3,
+   "centroid_hz": 956
+  },
+  "ui-sound-270349": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 3.239,
+   "peak_s": 0.43,
+   "rms_db": -35.9,
+   "centroid_hz": 613
+  },
+  "ui-sound-374228": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 0.888,
+   "peak_s": 0.09,
+   "rms_db": -16.6,
+   "centroid_hz": 778
+  },
+  "ui-sound-off-270300": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 3.344,
+   "peak_s": 0.32,
+   "rms_db": -40.1,
+   "centroid_hz": 770
+  },
+  "ui-sounds-pack-2-sound-1-358893": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 2.064,
+   "peak_s": 0.33,
+   "rms_db": -38.5,
+   "centroid_hz": 1135
+  },
+  "ui-sounds-pack-2-sound-2-358896": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 3.109,
+   "peak_s": 0.32,
+   "rms_db": -37.8,
+   "centroid_hz": 1080
+  },
+  "ui-sounds-pack-2-sound-4-358895": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 2.508,
+   "peak_s": 0.17,
+   "rms_db": -38.4,
+   "centroid_hz": 1354
+  },
+  "ui-sounds-pack-2-sound-6-358891": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 0.758,
+   "peak_s": 0.21,
+   "rms_db": -21.2,
+   "centroid_hz": 2804
+  },
+  "ui-sounds-pack-2-sound-7-358894": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 1.959,
+   "peak_s": 0.29,
+   "rms_db": -21.1,
+   "centroid_hz": 582
+  },
+  "ui-sounds-pack-3-7-359721": {
+   "family": "ui",
+   "use": "UI sounds: panels opening, meters, a mode switch; ui-sound(-2)-374228/9 sit nicely under a pixel wipe; ui-sound-off for closing",
+   "dur_s": 0.131,
+   "peak_s": 0.05,
+   "rms_db": -31.6,
+   "centroid_hz": 1634
+  },
+  "simple-whoosh-02-433006": {
+   "family": "whoosh",
+   "use": "deep, long whoosh: a big move into the end card or a reveal",
+   "dur_s": 4.032,
+   "peak_s": 1.23,
+   "rms_db": -16.3,
+   "centroid_hz": 284
+  },
+  "simple-whoosh-382724": {
+   "family": "whoosh",
+   "use": "short, fast whip: snaps, a quick punch-in, a shrink",
+   "dur_s": 0.575,
+   "peak_s": 0.17,
+   "rms_db": -19.2,
+   "centroid_hz": 1545
+  },
+  "swoosh-010-352856": {
+   "family": "whoosh",
+   "use": "mid whoosh: a card or panel sliding in, a camera move",
+   "dur_s": 1.368,
+   "peak_s": 0.48,
+   "rms_db": -21.7,
+   "centroid_hz": 1949
+  },
+  "swoosh-014-383768": {
+   "family": "whoosh",
+   "use": "low, round whoosh: scene changes, pushes, wipes (the default transition)",
+   "dur_s": 1.056,
+   "peak_s": 0.3,
+   "rms_db": -21.5,
+   "centroid_hz": 539
+  },
+  "swoosh-015-383769": {
+   "family": "whoosh",
+   "use": "mid whoosh: a card or panel sliding in, a camera move",
+   "dur_s": 1.056,
+   "peak_s": 0.5,
+   "rms_db": -23.4,
+   "centroid_hz": 1525
+  },
+  "swoosh-06-351021": {
+   "family": "whoosh",
+   "use": "mid whoosh: a card or panel sliding in, a camera move",
+   "dur_s": 1.104,
+   "peak_s": 0.38,
+   "rms_db": -22.9,
+   "centroid_hz": 2758
+  },
+  "swoosh-2-359826": {
+   "family": "whoosh",
+   "use": "low, round whoosh: scene changes, pushes, wipes (the default transition)",
+   "dur_s": 1.104,
+   "peak_s": 0.49,
+   "rms_db": -21.2,
+   "centroid_hz": 491
+  },
+  "swoosh-sound-effect-for-fight-scenes-or-transitions-2-149890": {
+   "family": "whoosh",
+   "use": "short, fast whip: snaps, a quick punch-in, a shrink",
+   "dur_s": 0.36,
+   "peak_s": 0.09,
+   "rms_db": -17.3,
+   "centroid_hz": 2047
+  },
+  "universfield-swoosh-023-454830": {
+   "family": "whoosh",
+   "use": "low, round whoosh: scene changes, pushes, wipes (the default transition)",
+   "dur_s": 1.272,
+   "peak_s": 0.47,
+   "rms_db": -20.3,
+   "centroid_hz": 623
+  },
+  "victorabdo-spin-232536": {
+   "family": "whoosh",
+   "use": "spin: a loop or refresh icon turning, a rebuild",
+   "dur_s": 3.683,
+   "peak_s": 1.43,
+   "rms_db": -43.1,
+   "centroid_hz": 9459
+  },
+  "whoosh-arrow-start-243483": {
+   "family": "whoosh",
+   "use": "quiet airy start (-40 dB RMS): needs a lot of gain; arrows, pointers",
+   "dur_s": 8.04,
+   "peak_s": 0.16,
+   "rms_db": -40.3,
+   "centroid_hz": 6136
+  },
+  "whoosh-velocity-383019": {
+   "family": "whoosh",
+   "use": "long airy pass: a strip or timeline gliding across (trim with len)",
+   "dur_s": 6.024,
+   "peak_s": 0.49,
+   "rms_db": -26.8,
+   "centroid_hz": 1733
+  },
+  "woosh-230554": {
+   "family": "whoosh",
+   "use": "mid whoosh: a card or panel sliding in, a camera move",
+   "dur_s": 1.149,
+   "peak_s": 0.45,
+   "rms_db": -21.9,
+   "centroid_hz": 2910
+  }
+ }
+}

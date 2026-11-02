@@ -1,0 +1,579 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Serif;src:url(fonts/serif.woff2) format("woff2")}
+@font-face{font-family:Serif;font-style:italic;src:url(fonts/serif-i.woff2) format("woff2")}
+@font-face{font-family:Geist;src:url(fonts/geist.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:Mono;src:url(fonts/mono.woff2) format("woff2");font-weight:100 900}
+html,body{margin:0;background:#000;overflow:hidden}
+#stage{position:relative;width:1920px;height:1080px;overflow:hidden;font-family:Geist,sans-serif;-webkit-font-smoothing:antialiased;color:#fff}
+#cam{position:absolute;inset:0;transform-origin:960px 500px}
+#ui,#wipe,#cap{position:absolute;inset:0;pointer-events:none}
+.a{position:absolute;box-sizing:border-box}
+.c{left:0;width:1920px;text-align:center}
+.serif{font-family:Serif;font-weight:400;letter-spacing:-0.01em}
+.mono{font-family:Mono}
+.w{display:inline-block;white-space:pre}
+.pill{display:inline-flex;align-items:center;gap:12px;border-radius:999px;padding:10px 22px;font-family:Mono;font-size:22px}
+.card{border-radius:18px;border:1px solid #2A2826;background:#171615}
+#cap{top:auto;bottom:0;height:200px}
+#cap .box{position:absolute;left:0;width:1920px;top:52px;text-align:center;font-family:Geist;font-weight:700;font-size:50px;letter-spacing:-0.01em}
+#cap .box span.b{display:inline-block;background:rgba(10,10,9,.86);border-radius:18px;padding:10px 26px 14px}
+svg{position:absolute;overflow:visible}
+</style></head>
+<body><div id="stage"><div id="cam"></div><div id="ui"></div><div id="cap"></div><div id="wipe"></div></div>
+<script src="vo.js"></script>
+<script>
+// ---------- palette (matte black, ivory, dull accents: rule 5 practised) ----------
+const DK='#0D0D0C', DK2='#171615', DKL='#2A2826', IV='#EFEBE3', IV2='#E4DFD5', INK='#161513', MID='#6E6860', DMID='#9A948B',
+      OR='#E07A4F', ORS='#3A2318', TEAL='#7BA79F', BLUE='#8597B8', SAND='#CDB98D', RED='#C8594C', GRN='#79AB84';
+const W=1920, H=1080, CX=960;
+// ---------- math ----------
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const lerp=(a,b,p)=>a+(b-a)*p;
+const eo=x=>x<=0?0:x>=1?1:1-Math.pow(2,-10*x);
+const sio=x=>x<=0?0:x>=1?1:-(Math.cos(Math.PI*x)-1)/2;
+const seg=(t,t0,d,e=eo)=>e(clamp((t-t0)/d));
+function hash(n){let x=Math.sin(n*127.1+311.7)*43758.5453;return x-Math.floor(x);}
+// ---------- voice timing ----------
+const LINES={};for(const l of VO.lines)LINES[l.id]=l;
+const S=id=>LINES[id].start, E=id=>LINES[id].end;
+const norm=s=>s.toLowerCase().replace(/[^a-z0-9]/g,'');
+function wt(id,i){const l=LINES[id];const w=l.words[Math.min(i,l.words.length-1)];return w?w.s:l.start;}
+function we(id,i){const l=LINES[id];const w=l.words[Math.min(i,l.words.length-1)];return w?w.e:l.end;}
+function wordIdx(id,word,from=0){const l=LINES[id];const k=l.words.findIndex((w,i)=>i>=from&&norm(w.w).startsWith(word));if(k<0)console.warn('no word',id,word);return k<0?0:k;}
+const at=(id,word,from=0)=>wt(id,wordIdx(id,word,from));
+// the voice's own loudness at time t (30 fps envelope from mkvo.py)
+function venv(t){for(const l of VO.lines){if(t>=l.start&&t<l.end){return l.env[Math.min(l.env.length-1,Math.floor((t-l.start)*30))]||0;}}return 0;}
+// ---------- primitives ----------
+function rise(t,t0,d=.38,dy=24){const p=seg(t,t0,d);return `opacity:${p.toFixed(3)};transform:translateY(${((1-p)*dy).toFixed(2)}px)`;}
+// words rise one at a time: fade + 20 px + a touch of blur (rule 5: never longer than 1.5 s for a phrase)
+function wrise(t,t0){const p=seg(t,t0,.34);return `opacity:${p.toFixed(3)};transform:translateY(${((1-p)*20).toFixed(1)}px);filter:blur(${((1-p)*5).toFixed(2)}px)`;}
+function fade(t,t0,d=.3){return `opacity:${seg(t,t0,d).toFixed(3)}`;}
+function ws(t,words,times,style=''){return words.map((w,i)=>`<span class="w" style="${wrise(t,times[i]??times[times.length-1])};${typeof style==='function'?style(i,w):style}">${w}${i<words.length-1?' ':''}</span>`).join('');}
+function spoken(t,id,words,k=0,style=''){return ws(t,words,words.map((_,i)=>wt(id,k+i)-.06),style);}
+function A(x,y,css,html){return `<div class="a" style="left:${x}px;top:${y}px;${css}">${html??''}</div>`;}
+function C(y,css,html){return `<div class="a c" style="top:${y}px;${css}">${html??''}</div>`;}
+function dotgrid(col,o=1){return `<div class="a" style="inset:0;opacity:${o};background-image:radial-gradient(${col} 1.5px,transparent 1.5px);background-size:48px 48px;background-position:24px 24px"></div>`;}
+const it=(s,c=OR)=>`<span class="serif" style="font-style:italic;color:${c}">${s}</span>`;
+const ICON={
+ check:'<path d="M20 6 9 17l-5-5"/>', x:'<path d="M6 6l12 12M18 6 6 18"/>',
+ file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
+ film:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4"/>',
+ wave:'<path d="M2 12h2M6 8v8M10 4v16M14 7v10M18 10v4M22 12h-2"/>',
+ pen:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+ eye:'<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+ mic:'<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/>',
+ send:'<path d="M5 12h14M13 6l6 6-6 6"/>', spark:'<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>',
+ loop:'<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
+ bolt:'<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>', clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+};
+function icon(name,size,col,sw=2){return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" style="position:static;fill:none;stroke:${col};stroke-width:${sw};stroke-linecap:round;stroke-linejoin:round;vertical-align:middle">${ICON[name]}</svg>`;}
+function chat(x,y,w,text,t,t0,opts={}){
+  // a plain chat composer (generic, not any product's UI): typed text + caret
+  const n=Math.floor(clamp((t-t0)/(opts.dur??1.2))*text.length); const shown=opts.del!=null?text.slice(0,Math.max(0,n-Math.floor(clamp((t-opts.del)/.45)*text.length))):text.slice(0,n);
+  const caret=(Math.floor(t*2.2)%2===0)?`<span style="display:inline-block;width:3px;height:1.05em;background:${OR};vertical-align:-0.15em;margin-left:2px"></span>`:'<span style="display:inline-block;width:3px;margin-left:2px"></span>';
+  return A(x,y,`width:${w}px;${opts.css||''}`,`<div class="card" style="padding:26px 30px 22px;background:${opts.bg||DK2}">
+    <div style="font-size:${opts.fs||34}px;line-height:1.35;color:${opts.col||'#ECE7DE'};min-height:${(opts.fs||34)*1.35}px">${shown}${caret}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px">
+      <span class="mono" style="font-size:18px;color:${DMID}">${opts.tag||'+  attach'}</span>
+      <span style="width:46px;height:46px;border-radius:12px;background:${OR};display:inline-flex;align-items:center;justify-content:center">${icon('send',24,'#1a0f09',2.4)}</span></div></div>`);
+}
+// ---------- scenes (each starts on its line; the next scene's start ends it) ----------
+const SC=[];
+function scene(t0,bg,draw,opt={}){SC.push({t0,bg,draw,...opt});}
+const RULES=['Direct','Style','Plan','Voice','Motion','Sound','Review'];
+const RULE_AT=['l05','l08','l11','l14','l16','l19','l23'];
+const LEAD=.3; // a section's cut (and its pixel wipe) sits in the breath before its first word
+function ruleOf(t){let r=-1;for(let i=0;i<7;i++)if(t>=S(RULE_AT[i])-LEAD)r=i;return (t>=S('l26')-LEAD)?-1:r;}
+
+// title card for a rule: big number, the rule in words, risen word by word
+function ruleTitle(id,n,words,ital){
+  scene(S(id)-LEAD,DK,(t)=>{
+    const t0=S(id);let h=dotgrid('#1b1a18');
+    h+=A(160,300,`${rise(t,t0-.2)}`,`<span class="mono" style="font-size:26px;letter-spacing:.22em;color:${DMID}">RULE</span>`);
+    // the rule number counts up like a dial
+    const p=seg(t,t0-.25,.5);
+    h+=A(150,330,`font-family:Mono;font-size:300px;line-height:1;color:${OR};letter-spacing:-.04em;opacity:${p};font-variant-numeric:tabular-nums`,String(n).padStart(2,'0'));
+    h+=A(760,365,`width:1050px;font-size:118px;line-height:1.02;font-weight:700;letter-spacing:-0.035em;color:#fff`,
+      spoken(t,id,words,2,(i)=>ital.includes(i)?`font-family:Serif;font-weight:400;font-style:italic;color:${OR};letter-spacing:-0.01em`:''));
+    return h;
+  },{rule:true,punch:1.045});
+}
+
+// 1 · hook: the chat box is already typing on frame 0; the text hook is already on screen
+scene(0,DK,(t)=>{
+  let h=dotgrid('#1b1a18');
+  h+=C(150,'',`<span class="pill" style="background:${DK2};border:1px solid ${DKL};color:${DMID}">${icon('spark',22,OR)} the question everyone asks</span>`);
+  const del=at('l01','there')-.05;
+  h+=chat(CX-560,300,1120,'make me a viral video, cinematic, trending, high quality',t,-0.9,{dur:2.3,del,fs:40});
+  const words=['Everyone','wants','the','prompt.'];
+  h+=C(620,`font-size:96px;font-weight:700;letter-spacing:-0.035em;${fade(t,-1)}`,`${words.map((w,i)=>`<span class="w" style="${i===3?`font-family:Serif;font-weight:400;font-style:italic;color:${OR}`:''}">${w}${i<3?' ':''}</span>`).join('')}`);
+  const p=seg(t,del,.4);
+  h+=C(760,`font-size:120px;${wrise(t,del)}`,`<span class="serif" style="font-style:italic;color:#fff">There isn't one.</span>`);
+  // the first line dims once the answer lands
+  if(p>0)h+=C(620,`height:120px;background:${DK};opacity:${(p*.6).toFixed(3)}`,'');
+  return h;
+});
+
+// 2 · made by Claude: script, every frame, every sound
+scene(S('l02'),DK,(t)=>{
+  const t0=S('l02');let h=dotgrid('#1b1a18');
+  h+=C(120,`font-size:70px;font-weight:700;letter-spacing:-0.03em`,spoken(t,'l02',['This','whole','video','was','made','by','Claude.'],0,(i)=>i===6?`color:${OR}`:''));
+  const T=[at('l02','script'),at('l02','every'),at('l02','every',wordIdx('l02','every')+1)];
+  const tiles=[['THE SCRIPT','file','script.json'],['EVERY FRAME','film','film.html'],['EVERY SOUND','wave','mix.wav']];
+  tiles.forEach(([lab,ic,f],i)=>{const x=210+i*520, y=330, d=T[i]-.08;
+    let inner='';
+    if(i===0){for(let k=0;k<6;k++)inner+=`<div style="height:12px;border-radius:6px;background:${k===2?OR:'#3a3733'};width:${[300,260,330,220,290,180][k]}px;margin:0 0 16px;opacity:${seg(t,d+.1+k*.09,.2)}"></div>`;}
+    if(i===1){inner='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">';for(let k=0;k<12;k++)inner+=`<div style="height:46px;border-radius:6px;background:${['#2b2926',ORS,'#22302d','#2b2926'][k%4]};opacity:${seg(t,d+.05+k*.04,.2)}"></div>`;inner+='</div>';}
+    if(i===2){inner='<div style="display:flex;align-items:center;gap:6px;height:132px">';for(let k=0;k<38;k++){const a=.25+.75*Math.abs(Math.sin(k*1.7+t*6))*hash(k);inner+=`<div style="width:5px;border-radius:3px;background:${TEAL};height:${(a*120*seg(t,d+.1,.4)).toFixed(1)}px"></div>`;}inner+='</div>';}
+    h+=A(x,y,`width:480px;${rise(t,d)}`,`<div class="card" style="padding:30px;height:340px">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:30px">${icon(ic,30,OR)}<span class="mono" style="font-size:22px;letter-spacing:.14em;color:#d8d2c8">${lab}</span></div>${inner}
+      <div class="mono" style="position:absolute;left:30px;bottom:24px;font-size:20px;color:${DMID}">${f}</div></div>`);
+  });
+  h+=C(760,`${rise(t,E('l02')-.3)};font-family:Mono;font-size:22px;color:${DMID};letter-spacing:.06em`,'no stock footage · no editing app · drawn in code, frame by frame');
+  return h;
+});
+
+// 3 · the voice is a trained model: the waveform is the voice itself
+scene(S('l03'),DK,(t)=>{
+  const t0=S('l03');let h=dotgrid('#1b1a18');
+  h+=C(170,`${rise(t,t0)}`,`<span class="pill" style="background:${DK2};border:1px solid ${DKL};color:#d8d2c8">${icon('mic',22,OR)} myvoice · sparsh</span>`);
+  let bars='';const N=96;
+  for(let k=0;k<N;k++){const tt=t-(N-k)*.018;const v=venv(tt);const hh=10+v*300;bars+=`<div style="width:9px;border-radius:5px;background:${k>N-8?OR:'#d8d2c8'};opacity:${(.3+.7*k/N).toFixed(2)};height:${hh.toFixed(1)}px"></div>`;}
+  h+=A(CX-860,330,`width:1720px;height:330px;display:flex;align-items:center;justify-content:center;gap:9px`,bars);
+  h+=C(720,`font-size:64px;font-weight:700;letter-spacing:-0.03em`,spoken(t,'l03',['Even','this','voice','is','a','model','trained','on','mine.'],0,(i)=>i===5?`font-family:Serif;font-weight:400;font-style:italic;color:${OR}`:''));
+  h+=C(830,`${rise(t,E('l03')-.2)};font-family:Mono;font-size:22px;color:${DMID}`,'a fine-tuned voice model of Sparsh, voiced on a cloud GPU');
+  return h;
+});
+
+// 4 · seven rules: directed, not generated
+scene(S('l04'),DK,(t)=>{
+  const t0=S('l04');let h=dotgrid('#1b1a18');
+  const n=Math.round(lerp(0,7,seg(t,at('l04','seven')-.1,.6,sio)));
+  h+=C(110,`font-family:Mono;font-size:260px;line-height:1;color:${OR};${fade(t,at('l04','seven')-.15)}`,String(n));
+  h+=C(400,`font-size:64px;font-weight:700;letter-spacing:-0.03em`,spoken(t,'l04',['rules','that','make','AI','video','look'],4));
+  const d=at('l04','directed'), g=at('l04','generated');
+  h+=C(510,`font-size:150px;line-height:1.05`,`<span class="w serif" style="${wrise(t,d-.06)};font-style:italic;color:${OR}">directed,</span> <span class="w serif" style="${wrise(t,g-.25)};color:#5d5852;text-decoration:line-through;text-decoration-thickness:6px">not generated.</span>`);
+  // the seven rules, laid out as the map we'll walk through
+  RULES.forEach((r,i)=>{const x=CX-840+i*240;h+=A(x,800,`width:220px;text-align:center;${rise(t,E('l04')-.55+i*.05)}`,
+    `<div class="mono" style="font-size:20px;color:${DMID}">${String(i+1).padStart(2,'0')}</div><div style="font-size:30px;font-weight:600;color:#ECE7DE;margin-top:6px">${r}</div>`);});
+  return h;
+});
+
+// RULE 1 · direct, don't prompt
+ruleTitle('l05',1,['Stop','prompting.','Start','directing.'],[3]);
+scene(S('l06'),DK,(t)=>{
+  const t0=S('l06');let h='';
+  const slop=at('l06','slop'), give=at('l06','give'), film=at('l06','film');
+  // left: the prompt and what it gets you
+  h+=A(120,150,`width:780px;${rise(t,t0)}`,`<div class="mono" style="font-size:22px;letter-spacing:.14em;color:${DMID};margin-bottom:18px">THE PROMPT</div>`);
+  h+=chat(120,200,780,'make a cool motion video',t,t0+.05,{dur:.9,fs:34});
+  let g='';for(let k=0;k<6;k++){const c=['#5b3fd6','#e0306a','#16b3d9','#f2b705','#5b3fd6','#e0306a'][k];g+=`<div style="height:120px;border-radius:12px;background:${c};opacity:${seg(t,slop-.3+k*.05,.2)};position:relative;overflow:hidden"><div style="position:absolute;inset:0;background:radial-gradient(circle at 30% 30%,rgba(255,255,255,.55),transparent 60%)"></div></div>`;}
+  const dim=seg(t,slop+.2,.4);
+  h+=A(120,440,`width:780px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px;filter:grayscale(${dim}) blur(${dim*1.5}px);opacity:${1-.5*dim}`,g);
+  h+=A(120,740,`width:780px;text-align:center;${wrise(t,slop-.05)}`,`<span style="font-size:72px;font-weight:800;letter-spacing:-0.03em;color:#6b655e">slop.</span>`);
+  // right: a director's notes and what they get you
+  h+=A(1020,150,`width:780px;${rise(t,give-.1)}`,`<div class="mono" style="font-size:22px;letter-spacing:.14em;color:${OR};margin-bottom:18px">THE DIRECTOR'S NOTES</div>`);
+  const notes=['Hook: the question, on frame 1','Cut on spoken words, every 2-3 s','One accent colour, dull palette','Whoosh on every move, voice on top','Hold the end card 2 s'];
+  let nl='';notes.forEach((n,k)=>{nl+=`<div style="display:flex;gap:14px;align-items:center;font-size:27px;color:#ECE7DE;margin:0 0 14px;${wrise(t,give+.05+k*.17)}">${icon('pen',22,OR)}<span>${n}</span></div>`;});
+  h+=A(1020,200,`width:780px;${rise(t,give-.05)}`,`<div class="card" style="padding:28px 30px 16px">${nl}</div>`);
+  // a film strip that runs
+  let fr='';const off=((t-film)*180)%170;for(let k=0;k<6;k++)fr+=`<div style="position:absolute;left:${k*170-off}px;top:14px;width:150px;height:92px;border-radius:6px;background:${k%2?'#22302d':ORS}"><div style="position:absolute;left:14px;top:14px;width:${40+hash(k)*60}px;height:8px;background:${k%2?TEAL:OR};border-radius:4px"></div></div>`;
+  h+=A(1020,620,`width:780px;height:120px;overflow:hidden;border-radius:12px;background:#000;border:1px solid ${DKL};${rise(t,film-.15)}`,fr);
+  h+=A(1020,740,`width:780px;text-align:center;${wrise(t,film-.05)}`,`<span class="serif" style="font-size:84px;font-style:italic;color:${OR}">a film.</span>`);
+  return h;
+},{rule:true,cap:'l06'});
+scene(S('l07'),DK,(t)=>{
+  const t0=S('l07');let h=dotgrid('#1b1a18');
+  const most=at('l07','most'), idea=at('l07','your'), fake=at('l07','fake');
+  h+=C(130,`font-size:60px;font-weight:700;letter-spacing:-0.03em`,spoken(t,'l07',['Claude','does','most','of','the','work.'],0,(i)=>i===2?`color:${OR}`:''));
+  // the split: what Claude does vs what only you bring
+  const p=seg(t,most,.8,sio), q=seg(t,idea-.1,.6,sio);
+  h+=A(260,330,`width:1400px;height:150px;border-radius:18px;background:${DK2};border:1px solid ${DKL};overflow:hidden`,
+    `<div style="position:absolute;left:0;top:0;bottom:0;width:${(p*76).toFixed(2)}%;background:#2c2a27"></div>
+     <div style="position:absolute;right:0;top:0;bottom:0;width:${(q*24).toFixed(2)}%;background:${OR}"></div>`);
+  ['script','frames','voice','sound','the mix'].forEach((s,i)=>{h+=A(290+i*200,372,`${rise(t,most+.15+i*.1)};font-family:Mono;font-size:24px;color:#d8d2c8`,s);});
+  h+=A(1360,360,`width:290px;text-align:center;${rise(t,idea)};font-size:38px;font-weight:700;color:#1a0f09`,'idea · taste');
+  h+=A(260,505,`${rise(t,most+.2)};font-family:Mono;font-size:22px;color:${DMID}`,'CLAUDE');
+  h+=A(1510,505,`${rise(t,idea)};font-family:Mono;font-size:22px;color:${OR}`,'YOU');
+  h+=C(650,`font-size:76px;font-weight:700;letter-spacing:-0.03em`,spoken(t,'l07',['the','part','it','can\'t','fake.'],wordIdx('l07','the',8),(i)=>i===4?`font-family:Serif;font-weight:400;font-style:italic;color:${OR}`:''));
+  return h;
+},{rule:true});
+
+// RULE 2 · write your style down once
+ruleTitle('l08',2,['Write','your','style','down','once.'],[4]);
+scene(S('l09'),IV,(t)=>{
+  const t0=S('l09');let h=dotgrid('#DCD6CB');
+  const T=[at('l09','fonts'),at('l09','colours'),at('l09','where'),at('l09','how'),at('l09','skill')];
+  const fold=seg(t,T[4]-.25,.55,sio);
+  // the style guide, a real document
+  const dx=lerp(0,-430,fold), sc=lerp(1,.62,fold);
+  let d=`<div class="mono" style="font-size:20px;color:${MID};letter-spacing:.12em">STYLE.md</div><div style="font-size:46px;font-weight:700;color:${INK};letter-spacing:-0.02em;margin:10px 0 28px">How our videos look</div>`;
+  const row=(i,k,v)=>`<div style="display:flex;gap:28px;align-items:center;padding:18px 0;border-top:1px solid ${IV2};${wrise(t,T[i]-.05)}"><div class="mono" style="width:220px;font-size:22px;color:${MID}">${k}</div><div style="flex:1">${v}</div></div>`;
+  d+=row(0,'fonts',`<span style="font-size:36px;font-weight:700;color:${INK}">Geist Bold</span><span style="color:${MID};font-size:30px"> + </span><span class="serif" style="font-size:44px;font-style:italic;color:${INK}">Instrument Serif</span><span style="color:${MID};font-size:30px"> + </span><span class="mono" style="font-size:28px;color:${INK}">Mono</span>`);
+  d+=row(1,'colours',[DK,IV,OR,TEAL,SAND].map(c=>`<span style="display:inline-block;width:64px;height:44px;border-radius:8px;background:${c};border:1px solid #cfc8bc;margin-right:10px;vertical-align:middle"></span>`).join('')+`<span class="mono" style="font-size:20px;color:${MID}">one accent, dull tones</span>`);
+  d+=row(2,'text sits',`<span style="display:inline-block;width:150px;height:84px;border:2px solid ${INK};border-radius:6px;position:relative;vertical-align:middle"><span style="position:absolute;left:14px;right:14px;top:12px;bottom:12px;border:2px dashed ${OR}"></span></span><span style="font-size:26px;color:${INK};margin-left:20px">centred on x 960, inside the safe area</span>`);
+  const demo=((t-T[3])%1.6+1.6)%1.6;
+  d+=row(3,'words move',`<span style="font-size:34px;font-weight:700;color:${INK}">${['rise','in','one','by','one'].map((w,i)=>`<span class="w" style="${wrise(demo,.1+i*.16)}">${w} </span>`).join('')}</span><span class="mono" style="font-size:20px;color:${MID}">fade + 20 px + blur · ≤ 1.5 s</span>`);
+  h+=A(260,120,`width:1400px;transform:translateX(${dx}px) scale(${sc});transform-origin:0 0;${rise(t,t0-.1)}`,`<div style="background:#fff;border:1px solid #d8d1c4;border-radius:18px;padding:40px 50px 30px;box-shadow:0 30px 60px rgba(60,50,30,.10)">${d}</div>`);
+  // ...and the guide becomes a skill
+  const s=seg(t,T[4]-.05,.4);
+  h+=A(1180,320,`width:560px;opacity:${s};transform:translateY(${(1-s)*24}px)`,`<div style="background:${INK};border-radius:18px;padding:34px 36px;color:#fff">
+    <div style="display:flex;gap:16px;align-items:center">${icon('file',40,OR)}<span class="mono" style="font-size:34px">SKILL.md</span></div>
+    <div class="mono" style="font-size:20px;color:${DMID};margin:16px 0 22px">.claude/skills/video-director/</div>
+    <div class="mono" style="font-size:22px;color:#d8d2c8;line-height:1.7">name: video-director<br>description: make our videos,<br>&nbsp;&nbsp;our way, every time</div></div>`);
+  return h;
+},{rule:true,cap:'l09'});
+scene(S('l10'),DK,(t)=>{
+  const t0=S('l10');let h=dotgrid('#1b1a18');
+  h+=chat(CX-620,150,1240,'/video-director  60-second explainer on our new feature',t,t0,{dur:1.1,fs:36,tag:'skill · video-director'});
+  const g=at('l10','guess');
+  h+=A(CX-620,430,`width:1240px;${rise(t,g-.25)}`,`<div style="display:flex;gap:16px;align-items:center;font-size:30px;color:#ECE7DE">
+    <span style="width:40px;height:40px;border-radius:50%;background:${GRN};display:inline-flex;align-items:center;justify-content:center">${icon('check',24,'#0d1a10',3)}</span>
+    <span class="mono" style="font-size:26px">loaded skill: video-director</span><span class="mono" style="font-size:22px;color:${DMID}">· fonts · colours · motion · sound</span></div>`);
+  h+=C(620,`font-size:64px;font-weight:700;letter-spacing:-0.03em`,spoken(t,'l10',['Claude','never','has','to','guess.'],1,(i)=>i===4?`color:${OR}`:''));
+  const tw=at('l10','twice');
+  h+=C(740,`font-size:64px;font-weight:700;letter-spacing:-0.03em;color:#cfc9bf`,spoken(t,'l10',['You','never','explain','it'],wordIdx('l10','you'))+` <span class="w serif" style="${wrise(t,tw-.06)};font-style:italic;color:${OR};font-weight:400">twice.</span>`);
+  return h;
+},{rule:true});
+
+// RULE 3 · plan every line before a single frame
+ruleTitle('l11',3,['Plan','every','line','before','a','single','frame.'],[6]);
+const PLAN=[['These three mistakes make your edits look amateur.','CAPTIONS',0],['Here\'s what to do instead.','CAPTIONS + UI',1],['Number one: stop oversizing everything.','HALF SCREEN',2],['Huge icons scream beginner.','FULL SCREEN',3]];
+function layoutIcon(k,col){const b=`border:2px solid ${col};border-radius:5px`;
+  const inner=[`<div style="position:absolute;left:10px;right:10px;bottom:8px;height:6px;background:${col};border-radius:3px"></div>`,
+    `<div style="position:absolute;left:18px;right:18px;bottom:8px;height:14px;border:2px solid ${col};border-radius:3px"></div>`,
+    `<div style="position:absolute;left:0;right:0;top:0;height:50%;background:${col};opacity:.5"></div>`,
+    `<div style="position:absolute;inset:4px;background:${col};opacity:.5;border-radius:3px"></div>`][k];
+  return `<span style="display:inline-block;width:76px;height:46px;position:relative;vertical-align:middle;${b}">${inner}</span>`;}
+scene(S('l12'),IV,(t)=>{
+  const t0=S('l12');let h=dotgrid('#DCD6CB');
+  const L=at('l12','script'), R=at('l12','scene'), T=[at('l12','captions'),at('l12','small'),at('l12','half'),at('l12','full')];
+  h+=A(200,110,`width:1520px;${rise(t,t0-.1)}`,`<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:42px;font-weight:700;color:${INK};letter-spacing:-0.02em">The plan</span><span class="mono" style="font-size:20px;color:${MID}">accent ${`<span style="display:inline-block;width:18px;height:18px;border-radius:4px;background:${OR};vertical-align:-3px"></span>`} · Geist + Serif</span></div>`);
+  h+=A(200,190,`width:1520px;${rise(t,L-.1)}`,`<div style="display:flex;font-family:Mono;font-size:20px;letter-spacing:.12em;color:${MID};padding:0 30px"><span style="flex:1">SCRIPT</span><span style="width:560px;${fade(t,R-.1)}">SCENE</span></div>`);
+  PLAN.forEach(([line,type,k],i)=>{const y=240+i*140; const p=seg(t,T[i]-.08,.3);
+    h+=A(200,y,`width:1520px;${rise(t,L+.05+i*.1)}`,`<div style="display:flex;align-items:center;background:#fff;border:1px solid #d8d1c4;border-radius:16px;height:118px;padding:0 30px">
+      <span class="mono" style="font-size:20px;color:${MID};width:60px">${String(i+1).padStart(2,'0')}</span>
+      <span style="flex:1;font-size:32px;color:${INK}">${line}</span>
+      <span style="width:560px;display:flex;align-items:center;gap:22px;opacity:${p};transform:translateY(${(1-p)*16}px)">${layoutIcon(k,i===3?OR:INK)}<span class="mono" style="font-size:24px;padding:8px 16px;border-radius:8px;background:${i===3?OR:IV};color:${i===3?'#fff':INK}">${type}</span></span></div>`);});
+  return h;
+},{rule:true,cap:'l12'});
+scene(S('l13'),DK,(t)=>{
+  const t0=S('l13');let h=dotgrid('#1b1a18');
+  h+=C(130,`font-size:64px;font-weight:700;letter-spacing:-0.03em`,spoken(t,'l13',['You','decide','what','pops','up','and','when.'],0,(i)=>i===6?`font-family:Serif;font-weight:400;font-style:italic;color:${OR}`:''));
+  // a timeline with the beats you chose
+  const tl=seg(t,t0+.1,1.4,sio);
+  h+=A(260,360,`width:1400px;height:4px;background:${DKL};border-radius:2px`,`<div style="width:${tl*100}%;height:4px;background:#d8d2c8;border-radius:2px"></div>`);
+  [['0:00.0','hook text'],['0:01.8','3 circles'],['0:04.2','zoom in'],['0:06.5','slider'],['0:09.1','full screen']].forEach(([tc,lab],i)=>{const x=260+i*340;const d=t0+.2+i*.22;
+    h+=A(x-10,349,`width:26px;height:26px;border-radius:50%;background:${i===2?OR:'#d8d2c8'};${fade(t,d,.2)}`,'');
+    h+=A(x-60,400,`width:200px;${rise(t,d)}`,`<div class="mono" style="font-size:20px;color:${DMID}">${tc}</div><div style="font-size:28px;color:#ECE7DE;margin-top:6px">${lab}</div>`);});
+  const c=at('l13','that');
+  h+=C(620,`${rise(t,c-.1)}`,`${icon('eye',72,OR,1.6)}`);
+  h+=C(720,`font-size:56px;font-weight:600;letter-spacing:-0.02em;color:#cfc9bf`,spoken(t,'l13',['That\'s','the','part','Claude','can\'t','see.'],wordIdx('l13','that'),(i)=>i===5?`color:${OR}`:''));
+  return h;
+},{rule:true});
+
+// RULE 4 · voice first
+ruleTitle('l14',4,['Record','the','voice','first,','then','animate','to','it.'],[2]);
+scene(S('l15'),DK,(t)=>{
+  const t0=S('l15');const l=LINES['l15'];let h=dotgrid('#1b1a18');
+  h+=A(120,110,`${rise(t,t0-.1)}`,`<span class="mono" style="font-size:22px;letter-spacing:.14em;color:${DMID}">THIS SENTENCE, TIMED BY WHISPER · word starts in seconds</span>`);
+  // the real waveform of this very line, with the playhead on it
+  const x0=120, w=1680, span=l.end-l.start+.2; const X=tt=>x0+(tt-l.start+.1)/span*w;
+  let wv='';const n=l.env.length;for(let k=0;k<n;k+=1){const x=X(l.start+k/30);wv+=`<div class="a" style="left:${x.toFixed(1)}px;top:${(330-l.env[k]*120).toFixed(1)}px;width:4px;height:${(l.env[k]*240+2).toFixed(1)}px;border-radius:2px;background:${(l.start+k/30)<t?'#d8d2c8':'#3a3733'}"></div>`;}
+  h+=`<div class="a" style="inset:0;${fade(t,t0-.2)}">${wv}</div>`;
+  h+=A(X(clamp(t,l.start-.1,l.end+.1)),170,`width:3px;height:320px;background:${OR}`,'');
+  // each word as a chip at its real start, with a cut mark on the ones we cut on
+  const CUT=['every','cut','spoken'];
+  l.words.forEach((wd,i)=>{const x=X(wd.s);const row=i%2;const on=t>=wd.s-.04;
+    h+=A(x,520+row*90,`${wrise(t,wd.s-.05)}`,`<div style="border-left:2px solid ${CUT.includes(norm(wd.w))?OR:'#4a4641'};padding-left:10px"><div style="font-size:30px;font-weight:600;color:${on?'#fff':'#6b655e'}">${wd.w.replace(/[.,]/g,'')}</div><div class="mono" style="font-size:18px;color:${DMID}">${wd.s.toFixed(2)}</div></div>`);
+    if(CUT.includes(norm(wd.w)))h+=A(x-1,170,`width:2px;height:320px;background:${OR};opacity:${(.5*seg(t,wd.s-.04,.15)).toFixed(2)}`,'');});
+  h+=C(800,`${rise(t,at('l15','so'))};font-size:44px;font-weight:600;color:#ECE7DE`,`every cut lands ${it('on a spoken word')}`);
+  return h;
+},{rule:true});
+
+// RULE 5 · small, calm, on the beat
+ruleTitle('l16',5,['Small,','calm,','and','on','the','beat.'],[5]);
+scene(S('l17'),DK,(t)=>{
+  const t0=S('l17');let h=dotgrid('#1b1a18');
+  // the sentence does what it says
+  const words=['Words','rise','in','one','at','a','time.'];
+  h+=C(150,`font-size:92px;font-weight:700;letter-spacing:-0.035em`,spoken(t,'l17',words,0,(i)=>i===1?`font-family:Serif;font-weight:400;font-style:italic;color:${OR}`:''));
+  const u=at('l17','under');
+  h+=C(300,`${rise(t,u-.1)}`,`<span class="pill" style="background:${DK2};border:1px solid ${DKL};color:#d8d2c8">${icon('clock',22,OR)} under 1.5 s · fade + 20 px + a little blur · no bounce</span>`);
+  // the cut rhythm: one cut every 2-3 s
+  const c=at('l17','cut'), p=seg(t,c-.1,1.2,sio);
+  h+=A(260,520,`width:1400px;height:110px;${fade(t,c-.2)}`,(()=>{let r=`<div class="a" style="left:0;top:54px;width:${p*1400}px;height:2px;background:#4a4641"></div>`;
+    const marks=[0,2.4,4.6,7.3,9.8,12.2,14.6];marks.forEach((m,i)=>{const x=m/14.6*1400;const on=p*1400>=x;r+=`<div class="a" style="left:${x-1}px;top:20px;width:3px;height:70px;background:${on?OR:'#2a2826'}"></div>`;
+      if(i>0)r+=`<div class="a mono" style="left:${(marks[i-1]+m)/2/14.6*1400-30}px;top:84px;width:60px;text-align:center;font-size:18px;color:${on?DMID:'transparent'}">${(m-marks[i-1]).toFixed(1)}s</div>`;});return r;})());
+  h+=C(700,`font-size:56px;font-weight:700;letter-spacing:-0.03em;color:#cfc9bf`,spoken(t,'l17',['Cut','every','two','to','three','seconds.'],wordIdx('l17','cut')));
+  return h;
+},{rule:true});
+scene(S('l18'),IV,(t)=>{
+  const t0=S('l18');let h=dotgrid('#DCD6CB');
+  const sm=at('l18','smaller'), du=at('l18','duller'), ex=at('l18','expensive');
+  // −25%: an oversized card snaps to its right size
+  const s=lerp(1.33,1,seg(t,sm-.1,.5,sio));
+  h+=A(150,140,`width:760px;height:640px;${rise(t,t0-.1)}`,`<div class="mono" style="font-size:22px;letter-spacing:.14em;color:${MID}">EVERY ELEMENT −25%</div>
+    <div class="a" style="left:130px;top:150px;width:500px;height:360px;transform:scale(${s.toFixed(4)});transform-origin:50% 50%;background:#fff;border:1px solid #d8d1c4;border-radius:22px;box-shadow:0 20px 40px rgba(60,50,30,.10)">
+      <div style="position:absolute;left:40px;top:40px;width:90px;height:90px;border-radius:22px;background:${OR}"></div>
+      <div style="position:absolute;left:40px;top:160px;width:340px;height:26px;border-radius:13px;background:${INK}"></div>
+      <div style="position:absolute;left:40px;top:210px;width:250px;height:20px;border-radius:10px;background:#cfc8bc"></div>
+      <div style="position:absolute;left:40px;top:280px;width:150px;height:44px;border-radius:12px;background:${INK}"></div></div>
+    <div class="a mono" style="left:130px;top:560px;font-size:24px;color:${INK};${rise(t,sm+.3)}">${Math.round(lerp(133,100,seg(t,sm-.1,.5,sio)))}% → 100%</div>`);
+  // pure → dull
+  const p=seg(t,du-.1,.6,sio);
+  const pairs=[['#000000','#1C1B19','black'],['#FFFFFF','#EFEBE3','white'],['#FF0000','#C8594C','red'],['#0000FF','#8597B8','blue']];
+  h+=A(1010,140,`width:760px;${rise(t,at('l18','trade')-.1)}`,`<div class="mono" style="font-size:22px;letter-spacing:.14em;color:${MID};margin-bottom:40px">PURE → DULL</div>`+
+    pairs.map(([a,b,n],i)=>`<div style="display:flex;align-items:center;gap:26px;margin-bottom:22px;${rise(t,at('l18','trade')+i*.08)}"><span style="width:130px;height:76px;border-radius:12px;border:1px solid #cfc8bc;background:${a};opacity:${1-.65*p}"></span><span style="font-size:30px;color:${MID}">→</span><span style="width:130px;height:76px;border-radius:12px;border:1px solid #cfc8bc;background:${b};opacity:${.3+.7*p}"></span><span class="mono" style="font-size:22px;color:${INK}">${b} · ${n}</span></div>`).join(''));
+  h+=C(860,`font-size:60px;font-weight:700;letter-spacing:-0.03em;color:${INK}`,spoken(t,'l18',['It','instantly','looks','more'],wordIdx('l18','it',8))+` <span class="w serif" style="${wrise(t,ex-.06)};font-style:italic;color:${OR};font-weight:400">expensive.</span>`);
+  return h;
+},{rule:true});
+
+// RULE 6 · sound is half the video
+ruleTitle('l19',6,['Sound','is','half','the','video.'],[2]);
+const FAM=[['WHOOSHES','movement','slides · zooms · scene changes',['swoosh-014','woosh-230554','universfield-swoosh-023','simple-whoosh-02'],BLUE],
+           ['TEXTURES','things that appear','clicks · pops · UI · typing',['ui-pop-up-2','App Click 1','soft-subtle-ui-pop','keyboard-typing-fast'],TEAL],
+           ['RISERS & HITS','the big reveal','builds · sub booms · shines',['shine-6, reversed','whoosh-end (sub boom)','benkirb-shine-1','sfx-acceptation'],OR]];
+scene(S('l20'),DK,(t)=>{
+  const t0=S('l20');let h=dotgrid('#1b1a18');
+  h+=C(110,`${rise(t,t0-.1)}`,`<span class="pill" style="background:${DK2};border:1px solid ${DKL};color:#d8d2c8">${icon('wave',22,OR)} our library: 92 sounds, three jobs</span>`);
+  const T=[at('l20','whooshes'),at('l20','clicks'),at('l20','risers')];
+  FAM.forEach(([name,job,ex,files,col],i)=>{const x=160+i*540, d=T[i]-.1;
+    let wave='';for(let k=0;k<40;k++){let a;const u=k/39;if(i===0)a=Math.exp(-Math.pow((u-.55)/.18,2));else if(i===1)a=(k%9===2)?1:(k%9===3?.45:.05);else a=u<.8?Math.pow(u/.8,2.2):(u<.84?1:Math.max(0,1-(u-.84)*3));
+      wave+=`<div style="width:7px;border-radius:3px;background:${col};height:${(4+a*90*seg(t,d+.1,.5)).toFixed(1)}px"></div>`;}
+    h+=A(x,200,`width:500px;${rise(t,d)}`,`<div class="card" style="padding:30px 32px;height:560px;border-color:${t>=d?col+'66':DKL}">
+      <div class="mono" style="font-size:24px;letter-spacing:.14em;color:${col}">${name}</div>
+      <div style="font-size:44px;font-weight:700;letter-spacing:-0.02em;margin:14px 0 6px">${job}</div>
+      <div style="font-size:24px;color:${DMID}">${ex}</div>
+      <div style="display:flex;align-items:flex-end;gap:4px;height:100px;margin:30px 0">${wave}</div>
+      ${files.map((f,k)=>`<div class="mono" style="font-size:20px;color:#bdb7ac;margin-bottom:10px;${rise(t,d+.25+k*.08)}">▸ ${f}</div>`).join('')}</div>`);
+  });
+  return h;
+},{rule:true,cap:'l20'});
+scene(S('l21'),DK,(t)=>{
+  const t0=S('l21');let h=dotgrid('#1b1a18');
+  const f=at('l21','fastest'), one=at('l21','one'), cov=at('l21','covers');
+  // motion curve vs the whoosh envelope: peak on the fastest frame
+  h+=A(150,120,`width:900px;${rise(t,t0-.1)}`,`<div class="mono" style="font-size:22px;letter-spacing:.14em;color:${DMID}">THE WHOOSH PEAKS WHERE THE MOVE IS FASTEST</div>`);
+  const pts=[],env=[];for(let k=0;k<=60;k++){const u=k/60;const v=Math.exp(-Math.pow((u-.5)/.16,2));pts.push(`${150+u*820},${560-v*300}`);env.push(`${150+u*820},${560-Math.exp(-Math.pow((u-.5)/.12,2))*260}`);}
+  const dr=seg(t,t0+.1,1.0);
+  h+=`<svg class="a" style="left:0;top:0" width="1920" height="1080"><polyline points="${pts.join(' ')}" fill="none" stroke="#d8d2c8" stroke-width="4" stroke-dasharray="2000" stroke-dashoffset="${(1-dr)*2000}"/>
+    <polyline points="${env.join(' ')}" fill="none" stroke="${BLUE}" stroke-width="4" stroke-dasharray="2000" stroke-dashoffset="${(1-seg(t,f-.3,.6))*2000}"/>
+    <line x1="560" y1="200" x2="560" y2="600" stroke="${OR}" stroke-width="3" stroke-dasharray="8 8" opacity="${seg(t,f-.05,.3)}"/></svg>`;
+  h+=A(170,600,`${rise(t,t0+.3)};font-family:Mono;font-size:20px;color:#d8d2c8`,'— speed on screen');
+  h+=A(470,600,`${rise(t,f-.2)};font-family:Mono;font-size:20px;color:${BLUE}`,'— whoosh loudness');
+  h+=A(580,250,`${rise(t,f)};font-family:Mono;font-size:22px;color:${OR}`,'fastest frame');
+  // one big hit per scene
+  h+=A(1130,120,`width:640px;${rise(t,one-.15)}`,`<div class="mono" style="font-size:22px;letter-spacing:.14em;color:${DMID}">ONE BIG HIT PER SCENE</div>`);
+  let bars='';[.2,.3,.18,.25,1,.22,.3,.16,.24,.2].forEach((v,k)=>{bars+=`<div style="width:44px;border-radius:6px;background:${k===4?OR:'#3a3733'};height:${(v*300*seg(t,one-.1+k*.03,.3)).toFixed(1)}px"></div>`;});
+  h+=A(1130,190,`width:640px;height:380px;display:flex;align-items:flex-end;gap:16px`,bars);
+  // nothing covers the voice
+  h+=C(760,`font-size:60px;font-weight:700;letter-spacing:-0.03em`,spoken(t,'l21',['nothing','ever','covers','the','voice.'],wordIdx('l21','nothing'),(i)=>i===4?`font-family:Serif;font-weight:400;font-style:italic;color:${OR}`:''));
+  return h;
+},{rule:true});
+scene(S('l22'),DK,(t)=>{
+  const t0=S('l22');let h=dotgrid('#1b1a18');
+  h+=C(110,`${rise(t,t0-.1)}`,`<span class="mono" style="font-size:22px;letter-spacing:.14em;color:${DMID}">THIS VIDEO'S MIX · live</span>`);
+  const v=venv(t), duck=clamp(v*2.2);
+  const ch=[['VOICE','-15 LUFS',.25+.7*v,'#ECE7DE'],['MUSIC','-27 LUFS · ducked',.42-.22*duck,BLUE],['SFX','-23 LUFS',.18+.5*Math.pow(Math.abs(Math.sin(t*3.1)),8),TEAL],['MASTER','-14 LUFS',.35+.5*v,OR]];
+  ch.forEach(([n,lv,m,col],i)=>{const x=410+i*300;const d=t0+.1+i*.12;
+    let seg_='';for(let k=0;k<24;k++){const on=k/24<m;seg_+=`<div style="height:13px;border-radius:3px;margin-top:5px;background:${on?col:'#24221f'}"></div>`;}
+    h+=A(x,190,`width:200px;${rise(t,d)}`,`<div class="card" style="padding:22px 26px"><div style="display:flex;flex-direction:column-reverse">${seg_}</div>
+      <div class="mono" style="font-size:22px;margin-top:20px;color:#ECE7DE">${n}</div><div class="mono" style="font-size:18px;color:${DMID};margin-top:6px;white-space:nowrap">${lv}</div></div>`);});
+  h+=C(800,`font-size:52px;font-weight:700;letter-spacing:-0.03em;color:#cfc9bf`,`<span class="w" style="${wrise(t,at('l22','music')-.06)}">music</span> <span class="w" style="${wrise(t,at('l22','twelve')-.06)};color:#fff">12 dB under,</span> <span class="w" style="${wrise(t,at('l22','ducked')-.06)}">ducked under</span> <span class="w serif" style="${wrise(t,at('l22','every')-.06)};font-style:italic;color:${OR};font-weight:400">every word.</span>`);
+  return h;
+},{rule:true});
+
+// RULE 7 · watch it like a director
+ruleTitle('l23',7,['Watch','it','like','a','director.'],[4]);
+// the contact sheet is this film's own frames (each tile draws a real scene at a real hit)
+const SHEET=[['l02',.8],['l06',3.6],['l09',3.2],['l12',4.4],['l15',2.6],['l18',4.6],['l20',3.6],['l22',2.0]];
+scene(S('l24'),IV,(t)=>{
+  const t0=S('l24');let h=dotgrid('#DCD6CB');
+  h+=A(120,96,`${rise(t,t0-.1)}`,`<span class="mono" style="font-size:22px;letter-spacing:.14em;color:${MID}">A STILL AT EVERY HIT · from this video</span>`);
+  SHEET.forEach(([id,dt],i)=>{const col=i%4,row=Math.floor(i/4);const x=120+col*300,y=150+row*200;const tt=S(id)+dt;const sc=SC.filter(s=>s.t0<=tt).pop();
+    h+=A(x,y,`width:280px;height:158px;overflow:hidden;border-radius:10px;border:1px solid #cfc8bc;background:${sc.bg};${rise(t,t0+.05+i*.07)}`,
+      `<div style="position:absolute;left:0;top:0;width:1920px;height:1080px;transform:scale(${280/1920});transform-origin:0 0">${sc.draw(tt)}</div>`);
+    h+=A(x,y+162,`${rise(t,t0+.05+i*.07)};font-family:Mono;font-size:16px;color:${MID}`,`${(tt).toFixed(1)} s`);});
+  // the checks, then the notes that go back to Claude
+  const q1=at('l24','is'), q2=at('l24','does'), n=at('l24','then');
+  h+=A(1360,150,`width:440px;${rise(t,q1-.1)}`,`<div style="background:#fff;border:1px solid #d8d1c4;border-radius:16px;padding:24px 26px">
+    ${[['text clear?',q1],['sound on the move?',q2],['nothing cut off?',q2+.35]].map(([s,d])=>`<div style="display:flex;gap:12px;align-items:center;font-size:26px;color:${INK};margin-bottom:12px;${wrise(t,d)}"><span style="width:32px;height:32px;border-radius:50%;background:${GRN};display:inline-flex;align-items:center;justify-content:center">${icon('check',20,'#fff',3)}</span>${s}</div>`).join('')}</div>`);
+  h+=A(120,600,`width:1680px;${rise(t,n-.1)}`,`<div style="background:${INK};border-radius:16px;padding:22px 30px;display:flex;gap:18px;align-items:center;color:#ECE7DE">${icon('pen',28,OR)}
+    <span style="font-size:28px">notes: <span class="mono" style="font-size:24px;color:#d8d2c8">shorten the title by 2 words · lower the pop at 0:41 · hold the end card one more beat</span></span></div>`);
+  const r=at('l24','rebuild');
+  h+=C(760,`${wrise(t,r-.1)};font-size:56px;font-weight:700;letter-spacing:-0.03em;color:${INK}`,`${icon('loop',52,OR,2.2)} &nbsp;Claude ${it('rebuilds')}`);
+  return h;
+},{rule:true,cap:'l24'});
+scene(S('l25'),DK,(t)=>{
+  const t0=S('l25');let h=dotgrid('#1b1a18');
+  h+=C(120,`font-size:64px;font-weight:700;letter-spacing:-0.03em`,spoken(t,'l25',['Check','every','fact','against','the','source.'],1,(i)=>i===5?`font-family:Serif;font-weight:400;font-style:italic;color:${OR}`:''));
+  const w=at('l25','one');
+  const card=(x,claim,ok,src,d)=>A(x,330,`width:620px;${rise(t,d)}`,`<div class="card" style="padding:32px 34px;border-color:${ok?GRN+'88':RED+'88'}">
+    <div style="font-size:46px;font-weight:700;letter-spacing:-0.02em;color:${ok?'#fff':'#9a948b'};${ok?'':'text-decoration:line-through;text-decoration-color:'+RED}">${claim}</div>
+    <div style="display:flex;gap:12px;align-items:center;margin-top:22px"><span style="width:36px;height:36px;border-radius:50%;background:${ok?GRN:RED};display:inline-flex;align-items:center;justify-content:center">${icon(ok?'check':'x',22,'#fff',3)}</span><span class="mono" style="font-size:22px;color:${DMID}">${src}</span></div></div>`);
+  h+=card(300,'Whisper: word times',true,'source: the model card',at('l25','against')-.1);
+  h+=card(1000,'“10x more views”',false,'source: none',w-.1);
+  h+=C(720,`font-size:54px;font-weight:600;letter-spacing:-0.02em;color:#cfc9bf`,spoken(t,'l25',['One','wrong','number','kills','a','good','video.'],wordIdx('l25','one'),(i)=>i===1?`color:${RED}`:''));
+  return h;
+},{rule:true});
+
+// CLOSE · one editor's real timing
+scene(S('l26')-LEAD,IV,(t)=>{
+  const t0=S('l26');let h=dotgrid('#DCD6CB');
+  h+=A(160,120,`${rise(t,t0-.1)}`,`<span class="mono" style="font-size:22px;letter-spacing:.14em;color:${MID}">ONE EDITOR'S OWN SCREEN RECORDING · a one-minute talking-head edit</span>`);
+  const segs=[['cut',24,'#cfc8bc'],['plan',15,OR],['animate',40,'#cfc8bc'],['gap',5,IV2],['sound',25,'#cfc8bc']];
+  const total=110; let x=0;const bw=1600; const p=seg(t,at('l26','almost')-.2,1.2,sio);
+  let bar='';segs.forEach(([n,m,c],i)=>{const w=m/total*bw;const vis=clamp(p*total/ (x/bw*total+m) );bar+=`<div class="a" style="left:${x}px;top:0;width:${(w*clamp((p*bw-x)/w)).toFixed(1)}px;height:110px;background:${c};border-right:2px solid ${IV}"></div>`;
+    if(n!=='gap')bar+=`<div class="a mono" style="left:${x+14}px;top:126px;font-size:22px;color:${INK};${fade(t,at('l26','almost')+i*.22)}">${n} · ${m} min</div>`;x+=w;});
+  h+=A(160,260,`width:${bw}px;height:180px;${fade(t,t0)}`,bar);
+  const mins=Math.round(lerp(0,110,p));
+  h+=A(160,500,`font-family:Mono;font-size:120px;line-height:1;color:${INK};${fade(t,at('l26','almost')-.2)}`,`${Math.floor(mins/60)}h ${String(mins%60).padStart(2,'0')}m`);
+  const y=at('l26','he');
+  h+=A(900,500,`width:860px;${rise(t,y-.1)}`,`<div style="background:${INK};color:#fff;border-radius:18px;padding:26px 34px;display:flex;align-items:center;gap:26px">
+    <span class="mono" style="font-size:90px;color:${OR};line-height:1">~20</span><span style="font-size:34px;line-height:1.25">minutes of it were him:<br>${it('planning and notes.')}</span></div>`);
+  h+=A(160,690,`${rise(t,y+.4)};font-family:Mono;font-size:20px;color:${MID}`,'the other ~90 minutes, Claude worked on its own · his numbers, not ours');
+  return h;
+},{cap:'l26'});
+scene(S('l27'),DK,(t)=>{
+  const t0=S('l27');let h=dotgrid('#1b1a18');
+  const pr=at('l27','prompt'), d=at('l27','direction');
+  h+=C(270,`font-size:96px;font-weight:700;letter-spacing:-0.035em;color:${t>=d-.1?'#5d5852':'#fff'}`,spoken(t,'l27',['The','prompt','was','never','the','secret.'],1,(i)=>i===1?`text-decoration:line-through;text-decoration-thickness:6px;text-decoration-color:${seg(t,pr+.2,.3)>.5?RED:'transparent'}`:''));
+  h+=C(450,`font-size:210px;line-height:1.05`,`<span class="w serif" style="${wrise(t,at('l27','the',3)-.06)};color:#fff">The </span><span class="w serif" style="${wrise(t,d-.06)};font-style:italic;color:${OR}">direction is.</span>`);
+  return h;
+},{punch:1.05});
+// end card: still, holds
+scene(S('l28'),DK,(t)=>{
+  const t0=S('l28');let h=dotgrid('#1b1a18');
+  h+=C(150,`${rise(t,t0-.1)};font-size:84px;font-weight:700;letter-spacing:-0.035em`,`7 rules for ${it('directing')} Claude`);
+  RULES.forEach((r,i)=>{const x=CX-840+i*240;h+=A(x,330,`width:220px;text-align:center;${rise(t,t0+.1+i*.06)}`,
+    `<div class="card" style="padding:22px 10px"><div class="mono" style="font-size:20px;color:${OR}">${String(i+1).padStart(2,'0')}</div><div style="font-size:30px;font-weight:600;margin-top:8px">${r}</div></div>`);});
+  const sv=at('l28','save'), fo=at('l28','follow');
+  h+=C(560,`${rise(t,sv-.05)}`,`<span style="display:inline-block;border:1px solid ${DKL};background:${DK2};border-radius:999px;padding:20px 46px;font-size:40px;font-weight:600">Save this for your next video</span>`);
+  h+=C(690,`${rise(t,fo-.05)}`,`<span style="display:inline-block;background:#fff;color:${INK};border-radius:999px;padding:22px 52px;font-size:42px;font-weight:700">Follow for the full build</span>`);
+  h+=C(860,`${rise(t,fo+.4)};font-family:Mono;font-size:22px;color:${DMID}`,'script · frames · voice · sound — made with Claude in our studio');
+  return h;
+},{still:true});
+
+// ---------- the persistent frame: header + the seven-step map (rule 11) ----------
+function chrome(t){
+  const r=ruleOf(t);if(r<0)return '';
+  const sc=SC.filter(s=>s.t0<=t).pop();const lightBg=sc&&sc.bg===IV;const col=lightBg?MID:DMID, ink=lightBg?INK:'#ECE7DE';
+  const tin=seg(t,S('l05')-LEAD,.4);
+  let h=`<div class="a" style="left:72px;top:44px;opacity:${tin};font-family:Mono;font-size:20px;letter-spacing:.16em;color:${col}">DIRECTING CLAUDE · VIDEO</div>`;
+  h+=`<div class="a" style="right:72px;top:44px;opacity:${tin};font-family:Mono;font-size:20px;letter-spacing:.16em;color:${col}">RULE <span style="color:${OR}">${String(r+1).padStart(2,'0')}</span> / 07 · ${RULES[r].toUpperCase()}</div>`;
+  // the stepper
+  let st='';RULES.forEach((n,i)=>{const on=i===r, done=i<r;
+    st+=`<div style="display:flex;align-items:center;gap:10px;${i?'margin-left:26px':''}"><span style="width:12px;height:12px;border-radius:50%;background:${on?OR:done?ink:'transparent'};border:2px solid ${on?OR:done?ink:col}"></span><span class="mono" style="font-size:18px;color:${on?OR:done?ink:col}">${n}</span></div>`;});
+  h+=`<div class="a" style="left:0;width:1920px;top:1022px;display:flex;justify-content:center;opacity:${tin}">${st}</div>`;
+  return h;
+}
+// ---------- captions (1-2 words, the current word lit), only where the screen doesn't already say it ----------
+function caption(t){
+  const sc=SC.filter(s=>s.t0<=t).pop();if(!sc||!sc.cap)return '';
+  const l=LINES[sc.cap];if(!l||t<l.start||t>l.end+.25)return '';
+  const Wd=l.words;let k=Wd.findIndex(w=>t<w.e+.04);if(k<0)k=Wd.length-1;
+  const g=Math.floor(k/3)*3;const grp=Wd.slice(g,g+3);
+  if(t<Wd[0].s-.05)return '';
+  return `<div class="box" style="top:${sc.rule?18:52}px"><span class="b">${grp.map((w,i)=>`<span style="color:${g+i===k?'#F4B08F':'#fff'}">${w.w}</span>`).join(' ')}</span></div>`;
+}
+// ---------- the pixel wipe between rules (the reference reel's signature move, in our palette) ----------
+const WIPES=[...RULE_AT.map(S),S('l26')].map(x=>x-LEAD);
+function wipe(t){
+  for(const T of WIPES){if(t<T-.42||t>T+.42)continue;let h='';const B=96;
+    for(let r=0;r<12;r++)for(let c=0;c<20;c++){const i=r*20+c;const d=hash(i)*.2+c/20*.14;
+      const on=t>=T-.4+d&&t<T+.02+d;if(!on)continue;
+      const col=hash(i+7)<.12?OR:hash(i+9)<.18?'#2c2a27':'#161514';
+      h+=`<div class="a" style="left:${c*B}px;top:${r*B}px;width:${B}px;height:${B}px;background:${col}"></div>`;}
+    return h;}
+  return '';
+}
+// ---------- the sound cues: every one tied to something on screen (read by tools/audio.py) ----------
+function cues(){
+  const q=[];const add=(t,f,db=0,o={})=>q.push({t:+t.toFixed(3),f,db,...o});
+  // whoosh peaks sit on the fastest frame of each move: audio.py aligns the file's peak to t
+  WIPES.forEach((T,i)=>{add(T,'swoosh-014-383768',-3,{peak:true});add(T-.2,['ui-sound-2-374229','ui-sound-374228'][i%2],-10);});
+  // hook
+  add(0,'keyboard-typing-fast-371229',-6,{len:1.7,fade:.25});
+  add(at('l01','there')-.05,'interface-digital-de-texto-text-digital-interface-218128_1_',-10,{len:.5});
+  add(at('l01','there')+.05,'whoosh-end-384629',-4,{peak:true,len:2.5,fade:1});
+  add(S('l02')-.1,'woosh-230554',-12,{peak:true});
+  [at('l02','script'),at('l02','every'),at('l02','every',wordIdx('l02','every')+1)].forEach((x,i)=>add(x-.08,'ui-pop-up-2-197887',-9));
+  add(S('l03'),'universfield-swoosh-023-454830',-6,{peak:true});
+  add(S('l03')+.1,'sonar-ping-95840',-14,{len:1.6,fade:.8});
+  add(S('l04'),'simple-whoosh-382724',-4,{peak:true});
+  add(at('l04','seven')-.1,'ui-processing-data-sequence-modern-interface-progress-02-230495',-12,{len:.7,fade:.2});
+  add(at('l04','directed')-.08,'whoosh-end-384629',-4,{peak:true,len:2,fade:1});
+  for(let i=0;i<7;i++)add(E('l04')-.55+i*.05,'soft-pop-sfx-433612',-10);
+  // rule titles: the number lands
+  RULE_AT.forEach(id=>add(S(id)-.25,'creatorshome-sharp-pop-328170',-8));
+  // rule 1
+  add(S('l06')+.05,'keyboard-typing-fast-371229',-9,{len:.9,fade:.2});
+  add(at('l06','slop')-.3,'bubble-254777',-12);add(at('l06','slop')+.2,'sfx-erreur-363728',-12);
+  for(let k=0;k<5;k++)add(at('l06','give')+.05+k*.17,'universfield-computer-mouse-click-352734',-4);
+  add(at('l06','film')-.15,'whoosh-velocity-383019',-10,{peak:true,len:1.4,fade:.5});
+  add(at('l07','most'),'swoosh-06-351021',-8,{peak:true});add(at('l07','your')-.1,'shine-6-268910',-10,{len:1.6,fade:.8});
+  // rule 2
+  [at('l09','fonts'),at('l09','colours'),at('l09','where'),at('l09','how')].forEach(x=>add(x-.05,'App_Click_1',-5));
+  add(at('l09','skill')-.55,'shine-6-268910',-8,{reverse:true,len:.55});add(at('l09','skill')-.05,'pop-402324',-4);
+  add(S('l10'),'keyboard-typing-fast-371229',-8,{len:1.1,fade:.2});add(at('l10','guess')-.25,'sfx-acceptation-363730',-10);
+  add(at('l10','twice')-.06,'marimba-bloop-3-188151',-10);
+  // rule 3
+  for(let i=0;i<4;i++)add(at('l12','script')+.05+i*.1,'flipcard-91468',-12);
+  [at('l12','captions'),at('l12','small'),at('l12','half'),at('l12','full')].forEach((x,i)=>add(x-.08,i===3?'pop-331049':'soft-subtle-ui-pop-sfx-348820',-5));
+  for(let i=0;i<5;i++)add(S('l13')+.2+i*.22,'ui-pop-up-2-197887',-12);
+  add(at('l13','that')-.1,'freesound_community-appearance-effect-6733',-10);
+  // rule 4: a tick on every word of the timed sentence
+  LINES['l15'].words.forEach(w=>add(w.s-.05,'immersivecontrol-button-click-sound-463065',-14));
+  add(at('l15','so'),'swoosh-010-352856',-12,{peak:true});
+  // rule 5
+  add(at('l17','under')-.1,'new-notification-013-363676',-12);
+  [0,2.4,4.6,7.3,9.8,12.2,14.6].forEach(m=>add(at('l17','cut')-.1+m/14.6*1.2,'App_Click_1',-10));
+  add(at('l18','smaller')-.1,'swoosh-sound-effect-for-fight-scenes-or-transitions-2-149890',-8,{peak:true});
+  add(at('l18','smaller')+.3,'pop-2-269283',-6);
+  for(let i=0;i<4;i++)add(at('l18','trade')+i*.08,'bubble_pop_1-476367',-8);
+  add(at('l18','expensive')-.1,'benkirb-shine-1-268902',-8,{len:1.6,fade:.8});
+  // rule 6: each family plays its own sound
+  add(at('l20','whooshes')-.1,'universfield-swoosh-023-454830',-3,{peak:true});
+  add(at('l20','clicks')-.1,'ui-pop-up-2-197887',-2);add(at('l20','clicks')+.15,'App_Click_1',-4);
+  add(at('l20','risers')-.8,'shine-6-268910',-6,{reverse:true,len:.8});add(at('l20','risers')-.02,'whoosh-end-384629',-3,{peak:true,len:2,fade:1});
+  add(at('l21','fastest')-.3,'woosh-230554',-4,{peak:true,at:at('l21','fastest')});
+  add(at('l21','one')+.02,'whoosh-end-384629',-6,{peak:true,len:1.6,fade:.8});
+  for(let i=0;i<4;i++)add(S('l22')+.1+i*.12,'ui-sounds-pack-3-7-359721',-10);
+  // rule 7
+  for(let i=0;i<8;i++)add(S('l24')+.05+i*.07,'soft-pop-sfx-433612',-10);
+  [at('l24','is'),at('l24','does'),at('l24','does')+.35].forEach(x=>add(x,'new-notification-09-352705',-14));
+  add(at('l24','then')-.1,'pop-up-notify-smooth-modern-332448_2_',-14,{len:1,fade:.5});add(at('l24','rebuild')-.1,'victorabdo-spin-232536',-10,{len:1.3,fade:.5});
+  add(at('l25','against')-.1,'sfx-acceptation-363730',-10);add(at('l25','one')-.1,'sfx-erreur-363728',-6);
+  // close
+  add(at('l26','almost')-.2,'ui-processing-data-sequence-modern-interface-progress-02-230495',-14,{len:1.3,fade:.3});
+  add(at('l26','he')-.1,'pop-up-notify-smooth-modern-332448_2_',-8,{len:1.2,fade:.5});
+  add(at('l27','direction')-.9,'shine-6-268910',-11,{reverse:true,len:.9});add(at('l27','direction')-.06,'whoosh-end-384629',-2,{peak:true,len:2.6,fade:1.2});
+  add(S('l28')-.12,'simple-whoosh-02-433006',-8,{peak:true,len:1.6,fade:.6});
+  for(let i=0;i<7;i++)add(S('l28')+.1+i*.06,'soft-pop-sfx-433612',-9);
+  add(at('l28','save')-.05,'pop-402324',-6);add(at('l28','follow')-.05,'bright-notification-352449',-12,{len:1.6,fade:.8});
+  return q.sort((a,b)=>a.t-b.t);
+}
+// ---------- seek ----------
+const cam=document.getElementById('cam'), ui=document.getElementById('ui'), cap=document.getElementById('cap'), wp=document.getElementById('wipe'), stage=document.getElementById('stage');
+window.DURATION=VO.duration;
+window.seek=function(t){
+  let i=0;while(i+1<SC.length&&SC[i+1].t0<=t)i++;
+  const sc=SC[i], lt=t-sc.t0, t1=(SC[i+1]?.t0)??window.DURATION;
+  stage.style.background=sc.bg;
+  // camera: a small punch-in on each cut, a slow drift after (never fully still, except the end card)
+  let s=1;
+  if(!sc.still){s=1+(sc.punch?sc.punch-1:.03)*(1-eo(clamp(lt/.3)))+(sc.drift??.018)*clamp(lt/Math.max(1,t1-sc.t0));}
+  else s=1+.03*(1-eo(clamp(lt/.3)));
+  cam.style.transform=`scale(${s.toFixed(5)})`;
+  cam.innerHTML=sc.draw(t);
+  ui.innerHTML=chrome(t);
+  cap.innerHTML=caption(t);
+  wp.innerHTML=wipe(t);
+};
+window.CUTS=SC.map(s=>s.t0);
+window.SFX=cues();
+window.ready=document.fonts.ready;
+</script></body></html>
