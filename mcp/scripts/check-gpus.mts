@@ -14,12 +14,13 @@ const obj = (key: string, v: string) => ({ key, size: v.length, etag: "e", httpE
 } } };
 process.env.WORKER_SECRET = "x".repeat(32);
 
-type Fake = { name: string; hits: string[]; jobs: string[]; url: string; down?: boolean };
+type Fake = { name: string; hits: string[]; jobs: string[]; url: string; down?: boolean; auth?: string };
 function fake(name: string): Promise<Fake> {
   const f: Fake = { name, hits: [], jobs: [], url: "" };
   const srv = http.createServer((req, res) => {
     if (f.down) { req.socket.destroy(); return; }
     f.hits.push(`${req.method} ${req.url}`);
+    f.auth = req.headers.authorization;
     let body = "";
     req.on("data", (c) => (body += c)).on("end", () => {
       res.setHeader("content-type", "application/json");
@@ -91,5 +92,20 @@ const boot = Date.now() / 1000 - 30;
 await gp.countModal(boot); await new Promise((r) => setTimeout(r, 1100)); await gp.countModal(boot);
 const u = await gp.modalUsage();
 ok(u.seconds >= 30 && u.seconds < 40, `Modal heartbeats count its awake time (${u.seconds.toFixed(1)} s)`);
+// 11. Modal's own key: the dashboard sends it to Modal (Colab keeps WORKER_SECRET), and worker routes know it
+await prefs({ prefer: "colab" }); await beat("colab"); await beat("modal");
+const key = await gp.newModalKey("check");
+await call("/jobs", { body: { kind: "tts" } });
+ok(colab.auth === `Bearer ${process.env.WORKER_SECRET}`, "Colab gets WORKER_SECRET");
+await prefs({ prefer: "modal" });
+await call("/jobs", { body: { kind: "tts" } });
+ok(modal.auth === `Bearer ${key}`, "Modal gets its own key");
+const req = (t?: string) => new Request("https://x/api/register", { headers: t ? { authorization: `Bearer ${t}` } : {} });
+ok((await gp.workerCaller(req(key))) === "modal" && (await gp.workerCaller(req(process.env.WORKER_SECRET))) === "worker"
+  && (await gp.workerCaller(req("vbmd_wrong"))) === null && (await gp.workerCaller(req())) === null, "worker routes tell Modal's key, WORKER_SECRET and anything else apart");
+const cmds = gp.setupCommands(key, "https://studio.example");
+ok(cmds.length === 4 && cmds.every((c) => !c.includes(process.env.WORKER_SECRET!)) && cmds.filter((c) => c.includes(key)).length === 3, "the setup commands carry Modal's key, never WORKER_SECRET");
+const key2 = await gp.newModalKey("check");
+ok(key2 !== key && (await gp.workerCaller(req(key))) === null, "a new Modal key retires the old one");
 console.log(fails ? `${fails} FAILED` : "all passed");
 process.exit(fails ? 1 : 0);

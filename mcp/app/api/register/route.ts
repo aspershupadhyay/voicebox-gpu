@@ -1,18 +1,22 @@
 // Heartbeat from a GPU worker (Colab, or Modal with backend: "modal"): POST {url, version, gpu, engines, loaded, queue, started_at, running, last_active}.
 import { after } from "next/server";
 import { saveWorker } from "@/lib/registry";
-import { safeEqual } from "@/lib/worker";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // copying a finished download into Files runs after the reply
 const TUNNEL = /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/;
 
 export async function POST(req: Request) {
-  const secret = process.env.WORKER_SECRET ?? "";
-  const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
-  if (secret.length < 24 || !safeEqual(token, secret)) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const who = await (await import("@/lib/gpus")).workerCaller(req);
+  if (!who) return Response.json({ error: "unauthorized" }, { status: 401 });
 
   const b = await req.json().catch(() => null);
+  if (b?.backend === "modal" && b?.hello === true) {
+    // the end of Modal's setup (python3 voicebox_modal.py <key> <origin>): its address, so nobody has to paste it
+    const { setPrefs } = await import("@/lib/gpus");
+    try { await setPrefs({ modal_url: String(b.url ?? ""), hello: true }); } catch (e) { return Response.json({ error: (e as Error).message }, { status: 400 }); }
+    return Response.json({ ok: true });
+  }
   if (b?.backend === "modal") {
     // the Modal GPU (modal/voicebox_modal.py) beats only while its container is awake: that time counts toward its
     // monthly cap (lib/gpus.ts). None of Colab's start / stop / reminder bookkeeping applies to it
@@ -24,6 +28,8 @@ export async function POST(req: Request) {
     await import("@/lib/downloads").then((d) => d.refresh((f) => after(f), { name: "Download" })).catch((e) => console.error("downloads", e));
     return Response.json({ ok: true });
   }
+  // Modal's key is for Modal's heartbeat only: the Colab worker's record takes WORKER_SECRET
+  if (who !== "worker") return Response.json({ error: "unauthorized" }, { status: 401 });
   const allowed = process.env.WORKER_URL_PATTERN ? new RegExp(process.env.WORKER_URL_PATTERN) : TUNNEL;
   if (!b || typeof b.url !== "string" || !allowed.test(b.url))
     return Response.json({ error: "url must be an https trycloudflare.com origin" }, { status: 400 });

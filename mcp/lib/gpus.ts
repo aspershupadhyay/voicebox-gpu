@@ -2,6 +2,7 @@
 // that sleeps until a job wakes it and bills by the second. Which one goes first, whether the other takes over when it
 // fails, Modal's monthly cap, and which GPU holds each job all live here; lib/worker.ts routes every call through it.
 // Settings → GPU & engines and the MCP `gpu` tool (action backend) change the preferences.
+import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { getJson, putJson } from "./store";
 import { loadWorker, STALE_MS, type Backend, type WorkerRecord } from "./registry";
 
@@ -17,6 +18,8 @@ export type GpuPrefs = {
   modal_cap_h: number;
   /** Training, Orpheus drafts and video on Modal too (hours of GPU each); off by default, they stay on Colab. */
   modal_heavy: boolean;
+  /** When Modal's setup last connected its address (the end of the setup commands). */
+  modal_hello_at?: number;
 };
 
 export const DEFAULT_PREFS: GpuPrefs = { prefer: "colab", fallback: true, modal_url: "", modal_cap_h: 30, modal_heavy: false };
@@ -48,6 +51,7 @@ export async function setPrefs(patch: Record<string, unknown>): Promise<GpuPrefs
     if (u && !MODAL_URL.test(u)) throw new Error("the Modal address looks like https://<workspace>--voicebox-worker-gateway.modal.run");
     next.modal_url = u;
   }
+  if (patch.hello === true) next.modal_hello_at = Date.now();
   await putJson(PREFS, next);
   prefsCache = { at: Date.now(), v: next };
   return next;
@@ -127,6 +131,67 @@ export function describe(s: GpuState) {
     prefer: s.prefs.prefer, fallback: s.prefs.fallback, modal_heavy: s.prefs.modal_heavy,
     colab: { online: s.colab.online, last_seen: s.colab.rec?.last_seen ?? null, gpu: s.colab.rec?.gpu?.name ?? null },
     modal: { configured: s.modal.configured, awake: s.modal.awake, available: s.modal.available, used_h: s.modal.used_h, cap_h: s.modal.cap_h,
-      over_cap: s.modal.over, gpu: s.modal.rec?.gpu?.name ?? null, url_from: process.env.MODAL_WORKER_URL ? "env" : s.modal.url ? "settings" : null },
+      over_cap: s.modal.over, gpu: s.modal.rec?.gpu?.name ?? null, connected_at: s.prefs.modal_hello_at ?? null, url_from: process.env.MODAL_WORKER_URL ? "env" : s.modal.url ? "settings" : null },
   };
+}
+
+// Modal's own key: what the Modal worker uses where Colab uses WORKER_SECRET (the gateway's password, the heartbeat,
+// the bundle, its settings and its weight cache), so setting Modal up never needs WORKER_SECRET. Made in Settings → GPU &
+// engines → Set up Modal (shown once, inside the commands to paste); making a new one replaces the old. Kept in R2
+// sealed with AES-256-GCM under a key derived from WORKER_SECRET.
+const KEYFILE = "voicebox/modal-key.json";
+const boxKey = () => createHash("sha256").update(`voicebox-modal-key-v1:${process.env.WORKER_SECRET ?? ""}:${process.env.MCP_TOKEN ?? ""}`).digest();
+function seal(s: string) {
+  const iv = randomBytes(12);
+  const c = createCipheriv("aes-256-gcm", boxKey(), iv);
+  const body = Buffer.concat([c.update(s, "utf8"), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), body]).toString("base64");
+}
+function unseal(e: string): string | null {
+  try {
+    const b = Buffer.from(e, "base64");
+    const d = createDecipheriv("aes-256-gcm", boxKey(), b.subarray(0, 12));
+    d.setAuthTag(b.subarray(12, 28));
+    return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString("utf8");
+  } catch { return null; }
+}
+let keyCache: { at: number; v: string | null } | null = null;
+/** The Modal key, or null when none was made. */
+export async function modalKey(): Promise<string | null> {
+  if (keyCache && Date.now() - keyCache.at < 10_000) return keyCache.v;
+  const f = await getJson<{ enc: string }>(KEYFILE).catch(() => null);
+  const v = f ? unseal(f.enc) : null;
+  keyCache = { at: Date.now(), v };
+  return v;
+}
+export async function newModalKey(by: string) {
+  const key = `vbmd_${randomBytes(30).toString("base64url")}`;
+  await putJson(KEYFILE, { enc: seal(key), at: Date.now(), by });
+  keyCache = { at: Date.now(), v: key };
+  return key;
+}
+/** The password the dashboard sends a GPU: Modal's own key once one was made (else WORKER_SECRET, for a Modal set up by hand). */
+export async function authFor(b: Backend) {
+  return (b === "modal" && (await modalKey())) || process.env.WORKER_SECRET || "";
+}
+
+/** Who a worker request comes from: Colab (or any worker) with WORKER_SECRET, Modal with its own key, or nobody. */
+export async function workerCaller(req: Request): Promise<"worker" | "modal" | null> {
+  const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const secret = process.env.WORKER_SECRET ?? "";
+  if (!token) return null;
+  if (secret.length >= 24 && eq(token, secret)) return "worker";
+  const k = await modalKey();
+  return k && eq(token, k) ? "modal" : null;
+}
+const eq = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+
+/** The commands that set Modal up, with a fresh key in them (one paste, in a terminal on any Mac or Linux machine). */
+export function setupCommands(key: string, origin: string) {
+  return [
+    "python3 -m pip install -q --upgrade modal && python3 -m modal setup",
+    `curl -fsSL -H "Authorization: Bearer ${key}" ${origin}/api/modal/app -o voicebox_modal.py`,
+    `python3 -m modal secret create voicebox WORKER_SECRET=${key} REGISTER_URL=${origin}/api/register --force`,
+    `python3 -m modal deploy voicebox_modal.py && python3 voicebox_modal.py ${key} ${origin}`,
+  ];
 }
