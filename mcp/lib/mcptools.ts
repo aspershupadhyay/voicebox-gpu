@@ -108,9 +108,10 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       const gs = await gp.gpuState();
       const gpus = gp.describe(gs);
       // Colab off: a Modal GPU that's awake answers instead; one that's asleep still takes the next job (it wakes for it)
-      const rec = gs.colab.online ? gs.colab.rec : gs.modal.awake ? gs.modal.rec : gs.colab.rec;
-      const asleep = !gs.colab.online && !gs.modal.awake && gs.modal.available && gp.order(gs).includes("modal");
-      if (asleep) return text({ online: true, backend: "modal", asleep: true, gpus, latest_worker_version: WORKER_VERSION, colab, hint: "Colab is off; the Modal GPU is asleep and wakes for the next job (about a minute)." });
+      const awakeCloud = gp.CLOUDS.find((c) => gs[c].awake);
+      const rec = gs.colab.online ? gs.colab.rec : awakeCloud ? gs[awakeCloud].rec : gs.colab.rec;
+      const sleeper = !gs.colab.online && !awakeCloud ? gp.order(gs).find((b) => gp.isCloud(b) && gs[b].available) : undefined;
+      if (sleeper) return text({ online: true, backend: sleeper, asleep: true, gpus, latest_worker_version: WORKER_VERSION, colab, hint: `Colab is off; the ${gp.CLOUD_NAME[sleeper]} GPU is asleep and wakes for the next job (about a minute).` });
       if (!rec) return text({ online: false, gpus, latest_worker_version: WORKER_VERSION, colab, hint: "No worker has registered: gpu action start, or run the Colab notebook (or set up Modal: gpu action backend)." });
       const age = Math.round((Date.now() - rec.last_seen) / 1000);
       if (age * 1000 > STALE_MS) return text({ online: false, gpus, last_seen_s_ago: age, latest_worker_version: WORKER_VERSION, colab, hint: "Colab runtime stopped: gpu action start, or re-run the notebook." });
@@ -121,7 +122,7 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
           [n, await call<{ text: string }>(`/logs/${n}?n=40`).then((r) => r.text.slice(-4000)).catch(() => null)] as const));
         const logs: Record<string, string | null> = Object.fromEntries(found);
         if (want) logs[want] = await call<{ text: string }>(`/logs/${want}?n=${lines ?? 80}`).then((r) => r.text.slice(-12000)).catch((e: Error) => e.message);
-        return text({ online: true, backend: gs.colab.online ? "colab" : "modal", gpus, last_seen_s_ago: age, ...h, latest_worker_version: WORKER_VERSION, colab, ...(Object.keys(logs).length ? { engine_logs: logs } : {}) });
+        return text({ online: true, backend: gs.colab.online ? "colab" : awakeCloud, gpus, last_seen_s_ago: age, ...h, latest_worker_version: WORKER_VERSION, colab, ...(Object.keys(logs).length ? { engine_logs: logs } : {}) });
       } catch (e) {
         return text({ online: false, last_seen_s_ago: age, registered: rec, error: (e as Error).message, colab });
       }
@@ -369,10 +370,13 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     "gpu",
     {
       title: "Control the Colab GPU",
-      description: "The GPU without opening Colab (Colab is connected on the Health page). Two GPUs can take work: Colab and Modal (sleeps until a job wakes it, bills by the second, capped per month). backend: which goes first (prefer colab | modal), fallback (true: the other takes the job when the first is off or unreachable), modal_cap_h, modal_heavy (training / video on Modal too), modal_url (Modal's address), test_modal true (wake Modal and answer with its GPU), stop_modal true (shut it down now); with none of those, shows the current choice. Modal is set up once from Settings → GPU & engines → Set up Modal (docs/MODAL.md); every job tool then uses whichever GPU the choice picks. Actions: status (default): compute units left, hourly burn, runtimes assigned, the current session, settings. start: assign a Colab GPU and launch the worker on it; it shows online in worker_status in about 2 min. Pick by purpose: voice (voiceovers, subtitles, clean-up: settings voice_gpu, an L4 by default, far cheaper and plenty for them) or heavy (training, RLHF polish, video: settings heavy_gpu, an A100); or name gpu (A100 / L4 / H100 / T4 / G4) outright; high_ram true/false overrides the setting. status shows rates: the units an hour Colab really charged per runtime kind. stop: release a runtime (endpoint, default the current session's; with nothing else known, the only runtime assigned) and billing stops at once. restart_worker: restart the worker process on the running GPU (keeps the runtime; force: true even while a job runs). update_worker: fetch the newest worker code and restart with it (worker 3.1.0+). selfcheck: run the worker's quick self-check (results in worker_status.selfcheck). train_draft: train an EAGLE draft for Orpheus (faster single-request decoding): voices sentences (default 6000) for its data, trains it, then benchmarks Orpheus plain vs with the draft; it's switched on only if it measured faster. Takes the whole GPU (~45-60 min on an L4); returns a job id for get_job. settings: change gpu (default for start without a purpose), voice_gpu, heavy_gpu, high_ram, idle_stop_min (0 = never; stops a GPU started from the app after that many idle minutes), remind_hours (0 = never), low_units (warn below), ntfy (on / off: phone push via the ntfy app). notify_test: send a test push.",
+      description: "The GPU without opening Colab (Colab is connected on the Health page). Three GPUs can take work: Colab, and two cloud GPUs that sleep until a job wakes them, bill by the second and are capped per month: Modal and Cerebrium. backend: which goes first (prefer colab | modal | cerebrium), fallback (true: the other takes the job when the first is off or unreachable), modal_cap_h, modal_heavy (training / video on Modal too), modal_url (Modal's address), test_modal true (wake Modal, or the cloud named, and answer with its GPU), stop_modal true (shut it down now), cerebrium_url, cerebrium_cap_h; with none of those, shows the current choice. Modal is set up once from Settings → GPU & engines → Set up Modal (docs/MODAL.md); every job tool then uses whichever GPU the choice picks. Actions: status (default): compute units left, hourly burn, runtimes assigned, the current session, settings. start: assign a Colab GPU and launch the worker on it; it shows online in worker_status in about 2 min. Pick by purpose: voice (voiceovers, subtitles, clean-up: settings voice_gpu, an L4 by default, far cheaper and plenty for them) or heavy (training, RLHF polish, video: settings heavy_gpu, an A100); or name gpu (A100 / L4 / H100 / T4 / G4) outright; high_ram true/false overrides the setting. status shows rates: the units an hour Colab really charged per runtime kind. stop: release a runtime (endpoint, default the current session's; with nothing else known, the only runtime assigned) and billing stops at once. restart_worker: restart the worker process on the running GPU (keeps the runtime; force: true even while a job runs). update_worker: fetch the newest worker code and restart with it (worker 3.1.0+). selfcheck: run the worker's quick self-check (results in worker_status.selfcheck). train_draft: train an EAGLE draft for Orpheus (faster single-request decoding): voices sentences (default 6000) for its data, trains it, then benchmarks Orpheus plain vs with the draft; it's switched on only if it measured faster. Takes the whole GPU (~45-60 min on an L4); returns a job id for get_job. settings: change gpu (default for start without a purpose), voice_gpu, heavy_gpu, high_ram, idle_stop_min (0 = never; stops a GPU started from the app after that many idle minutes), remind_hours (0 = never), low_units (warn below), ntfy (on / off: phone push via the ntfy app). notify_test: send a test push.",
       inputSchema: z.object({
         action: z.enum(["status", "start", "stop", "restart_worker", "update_worker", "selfcheck", "train_draft", "settings", "notify_test", "backend"]).optional(),
-        prefer: z.enum(["colab", "modal"]).optional().describe("backend: the GPU new work goes to first"),
+        prefer: z.enum(["colab", "modal", "cerebrium"]).optional().describe("backend: the GPU new work goes to first"),
+        cloud: z.enum(["modal", "cerebrium"]).optional().describe("backend: which cloud GPU test_modal / stop_modal act on (default modal)"),
+        cerebrium_url: z.string().max(200).optional().describe("backend: Cerebrium's address, https://api.cerebrium.ai/v4/p-<project>/voicebox-worker (the setup fills it in)"),
+        cerebrium_cap_h: z.number().min(0).max(500).optional().describe("backend: hours of Cerebrium GPU a month (0 = Cerebrium off)"),
         fallback: z.boolean().optional().describe("backend: when that GPU is off or can't be reached, use the other (default true)"),
         modal_cap_h: z.number().min(0).max(500).optional().describe("backend: hours of Modal GPU a month (0 = Modal off)"),
         modal_heavy: z.boolean().optional().describe("backend: let training, Orpheus drafts and video run on Modal too (default false)"),
@@ -394,16 +398,16 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
         ntfy: z.enum(["on", "off"]).optional(),
       }),
     },
-    async ({ action, gpu, purpose, high_ram, voice_gpu, heavy_gpu, endpoint, force, idle_stop_min, remind_hours, low_units, ntfy, sentences, epochs, prefer, fallback, modal_cap_h, modal_heavy, modal_url, test_modal, stop_modal }) => {
+    async ({ action, gpu, purpose, high_ram, voice_gpu, heavy_gpu, endpoint, force, idle_stop_min, remind_hours, low_units, ntfy, sentences, epochs, prefer, fallback, modal_cap_h, modal_heavy, modal_url, test_modal, stop_modal, cloud, cerebrium_url, cerebrium_cap_h }) => {
       try {
         const colab = await import("@/lib/colab");
         if (action === "backend") {
           // Colab or Modal first, the other as the fallback (lib/gpus.ts); with no changes, just the current choice
           const gp = await import("@/lib/gpus");
-          const patch = Object.fromEntries(Object.entries({ prefer, fallback, modal_cap_h, modal_heavy, modal_url }).filter(([, v]) => v !== undefined));
+          const patch = Object.fromEntries(Object.entries({ prefer, fallback, modal_cap_h, modal_heavy, modal_url, cerebrium_url, cerebrium_cap_h }).filter(([, v]) => v !== undefined));
           if (Object.keys(patch).length) await gp.setPrefs(patch);
-          if (stop_modal) await gp.stopModal();
-          const test = test_modal ? await (await import("@/lib/worker")).testModal(45_000).catch((e: Error) => ({ ok: false, error: e.message })) : undefined;
+          if (stop_modal) await gp.stopCloud(cloud ?? "modal");
+          const test = test_modal ? await (await import("@/lib/worker")).testModal(45_000, cloud ?? "modal").catch((e: Error) => ({ ok: false, error: e.message })) : undefined;
           return text({ ...gp.describe(await gp.gpuState()), ...(test ? { modal_test: test } : {}) });
         }
         if (action === "start") return text({ ...(await colab.start(colab.appOrigin(), gpu, { purpose, high_ram })), next: "The worker comes online in about 2 min: check worker_status." });

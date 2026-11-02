@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Let's set up Cerebrium quickly"** (2026-11-02): a third GPU, the same pattern as Modal (`cerebrium_app/`,
+  `docs/MODAL.md` → Cerebrium): its own card on the Overview, its own tab, the same four-command setup, cap, Wake and
+  Stop, and the fallback runs down Colab, Modal, Cerebrium. A new cloud GPU is one more entry in `lib/gpus.ts` CLOUDS
+  with its app folder, never a second copy of the routing.
 - **"The GPU page is so cluttered… how will I stop it… UI & UX needs to be simple"** (2026-11-02): Settings → GPU &
   engines is tabs that each do one job: Overview (Colab and Modal side by side, each with its state and one button:
   Start / Stop, Wake / Stop; then "goes first" and the fallback switch, nothing else), Colab, Modal, Engines, Machine.

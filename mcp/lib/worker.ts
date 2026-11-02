@@ -2,7 +2,7 @@
 // every call picks one (lib/gpus.ts): a job's follow-ups go to the GPU that has it, new work to the preferred GPU and,
 // when that one is off or can't be reached, to the other.
 import { loadWorker, saveWorker, STALE_MS, type WorkerRecord } from "./registry";
-import { authFor, gpuState, jobBackend, order, rememberModalJob, setPrefs, type Backend, type GpuState } from "./gpus";
+import { authFor, CLOUD_NAME, CLOUDS, gpuState, isCloud, jobBackend, order, rememberJob, setPrefs, type Backend, type Cloud, type GpuState } from "./gpus";
 
 export class WorkerOffline extends Error {}
 /** The worker is registered (it heartbeats) but a request to it didn't get through: a tunnel that's seconds old and
@@ -20,7 +20,7 @@ function netError(e: unknown) {
   return { code: code || err.message, neverArrived: /^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|UND_ERR_CONNECT_TIMEOUT|EHOSTUNREACH|ENETUNREACH)$/.test(code) };
 }
 
-const NAME: Record<Backend, string> = { colab: "Colab", modal: "Modal" };
+const NAME = CLOUD_NAME;
 
 /** The Colab worker's record, when it's online. */
 export async function currentWorker(): Promise<WorkerRecord> {
@@ -44,18 +44,20 @@ function target(s: GpuState, b: Backend, method: string, isJob: boolean): string
     if (!s.colab.online) throw new WorkerOffline(`Colab is off: last seen ${Math.round((Date.now() - s.colab.rec.last_seen) / 60000)} min ago (start it in Settings → GPU & engines).`);
     return s.colab.rec.url;
   }
-  if (!s.modal.configured) throw new WorkerOffline("Modal isn't set up (Settings → GPU & engines → Modal).");
-  if (isJob && !s.modal.awake) throw new WorkerOffline("the Modal GPU that ran this job has gone to sleep; its results are in Files if it finished");
-  if (!s.modal.awake && s.modal.over) throw new WorkerOffline(`Modal has used its ${s.modal.cap_h} h for this month (raise the cap in Settings → GPU & engines).`);
-  if (!s.modal.awake && method === "GET") throw new WorkerOffline("Modal is asleep (it wakes for the next job).");
-  return s.modal.url;
+  const c = s[b], n = NAME[b];
+  if (!c.configured) throw new WorkerOffline(`${n} isn't set up (Settings → GPU & engines → ${n}).`);
+  if (isJob && !c.awake) throw new WorkerOffline(`the ${n} GPU that ran this job has gone to sleep; its results are in Files if it finished`);
+  if (!c.awake && c.over) throw new WorkerOffline(`${n} has used its ${c.cap_h} h for this month (raise the cap in Settings → GPU & engines).`);
+  if (!c.awake && method === "GET") throw new WorkerOffline(`${n} is asleep (it wakes for the next job).`);
+  return c.url;
 }
 
 /** Wake a sleeping Modal GPU: its first answer waits on a container starting (about a minute; longer the first time,
  *  while it installs). Only that wait is waited out: an address that doesn't resolve, refuses or resets, or an answer
  *  that says it isn't ours (not deployed, wrong secret), gives up in seconds, so the other GPU can take the job. */
-async function wake(url: string, budgetMs = 8 * 60_000) {
-  const auth = await authFor("modal");
+async function wake(url: string, budgetMs = 8 * 60_000, cloud: Cloud = "modal") {
+  const auth = await authFor(cloud);
+  const n = NAME[cloud];
   const until = Date.now() + budgetMs;
   let last = "", drops = 0;
   while (Date.now() < until) {
@@ -64,17 +66,17 @@ async function wake(url: string, budgetMs = 8 * 60_000) {
       if (r.ok) return;
       const said = r.status < 500 ? await r.json().then((j: { error?: string }) => j.error, () => null).catch(() => null) : null;
       if (r.status === 424 && said) throw new WorkerUnreachable(said, true); // the worker's own start failed: it says why
-      if (r.status < 500) throw new WorkerUnreachable(`Modal answered ${r.status}: ${r.status === 404 ? "the app isn't deployed at that address (modal deploy modal_app/voicebox_modal.py)" : r.status === 401 ? "its key doesn't match (Settings → GPU & engines → Set up Modal again)" : "it isn't the voicebox worker"}`, true);
+      if (r.status < 500) throw new WorkerUnreachable(`${n} answered ${r.status}: ${r.status === 404 ? `the app isn't deployed at that address (Settings → GPU & engines → ${n} → Set up again)` : r.status === 401 ? `its key doesn't match (Settings → GPU & engines → ${n} → Set up again)` : "it isn't the voicebox worker"}`, true);
       last = `HTTP ${r.status}`;
     } catch (e) {
       if (e instanceof WorkerUnreachable) throw e;
-      const n = netError(e);
-      if (n.code !== "TIMEOUT" && ++drops >= 3) throw new WorkerUnreachable(`couldn't reach Modal (${n.code})`, true);
-      last = n.code;
+      const e2 = netError(e);
+      if (e2.code !== "TIMEOUT" && ++drops >= 3) throw new WorkerUnreachable(`couldn't reach ${n} (${e2.code})`, true);
+      last = e2.code;
     }
     await new Promise((res) => setTimeout(res, 3000));
   }
-  throw new WorkerUnreachable(`the Modal GPU didn't wake up in ${Math.round(budgetMs / 60_000) || "<1"} min (${last})`, true);
+  throw new WorkerUnreachable(`the ${n} GPU didn't wake up in ${Math.round(budgetMs / 60_000) || "<1"} min (${last})`, true);
 }
 
 export async function call<T = unknown>(path: string, init: Init = {}) {
@@ -92,10 +94,10 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
     return callOn<T>(b, target(s, b, method, true), path, init, method);
   }
   if (path === "/jobs" && method === "GET") {
-    // every job on every GPU that's up (Modal only while awake)
-    const up = (["colab", "modal"] as Backend[]).filter((b) => (b === "colab" ? s.colab.online : s.modal.awake));
+    // every job on every GPU that's up (the cloud ones only while awake)
+    const up = (["colab", ...CLOUDS] as Backend[]).filter((b) => (isCloud(b) ? s[b].awake : s.colab.online));
     if (!up.length) throw new WorkerOffline(offline(s));
-    const all = await Promise.allSettled(up.map((b) => callOn<{ jobs?: unknown[] }>(b, b === "colab" ? s.colab.rec!.url : s.modal.url, path, init, method)));
+    const all = await Promise.allSettled(up.map((b) => callOn<{ jobs?: unknown[] }>(b, isCloud(b) ? s[b].url : s.colab.rec!.url, path, init, method)));
     const ok = all.filter((r): r is PromiseFulfilledResult<{ jobs?: unknown[] }> => r.status === "fulfilled").map((r) => r.value);
     if (!ok.length) throw (all[0] as PromiseRejectedResult).reason;
     return { ...ok[0], jobs: ok.flatMap((r) => r.jobs ?? []) } as T;
@@ -107,17 +109,17 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
     let url: string;
     try { url = target(s, b, method, false); } catch (e) { why.push((e as Error).message); continue; }
     try {
-      if (b === "modal" && s.prefs.modal_stop_at) await setPrefs({ stop: false }); // new work: Stop no longer applies
-      if (b === "modal" && !s.modal.awake) {
-        await wake(url);
+      if (isCloud(b) && s.prefs[`${b}_stop_at`]) await setPrefs({ stop: false, cloud: b }); // new work: Stop no longer applies
+      if (isCloud(b) && !s[b].awake) {
+        await wake(url, undefined, b);
         // awake from now: the job's progress polls go to it before its first heartbeat lands
-        await saveWorker({ ...(s.modal.rec ?? {}), url, started_at: Date.now() / 1000, last_seen: Date.now() }, "modal").catch(() => {});
+        await saveWorker({ ...(s[b].rec ?? {}), url, started_at: Date.now() / 1000, last_seen: Date.now() }, b).catch(() => {});
       }
       const out = await callOn<T>(b, url, path, init, method);
-      if (b === "modal" && method === "POST") {
+      if (isCloud(b) && method === "POST") {
         const id = (out as { id?: unknown } | null)?.id;
         // the job exists either way: a failed note must not turn its start into an error
-        if (typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id)) await rememberModalJob(id).catch((e) => console.error("modal job note", e));
+        if (typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id)) await rememberJob(b, id).catch((e) => console.error(`${b} job note`, e));
       }
       return out;
     } catch (e) {
@@ -131,28 +133,29 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
 
 /** Wake Modal (even with Colab on, even past nothing but a read) and ask its /health: proof it works, end to end.
  *  Costs a minute or two of Modal GPU; it sleeps again 10 minutes later. */
-export async function testModal(budgetMs?: number) {
+export async function testModal(budgetMs?: number, cloud: Cloud = "modal") {
   const s = await gpuState();
-  if (s.prefs.modal_stop_at) await setPrefs({ stop: false });
-  const url = target(s, "modal", "POST", false);
+  const n = NAME[cloud];
+  if (s.prefs[`${cloud}_stop_at`]) await setPrefs({ stop: false, cloud });
+  const url = target(s, cloud, "POST", false);
   const t = Date.now();
-  if (!s.modal.awake) {
-    try { await wake(url, budgetMs); } catch (e) {
+  if (!s[cloud].awake) {
+    try { await wake(url, budgetMs, cloud); } catch (e) {
       // out of time but nothing went wrong: the container is starting (the knock reached Modal), ask again shortly
       if (budgetMs && /didn't wake up in/.test((e as Error).message)) return { ok: false, starting: true, waited_s: Math.round((Date.now() - t) / 1000), url,
-        next: "Modal is still starting (the first start downloads its image): ask again in a minute; it heartbeats once it's up" };
+        next: `${n} is still starting (the first start downloads its image): ask again in a minute; it heartbeats once it's up` };
       throw e;
     }
-    await saveWorker({ ...(s.modal.rec ?? {}), url, started_at: Date.now() / 1000, last_seen: Date.now() }, "modal").catch(() => {});
+    await saveWorker({ ...(s[cloud].rec ?? {}), url, started_at: Date.now() / 1000, last_seen: Date.now() }, cloud).catch(() => {});
   }
-  const h = await callOn<{ gpu?: { name?: string; total_gb?: number }; version?: string; engines?: Record<string, string> }>("modal", url, "/health", {}, "GET");
-  return { ok: true, woke_in_s: Math.round((Date.now() - t) / 1000), was_awake: s.modal.awake, gpu: h.gpu?.name ?? null, gpu_gb: h.gpu?.total_gb ?? null,
+  const h = await callOn<{ gpu?: { name?: string; total_gb?: number }; version?: string; engines?: Record<string, string> }>(cloud, url, "/health", {}, "GET");
+  return { ok: true, woke_in_s: Math.round((Date.now() - t) / 1000), was_awake: s[cloud].awake, gpu: h.gpu?.name ?? null, gpu_gb: h.gpu?.total_gb ?? null,
     worker_version: h.version ?? null, engines: h.engines ?? {}, url };
 }
 
 function offline(s: GpuState) {
-  const parts = [s.colab.online ? null : "Colab is off", !s.modal.configured ? "Modal isn't set up" : s.modal.over ? "Modal is past its monthly cap" : "Modal is asleep"].filter(Boolean);
-  return `No GPU is on (${parts.join(", ")}). Start Colab in Settings → GPU & engines, or send a job and Modal wakes for it.`;
+  const parts = [s.colab.online ? null : "Colab is off", ...CLOUDS.filter((c) => s[c].configured).map((c) => `${NAME[c]} is ${s[c].over ? "past its monthly cap" : "asleep"}`)].filter(Boolean);
+  return `No GPU is on (${parts.join(", ")}). Start Colab in Settings → GPU & engines, or send a job and a cloud GPU wakes for it.`;
 }
 
 async function callOn<T>(b: Backend, base: string, path: string, init: Init, method: string): Promise<T> {
@@ -167,7 +170,7 @@ async function callOn<T>(b: Backend, base: string, path: string, init: Init, met
         method,
         headers: { Authorization: `Bearer ${auth}`, "Content-Type": "application/json" },
         body: init.body ? JSON.stringify(init.body) : undefined,
-        signal: AbortSignal.timeout(init.timeoutMs ?? (b === "modal" ? 60_000 : 25_000)),
+        signal: AbortSignal.timeout(init.timeoutMs ?? (isCloud(b) ? 60_000 : 25_000)),
         cache: "no-store",
       });
     } catch (e) {

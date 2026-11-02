@@ -108,5 +108,8 @@ if __name__ == "__main__":
                         f"export const WORKER_VERSION = {json.dumps(config.VERSION)};\n"
                         f"export const WORKER_BUNDLE_B64 = {json.dumps(bundle())};\n"
                         # the Modal GPU's app, served by /api/modal/app for the setup commands (docs/MODAL.md)
-                        f"export const MODAL_APP_PY = {json.dumps(open(os.path.join(ROOT, 'modal_app', 'voicebox_modal.py')).read())};\n")
+                        f"export const MODAL_APP_PY = {json.dumps(open(os.path.join(ROOT, 'modal_app', 'voicebox_modal.py')).read())};\n"
+                        # the Cerebrium GPU's two files, the same way (docs/MODAL.md → Cerebrium)
+                        f"export const CEREBRIUM_TOML = {json.dumps(open(os.path.join(ROOT, 'cerebrium_app', 'cerebrium.toml')).read())};\n"
+                        f"export const CEREBRIUM_PY = {json.dumps(open(os.path.join(ROOT, 'cerebrium_app', 'voicebox_cerebrium.py')).read())};\n")
     print("wrote", ts)

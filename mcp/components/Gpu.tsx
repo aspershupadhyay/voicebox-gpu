@@ -1,6 +1,6 @@
 "use client";
-// GPU & engines, one job per tab: Overview (the two GPUs, start / stop, which goes first), Colab, Modal, Engines and
-// Machine. Before the tabs it was: which GPU takes the work (Colab or Modal, GpuChoice), start or stop the Colab GPU, what's on it right now, every engine (warm it up, unload it, read its
+// GPU & engines, one job per tab: Overview (the GPUs, start / stop, which goes first), Colab, Modal, Cerebrium,
+// Engines and Machine. Before the tabs it was: which GPU takes the work (Colab or Modal, GpuChoice), start or stop the Colab GPU, what's on it right now, every engine (warm it up, unload it, read its
 // logs, free its disk), then the machine, the worker and how each engine has been doing.
 import { Broom, Cpu, Fire, Gauge, Power, Terminal, Timer, Waveform, X } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
@@ -9,7 +9,7 @@ import { Info } from "./Info";
 import { useDialog } from "./Dialog";
 import FetchBar, { MODEL_NAMES } from "./FetchBar";
 import GpuCard from "./GpuCard";
-import { GpuOverview, ModalPanel } from "./GpuChoice";
+import { CloudPanel, GpuOverview } from "./GpuChoice";
 import Health from "./Health";
 import { fmtUptime, useStatus } from "./Shell";
 import { PageHeader, StatCard } from "./ui";
@@ -24,8 +24,8 @@ const ENGINES: Record<string, { role: string; lang: string; mem: string }> = {
   zimage: { role: "Photoreal images in about 2 s. Commercial use OK.", lang: "1K images", mem: "≈22 GB" },
   qwenimage: { role: "2K images, sharp text, edits and transparent PNGs. Non-commercial.", lang: "2K images · edit", mem: "≈33 GB" },
 };
-type View = "overview" | "colab" | "modal" | "engines" | "machine";
-const VIEWS: [View, string][] = [["overview", "Overview"], ["colab", "Colab"], ["modal", "Modal"], ["engines", "Engines"], ["machine", "Machine"]];
+type View = "overview" | "colab" | "modal" | "cerebrium" | "engines" | "machine";
+const VIEWS: [View, string][] = [["overview", "Overview"], ["colab", "Colab"], ["modal", "Modal"], ["cerebrium", "Cerebrium"], ["engines", "Engines"], ["machine", "Machine"]];
 const STATE: Record<string, [string, string]> = { ready: ["Warm", "ok"], parked: ["In RAM", "blue"], loading: ["Loading", "warn"], installing: ["Installing", "warn"], busy: ["Busy", "warn"], error: ["Error", "bad"], idle: ["Off", ""] };
 
 export default function Gpu({ embedded }: { embedded?: boolean }) {
@@ -74,9 +74,10 @@ export default function Gpu({ embedded }: { embedded?: boolean }) {
   const active = jobs.filter((j) => ["queued", "running"].includes(j.status));
   const warm = Object.values(st?.engines ?? {}).filter((s) => s === "ready").length;
   const gpu = st?.gpu?.name?.replace("NVIDIA ", "");
-  const lead = !st ? "Checking on the GPU…" : st.asleep ? "Colab is off. Modal is asleep and wakes for the next job, in about a minute."
+  const cloudName = st?.backend === "cerebrium" ? "Cerebrium" : "Modal";
+  const lead = !st ? "Checking on the GPU…" : st.asleep ? `Colab is off. ${cloudName} is asleep and wakes for the next job, in about a minute.`
     : !st.online ? (st.reason === "heartbeat stale" ? "The Colab GPU stopped. Start it below." : "The GPU is off. Start it below; engines load on first use.")
-    : `${gpu ?? "GPU"} is on${st.backend === "modal" ? " (Modal)" : ""} with ${warm} engine${warm === 1 ? "" : "s"} warm.`;
+    : `${gpu ?? "GPU"} is on${st.backend && st.backend !== "colab" ? ` (${cloudName})` : ""} with ${warm} engine${warm === 1 ? "" : "s"} warm.`;
 
   return (
     <>
@@ -88,7 +89,8 @@ export default function Gpu({ embedded }: { embedded?: boolean }) {
 
       {view === "overview" && <GpuOverview open={go} />}
       {view === "colab" && <GpuCard />}
-      {view === "modal" && <ModalPanel />}
+      {view === "modal" && <CloudPanel cloud="modal" />}
+      {view === "cerebrium" && <CloudPanel cloud="cerebrium" />}
 
       {view === "machine" && <div className="stats-row">
         <StatCard icon={<Gauge size={17} weight="bold" />} value={st?.gpu ? <>{st.gpu.used_gb}<small>/ {st.gpu.total_gb} GB</small></> : "—"} label="GPU memory in use">
