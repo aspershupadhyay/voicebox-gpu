@@ -6,6 +6,14 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Never use this purple slop… list all the slop colours AI agents generate… hard rules"** and **"it's completely
+  slop design… the outro is shit… the swipe and typing SFX suck… not engaging… the script needs to feel professional"**
+  (2026-11-02, on the v1 Cyclon Reel's violet-on-ivory end card): banned for good: purple / violet / indigo /
+  lavender in any shade, purple-blue gradients, Tailwind and shadcn default colours, neon cyan and magenta, slate
+  navy, pure black and white, Claude's clay, rainbow tiles (the full list: the video-director style guide → "Banned
+  colours"). `scripts/reels/check_colors.py` must pass before any render. Also: a design is not a template with a new
+  accent; every video gets its own idea for how it looks and how it ends, synthesized swooshes and clicky typing are
+  out (use the SFX library, sounds tied to what moves), and the outro is a scene with a payoff, not a card of buttons.
 - **"Use the Colab GPU, Modal is not working"** and **"create a video on it… cool animation, fast transitions, 120 BPM,
   fast-paced speech, not too fast, just like the Karpathy one"** (2026-11-02, on Adam Zinebi's Cyclon post): Modal sat
   "loading whisper into memory" for 4+ minutes on its A10, so the owner switched to Colab (L4: online in ~2 min, the

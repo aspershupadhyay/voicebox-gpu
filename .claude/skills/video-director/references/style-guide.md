@@ -20,6 +20,30 @@ the EGM Reel). Pick one per video and keep it for the whole film.
   colours look more expensive).
 - Flat. No gradients except a soft highlight inside a mock thumbnail.
 
+## Banned colours (the owner's hard rule, 2026-11-02: "never use this purple slop")
+These are the colours AI agents reach for by default. They make a video read as generated. Never use them, in any
+video, thumbnail prompt or new design. `python3 scripts/reels/check_colors.py film.html` must print "clean" before a
+render. It flags each of these, anything within a hair of one, and every gradient.
+
+1. **Purple, violet, indigo, lavender: any of it.** Tailwind indigo/violet/purple (`#6366F1`, `#4F46E5`, `#8B5CF6`,
+   `#7C3AED`, `#A855F7`), the "AI startup" violet (`#7C6CF2`, the v1 Cyclon cut), lilac text (`#A99EFF`), pastel
+   lavender washes (`#E0E7FF`, `#EDE9FE`, `#ECE9F5`). Hue 235-300° with any real saturation fails, whatever the shade.
+2. **The purple-to-blue / purple-to-pink gradient** (`#667EEA → #764BA2`), aurora and mesh gradients, glows. Flat only.
+3. **Tailwind and shadcn defaults used as-is**: blue-500 `#3B82F6` / `#2563EB`, sky `#0EA5E9`, emerald `#10B981`,
+   green-500 `#22C55E`, amber `#F59E0B`, orange-500 `#F97316`, red-500 `#EF4444`, pink `#EC4899`, fuchsia `#D946EF`.
+4. **Neon "cyber"**: cyan `#06B6D4` / `#22D3EE`, teal `#14B8A6`, magenta: any colour over ~75% saturation at mid
+   lightness, especially glowing on black.
+5. **Slate "navy dark mode"**: `#0F172A`, `#1E293B`, `#020617`. Our dark is a warm matte near-black (`#0D0D0C`).
+6. **Pure values**: `#000`, `#FFF`, `#F00`, `#0F0`, `#00F`. Use near-black and warm off-white.
+7. **Claude's clay** (`#D97757`, `#CC785C`): never Claude's colour (the owner, on Reel).
+8. **The rainbow of saturated tiles**: a row of chips or app icons each in a different loud colour. Use one family of
+   tones, varied in lightness.
+
+What to do instead: neutrals do most of the work (matte near-black, warm greys, warm off-white paper), plus **one**
+accent taken from the subject's own world and dulled (lower saturation, a little grey in it). Hold it to a few
+moments per scene. A second tone only if it means something (good / bad). When unsure, take the colour away and see
+if the frame still reads: it usually reads better.
+
 ## Text motion (the one rule everyone notices)
 - Words rise **one at a time on their spoken word**: opacity 0→1, translateY 20 px→0, blur 5 px→0, 0.34 s, ease-out
   expo. A phrase never takes longer than 1.5 s to land. No bounce, no overshoot, no tilt, no typewriter on statements.
