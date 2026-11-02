@@ -56,8 +56,8 @@ many agents at once), in order. A new tool goes in
 
 Done moving (2026-10-31, `docs/MIGRATION.md`): the app on a Cloudflare Worker, files in R2 (the Worker reads it through its
 `BUCKET` binding, `lib/store.ts`), posts, comments, activity, file rows and accounts in Postgres on Neon (`lib/db.ts`,
-`lib/data.ts`, `lib/users.ts`), backups in Neon storage, deploys from GitHub. The GPU is Colab or Modal (`docs/MODAL.md`: same worker, `lib/gpus.ts` picks one and
-falls back to the other; every call goes through `lib/worker.ts`). Appwrite and Vercel are not used by any
+`lib/data.ts`, `lib/users.ts`), backups in Neon storage, deploys from GitHub. The GPU is Colab, Modal or Cerebrium (`docs/MODAL.md`: same worker, `lib/gpus.ts` picks one and
+falls back down the list; every call goes through `lib/worker.ts`). Appwrite and Vercel are not used by any
 code. The trained voices in R2 (`models/`, `datasets/`) are never touched.
 
 ## Inference work
@@ -72,7 +72,7 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   (`vbmk_`, `lib/auto/keys.ts`, made and revoked only by a signed-in person, MCP only) and code-mode run keys.
 - Tool keys (GitHub, search) pasted in Settings → Automation → Keys live encrypted in R2 (`lib/auto/secrets.ts`): never
   return one to the browser or a model, and only a signed-in person sets them.
-- Never add a route without `isAuthed(req)` (worker routes use `WORKER_SECRET`, or Modal's own key from Settings → GPU &
+- Never add a route without `isAuthed(req)` (worker routes use `WORKER_SECRET`, or the cloud key (Modal and Cerebrium) from Settings → GPU &
   engines (`lib/gpus.ts` `workerCaller`: it opens the worker routes and `/api/modal/app`, never the Colab worker's
   record or the cron routes); `/api/cron/live` also takes the
   Cloudflare live timer's secret, kept only as a SHA-256; `/api/files/upload`, `/complete` and `/api/files/carousels` also take an

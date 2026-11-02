@@ -7,7 +7,7 @@ name: Deploy
 on:
   push:
     branches: [main]
-    paths: [mcp/**, worker/**, workers/**, modal_app/**, docs/**, CLAUDE.md, notebook/build_notebook.py, scripts/build_playbook.py, .github/workflows/deploy.yml]
+    paths: [mcp/**, worker/**, workers/**, modal_app/**, cerebrium_app/**, docs/**, CLAUDE.md, notebook/build_notebook.py, scripts/build_playbook.py, .github/workflows/deploy.yml]
   workflow_dispatch:
 concurrency: { group: deploy, cancel-in-progress: false }
 jobs:

@@ -11,26 +11,27 @@ export async function POST(req: Request) {
   if (!who) return Response.json({ error: "unauthorized" }, { status: 401 });
 
   const b = await req.json().catch(() => null);
-  if (b?.backend === "modal" && b?.hello === true) {
-    // the end of Modal's setup (python3 voicebox_modal.py <key> <origin>): its address, so nobody has to paste it
-    const { setPrefs } = await import("@/lib/gpus");
-    try { await setPrefs({ modal_url: String(b.url ?? ""), hello: true }); } catch (e) { return Response.json({ error: (e as Error).message }, { status: 400 }); }
-    return Response.json({ ok: true });
-  }
-  if (b?.backend === "modal") {
-    // the Modal GPU (modal/voicebox_modal.py) beats only while its container is awake: that time counts toward its
-    // monthly cap (lib/gpus.ts). None of Colab's start / stop / reminder bookkeeping applies to it
-    const { MODAL_URL, countModal, shouldStop } = await import("@/lib/gpus");
-    if (typeof b.url !== "string" || !MODAL_URL.test(b.url)) return Response.json({ error: "url must be an https modal.run origin" }, { status: 400 });
-    // Stop was pressed after this container started: it shuts itself down (modal_app/voicebox_modal.py watch)
-    if (await shouldStop(Number(b.started_at ?? 0))) { await countModal(Number(b.started_at ?? 0) || Date.now() / 1000); return Response.json({ ok: true, stop: true }); }
+  if (b?.backend === "modal" || b?.backend === "cerebrium") {
+    // a cloud GPU (Modal: modal_app/, Cerebrium: cerebrium_app/) beats only while its container is awake: that time
+    // counts toward its monthly cap (lib/gpus.ts). None of Colab's start / stop / reminder bookkeeping applies to it
+    const g = await import("@/lib/gpus");
+    const cloud = b.backend as "modal" | "cerebrium";
+    if (b.hello === true) {
+      // the end of its setup: its address, so nobody has to paste it
+      try { await g.setPrefs({ [`${cloud}_url`]: String(b.url ?? ""), hello: true, cloud }); } catch (e) { return Response.json({ error: (e as Error).message }, { status: 400 }); }
+      return Response.json({ ok: true });
+    }
+    if (typeof b.url !== "string" || !g.URL_RE[cloud].test(b.url)) return Response.json({ error: `url must be a ${cloud} app address` }, { status: 400 });
+    const boot = Number(b.started_at ?? 0) || Date.now() / 1000;
+    // Stop was pressed after this container started: it shuts itself down (the app's watch loop)
+    if (await g.shouldStop(boot, cloud)) { await g.countCloud(cloud, boot); return Response.json({ ok: true, stop: true }); }
     await saveWorker({ url: b.url, version: String(b.version ?? ""), gpu: b.gpu, engines: b.engines, loaded: b.loaded,
-      queue: Number(b.queue ?? 0), started_at: Number(b.started_at ?? 0), last_seen: Date.now() }, "modal");
-    await countModal(Number(b.started_at ?? 0) || Date.now() / 1000);
+      queue: Number(b.queue ?? 0), started_at: Number(b.started_at ?? 0), last_seen: Date.now() }, cloud);
+    await g.countCloud(cloud, boot);
     await import("@/lib/downloads").then((d) => d.refresh((f) => after(f), { name: "Download" })).catch((e) => console.error("downloads", e));
     return Response.json({ ok: true });
   }
-  // Modal's key is for Modal's heartbeat only: the Colab worker's record takes WORKER_SECRET
+  // the cloud key is for the cloud GPUs' heartbeats only: the Colab worker's record takes WORKER_SECRET
   if (who !== "worker") return Response.json({ error: "unauthorized" }, { status: 401 });
   const allowed = process.env.WORKER_URL_PATTERN ? new RegExp(process.env.WORKER_URL_PATTERN) : TUNNEL;
   if (!b || typeof b.url !== "string" || !allowed.test(b.url))

@@ -111,13 +111,13 @@ export async function GET(req: Request, ctx: Ctx) {
       const g = await import("@/lib/gpus");
       const s = await g.gpuState();
       const gpus = g.describe(s);
-      const up = g.order(s).find((b) => (b === "colab" ? s.colab.online : s.modal.awake)) ?? g.order(s).find((b) => b === "modal" && s.modal.available);
+      const up = g.order(s).find((b) => (g.isCloud(b) ? s[b].awake : s.colab.online)) ?? g.order(s).find((b) => g.isCloud(b) && s[b].available);
       const rec = s.colab.rec;
       if (!up) return Response.json({ online: false, reason: !rec ? "never registered" : "heartbeat stale", last_seen: rec?.last_seen, gpus });
-      if (up === "modal" && !s.modal.awake) return Response.json({ online: true, backend: "modal", asleep: true, engines: {}, queue: 0, gpus });
+      if (g.isCloud(up) && !s[up].awake) return Response.json({ online: true, backend: up, asleep: true, engines: {}, queue: 0, gpus });
       try {
         const h = await call<object>("/health", { timeoutMs: 8000 });
-        return Response.json({ online: true, backend: up, last_seen: (up === "colab" ? rec : s.modal.rec)?.last_seen, ...h, gpus });
+        return Response.json({ online: true, backend: up, last_seen: (g.isCloud(up) ? s[up].rec : rec)?.last_seen, ...h, gpus });
       } catch (e) {
         return Response.json({ online: false, reason: (e as Error).message, last_seen: rec?.last_seen, gpus });
       }
@@ -126,7 +126,7 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "samples") return Response.json(await getSamples());
     if (a === "myvoices") return Response.json({ voices: await listMyVoices() });
     if (a === "settings") return Response.json(settingsFor(await getSettings(), (await currentUser())?.id));
-    if (a === "gpus" && !b) { const g = await import("@/lib/gpus"); const s = await g.gpuState(); return Response.json({ ...g.describe(s), modal_url: s.prefs.modal_url }); }
+    if (a === "gpus" && !b) { const g = await import("@/lib/gpus"); const s = await g.gpuState(); return Response.json({ ...g.describe(s), modal_url: s.prefs.modal_url, cerebrium_url: s.prefs.cerebrium_url }); }
     if (a === "ratings" && b && c) {
       const job = new URL(req.url).searchParams.get("job") ?? undefined;
       const { ratingsOf } = await import("@/lib/ratings");
@@ -275,24 +275,27 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     let body = await req.json().catch(() => ({}));
     if (a === "publish") return await (await import("@/lib/publish/api")).publishPost(g.path.slice(1), body);
-    if (a === "gpus" && b === "modal-stop") { await (await import("@/lib/gpus")).stopModal(); return Response.json({ ok: true }); } // shuts down within a minute
-    if (a === "gpus" && b === "modal-test") return Response.json(await (await import("@/lib/worker")).testModal()); // wake Modal: proof it works
-    if (a === "gpus" && b === "modal-setup") {
-      // Settings → GPU & engines → Set up Modal: a new key for Modal (replacing any old one) inside the commands to
-      // paste. A signed-in person in the browser only: never handed to a model or a token caller
-      if (req.headers.get("authorization")) return Response.json({ error: "set Modal up from the dashboard" }, { status: 403 });
+    const cl = a === "gpus" ? b?.match(/^(modal|cerebrium)-(stop|test|setup)$/) : null;
+    if (cl) {
+      const cloud = cl[1] as "modal" | "cerebrium";
       const gp = await import("@/lib/gpus");
+      if (cl[2] === "stop") { await gp.stopCloud(cloud); return Response.json({ ok: true }); } // shuts down within a minute
+      if (cl[2] === "test") return Response.json(await (await import("@/lib/worker")).testModal(undefined, cloud)); // wake it: proof it works
+      // Set up: the commands to paste, with the cloud key in them (Modal and Cerebrium share it, so it's made once and
+      // reused; new_key: true replaces it, and every cloud GPU then needs its setup run again). A signed-in person in
+      // the browser only: never handed to a model or a token caller
+      if (req.headers.get("authorization")) return Response.json({ error: "set it up from the dashboard" }, { status: 403 });
       const by = (await currentUser())?.name ?? "dashboard";
-      const key = await gp.newModalKey(by);
+      const key = (body?.new_key !== true && (await gp.modalKey())) || (await gp.newModalKey(by));
       const origin = (await import("@/lib/colab")).appOrigin(new URL(req.url).origin) || new URL(req.url).origin;
-      return Response.json({ commands: gp.setupCommands(key, origin) }, { headers: { "Cache-Control": "no-store" } });
+      return Response.json({ commands: gp.setupCommands(key, origin, cloud) }, { headers: { "Cache-Control": "no-store" } });
     }
     if (a === "gpus" && !b) {
       // Settings → GPU & engines: which GPU goes first, falling back to the other, Modal's address and monthly cap
       const gp = await import("@/lib/gpus");
       await gp.setPrefs(body);
       const s = await gp.gpuState();
-      return Response.json({ ...gp.describe(s), modal_url: s.prefs.modal_url });
+      return Response.json({ ...gp.describe(s), modal_url: s.prefs.modal_url, cerebrium_url: s.prefs.cerebrium_url });
     }
     if (a === "radar") {
       // Grow → Radar: watch / unwatch a keyword, the lane (seeds and countries), a title's SEO score

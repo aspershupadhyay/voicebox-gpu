@@ -63,7 +63,24 @@ capacity); `VOICEBOX_MODAL_GPU=L4 modal deploy …` (or a comma list) pins it. T
 `python3 -m modal run voicebox_modal.py::doctor`. Check https://modal.com/pricing for
 what an hour costs and how much credit the free plan includes; set the cap to match.
 
+## Cerebrium: the third GPU
+
+The same as Modal on a second cloud (`cerebrium_app/`: `cerebrium.toml` and `voicebox_cerebrium.py`): asleep until a
+job wakes it, billed by the second, its own monthly hour cap (default 15), Stop, and the same fallback. The order is
+Colab, Modal, Cerebrium after whichever goes first. It runs the gateway as a custom web server on port 8000, auth off at
+Cerebrium (the gateway checks the cloud key itself), engines and weights on `/persistent-storage`, one replica,
+asleep 10 min after the last request. GPU: the first free of L4 and L40.
+
+Setting it up: Settings → GPU & engines → Cerebrium → **Set up Cerebrium**, then paste the four commands (Mac or
+Linux): the CLI and sign-in, the two files from the studio (`/api/modal/app?f=…`), `voicebox.env` with the cloud key
+(deployed with the app: Cerebrium has no secrets command), then deploy and connect (the address is read from what the
+deploy printed). Modal and Cerebrium share the **cloud key**: Set up reuses it, so setting one up never breaks the
+other (`new_key: true` on `gpus/<cloud>-setup` replaces it; then both need their setup run again).
+
+The MCP: `gpu` action `backend` with `prefer: "cerebrium"`, `cerebrium_url`, `cerebrium_cap_h`, and `cloud:
+"cerebrium"` with `test_modal` / `stop_modal`.
+
 ## Checks
 
 `cd mcp && npx -y tsx scripts/check-gpus.mts`: the routing against two fake GPUs (preference, fallback both ways, job
-follow-ups, a read never waking Modal, the cap, heavy jobs, Modal's own key).
+follow-ups, a read never waking Modal, the cap, heavy jobs, Modal's own key, Cerebrium as the third GPU).

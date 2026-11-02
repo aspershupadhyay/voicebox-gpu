@@ -1,0 +1,47 @@
+# Voicebox's third GPU on Cerebrium (https://cerebrium.ai): the same worker as Colab and Modal, asleep until a job wakes
+# it. Settings → GPU & engines → Cerebrium → Set up prints the commands that deploy this (docs/MODAL.md → Cerebrium).
+[cerebrium.deployment]
+name = "voicebox-worker"
+python_version = "3.12"
+# the gateway checks its own key on every request (the cloud key in voicebox.env), so Cerebrium's token stays off
+disable_auth = true
+include = ["*"]
+exclude = [".*", "deploy.log"]
+
+[cerebrium.runtime.custom]
+port = 8000
+entrypoint = ["python", "voicebox_cerebrium.py", "serve"]
+# no healthcheck path: the gateway answers only with its key, so the TCP check on the port is the one that fits
+
+[cerebrium.hardware]
+compute = ["ADA_L4", "ADA_L40"] # the first one free; L4 (24 GB) is the cheap one
+gpu_count = 1
+cpu = 4
+memory = 32.0 # a voice job peaks near 26 GB of RAM (engines parked in RAM between jobs)
+
+[cerebrium.scaling]
+min_replicas = 0
+max_replicas = 1          # one container: the gateway keeps each job's state in memory
+replica_concurrency = 100 # progress polls arrive while a job runs
+cooldown = 600            # asleep ten minutes after the last request
+response_grace_period = 900
+
+[cerebrium.dependencies.apt]
+ca-certificates = "latest"
+ffmpeg = "latest"
+sox = "latest"
+git = "latest"
+curl = "latest"
+libsndfile1 = "latest"
+build-essential = "latest"
+
+[cerebrium.dependencies.pip]
+numpy = "latest"
+scipy = "latest"
+soundfile = "latest"
+pillow = "latest"
+librosa = "latest"
+yt-dlp = "latest"
+curl_cffi = "latest"
+uv = "latest"
+certifi = "latest"

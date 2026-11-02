@@ -112,5 +112,28 @@ await beat("modal", 10 * 60_000); reset();
 const { testModal } = await import("../lib/worker");
 const tm = await testModal();
 ok(tm.ok && tm.gpu === "modal" && !tm.was_awake && modal.hits.length >= 2, "Test Modal wakes it and reports its GPU");
+// 13. Cerebrium, the second cloud GPU: fallback down the list, its own job notes, its own cap, the shared key
+const cere = await fake("cerebrium");
+process.env.CEREBRIUM_WORKER_URL = cere.url;
+await prefs({ prefer: "colab", fallback: true });
+await beat("colab", 10 * 60_000); await beat("modal", 10 * 60_000);
+await reg.saveWorker({ url: cere.url, started_at: Date.now() / 1000 - 600, last_seen: Date.now() - 10 * 60_000 }, "cerebrium");
+modal.down = true; reset(); cere.hits = [];
+ok((await on(call("/jobs", { body: { kind: "tts" } }))) === "cerebrium", "Colab off and Modal down: the job falls to Cerebrium");
+ok(cere.auth === `Bearer ${key2}`, "Cerebrium gets the cloud key");
+const cjob = cere.jobs.at(-1)!;
+ok((await on(call(`/jobs/${cjob}`))) === "cerebrium", "a Cerebrium job's progress is asked of Cerebrium");
+modal.down = false;
+await prefs({ prefer: "cerebrium" });
+await reg.saveWorker({ url: cere.url, started_at: Date.now() / 1000 - 600, last_seen: Date.now() }, "cerebrium");
+ok((await on(call("/jobs", { body: { kind: "tts" } }))) === "cerebrium", "Cerebrium first: a job goes to Cerebrium");
+await prefs({ prefer: "cerebrium", cerebrium_cap_h: 1 }); await reg.saveWorker({ url: cere.url, last_seen: Date.now() - 10 * 60_000 }, "cerebrium");
+mem.set("voicebox/cerebrium-usage.json", JSON.stringify({ month: new Date().toISOString().slice(0, 7), seconds: 3700 }));
+await beat("modal");
+ok((await on(call("/jobs", { body: { kind: "tts" } }))) !== "cerebrium", "past Cerebrium's cap, the job goes to the next GPU");
+ok(gp.URL_RE.cerebrium.test("https://api.cerebrium.ai/v4/p-abc12345/voicebox-worker") && !gp.URL_RE.cerebrium.test("https://api.cerebrium.ai.evil.com/v4/p-abc12345/x")
+  && !gp.URL_RE.cerebrium.test("https://evil.com/api.cerebrium.ai/v4/p-abc12345/x"), "Cerebrium addresses: the real form passes, look-alikes don't");
+const cc = gp.setupCommands(key2, "https://studio.example", "cerebrium");
+ok(cc.length === 4 && cc.some((c) => c.includes("cerebrium deploy")) && !cc.join("").includes(process.env.WORKER_SECRET!), "Cerebrium's setup commands carry the cloud key, never WORKER_SECRET");
 console.log(fails ? `${fails} FAILED` : "all passed");
 process.exit(fails ? 1 : 0);
