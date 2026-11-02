@@ -41,7 +41,7 @@ cue can put the loudest moment exactly on the frame it scores.
 | A voice / a signal | `sonar-ping-95840` (quiet) | |
 | A refresh / a rebuild | `victorabdo-spin-232536` | |
 | A page or card flip | `flipcard-91468` | |
-| Music bed | `nightfall-future-bass-music-228100` (~134 BPM, 2:21, builds, breaks down ~60-90 s) | `88300` (~150 BPM, 2:59, steady), `gorila-315977` (~105 BPM, 1:55) |
+| Music bed | `nightfall-future-bass-music-228100` (**100 BPM**: its kick measured 2026-11-02, not 134; sped up 1.2x with `atempo` it's a clean 120 BPM bed: intro 0-14 s, drop 16-46, breakdown 48-78, drop 80-112 at 120 BPM) | `88300` (~150 BPM, 2:59, steady), `gorila-315977` (~105 BPM, 1:55) |
 
 Use the glitch and sci-fi sounds rarely: they read as "AI video", which is what we're trying not to look like.
 
@@ -69,3 +69,10 @@ add(T-.12, 'swoosh-014-383768', -1, {peak:true});                              /
   slow (~0.08) and quiet as a drone that holds tension under a long stretch. It lives in the SFX stem, so the voice
   guard holds it under the voice.
 - **Silence is the biggest hit**: cut everything (music, drone, SFX) ~0.4 s before the reveal line, then land it.
+
+## The pen (learned on the Catch the Error Cyclon Reel, 2026-11-02)
+The library has no pen-on-paper sound, and the brand's red pen draws in every scene. `promo/cte-cyclon/tools/audio.py`
+synthesizes it per cue (`{synth: 'pen', len}`): band-passed noise whose loudness follows the stroke (one swell per loop
+of a ring) with a paper-tooth grain. It's the one synthesized sound we keep: everything else comes from the library.
+The owner disliked synthesized swooshes and clicky typing in v1: real library whooshes for moves, and a prompt that is
+*said* (a live waveform and words on the voice's times), not typed.

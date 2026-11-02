@@ -8,6 +8,9 @@ description: Direct Claude to make a finished, voiced, sound-designed video (a Y
 You are the editor, motion designer and sound designer. The owner is the director: their taste, their notes and
 `docs/FEEDBACK.md` win over anything here. Read `docs/REELS.md` (the owner's video rules) before you start; this skill
 is how to apply them, plus what we learned from two reference videos on 2026-11-02 (`references/learned-from.md`).
+**Read `references/craft.md` first** (story, audience psychology, focal points, type pairing, motion principles: what
+the best creators do), and `docs/BRAND.md`: every video is on the Catch the Error brand and ends on its ident
+(`promo/brand/cte.js`). The current reference build is `promo/cte-cyclon/` (vertical, paper + ink + the red pen).
 
 The working kit to copy is `promo/claude-video-rules/` (a 2:11 landscape tutorial made this way); the faster,
 story-shaped v2 is `promo/directors-cut/` (54 s: the rewind and strip structure, Reel the pixel director, music

@@ -6,6 +6,15 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Learn the best way how other people are creating… design rules, psychology, font pairing, visual and focal
+  point… a beautiful storyteller… the outro must be our brand outro, animated like Pixar but for our logo… first learn
+  and add it in our project"** (2026-11-02, with the Catch the Error logo): the research is in the video-director
+  skill's `references/craft.md` (story spine, audience psychology, one focal point per frame, type with one job per
+  family, Disney's motion principles, sound that scores motion, the ten-point checklist). The brand is `docs/BRAND.md`
+  and `promo/brand/` (logo, fonts, `cte.js`: the ident where the "e" hops in like Pixar's lamp, breaks through the
+  baseline, and the red pen catches it). v2 of the Cyclon Reel is `promo/cte-cyclon/`: paper, ink and the red pen as
+  the one visual language, a story with a turn ("So, what's the catch?"), sourced marks on the claim, and the ident.
+  Every video ends on it from now on.
 - **"Never use this purple slop… list all the slop colours AI agents generate… hard rules"** and **"it's completely
   slop design… the outro is shit… the swipe and typing SFX suck… not engaging… the script needs to feel professional"**
   (2026-11-02, on the v1 Cyclon Reel's violet-on-ivory end card): banned for good: purple / violet / indigo /
