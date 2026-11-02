@@ -19,6 +19,7 @@ export default function GpuChoice() {
   const [err, setErr] = useState("");
   const [setup, setSetup] = useState<{ commands: string[]; at: number } | null>(null);
   const [making, setMaking] = useState(false);
+  const [testing, setTesting] = useState(false);
   const load = useCallback(() => {
     api<Answer>("gpus").then((a) => { setG(a); setUrl((u) => u || a.modal_url); setCap((c) => c || String(a.modal.cap_h)); }).catch((e) => setErr((e as Error).message));
   }, []);
@@ -34,6 +35,15 @@ export default function GpuChoice() {
     try { setSetup({ commands: (await api<{ commands: string[] }>("gpus/modal-setup", { body: {} })).commands, at: Date.now() }); }
     catch (e) { setErr((e as Error).message); }
     setMaking(false);
+  }
+  async function test() {
+    setErr(""); setTesting(true);
+    try {
+      const r = await api<{ gpu: string | null; gpu_gb: number | null; woke_in_s: number; was_awake: boolean }>("gpus/modal-test", { body: {} });
+      toast(`Modal works: ${r.gpu?.replace("NVIDIA ", "") ?? "GPU"}${r.gpu_gb ? ` · ${r.gpu_gb} GB` : ""}${r.was_awake ? " (it was awake)" : `, awake in ${r.woke_in_s} s`}`, "ok");
+      load(); refresh();
+    } catch (e) { setErr((e as Error).message); }
+    setTesting(false);
   }
   async function copy() {
     try { await navigator.clipboard.writeText(setup!.commands.join("\n")); toast("Copied: paste it in a terminal", "ok"); }
@@ -108,7 +118,12 @@ export default function GpuChoice() {
         <button className="sm" onClick={() => save({ ...(m.url_from !== "env" ? { modal_url: url } : {}), modal_cap_h: Number(cap) || 0 }, "Saved")}
           disabled={(m.url_from === "env" || url === g.modal_url) && Number(cap) === m.cap_h}>Save</button>
       </div>
-      {m.configured && !setup && <button className="ghost xs" style={{ marginTop: 10 }} onClick={makeSetup} disabled={making}>Set up Modal again (new key)</button>}
+      {m.configured && !setup && (
+        <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <button className="ghost xs" onClick={test} disabled={testing || m.over_cap} title="Starts Modal (a minute or two of its GPU) and checks it answers">{testing ? "Waking Modal… about a minute" : "Test Modal"}</button>
+          <button className="ghost xs" onClick={makeSetup} disabled={making}>Set up Modal again (new key)</button>
+        </div>
+      )}
       {err && <p className="err small" style={{ marginBottom: 0 }}>{err}</p>}
     </div>
   );

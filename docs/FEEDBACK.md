@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Got this error, also make sure MCP can use this"** (2026-11-02, the setup's last step failing with
+  CERTIFICATE_VERIFY_FAILED on a Mac after `modal deploy` succeeded): setup scripts that run on the owner's machine use
+  certifi's certificates, never the system Python's, and a failed last step says the GPU is deployed and what to do.
+  Everything the card does, the MCP can do too (`gpu` action `backend`: the address, the choice, a test wake).
 - **"Where will I get this worker secret, that's BS, give me an option for that"** (2026-11-02, on Modal's setup): the
   owner shouldn't have to dig up a secret. Set up Modal (Settings → GPU & engines) makes Modal its own key and prints
   four commands with it inside, and the last one connects Modal's address by itself (`docs/MODAL.md`). Any setup that

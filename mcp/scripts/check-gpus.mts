@@ -107,5 +107,10 @@ const cmds = gp.setupCommands(key, "https://studio.example");
 ok(cmds.length === 4 && cmds.every((c) => !c.includes(process.env.WORKER_SECRET!)) && cmds.filter((c) => c.includes(key)).length === 3, "the setup commands carry Modal's key, never WORKER_SECRET");
 const key2 = await gp.newModalKey("check");
 ok(key2 !== key && (await gp.workerCaller(req(key))) === null, "a new Modal key retires the old one");
+// 12. the test wake: wakes a sleeping Modal even though /health is a read, and says what GPU answered
+await beat("modal", 10 * 60_000); reset();
+const { testModal } = await import("../lib/worker");
+const tm = await testModal();
+ok(tm.ok && tm.gpu === "modal" && !tm.was_awake && modal.hits.length >= 2, "Test Modal wakes it and reports its GPU");
 console.log(fails ? `${fails} FAILED` : "all passed");
 process.exit(fails ? 1 : 0);
