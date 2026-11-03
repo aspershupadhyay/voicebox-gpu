@@ -1,4 +1,4 @@
-# What two reference videos taught (analysed 2026-11-02)
+# What the reference videos and our own builds taught
 
 Both are in VoiceBox Files: the YouTube tutorial in `Videos/` ("How to Edit VIRAL Instagram Reels Using Opus 5.5"),
 the Reel in `Downloads/Instagram` (by miftahul_islam_efaz). Transcribed with Whisper, 1 fps and 0.1 fps contact
@@ -53,3 +53,24 @@ and the framework as a 75% / 25% bar: the skill does 75%, your idea, taste and n
   own 92-sound library; the **pixel dissolve** became our one flashy transition, in our palette.
 - Not taken: their characters and voxel rooms (our look stays ours), glitchy text, constant music under graphics
   (we duck a bed under the voice instead: docs/REELS.md rule 13), a course pitch.
+
+## Our build: Instagram on Apple TV (2026-11-03, `promo/cte-instagram-tv/`)
+- **Research finds the story the post left out.** The post said "new on Apple TV, US only". The reporting said the app
+  went live quietly ten days earlier, that it's Instagram's fourth TV platform in a year, and that IGTV (2018-2022)
+  was its first try: the catch came from history, not from the post. Search the launch, the predecessor and the pattern.
+- **Their screenshot is evidence.** Put the owner's screenshot in as "the real post", scaled up and marked with the
+  pen (a ring measured on the screenshot's own pixels), never redrawn as if it were the real thing.
+- **Another product's look, without its logos.** The TV interface is drawn in code from what makes it feel like that
+  product (the focus engine's lift, light edge, sheen and parallax; a top shelf; the remote), with a drawn camera glyph
+  for the app. Labelled as redrawn in the caption.
+- **Our own video on the screen.** When a screen plays a video, it's ours: `tools/frames.sh` turns the Files MP4 into
+  30 fps JPGs; the film preloads and decodes them, and `seek()` returns a promise that waits for every `<img>`, so
+  Playwright never grabs a blank frame.
+- **A match cut as the hook.** The phone playing our Reel widens into the TV on "biggest screen": one object becomes
+  the next, so the hook has motion, text and voice on frame 1 and a payoff in second 1.
+- **`wordIdx` matches by prefix.** `at('l01','in')` found "Instagram" (word 0), so "in your house" rose before "the
+  biggest screen". Pass the start index (`wordIdx(id, word, from)`) for short words, or check the order on a sheet.
+- **Heard is not said.** Whisper heard "DMs" as "demiss": re-voice with a spelling the model says cleanly
+  (`pronounce: {"DMs": "dee emms"}`, `takes: 3`) and check `heard` again.
+- **Dates line up across time zones.** The post read Nov 3 (IST) while the voice says "ten days later" (Oct 23 → Nov 2
+  in the US): show a "+10 days" counter rather than a second date that could contradict the screenshot.

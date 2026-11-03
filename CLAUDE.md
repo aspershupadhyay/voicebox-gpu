@@ -25,7 +25,8 @@ review checklist); `promo/claude-video-rules/` is its landscape kit.
 Hard rule: no slop colours in any video or design (no purple / violet / indigo / lavender, no purple-blue gradients, no
 Tailwind defaults, no neon, no pure black or white): the list is in the skill's style guide → "Banned colours", and
 `python3 scripts/reels/check_colors.py <file>` must pass before a render. The channel is **Catch the Error** (`docs/BRAND.md`):
-every video uses its look (paper, ink, the red pen) and ends on its Pixar-style ident (`promo/brand/cte.js`); the craft
+every video keeps its signature (the catch, the red pen, sources) in a world designed fresh for that video (the
+skill's `references/formats.md`: never the same look twice in a row) and ends on its Pixar-style ident (`promo/brand/cte.js`); the craft
 behind it (story, psychology, type, motion) is the skill's `references/craft.md`.
 
 ## Design
