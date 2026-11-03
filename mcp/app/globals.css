@@ -2198,6 +2198,11 @@ a.an-fr:hover { background: var(--hover); }
 .an-br-nets { display: inline-flex; gap: 4px; flex: none; }
 .an-br-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .an-br-top .ellipsis { flex: 1; min-width: 0; }
+/* Audience → Accounts → Group accounts */
+.an-group { display: flex; flex-direction: column; gap: 10px; padding: 12px 0 16px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.an-group-r { display: grid; grid-template-columns: 20px minmax(0, 1fr) minmax(120px, 0.9fr); gap: 10px; align-items: center; font-size: 13.5px; }
+.an-group-r input { width: 100%; min-width: 0; }
+@media (max-width: 640px) { .an-group-r { grid-template-columns: 20px minmax(0, 1fr); } .an-group-r input { grid-column: 1 / -1; } }
 .an-share { display: block; height: 4px; border-radius: 4px; background: var(--fill2); margin-top: 6px; overflow: hidden; max-width: 160px; }
 .an-share i { display: block; height: 100%; border-radius: 4px; }
 .an-tips.one { grid-template-columns: 1fr; }

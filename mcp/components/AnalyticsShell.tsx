@@ -25,6 +25,9 @@ import { ACC_KEY, RANGE_KEY, savedAcc, savedRange, useReport, type Report } from
 const Ctx = createContext<Report | null>(null);
 /** The report, inside an Analytics view (the shell only renders a view once it has one). */
 export const useAn = () => useContext(Ctx)!;
+const ReloadCtx = createContext<(fresh?: boolean) => Promise<void>>(async () => {});
+/** Ask for the report again (after a change that reshapes it, like grouping accounts). */
+export const useAnReload = () => useContext(ReloadCtx);
 
 /** A Grow link that keeps the account picked in the switcher ("" or null: every account). */
 export function growHref(href: string, acc: string | null | undefined) {
@@ -200,7 +203,9 @@ function ReportShell({ view, children }: { view: (typeof VIEWS)[number]; childre
         </Empty>
       ) : data && (
         <Ctx.Provider value={data}>
-          <div key={path} className={`an-wrap an-view ${busy ? "busy" : ""}`}>{children}</div>
+          <ReloadCtx.Provider value={reload}>
+            <div key={path} className={`an-wrap an-view ${busy ? "busy" : ""}`}>{children}</div>
+          </ReloadCtx.Provider>
         </Ctx.Provider>
       )}
     </>

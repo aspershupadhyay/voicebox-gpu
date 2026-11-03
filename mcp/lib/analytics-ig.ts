@@ -11,7 +11,12 @@ import type { PostDetail } from "./analytics-yt";
 import * as IG from "./publish/instagram";
 
 type Insight = { name: string; values?: { value: number | Record<string, number>; end_time?: string }[]; total_value?: { value?: number; breakdowns?: { dimension_keys?: string[]; results?: { dimension_values: string[]; value: number }[] }[] } };
-export const val = (x?: Insight) => (x?.total_value?.value ?? (typeof x?.values?.[0]?.value === "number" ? (x.values[0].value as number) : null));
+/** One number from an insight. Instagram counts some totals net (an un-like takes one off), so a quiet stretch can come
+ *  back as −1 interactions: nothing here is ever below zero. */
+export const val = (x?: Insight) => {
+  const v = x?.total_value?.value ?? (typeof x?.values?.[0]?.value === "number" ? (x.values[0].value as number) : null);
+  return v == null ? null : Math.max(0, v);
+};
 const label = (s: string) => ({ FOLLOWER: "Followers", NON_FOLLOWER: "Non-followers", UNKNOWN: "Unknown", POST: "Posts", REEL: "Reels", STORY: "Stories", AD: "Ads", CAROUSEL_CONTAINER: "Carousels", IGTV: "Video", LIVE: "Live", DEFAULT_DO_NOT_USE: "Other",
   BOOK_NOW: "Book now", CALL: "Call", DIRECTION: "Directions", EMAIL: "Email", INSTANT_EXPERIENCE: "Instant experience", TEXT: "Text", WEBSITE: "Website link", BIO_LINK_CLICKED: "Bio link", PROFILE_VISIT: "Profile visit",
   F: "Women", M: "Men", U: "Other", tap_forward: "Tapped forward", tap_back: "Tapped back", tap_exit: "Exited", swipe_forward: "Swiped to next account", automatic_forward: "Moved on automatically",
@@ -59,6 +64,8 @@ async function totals(token: string, user: string, metrics: string[], s: number,
     return all ? [all] : await Promise.all(metrics.map((m) => settle(q(m))));
   }));
   for (const rs of got) for (const r of rs) r?.data.forEach(add);
+  // net counts (un-likes, unfollows) can leave a quiet window below zero: a total is never negative
+  for (const v of out.values()) { v.value = Math.max(0, v.value); for (const [k, n] of v.parts) v.parts.set(k, Math.max(0, n)); }
   return out;
 }
 

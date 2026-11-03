@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Make sure no matter how many accounts we have, Instagram and YouTube, it should work the same… fix it all… make it
+  workable for any apps"** (2026-11-03): Grow works for any number of accounts. Accounts group by name or handle, also
+  when one says "Official", "HQ", "TV", "YT", "IG" or "The"; when names don't match, Audience → Accounts → "Group
+  accounts" sets a brand by hand (kept in R2, wins over the name). Shares are never added across accounts (reach from
+  non-followers is weighed by reach, not summed to 195%), and anything that shows one account's data among several
+  names the account. Instagram's net totals (an un-like counts −1) never show below zero.
 - **"Voicebox grow page is not built for multiple IG and YT"** and **"go ahead and build it"** (2026-11-03, after the
   Elite Minds review): Grow mixed every account. Elite Minds' viral Reel set the "usual" for Catch the Error, its
   #billgates showed up as Catch the Error's best hashtag, its May hit set the best posting time, and a post with no
