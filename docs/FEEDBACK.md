@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"That SFX sound… which starts at 21 or 23 and ends when token limit shows up, remove that… it won't look
+  appropriate"** (2026-11-03, on the weight-space Reel): no synthesized drone (the Shepard tone) and no accelerating
+  tick run under a talking scene. The loop plays over the music bed, and the music cuts dead on the token limit: the
+  stop is the sound. Shepard tones stay out of voiced Reels unless the owner asks.
 - **"Make video on this… create it like Cyclon one… the best creative explanation and hook… use the good neural network
   graph with the red dots of our logo… use the good images or make your illustrations… research and plan the good
   structure"** (2026-11-03, on Rikiya Takehi's weight-space programming post): `promo/cte-weight-space/`. The look is

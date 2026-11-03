@@ -12,9 +12,9 @@ requests from both checkpoints on Hugging Face and diffed (exactly 64 changed co
 **real** looping output for MATH-500 #515 (the line repeated 1,237 times, no answer) and the edited model's
 `\boxed{27}` from the rerun's published samples (`real.js`).
 
-**Sound:** library SFX per motion, the synthesized pen, a tick per lap that speeds up through the loop with a slow
-Shepard tone under it and a dead stop at the token limit; gorila bed in four segments (out for the loop, cut before
-the catch). -14.2 LUFS, -2 dBTP.
+**Sound:** library SFX per motion, the synthesized pen; the gorila bed in four segments runs under the loop and cuts
+dead on the token limit (v2: the Shepard drone and the tick run were removed at the owner's note), then cuts before
+the catch. -14.2 LUFS, -2 dBTP.
 
 **Voice:** Sparsh (myvoice, hype, 1.08x, best of 2; two lines re-taken at best of 3) on a Colab L4 (Cerebrium's
 first myvoice install hung with an empty log, so we switched).
