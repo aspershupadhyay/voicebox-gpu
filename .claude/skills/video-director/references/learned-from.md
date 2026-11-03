@@ -74,3 +74,16 @@ and the framework as a 75% / 25% bar: the skill does 75%, your idea, taste and n
   (`pronounce: {"DMs": "dee emms"}`, `takes: 3`) and check `heard` again.
 - **Dates line up across time zones.** The post read Nov 3 (IST) while the voice says "ten days later" (Oct 23 → Nov 2
   in the US): show a "+10 days" counter rather than a second date that could contradict the screenshot.
+
+## Our build: AI, decoded #1, the satellite (2026-11-03, `promo/cte-satellite-ai/`)
+- Real media first, from the primary source: NASA GIBS serves real satellite imagery for any date and box as a plain
+  WMS URL (a globe projected from that day's VIIRS true colour, tiles, Punjab's smoke with VIIRS fire dots). ESA's
+  image pages come through VoiceBox `download` (our sandbox gets 403 there; don't spoof a browser).
+- Our own footage: record the real site in a headless browser (Playwright `recordVideo`, scripted clicks and wheel
+  zooms), then cut frames from the webm. It reads as "we checked", and it's ours.
+- Research changes the script: Φ-sat-1 only *flagged* cloudy photos in its trial, so the voice says "checking", and
+  the "nothing comes down" claim rests on Φ-sat-2's fire app, which ESA says returns no data when there's no fire.
+- The sound that is the topic: a synthesized camera shutter (two blade clicks) is the transition and the beat;
+  a low thud is "not sent". Both live in `tools/audio.py` (synth cues), since the library has no shutter.
+- When a voice job ran on another GPU, its `/files` links won't open from Colab's tunnel: the WAVs are in the
+  library (`get_file`), and word stamps can be remade locally (faster-whisper small.en, fed raw audio from ffmpeg).

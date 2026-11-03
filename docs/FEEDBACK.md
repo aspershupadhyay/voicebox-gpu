@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Go ahead and record the video for me… use Sparsh's voice… download the real images… don't make the credits too
+  loud, keep it minimal… use Cosmos or Pinterest to fetch the best images… clipping and transitions need to be so
+  fast"** (2026-11-03, the satellite Reel, `promo/cte-satellite-ai/`): we record our own screen footage ourselves
+  (a headless browser on the real site, e.g. NASA Worldview), credits are one small mono line in a corner, transitions
+  are 0.2 s and cuts land every 2-4 s. Real images come first from the primary source (NASA GIBS, ESA's image pages
+  through VoiceBox `download`); Pinterest / Cosmos when the source has nothing usable.
 - **"Nowadays how other people are going crazy famous… we can add images, videos and all to make our edits real and
   creative instead of just plain explanation and drawing everything our own"** (2026-11-03): every video mixes real
   media with what we draw: the real post, product shots, a few seconds of real footage, headlines, a chart from the
