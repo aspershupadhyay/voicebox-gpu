@@ -1,0 +1,18 @@
+{
+ "l01": "This satellite decides which photos of Earth we never see.",
+ "l02": "Here's why. At any moment, about two thirds of Earth is under cloud.",
+ "l03": "So most photos from space are just... white.",
+ "l04": "And a satellite only gets a few minutes per pass to send its photos home.",
+ "l05": "So in twenty twenty, Europe tried something new.",
+ "l06": "A tiny AI chip on board, checking every photo for cloud before it's sent.",
+ "l07": "They even blasted the chip with radiation for thirty-six hours, so space wouldn't fry it.",
+ "l08": "It worked. Skipping the cloudy shots saves about thirty percent of the data.",
+ "l09": "Now its successor, Phi-sat two, the size of a shoebox, runs apps in orbit.",
+ "l10": "Spot ships. Draw street maps. Find wildfires.",
+ "l11": "Fire satellites can now send the alert first, before the full picture.",
+ "l12": "So, what's the catch?",
+ "l13": "If the AI finds no fire, nothing comes down. No photo. No second look.",
+ "l14": "So if it ever mistakes smoke for cloud, nobody on the ground sees it.",
+ "l15": "The AI isn't just taking the pictures. It's deciding what we get to see.",
+ "l16": "Would you let it decide? Yes or no."
+}
