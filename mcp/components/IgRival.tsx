@@ -54,7 +54,7 @@ export function FacebookLink() {
           <b>Facebook (for Instagram rivals)</b>
           <p className="tiny dim" style={{ margin: "2px 0 0" }}>
             {!fb.configured ? "Not set up yet: FACEBOOK_APP_SECRET goes on the Worker (docs/PUBLISHING.md)."
-              : fb.connected ? `Connected by ${fb.by ?? "someone"}${fb.at ? ` ${ago(fb.at)}` : ""} through ${igs.length ? igs.map((p) => `${p.name} (@${p.ig!.username})`).join(", ") : "a Page with no Instagram linked"}.`
+              : fb.connected ? `Connected by ${fb.by ?? "someone"}${fb.at ? ` ${ago(fb.at)}` : ""} through ${igs.length ? igs.map((p) => `${p.name} (@${p.ig!.username})`).join(", ") : "a Page with no Instagram linked"}.${fb.declined?.length ? ` Not allowed: ${fb.declined.join(", ")}; connect again and allow them.` : ""}`
                 : "Instagram only shares other accounts' followers and posts with apps signed in through Facebook, via a Page your Instagram is linked to."}
           </p>
         </div>
