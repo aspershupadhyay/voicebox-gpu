@@ -119,7 +119,7 @@ scene(S('l02'),PAPER,(t)=>{
   const t0=S('l02');let h=grain(0)+slug(t,0);
   const p=seg(t,t0+.1,Math.max(1,at('l02','adapted')-t0),eio), yrs=Math.round(p*19);
   h+=C(330,`${rise(t,t0)};font-family:'Courier Prime';font-size:30px;letter-spacing:.2em;color:${SOFT}`,'FOR ALMOST');
-  h+=C(390,`font-size:330px;line-height:1;font-weight:500;color:${INK};letter-spacing:-0.05em;font-variant-numeric:tabular-nums;${rise(t,t0)}`,`${yrs}<span style="font-size:120px;letter-spacing:-0.02em"> yrs</span>`);
+  h+=C(390,`font-size:330px;line-height:1;font-weight:500;color:${INK};letter-spacing:-0.05em;font-variant-numeric:tabular-nums;${rise(t,t0)}`,`${Math.round(p*20)}<span style="font-size:120px;letter-spacing:-0.02em"> yrs</span>`);
   // the ruler
   const rx0=110,rx1=970,ry=930;let r='';
   for(let y=0;y<=19;y++){const x=lerp(rx0,rx1,y/19),on=y<=yrs;r+=`<line x1="${x}" y1="${ry}" x2="${x}" y2="${ry-(y%5===0?40:22)}" stroke="${on?INK:GRAPH}" stroke-width="3"/>`;}
