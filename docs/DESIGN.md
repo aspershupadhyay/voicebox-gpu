@@ -106,6 +106,8 @@ status and history under it, and the actions in a footer. It saves as you type.
   Scores (views ÷ the usual of the same account and format, views only), tips, hashtags and best times are only ever
   worked out within one brand. All accounts shows totals, "Accounts side by side" (each brand's views, output, typical
   score and best post; a row switches to it), each brand's best slots, and no next moves.
+  Any number of accounts: when names don't say which brand an account is, Audience → Accounts → "Group accounts" sets
+  it by hand. A share (%) is never added across accounts, and a card that shows one account among several names it.
 - Analytics (`components/AnalyticsShell.tsx`, `Analytics.tsx`, `AnalyticsPlatform.tsx`) answers one question per view, the
   way YouTube Studio and the social suites split theirs, never every number on one screen. The shell holds the header,
   the range, the strips and the view tabs, and loads the report once for every view (`useReport`, shared with Home), so

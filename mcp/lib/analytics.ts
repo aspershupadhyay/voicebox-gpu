@@ -18,7 +18,7 @@ import { getRules, listPlans } from "./publish/plans";
 import * as YT from "./publish/youtube";
 import { getSpaces } from "./spacestore";
 import { spaceName, type SpaceId, type Target } from "./spaces";
-import { brandsOf, pickBrand, type Brand } from "./brands";
+import { brandsOf, getGroups, pickBrand, type Brand } from "./brands";
 import { listPosts } from "./data";
 import { DAY, hashtagsOf, iso, median, msg, report, settle, sum, windows, type Bar, type Daily, type Kpi, type Range, type Win } from "./analytics-util";
 import { AGE, DEVICES, TRAFFIC, ytDeep, ytPost, type PostDetail, type YtDeep } from "./analytics-yt";
@@ -74,6 +74,8 @@ export type Analytics = {
   brand: string | null;
   /** every connected brand, for the switcher */
   brands: Brand[];
+  /** brands set by hand (account id → brand name, lib/brands.ts); the rest are matched by name */
+  groups?: Record<string, string>;
   /** every account together (with more than one brand): each brand's own numbers, side by side. Empty in one brand's view */
   by_brand: BrandSum[];
   accounts: AccountSum[];
@@ -96,6 +98,8 @@ export type Analytics = {
   youtube: YtDeep[]; instagram: IgDeep[];
   /** followers per account, one point a day, kept by Voicebox (newest last) */
   history: { d: string; f: Record<string, number> }[];
+  /** whose audience yt and ig describe (the first account of that network in the view) */
+  audience_of?: { youtube: string | null; instagram: string | null };
   yt: { traffic: Bar[]; countries: Bar[]; ages: Bar[]; genders: Bar[]; devices: Bar[]; subs_per_1k: number | null; avg_pct: number | null } | null;
   ig: { countries: Bar[]; cities: Bar[]; ages: Bar[]; genders: Bar[]; online: number[] | null; reach: number | null; interactions: number | null } | null;
   lengths: { label: string; n: number; median: number }[];
@@ -269,7 +273,11 @@ function byPublishDay(items: Item[], w: Win, range: Range) {
 
 type IgMedia = { id: string; caption?: string; media_type: string; media_product_type?: string; timestamp: string; permalink: string; thumbnail_url?: string; media_url?: string; like_count?: number; comments_count?: number };
 type Insight = { name: string; values?: { value: number | Record<string, number>; end_time?: string }[]; total_value?: { value?: number; breakdowns?: { results?: { dimension_values: string[]; value: number }[] }[] } };
-const val = (x?: Insight) => (x?.total_value?.value ?? (typeof x?.values?.[0]?.value === "number" ? (x.values[0].value as number) : null));
+/** One number from an insight, never below zero (Instagram counts some totals net, so a quiet stretch can read −1). */
+const val = (x?: Insight) => {
+  const v = x?.total_value?.value ?? (typeof x?.values?.[0]?.value === "number" ? (x.values[0].value as number) : null);
+  return v == null ? null : Math.max(0, v);
+};
 const isPerm = (m: string) => /permission|\(#10\)|\(#200\)|scope|not authorized/i.test(m);
 
 type IgOut = { token: string; insights: boolean; acc: AccountSum; items: Item[]; series: YtOut["series"]; fmt: Partial<Record<Fmt, FmtSum>>; ig: NonNullable<Analytics["ig"]>; needs: Need[] };
@@ -497,6 +505,7 @@ export function derive(b: Base, brand: Brand | null, brands: Brand[]): Analytics
     heat: [], heat_metric: "", heat_by: {}, overview: [], trend: [],
     youtube: b.youtube.filter((d) => mine(d.account.id)), instagram: b.instagram.filter((d) => mine(d.account.id)), history: b.history,
     yt: parts.find((p) => p.yt)?.yt ?? null, ig: parts.find((p) => p.ig)?.ig ?? null,
+    audience_of: { youtube: b.accounts.find((x) => x.id === parts.find((p) => p.yt)?.id)?.name ?? null, instagram: b.accounts.find((x) => x.id === parts.find((p) => p.ig)?.id)?.name ?? null },
     lengths: [], tags: [], rhythm: [], gaps: [], tips: [], needs: b.needs,
   };
 
@@ -617,7 +626,13 @@ function overviewOf(a: Analytics, w: Win): Kpi[] {
   const hits = (s: number, e: number) => a.items.filter((i) => i.at >= s && i.at < e + DAY && (i.score ?? 0) >= 2).length;
   const r = (v: number | null, d = 1) => (v == null || !isFinite(v) ? null : Math.round(v * 10 ** d) / 10 ** d);
   const e = eng("value"), pe = eng("prev");
-  const nonF = kp(a.instagram, "non_follower_reach", "value");
+  // a share, so several accounts are weighed by their reach (adding them up would read 195%)
+  const nonF = (() => {
+    const xs = a.instagram.map((d) => ({ p: d.kpis.find((k) => k.key === "non_follower_reach")?.value, r: d.kpis.find((k) => k.key === "reach")?.value ?? 0 })).filter((x) => x.p != null) as { p: number; r: number }[];
+    if (!xs.length) return null;
+    const w = sum(xs.map((x) => x.r));
+    return Math.round((w ? sum(xs.map((x) => x.p * x.r)) / w : sum(xs.map((x) => x.p)) / xs.length) * 100) / 100;
+  })();
   const out: Kpi[] = [
     { key: "views", label: "Views, every platform", group: "Reach", value: views, prev: pViews, about: "YouTube views plus Instagram views." },
     { key: "reach", label: "Instagram accounts reached", group: "Reach", value: kp(a.instagram, "reach", "value"), prev: kp(a.instagram, "reach", "prev"), about: "Unique Instagram accounts that saw something." },
@@ -778,9 +793,9 @@ async function loadBase(range: Range, fresh: boolean, background?: (p: Promise<u
  *  `background` (Next's after()), it's still served at once with `stale: true` while a new one is built behind it; the
  *  page asks again to pick it up. With nothing kept, or `fresh`, it waits for a new one. */
 export async function getAnalytics(range: Range, fresh = false, background?: (p: Promise<unknown>) => void, acc?: string | null): Promise<Analytics & { cached: boolean; stale: boolean }> {
-  const { base, cached, stale } = await loadBase(range, fresh, background);
-  const brands = brandsOf(base.accounts);
-  return { ...derive(base, pickBrand(brands, base.accounts, acc), brands), cached, stale };
+  const [{ base, cached, stale }, groups] = await Promise.all([loadBase(range, fresh, background), getGroups()]);
+  const brands = brandsOf(base.accounts, groups);
+  return { ...derive(base, pickBrand(brands, base.accounts, acc), brands), groups, cached, stale };
 }
 
 /** One post in depth (YouTube: retention curve, views by day since upload, traffic; Instagram: every metric for its

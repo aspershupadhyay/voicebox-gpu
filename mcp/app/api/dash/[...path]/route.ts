@@ -321,6 +321,12 @@ export async function POST(req: Request, ctx: Ctx) {
       const s = await gp.gpuState();
       return Response.json({ ...gp.describe(s), modal_url: s.prefs.modal_url, cerebrium_url: s.prefs.cerebrium_url });
     }
+    if (a === "analytics" && b === "brands") {
+      // Grow → Audience → Accounts → Group accounts: put an account in a brand by hand ({ account, brand }; an empty
+      // brand goes back to matching by name). The brands are worked out again on the next report, no platform calls
+      const br = await import("@/lib/brands");
+      return Response.json({ groups: await br.setGroup(String(body.account ?? ""), typeof body.brand === "string" ? body.brand : null) });
+    }
     if (a === "radar") {
       // Grow → Radar: watch / unwatch a keyword, the lane (seeds and countries), a title's SEO score
       const rd = await import("@/lib/radar-data");

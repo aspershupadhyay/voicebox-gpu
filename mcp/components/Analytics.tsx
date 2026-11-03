@@ -17,9 +17,9 @@ import type { Analytics as Data, Bar, BrandSum, Daily, Fmt, Item, Kpi, Tip } fro
 import { spaceName } from "@/lib/spaces";
 import { Bars, change, Columns, compact, DAYS, day, fmtUnit, full, Heatmap, hour, LineChart, pct, Quadrant, Score, Scorecard, SLOTS, Trend, TrendBoard } from "./anparts";
 import { InstagramTab, PostDrawer, PostList, YouTubeTab } from "./AnalyticsPlatform";
-import { growHref, useAn } from "./AnalyticsShell";
+import { growHref, useAn, useAnReload } from "./AnalyticsShell";
 import { FollowerGrowth, KpiStrip, Responses, TopTable } from "./Flux";
-import { ago } from "./api";
+import { ago, api } from "./api";
 import { PlatformBadge } from "./platform";
 import { Select } from "./pop";
 import { Empty } from "./ui";
@@ -285,17 +285,63 @@ function Growth({ data }: { data: Data }) {
   );
 }
 
+/** Which brand each account belongs to. Accounts whose names read the same group by themselves; this sets one by hand
+ *  (type a brand's name to join it, a new name to start one, or leave it empty to go back to matching by name). */
+function GroupAccounts({ data, done }: { data: Data; done: () => void }) {
+  const reload = useAnReload();
+  const brandOf = (id: string) => data.brands.find((b) => b.accounts.includes(id));
+  const [names, setNames] = useState<Record<string, string>>(() => Object.fromEntries(data.accounts.map((a) => [a.id, data.groups?.[a.id] ?? ""])));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const save = async () => {
+    setBusy(true); setErr("");
+    try {
+      for (const a of data.accounts) {
+        const v = names[a.id].trim();
+        if (v !== (data.groups?.[a.id] ?? "")) await api("analytics/brands", { method: "POST", body: { account: a.id, brand: v } });
+      }
+      await reload();
+      done();
+    } catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <form className="an-group" onSubmit={(e) => { e.preventDefault(); save(); }}>
+      <p className="small dim" style={{ margin: 0 }}>Accounts with the same brand are shown together (their Instagram and YouTube as one). Type a brand&apos;s name to join it or a new name to start one; leave it empty to match by name.</p>
+      <datalist id="an-brand-names">{data.brands.map((b) => <option key={b.id} value={b.name} />)}</datalist>
+      {data.accounts.map((a, k) => (
+        <label key={a.id} className="an-group-r">
+          <PlatformBadge net={a.network} size={20} />
+          <span className="ellipsis an-acc-n">{a.name}<span className="tiny dim"> {a.network === "instagram" && a.handle ? `@${a.handle}` : a.handle ?? ""}</span></span>
+          <input type="text" list="an-brand-names" maxLength={60} value={names[a.id]} autoFocus={k === 0} placeholder={brandOf(a.id)?.name ?? a.name}
+            aria-label={`Brand for ${NET_NAME[a.network]} ${a.name}`} onChange={(e) => setNames({ ...names, [a.id]: e.target.value })} />
+        </label>
+      ))}
+      {err && <p className="small" role="alert" style={{ color: "var(--bad)", margin: 0 }}>{err}</p>}
+      <div className="row" style={{ justifyContent: "flex-end" }}>
+        <button type="button" className="ghost sm" onClick={done} disabled={busy}>Cancel</button>
+        <button type="submit" className="sm" disabled={busy}>{busy ? "Saving…" : "Save groups"}</button>
+      </div>
+    </form>
+  );
+}
+
 function Accounts({ data }: { data: Data }) {
   const accs = data.accounts.filter((a) => a.followers != null);
   const total = sumOf(accs.map((a) => a.followers ?? 0));
+  const [grouping, setGrouping] = useState(false);
   return (
     <section className="card an-card" aria-labelledby="an-aud-h">
-      <div className="card-head"><div><h2 id="an-aud-h">Accounts</h2><p className="sub">Followers and the change in {data.range} days</p></div></div>
+      <div className="card-head">
+        <div><h2 id="an-aud-h">Accounts</h2><p className="sub">Followers and the change in {data.range} days</p></div>
+        {!data.brand && data.accounts.length > 1 && !grouping && <button type="button" className="ghost xs" onClick={() => setGrouping(true)}>Group accounts</button>}
+      </div>
+      {grouping && <GroupAccounts data={data} done={() => setGrouping(false)} />}
       {total > 0 && <>
         <div className="an-split" role="img" aria-label={accs.map((a) => `${NET_NAME[a.network]} ${a.name}: ${pct((a.followers ?? 0) / total)}`).join(", ")}>
           {accs.map((a) => <i key={a.id} className={`c-${a.network}`} style={{ flexGrow: Math.max(a.followers ?? 0, total * 0.02) }} />)}
         </div>
-        <div className="an-legend tight">{accs.map((a) => <span key={a.id}><i className={`dot c-${a.network}`} />{NET_NAME[a.network]} <b className="mono an-ink">{pct((a.followers ?? 0) / total)}</b></span>)}</div>
+        <div className="an-legend tight">{accs.map((a) => <span key={a.id}><i className={`dot c-${a.network}`} />{accs.filter((x) => x.network === a.network).length > 1 ? a.name : NET_NAME[a.network]} <b className="mono an-ink">{pct((a.followers ?? 0) / total)}</b></span>)}</div>
       </>}
       <div className="an-acc-list">
         {data.accounts.map((a) => {
@@ -304,7 +350,7 @@ function Accounts({ data }: { data: Data }) {
           return (
             <div key={a.id} className="an-acc">
               <PlatformBadge net={a.network} size={22} />
-              <span className="ellipsis an-acc-n">{a.name}<span className="tiny dim"> {a.network === "instagram" && a.handle ? `@${a.handle}` : a.handle ?? ""}</span></span>
+              <span className="ellipsis an-acc-n">{a.name}<span className="tiny dim"> {a.network === "instagram" && a.handle ? `@${a.handle}` : a.handle ?? ""}{!data.brand && data.brands.length > 1 ? ` · ${data.brands.find((b) => b.accounts.includes(a.id))?.name ?? ""}` : ""}</span></span>
               <span className="mono">{full(a.followers)}</span>
               {a.gained != null ? <span className={`an-chg ${net >= 0 ? "up" : "down"}`} title={`${net >= 0 ? "+" : ""}${net} in ${data.range} days`}>{net >= 0 ? <ArrowUpRight size={12} weight="bold" aria-hidden /> : <ArrowDownRight size={12} weight="bold" aria-hidden />}{net >= 0 ? "+" : "−"}{Math.abs(net)}{base > 0 ? ` · ${pct(Math.abs(net) / base, 1)}` : ""}</span> : <span className="tiny dim">—</span>}
             </div>
@@ -323,7 +369,7 @@ function Who({ data }: { data: Data }) {
   return (
     <section className="card an-card" aria-labelledby="an-who-h">
       <div className="card-head">
-        <div><h2 id="an-who-h">Who&apos;s watching</h2><p className="sub">{n === "youtube" ? "Viewers in this period" : "Your followers"}</p></div>
+        <div><h2 id="an-who-h">Who&apos;s watching</h2><p className="sub">{data.accounts.filter((x) => x.network === n).length > 1 && data.audience_of?.[n] ? `${data.audience_of[n]} · ` : ""}{n === "youtube" ? "Viewers in this period" : "Your followers"}</p></div>
         {nets.length > 1 && <div className="seg" role="group" aria-label="Network">{nets.map((x) => <button key={x} className={n === x ? "on" : ""} aria-pressed={n === x} onClick={() => setN(x)}>{NET_NAME[x]}</button>)}</div>}
       </div>
       {!src || (!src.ages.length && !src.countries.length) ? <p className="small dim">Audience details show once there are enough viewers (Instagram needs 100 followers; YouTube hides small audiences).</p> : <>
@@ -340,7 +386,7 @@ function Found({ data }: { data: Data }) {
   const all = sumOf(t.map((b) => b[1]));
   return (
     <section className="card an-card" aria-labelledby="an-where-h">
-      <div className="card-head"><div><h2 id="an-where-h">How they find you</h2><p className="sub">Where YouTube views came from, last {data.range} days</p></div></div>
+      <div className="card-head"><div><h2 id="an-where-h">How they find you</h2><p className="sub">{data.accounts.filter((x) => x.network === "youtube").length > 1 && data.audience_of?.youtube ? `${data.audience_of.youtube} · ` : ""}Where YouTube views came from, last {data.range} days</p></div></div>
       {t.length ? <Bars rows={t} unit={(v) => pct(v / all)} /> : <p className="small dim">{data.yt ? "No views in this period yet." : "Connect a YouTube channel and turn on the YouTube Analytics API to see this."}</p>}
       {!!data.yt?.devices.length && <><h3 className="an-h3">Devices</h3><Bars rows={data.yt.devices} unit={(v) => pct(v / sumOf(data.yt!.devices.map((b) => b[1])))} /></>}
     </section>
