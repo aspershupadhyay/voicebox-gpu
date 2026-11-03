@@ -22,3 +22,9 @@ first myvoice install hung with an empty log, so we switched).
 Build: `python3 tools/mkvo.py <voice dir>` → `node tools/render.js cues` → `python3 tools/audio.py <SFX wav dir>`
 (aliases: `tick`, `sharp-pop`, `soft-pop`, `subtle-pop`, `data`, `erreur`, `accept`, `gorila`… see the cues) →
 `python3 tools/mix.py` → `node tools/render.js out/video.mp4 4` → mux.
+
+**The Shorts cut (61 s):** the same film with fewer lines. Copy the kit to a scratch folder, keep only
+`l01 l02 l06 l07 l07b l09 l11 l12 l13 l15 l16 l17 l20` in `tools/script.json`, and build as above: a missing line's
+scene and cues drop out by themselves (its times are NaN) and the music segments refit.
+**The cover:** `node tools/render.js stills -1` (the film draws it at t < 0). Posted as "GPT-6 Astra Rewired Another
+AI. Would You?" (Radar: seo_score 72), YouTube Short 1:00 PM and Instagram Reel 1:30 PM IST, Nov 4 2026.
