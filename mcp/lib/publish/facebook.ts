@@ -3,7 +3,9 @@
 // that has your Instagram linked to it. Publishing and your own analytics stay on Instagram Login (instagram.ts).
 //
 // Setup (docs/PUBLISHING.md → "Instagram rivals"): the Meta app's Facebook Login for Business, configuration
-// FACEBOOK_LOGIN_CONFIG_ID with instagram_basic, pages_show_list, pages_read_engagement and business_management, the
+// FACEBOOK_LOGIN_CONFIG_ID with instagram_basic, instagram_manage_insights, pages_show_list, pages_read_engagement,
+// business_management and ads_read (Meta's Business Discovery reference; ads_read when the Page role came through a
+// Business portfolio), the
 // redirect https://<site>/api/publish/facebook/callback, and FACEBOOK_APP_SECRET on the Worker. On connect the sign-in's
 // token is swapped for each Page's own token (a Page token from a long-lived sign-in doesn't expire while the person
 // stays a Page admin); they're sealed in R2 (workspace/publish/facebook.json) and never leave the server.
@@ -23,7 +25,7 @@ export type FbPage = { id: string; name: string; ig: { id: string; username: str
 type Stored = { by: string; at: number; user: string | null; pages: FbPage[]; sealed: string; granted?: string[]; declined?: string[] };
 export type FbStatus = { configured: boolean; connected: boolean; by: string | null; at: number | null; user: string | null; pages: FbPage[]; granted: string[]; declined: string[] };
 /** What Business Discovery needs on the sign-in (the configuration asks for these). */
-export const NEEDED = ["instagram_basic", "pages_show_list", "pages_read_engagement", "business_management"];
+export const NEEDED = ["instagram_basic", "instagram_manage_insights", "pages_show_list", "pages_read_engagement", "business_management"];
 
 type GErr = { error?: { message?: string; code?: number; error_subcode?: number; error_user_msg?: string } };
 export class FbError extends Error {

@@ -193,8 +193,10 @@ reading rivals (`lib/publish/facebook.ts`, `lib/rivals-ig.ts`).
 1. Link your Instagram to a Facebook Page you admin (the Page's Settings → Linked accounts → Instagram).
 2. In the Meta app (App ID `1607876027034664`): add the product **Facebook Login for Business**; under its Settings add
    the redirect `https://voiceboxstudio.pages.dev/api/publish/facebook/callback`; add the permissions `instagram_basic`,
-   `pages_show_list`, `pages_read_engagement` and `business_management` to the app (Use cases), and make a
-   configuration (User access token) with exactly those four. Its id (`1676190047634985`) and the App ID are in the code
+   `instagram_manage_insights`, `pages_show_list`, `pages_read_engagement`, `business_management` and `ads_read` to the
+   app (Use cases), and make a configuration (User access token) with exactly those six. Business Discovery answers
+   "(#10) Application does not have permission" without `instagram_manage_insights` (and without `ads_read` when your
+   Page role came through a Business portfolio), even with the other four granted. Its id (`1676190047634985`) and the App ID are in the code
    (not secrets; `FACEBOOK_LOGIN_CONFIG_ID` / `FACEBOOK_APP_ID` override them). In Development mode only people with a
    role on the app (App roles → Roles) can sign in.
 3. `npx wrangler secret put FACEBOOK_APP_SECRET` (App settings → Basic → App secret).
