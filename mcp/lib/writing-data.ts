@@ -10,11 +10,21 @@ export type WritingData = {
   at: number; items: WItem[]; rivals: WRival[];
   lengths: { label: string; n: number; median: number }[];
   tags: { tag: string; n: number; score: number }[];
+  /** the hashtags that work, per brand (each scored against its own posts, never mixed) */
+  tags_by: { brand: string; name: string; tags: { tag: string; n: number; score: number }[] }[];
   /** your best-performing length in seconds per format (the median length of your hits) */
   best_len: Record<string, number>;
   captions: Awaited<ReturnType<typeof getCaptions>>;
   needs: string[];
 };
+
+/** One brand: its own tags. Several: each brand's, from the side-by-side lines (the mixed list is empty on purpose). */
+function tagsBy(a: Awaited<ReturnType<typeof getAnalytics>> | null): WritingData["tags_by"] {
+  if (!a) return [];
+  if (a.by_brand.length) return a.by_brand.filter((b) => b.tags.length).map((b) => ({ brand: b.id, name: b.name, tags: b.tags }));
+  const b = a.brands[0];
+  return a.tags.length ? [{ brand: b?.id ?? "all", name: b?.name ?? "Your accounts", tags: a.tags }] : [];
+}
 
 export async function writingData(background?: (p: Promise<unknown>) => void): Promise<WritingData> {
   const [a, live, captions] = await Promise.all([
@@ -37,7 +47,7 @@ export async function writingData(background?: (p: Promise<unknown>) => void): P
     if (ls.length >= 2) best_len[f] = Math.round(ls[ls.length >> 1]);
   }
   return {
-    at: Date.now(), items, rivals, lengths: a?.lengths ?? [], tags: a?.tags ?? [], best_len, captions,
+    at: Date.now(), items, rivals, lengths: a?.lengths ?? [], tags: a?.tags ?? [], tags_by: tagsBy(a), best_len, captions,
     needs: [...(a ? [] : ["Analytics couldn't be read: connect YouTube or Instagram in Posts → Autopilot."]), ...(a?.needs ?? []).map((n) => n.text)],
   };
 }

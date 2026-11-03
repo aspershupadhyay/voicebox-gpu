@@ -392,7 +392,11 @@ function CaptionTool({ room, postId, setPost }: ToolProps) {
   const { toast } = useDialog();
   const ts = post ? targetsOf(post, room.targets).filter((x) => x.status !== "posted") : [];
   const saved = (post && room.data?.captions[post.$id]) || {};
-  const tags = (room.data?.tags ?? []).map((t) => t.tag);
+  // hashtags are scored per brand (never across brands), so the room shows one brand's at a time
+  const groups = room.data?.tags_by ?? [];
+  const [brand, setBrand] = useState("");
+  const group = groups.find((g) => g.brand === brand) ?? groups[0];
+  const tags = (group?.tags ?? []).map((t) => t.tag);
   const [base, setBase] = useState("");
   const [edits, setEdits] = useState<Partial<Record<SpaceId, string>>>({});
   const [busy, setBusy] = useState(false);
@@ -455,9 +459,10 @@ function CaptionTool({ room, postId, setPost }: ToolProps) {
       </section>
       <aside className="card wr-side" aria-labelledby="wr-c-tags">
         <h2 id="wr-c-tags">Hashtags that go with your best</h2>
-        <p className="small dim" style={{ margin: "2px 0 12px" }}>Median score of the posts that used each. Click one to add it to the caption you&apos;re on.</p>
-        {room.data?.tags.length ? (
-          <div className="an-tags">{room.data.tags.map((t) => <button type="button" key={t.tag} className="pill wr-tag" onClick={() => addTag(t.tag)} disabled={!post}>{t.tag}<b className="mono">{t.score}×</b></button>)}</div>
+        <p className="small dim" style={{ margin: "2px 0 12px" }}>Median score of {group ? `${group.name}'s` : "the"} posts that used each. Click one to add it to the caption you&apos;re on.</p>
+        {groups.length > 1 && <Select className="an-sel" size="sm" label="Account" value={group?.brand ?? ""} onChange={setBrand} options={groups.map((g) => [g.brand, g.name] as const)} />}
+        {group?.tags.length ? (
+          <div className="an-tags" style={{ marginTop: groups.length > 1 ? 12 : 0 }}>{group.tags.map((t) => <button type="button" key={t.tag} className="pill wr-tag" onClick={() => addTag(t.tag)} disabled={!post}>{t.tag}<b className="mono">{t.score}×</b></button>)}</div>
         ) : <p className="small dim">They show once a few posts have used the same hashtags.</p>}
         <h3 className="wr-h3">The limits</h3>
         <ul className="wr-limits">{(Object.entries(CAPTION) as [SpaceId, NonNullable<(typeof CAPTION)[SpaceId]>][]).filter(([s]) => ["x_post", "ig_reel", "yt_video", "tt_video", "li_post"].includes(s)).map(([s, c]) => <li key={s}><PlatformBadge space={s} size={16} /><span className="wr-lim-n">{spaceName(s)}</span><b className="mono">{c.limit.toLocaleString()}</b></li>)}</ul>

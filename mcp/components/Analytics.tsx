@@ -11,13 +11,13 @@
 // The report comes from the shell (useAn); data: lib/analytics.ts via /api/dash/analytics.
 import { ArrowRight, ArrowSquareOut, ArrowUpRight, ArrowDownRight, ChartLineUp, Clock, Fire, Lightning, Sparkle, TrendUp, Warning } from "@phosphor-icons/react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import type { Analytics as Data, Bar, Daily, Fmt, Item, Kpi, Tip } from "@/lib/analytics";
+import type { Analytics as Data, Bar, BrandSum, Daily, Fmt, Item, Kpi, Tip } from "@/lib/analytics";
 import { spaceName } from "@/lib/spaces";
 import { Bars, change, Columns, compact, DAYS, day, fmtUnit, full, Heatmap, hour, LineChart, pct, Quadrant, Score, Scorecard, SLOTS, Trend, TrendBoard } from "./anparts";
 import { InstagramTab, PostDrawer, PostList, YouTubeTab } from "./AnalyticsPlatform";
-import { useAn } from "./AnalyticsShell";
+import { growHref, useAn } from "./AnalyticsShell";
 import { FollowerGrowth, KpiStrip, Responses, TopTable } from "./Flux";
 import { ago } from "./api";
 import { PlatformBadge } from "./platform";
@@ -60,7 +60,7 @@ function Formats({ data }: { data: Data }) {
             const share = s.a.label === "Views" && views ? (s.a.value ?? 0) / views : null;
             const med = median(items.filter((i) => i.fmt === f && i.score != null).map((i) => i.score!));
             return (
-              <Link role="row" key={f} href={`/analytics/content?fmt=${f}`} className="an-fr">
+              <Link role="row" key={f} href={growHref(`/analytics/content?fmt=${f}`, data.brand)} className="an-fr">
                 <span role="cell" className="an-fr-n">
                   <PlatformBadge space={f} size={22} />
                   <span style={{ minWidth: 0, flex: 1 }}>
@@ -115,7 +115,7 @@ export function TopPosts({ data, open, n = 6, title = "Top posts", id = "an-top-
     <section className="card an-card" aria-labelledby={id}>
       <div className="card-head">
         <div><h2 id={id}>{title}</h2><p className="sub">{period.length ? `Posted in the last ${data.range} days` : "Your latest posts"}, by score: views against your usual for the format</p></div>
-        <Link href="/analytics/content" className="btn quiet sm">All content <ArrowRight size={14} /></Link>
+        <Link href={growHref("/analytics/content", data.brand)} className="btn quiet sm">All content <ArrowRight size={14} /></Link>
       </div>
       {!top.length ? <Empty icon={<Fire size={22} />} title="No scored posts yet">After three posts in a format, each gets a score.</Empty> : (
         <div className="an-tops">
@@ -139,26 +139,63 @@ export function TopPosts({ data, open, n = 6, title = "Top posts", id = "an-top-
   );
 }
 
+/** Every account together: each brand's own numbers side by side (its views, output, how a typical post did against
+ *  its own usual, its best post). Picking a row switches Grow to that brand, where the tips and what works are. */
+function BrandTable({ data }: { data: Data }) {
+  const path = usePathname();
+  const nets = (b: BrandSum) => [...new Set(data.accounts.filter((a) => b.accounts.includes(a.id)).map((a) => a.network))];
+  return (
+    <section className="card an-card flush" aria-labelledby="an-br-h">
+      <div className="card-head an-pad"><div><h2 id="an-br-h">Accounts side by side</h2><p className="sub">Each scored against its own usual, never against each other. Pick one for its next moves, hashtags and best times</p></div></div>
+      <div className="an-fmts" role="table" aria-label="Accounts">
+        <div role="row" className="an-fr an-br head"><span role="columnheader">Account</span><span role="columnheader">Views</span><span role="columnheader" className="hide-sm">Change</span><span role="columnheader" className="hide-sm">Followers</span><span role="columnheader" className="hide-sm">Posts</span><span role="columnheader">Typical</span><span role="columnheader" className="hide-sm">Best post</span></div>
+        {data.by_brand.map((b) => (
+          <Link role="row" key={b.id} href={growHref(path, b.id)} className="an-fr an-br" aria-label={`Show ${b.name}`}>
+            <span role="cell" className="an-fr-n">
+              <span className="an-br-nets" aria-hidden>{nets(b).map((n) => <PlatformBadge key={n} net={n} size={18} />)}</span>
+              <b className="ellipsis">{b.name}</b>
+            </span>
+            <span role="cell"><b className="mono">{compact(b.views)}</b></span>
+            <span role="cell" className="hide-sm"><Trend v={change(b.views, b.prev_views)} size="sm" /></span>
+            <span role="cell" className="hide-sm mono">{full(b.followers)}{b.net != null && b.net !== 0 && <span className="tiny dim"> {b.net > 0 ? "+" : "−"}{Math.abs(b.net)}</span>}</span>
+            <span role="cell" className="hide-sm mono">{b.posts}<span className="tiny dim"> / {b.prev_posts}</span></span>
+            <span role="cell"><Score v={b.median_score} /></span>
+            <span role="cell" className="hide-sm an-br-top">{b.top ? <><span className="ellipsis small">{b.top.title}</span><Score v={b.top.score} /></> : <span className="tiny dim">No scored posts yet</span>}</span>
+          </Link>
+        ))}
+      </div>
+      <p className="tiny dim an-pad" style={{ padding: "10px 20px 16px" }}>Posts: this period / the one before. Typical: how the period&apos;s median post did against that account&apos;s usual.</p>
+    </section>
+  );
+}
+
 export function Overview() {
   const data = useAn();
   const [open, setOpen] = useState<Item | null>(null);
   const trend = trendOf(data);
   const views = trend.find((t) => t.key === "views");
+  const mixed = data.by_brand?.length > 0;
+  const chart = (
+    <section className="card an-card" aria-labelledby="an-ov-views-h">
+      <div className="card-head"><div><h2 id="an-ov-views-h">Views and reach, day by day</h2><p className="sub">The last {data.range} days against the {data.range} before</p></div></div>
+      {views ? <LineChart labels={data.days.map((d) => day(d))} cur={views.cur} prev={views.prev} name="Views and reach" height={240} /> : <Empty icon={<ChartLineUp size={22} />} title="No daily views yet" />}
+      <div className="an-legend"><span><i className="k" />Last {data.range} days</span><span><i className="k prev" />The {data.range} days before</span></div>
+    </section>
+  );
   return (
     <>
       <KpiStrip data={data} />
+      {mixed && <BrandTable data={data} />}
       <div className="an-row">
         <FollowerGrowth data={data} />
         <Responses data={data} />
       </div>
-      <div className="an-row">
-        <section className="card an-card" aria-labelledby="an-ov-views-h">
-          <div className="card-head"><div><h2 id="an-ov-views-h">Views and reach, day by day</h2><p className="sub">The last {data.range} days against the {data.range} before</p></div></div>
-          {views ? <LineChart labels={data.days.map((d) => day(d))} cur={views.cur} prev={views.prev} name="Views and reach" height={240} /> : <Empty icon={<ChartLineUp size={22} />} title="No daily views yet" />}
-          <div className="an-legend"><span><i className="k" />Last {data.range} days</span><span><i className="k prev" />The {data.range} days before</span></div>
-        </section>
-        <Tips tips={data.tips} />
-      </div>
+      {mixed ? chart : (
+        <div className="an-row">
+          {chart}
+          <Tips tips={data.tips} />
+        </div>
+      )}
       <TopTable data={data} open={setOpen} />
       <Formats data={data} />
       {open && <PostDrawer item={open} onClose={() => setOpen(null)} />}
@@ -179,10 +216,14 @@ function Lengths({ data }: { data: Data }) {
 }
 
 function Tags({ data }: { data: Data }) {
+  const path = usePathname();
   return (
     <section className="card an-card" aria-labelledby="an-tags-h">
       <div className="card-head"><div><h2 id="an-tags-h">Hashtags and tags that work</h2><p className="sub">Median score of posts using each (used twice or more)</p></div></div>
-      {data.tags.length ? (
+      {data.by_brand?.length ? <>
+        <p className="small dim" style={{ margin: 0 }}>Hashtags are scored per account: what works on one says nothing about another. Pick one:</p>
+        <div className="an-tags" style={{ marginTop: 12 }}>{data.by_brand.map((b) => <Link key={b.id} href={growHref(path, b.id)} className="pill">{b.name}<span className="dim">· {b.tags.length} tags</span></Link>)}</div>
+      </> : data.tags.length ? (
         <div className="an-tags">{data.tags.map((t) => <span key={t.tag} className={`pill ${t.score >= 1.5 ? "ok" : t.score < 0.8 ? "" : "blue"}`}>{t.tag}<b className="mono">{t.score.toFixed(1)}×</b><span className="dim">· {t.n}</span></span>)}</div>
       ) : <p className="small dim">Use a few hashtags or tags again and again, and this shows which ones go with your best posts.</p>}
     </section>
@@ -330,14 +371,14 @@ export function AudienceView() {
 
 /* ───────────── When to post */
 
-function BestSlots({ heat, metric }: { heat: { v: number; n: number }[][]; metric: string }) {
+function BestSlots({ heat, metric, title = "Your best slots", id = "an-best-h", more }: { heat: { v: number; n: number }[][]; metric: string; title?: string; id?: string; more?: React.ReactNode }) {
   const cells = heat.flatMap((r, d) => r.map((c, s) => ({ d, s, ...c }))).filter((c) => c.n);
   const sure = cells.filter((c) => c.n >= 2);
   const top = [...(sure.length >= 3 ? sure : cells)].sort((a, b) => b.v - a.v).slice(0, 3);
   const fmt = (v: number) => (metric === "engagements" ? <><b className="mono">{compact(v)}</b> engagements</> : <><b className="mono">{v >= 10 ? Math.round(v) : v.toFixed(1)}×</b> your usual</>);
   return (
-    <section className="card an-card" aria-labelledby="an-best-h">
-      <div className="card-head"><div><h2 id="an-best-h">Your best slots</h2><p className="sub">Where posts did best{sure.length >= 3 ? " (two posts or more)" : ""}</p></div></div>
+    <section className="card an-card" aria-labelledby={id}>
+      <div className="card-head"><div><h2 id={id}>{title}</h2><p className="sub">Where posts did best{sure.length >= 3 ? " (two posts or more)" : ""}</p></div></div>
       {!top.length ? <p className="small dim">After a few posts this ranks the times that work for you.</p> : (
         <ol className="an-slots">
           {top.map((c, k) => (
@@ -349,7 +390,10 @@ function BestSlots({ heat, metric }: { heat: { v: number; n: number }[][]; metri
           ))}
         </ol>
       )}
-      <Link href="/posts?view=autopilot" className="btn ghost sm" style={{ marginTop: 14 }}><Clock size={14} />Set posting slots</Link>
+      <div className="row" style={{ gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+        <Link href="/posts?view=autopilot" className="btn ghost sm"><Clock size={14} />Set posting slots</Link>
+        {more}
+      </div>
     </section>
   );
 }
@@ -387,26 +431,37 @@ export function RhythmRows({ data }: { data: Data }) {
 
 export function TimingView() {
   const data = useAn();
+  const path = usePathname();
   const nets = (["youtube", "instagram"] as const).filter((n) => data.heat_by[n]);
   const [net, setNet] = useState<"all" | "youtube" | "instagram">("all");
   const heat = net === "all" ? data.heat : data.heat_by[net] ?? data.heat;
   const ytWeek = data.youtube.length ? DAYS.map((_, i) => sumOf(data.youtube.map((y) => y.weekday[i] ?? 0))) : null;
   const ig = data.instagram[0];
   const peak = ig?.online ? ig.online.indexOf(Math.max(...ig.online)) : -1;
+  const mixed = data.by_brand?.length > 0;
   return (
     <>
-      <div className="an-row">
-        <Heatmap id="an-heat-h" heat={heat} metric={data.heat_metric} tz={data.tz}
-          action={nets.length > 1 ? <div className="seg" role="group" aria-label="Network">{(["all", ...nets] as const).map((n) => <button key={n} className={net === n ? "on" : ""} aria-pressed={net === n} onClick={() => setNet(n)}>{n === "all" ? "All" : NET_NAME[n]}</button>)}</div> : undefined} />
-        <BestSlots heat={heat} metric={data.heat_metric} />
-      </div>
+      {mixed ? <>
+        <p className="small dim" style={{ margin: 0 }}>Best times are worked out per account, since each has its own audience. Each one&apos;s top slots are below; pick an account for its full heatmap.</p>
+        <div className="an-duo">
+          {data.by_brand.map((b) => (
+            <BestSlots key={b.id} id={`an-best-${b.id}`} title={b.name} heat={b.heat} metric={b.heat_metric} more={<Link href={growHref(path, b.id)} className="btn ghost sm">Its heatmap <ArrowRight size={14} /></Link>} />
+          ))}
+        </div>
+      </> : (
+        <div className="an-row">
+          <Heatmap id="an-heat-h" heat={heat} metric={data.heat_metric} tz={data.tz}
+            action={nets.length > 1 ? <div className="seg" role="group" aria-label="Network">{(["all", ...nets] as const).map((n) => <button key={n} className={net === n ? "on" : ""} aria-pressed={net === n} onClick={() => setNet(n)}>{n === "all" ? "All" : NET_NAME[n]}</button>)}</div> : undefined} />
+          <BestSlots heat={heat} metric={data.heat_metric} />
+        </div>
+      )}
       <div className="an-duo">
         <section className="card an-card" aria-labelledby="an-ytw-h">
           <div className="card-head"><div><h2 id="an-ytw-h">Which days YouTube views land</h2><p className="sub">Average views per weekday, last {data.range} days</p></div></div>
           {ytWeek && ytWeek.some((v) => v > 0) ? <Columns labels={DAYS} values={ytWeek} name="Average YouTube views by weekday" /> : <p className="small dim">Shows with the YouTube Analytics API on.</p>}
         </section>
         <section className="card an-card" aria-labelledby="an-igo-h">
-          <div className="card-head"><div><h2 id="an-igo-h">When Instagram followers are online</h2><p className="sub">{ig?.online ? `Most online at ${hour(peak)} (Instagram reports Pacific time)` : "Average reach per weekday"}</p></div></div>
+          <div className="card-head"><div><h2 id="an-igo-h">When Instagram followers are online</h2><p className="sub">{mixed && ig ? `${ig.account.name} · ` : ""}{ig?.online ? `Most online at ${hour(peak)} (Instagram reports Pacific time)` : "Average reach per weekday"}</p></div></div>
           {ig?.online ? <Columns labels={Array.from({ length: 24 }, (_, h) => hour(h))} values={ig.online} name="Followers online by hour" every={6} />
             : ig?.weekday.length ? <Columns labels={DAYS} values={ig.weekday} name="Average reach by weekday" /> : <p className="small dim">Instagram shares this from 100 followers.</p>}
         </section>

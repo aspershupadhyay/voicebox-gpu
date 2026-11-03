@@ -17,7 +17,8 @@ import * as IG from "./publish/instagram";
 import { getRules, listPlans } from "./publish/plans";
 import * as YT from "./publish/youtube";
 import { getSpaces } from "./spacestore";
-import { spaceName, type SpaceId } from "./spaces";
+import { spaceName, type SpaceId, type Target } from "./spaces";
+import { brandsOf, pickBrand, type Brand } from "./brands";
 import { listPosts } from "./data";
 import { DAY, hashtagsOf, iso, median, msg, report, settle, sum, windows, type Bar, type Daily, type Kpi, type Range, type Win } from "./analytics-util";
 import { AGE, DEVICES, TRAFFIC, ytDeep, ytPost, type PostDetail, type YtDeep } from "./analytics-yt";
@@ -42,7 +43,8 @@ export type Item = {
   subs: number | null;
   /** (likes + comments + shares + saves) / views (or reach) */
   er: number | null;
-  /** views ÷ the median views of the same format: 1 = a usual post, 3 = three times your usual (the viral signal) */
+  /** views ÷ the median views of the same account's posts of the same format: 1 = a usual post, 3 = three times its
+   *  usual (the viral signal). Null when the platform gave no views for it */
   score: number | null;
   /** the Voicebox post it went out from, when it went out through Voicebox */
   post: string | null; tags: string[];
@@ -56,15 +58,32 @@ export type AccountSum = {
 export type Tip = { tone: "ok" | "warn" | "blue" | "violet"; title: string; body: string; href?: string };
 export type Need = { network: "youtube" | "instagram"; text: string; action: "reconnect" | "enable" | "wait" };
 
+/** One brand's own numbers, for "every account" side by side: its totals, its best post, and what works for it (its
+ *  best times and hashtags), never mixed with another brand's. */
+export type BrandSum = {
+  id: string; name: string; accounts: string[];
+  followers: number | null; net: number | null; views: number | null; prev_views: number | null; er: number | null; shares: number | null;
+  posts: number; prev_posts: number; median_score: number | null; hits: number;
+  top: { title: string; url: string; score: number; fmt: Fmt } | null;
+  heat: { v: number; n: number }[][]; heat_metric: string; tags: { tag: string; n: number; score: number }[];
+};
+
 export type Analytics = {
   at: number; range: Range; from: string; to: string; tz: string;
+  /** the brand this view shows (lib/brands.ts), null for every account together */
+  brand: string | null;
+  /** every connected brand, for the switcher */
+  brands: Brand[];
+  /** every account together (with more than one brand): each brand's own numbers, side by side. Empty in one brand's view */
+  by_brand: BrandSum[];
   accounts: AccountSum[];
   formats: Partial<Record<Fmt, FmtSum>>;
   /** one value a day from `from` to `to`; prev is the same length, the period before */
   days: string[];
   series: Partial<Record<SeriesKey, { label: string; cur: number[]; prev: number[]; exact: boolean }>>;
   items: Item[];
-  /** 7 days (Sun first) × 8 three-hour slots (12 AM first), in the studio's time zone: how posts that went out then did */
+  /** 7 days (Sun first) × 8 three-hour slots (12 AM first), in the studio's time zone: how posts that went out then did.
+   *  Empty for every account together when there's more than one brand (each brand's is in by_brand) */
   heat: { v: number; n: number }[][];
   heat_metric: string;
   /** the same, per network */
@@ -83,6 +102,7 @@ export type Analytics = {
   tags: { tag: string; n: number; score: number }[];
   rhythm: { space: SpaceId; label: string; week: number; goal: number | null; next7: number; last: number | null }[];
   gaps: string[];
+  /** what to do next, for one brand only (empty for several brands together: mixed tips come out wrong) */
   tips: Tip[];
   needs: Need[];
 };
@@ -271,10 +291,11 @@ async function instagram(a: Account & { tokens: Parameters<typeof IG.accessToken
     at = u ? { path: `${u.origin}${u.pathname}`, params: Object.fromEntries(u.searchParams) } : null;
   }
 
-  // per post insights, for what went out in the last 180 days (older posts barely move)
+  // per post insights for the latest 60 posts of the last 400 days (older posts barely move), so an account that went
+  // quiet for a while still has views to score its posts by
   let insights = true;
   const ins = new Map<string, Record<string, number>>();
-  const recent = media.filter((m) => Date.now() - Date.parse(m.timestamp) < 180 * DAY && m.media_product_type !== "STORY").slice(0, 60);
+  const recent = media.filter((m) => Date.now() - Date.parse(m.timestamp) < 400 * DAY && m.media_product_type !== "STORY").slice(0, 60);
   for (let i = 0; i < recent.length && insights; i += 20) {
     await Promise.all(recent.slice(i, i + 20).map(async (m) => {
       const reel = m.media_product_type === "REELS";
@@ -383,66 +404,114 @@ function sumSeries(xs: ({ cur: number[]; prev: number[]; exact: boolean } | unde
   return { cur: Array.from({ length: range }, (_, i) => sum(got.map((s) => s.cur[i]))), prev: Array.from({ length: range }, (_, i) => sum(got.map((s) => s.prev[i]))), exact: got.every((s) => s.exact) };
 }
 
-export async function buildAnalytics(range: Range): Promise<Analytics> {
+/** What the platforms said for one range, kept in R2: every account's numbers side by side, before any are added up.
+ *  Each view (every account together, or one brand) is worked out from it on request (derive), so switching brands
+ *  never asks the platforms again. */
+type Part = { id: string; series: YtOut["series"]; fmt: Partial<Record<Fmt, FmtSum>>; yt: Analytics["yt"]; ig: Analytics["ig"] };
+type Booked = { space: SpaceId; status: string; due_at: string | null; posted_at: string | null; account: string | null };
+export type Base = {
+  v: 2; at: number; range: Range; from: string; to: string; tz: string; days: string[];
+  accounts: AccountSum[]; items: Item[]; parts: Part[]; youtube: YtDeep[]; instagram: IgDeep[]; needs: Need[];
+  history: Analytics["history"];
+  /** what's booked or posted per space, with the account its publishing plan names (null: not planned yet) */
+  targets: Booked[]; goals: Partial<Record<SpaceId, number>>; crossposting: boolean; ideas: number;
+};
+
+async function gather(range: Range): Promise<Base> {
   const w = windows(range);
   const [accounts, plans, rules, spaces] = await Promise.all([listAccounts(), listPlans().catch(() => []), getRules(), getSpaces().catch(() => ({ posts: {} as Record<string, never[]>, goals: {} as Partial<Record<SpaceId, number>> }))]);
   const tz = rules.tz || "UTC";
   const byResult = new Map(plans.filter((p) => p.result?.id).map((p) => [p.result!.id, p]));
   const shortsOf = new Set(plans.filter((p) => p.space === "yt_short" && p.result?.id).map((p) => p.result!.id));
 
-  const out: Analytics = {
-    at: Date.now(), range, from: iso(w.start), to: iso(w.end), tz, accounts: [], formats: {}, days: w.days, series: {}, items: [],
-    heat: [], heat_metric: "", heat_by: {}, overview: [], trend: [], youtube: [], instagram: [], history: [],
-    yt: null, ig: null, lengths: [], tags: [], rhythm: [], gaps: [], tips: [], needs: [],
+  const b: Base = {
+    v: 2, at: Date.now(), range, from: iso(w.start), to: iso(w.end), tz, days: w.days, accounts: [], items: [], parts: [],
+    youtube: [], instagram: [], needs: [], history: [], targets: [], goals: spaces.goals ?? {}, crossposting: rules.crosspost.length > 0, ideas: 0,
   };
   // each platform in depth starts as soon as its account is read (it doesn't need the scores), next to everything else
   const deep: Promise<unknown>[] = [];
   const posts = listPosts({ limit: 100 }).catch(() => []);
-  const parts: Partial<Record<SeriesKey, { cur: number[]; prev: number[]; exact: boolean }>>[] = [];
-  const fmts: Partial<Record<Fmt, FmtSum>>[] = [];
   await Promise.all(accounts.map(async (acc) => {
     const a = await getAccount(acc.id);
     if (!a) return;
     try {
       if (a.network === "youtube") {
         const r = await youtube(a, range, shortsOf);
-        out.accounts.push(r.acc); out.items.push(...r.items); parts.push(r.series); fmts.push(r.fmt); out.needs.push(...r.needs);
-        out.yt = out.yt ?? r.yt;
-        if (r.analytics) deep.push(ytDeep(r.token, r.acc, r.items, w, range).then((d) => out.youtube.push(d), () => null));
+        b.accounts.push(r.acc); b.items.push(...r.items); b.needs.push(...r.needs);
+        b.parts.push({ id: a.id, series: r.series, fmt: r.fmt, yt: r.yt, ig: null });
+        if (r.analytics) deep.push(ytDeep(r.token, r.acc, r.items, w, range).then((d) => b.youtube.push(d), () => null));
       } else {
         const r = await instagram(a, range);
-        out.accounts.push(r.acc); out.items.push(...r.items); parts.push(r.series); fmts.push(r.fmt); out.needs.push(...r.needs);
-        out.ig = out.ig ?? r.ig;
-        if (r.insights) deep.push(igDeep(r.token, r.acc, r.items, w, range).then((d) => out.instagram.push(d), () => null));
+        b.accounts.push(r.acc); b.items.push(...r.items); b.needs.push(...r.needs);
+        b.parts.push({ id: a.id, series: r.series, fmt: r.fmt, yt: null, ig: r.ig });
+        if (r.insights) deep.push(igDeep(r.token, r.acc, r.items, w, range).then((d) => b.instagram.push(d), () => null));
       }
     } catch (e) {
-      out.accounts.push({ id: a.id, network: a.network, name: a.name, handle: a.handle, avatar: a.avatar, followers: a.subscribers ?? null, gained: null, lost: null, prev_gained: null, posts: null });
-      out.needs.push({ network: a.network, action: /reconnect|expired|revoked/i.test(msg(e)) ? "reconnect" : "wait", text: `${a.name}: ${msg(e)}` });
+      b.accounts.push({ id: a.id, network: a.network, name: a.name, handle: a.handle, avatar: a.avatar, followers: a.subscribers ?? null, gained: null, lost: null, prev_gained: null, posts: null });
+      b.needs.push({ network: a.network, action: /reconnect|expired|revoked/i.test(msg(e)) ? "reconnect" : "wait", text: `${a.name}: ${msg(e)}` });
     }
   }));
-  out.accounts.sort((x, y) => x.network.localeCompare(y.network) || x.name.localeCompare(y.name) * -1);
+  b.accounts.sort((x, y) => x.network.localeCompare(y.network) || x.name.localeCompare(y.name) * -1);
+
+  // the viral signal: each post against the usual of its own account and format, views against views only (a post
+  // whose views the platform didn't give has no score, rather than its likes measured against other posts' views)
+  for (const a of b.accounts) for (const f of FMTS) {
+    const xs = b.items.filter((i) => i.account === a.id && i.fmt === f);
+    const seen = xs.map((i) => i.views ?? 0).filter((v) => v > 0);
+    const usual = median(seen);
+    if (seen.length >= 3 && usual > 0) for (const i of xs) i.score = i.views ? Math.round((i.views / usual) * 100) / 100 : null;
+  }
+  for (const i of b.items) i.post = byResult.get(i.id)?.post ?? null;
+  b.items.sort((x, y) => y.at - x.at);
+
+  await Promise.all(deep);
+  b.youtube.sort((x, y) => x.account.name.localeCompare(y.account.name));
+  b.instagram.sort((x, y) => x.account.name.localeCompare(y.account.name));
+  b.history = await keepHistory(b.accounts);
+
+  const planned = new Map(plans.map((p) => [`${p.post}|${p.space}`, p.account ?? null]));
+  b.targets = Object.entries(spaces.posts).flatMap(([post, ts]) => (ts as Target[]).map((t) => ({
+    space: t.space, status: t.status, due_at: t.due_at ?? null, posted_at: t.posted_at ?? null, account: planned.get(`${post}|${t.space}`) ?? null,
+  })));
+  b.ideas = (await posts).filter((p) => p.status === "idea" || p.status === "draft").length;
+  return b;
+}
+
+/** The window a kept report was built for (not today's: a copy from yesterday still lines up with its own days). */
+function winOf(b: Base): Win {
+  const start = Date.parse(`${b.from}T00:00:00Z`), end = Date.parse(`${b.to}T00:00:00Z`);
+  return { start, end, prevStart: start - b.range * DAY, prevEnd: start - DAY, days: b.days };
+}
+
+/** One view of a kept report: every account (brand null), or one brand's. Scores, tips, hashtags and best times are
+ *  only worked out within one brand: when the view holds several, they're left empty and `brands` carries each one's
+ *  own, side by side. */
+export function derive(b: Base, brand: Brand | null, brands: Brand[]): Analytics {
+  const w = winOf(b), range = b.range, tz = b.tz;
+  const mine = (id: string | null) => !brand || (id != null && brand.accounts.includes(id));
+  const parts = b.parts.filter((p) => mine(p.id));
+  const single = !!brand || brands.length <= 1;
+  const out: Analytics = {
+    at: b.at, range, from: b.from, to: b.to, tz, brand: brand?.id ?? null, brands, by_brand: [],
+    accounts: b.accounts.filter((a) => mine(a.id)), formats: {}, days: b.days, series: {}, items: b.items.filter((i) => mine(i.account)),
+    heat: [], heat_metric: "", heat_by: {}, overview: [], trend: [],
+    youtube: b.youtube.filter((d) => mine(d.account.id)), instagram: b.instagram.filter((d) => mine(d.account.id)), history: b.history,
+    yt: parts.find((p) => p.yt)?.yt ?? null, ig: parts.find((p) => p.ig)?.ig ?? null,
+    lengths: [], tags: [], rhythm: [], gaps: [], tips: [], needs: b.needs,
+  };
 
   // several accounts on one network add up
   for (const f of FMTS) {
-    const got = fmts.map((m) => m[f]).filter(Boolean) as FmtSum[];
+    const got = parts.map((m) => m.fmt[f]).filter(Boolean) as FmtSum[];
     if (!got.length) continue;
     const add = (k: "a" | "b") => ({ label: got[0][k].label, value: sum(got.map((g) => g[k].value)), prev: sum(got.map((g) => g[k].prev)) });
     out.formats[f] = { a: add("a"), b: add("b"), posts: sum(got.map((g) => g.posts)), prev_posts: sum(got.map((g) => g.prev_posts)) };
   }
   const LABEL: Record<SeriesKey, string> = { youtube: "YouTube views", instagram: "Instagram reach", yt_video: "Video views", yt_short: "Shorts views", ig_reel: "Reels views", ig_post: "Post views" };
   for (const k of ["youtube", "yt_video", "yt_short", "instagram", "ig_reel", "ig_post"] as SeriesKey[]) {
-    const s = sumSeries(parts.map((p) => p[k]), range);
+    const s = sumSeries(parts.map((p) => p.series[k]), range);
     if (s) out.series[k] = { label: LABEL[k], ...s };
   }
-
-  // the viral signal: each post against the usual for its format
-  for (const f of FMTS) {
-    const xs = out.items.filter((i) => i.fmt === f);
-    const base = median(xs.map((i) => i.views ?? i.reach ?? i.likes).filter((v) => v > 0));
-    if (xs.length >= 3 && base > 0) for (const i of xs) i.score = Math.round(((i.views ?? i.reach ?? i.likes) / base) * 100) / 100;
-  }
-  for (const i of out.items) i.post = byResult.get(i.id)?.post ?? null;
-  out.items.sort((x, y) => y.at - x.at);
 
   // when to post: how posts that went out in each slot did (the viral signal, else engagement)
   const scored = out.items.some((i) => i.score !== null);
@@ -460,12 +529,8 @@ export async function buildAnalytics(range: Range): Promise<Analytics> {
   out.heat = heatOf(out.items);
   for (const n of ["youtube", "instagram"] as const) if (out.items.some((i) => i.network === n)) out.heat_by[n] = heatOf(out.items.filter((i) => i.network === n));
 
-  await Promise.all(deep);
-  out.youtube.sort((a, b) => a.account.name.localeCompare(b.account.name));
-  out.instagram.sort((a, b) => a.account.name.localeCompare(b.account.name));
   out.overview = overviewOf(out, w);
   out.trend = trendOf(out, w, range);
-  out.history = await keepHistory(out.accounts);
 
   // what length works (video, any network that tells the length)
   const timed = out.items.filter((i) => i.duration && (i.views ?? 0) > 0);
@@ -479,20 +544,20 @@ export async function buildAnalytics(range: Range): Promise<Analytics> {
   // hashtags and tags that go with your best posts (used at least twice)
   const tagMap = new Map<string, number[]>();
   for (const i of out.items) if (i.score !== null) for (const t of i.tags) tagMap.set(t, [...(tagMap.get(t) ?? []), i.score]);
-  out.tags = [...tagMap].filter(([, s]) => s.length >= 2).map(([tag, s]) => ({ tag, n: s.length, score: Math.round(median(s) * 100) / 100 })).sort((a, b) => b.score - a.score).slice(0, 12);
+  out.tags = [...tagMap].filter(([, s]) => s.length >= 2).map(([tag, s]) => ({ tag, n: s.length, score: Math.round(median(s) * 100) / 100 })).sort((x, y) => y.score - x.score).slice(0, 12);
 
-  // the studio's rhythm: posted this week vs the goal, booked for the next 7 days, and the empty days ahead
+  // the rhythm: posted this week vs the goal, booked for the next 7 days, and the empty days ahead (a brand counts the
+  // targets planned on its own accounts)
   const now = Date.now();
-  const targets = Object.values(spaces.posts).flat();
+  const targets = b.targets.filter((t) => !brand || mine(t.account));
   const pubSpaces: SpaceId[] = ["yt_video", "yt_short", "ig_reel", "ig_post", "ig_story"];
-  const live = out.items;
   for (const s of pubSpaces) {
-    const goal = spaces.goals[s] ?? null;
-    const mine = targets.filter((t) => t.space === s);
-    const fromLive = s === "ig_story" ? [] : live.filter((i) => i.fmt === s);
-    const week = Math.max(mine.filter((t) => t.status === "posted" && t.posted_at && now - Date.parse(t.posted_at) < 7 * DAY).length, fromLive.filter((i) => now - i.at < 7 * DAY).length);
-    const next7 = mine.filter((t) => t.status !== "posted" && t.due_at && Date.parse(t.due_at) > now && Date.parse(t.due_at) - now < 7 * DAY).length;
-    const last = Math.max(0, ...fromLive.map((i) => i.at), ...mine.filter((t) => t.posted_at).map((t) => Date.parse(t.posted_at!))) || null;
+    const goal = b.goals[s] ?? null;
+    const ts = targets.filter((t) => t.space === s);
+    const fromLive = s === "ig_story" ? [] : out.items.filter((i) => i.fmt === s);
+    const week = Math.max(ts.filter((t) => t.status === "posted" && t.posted_at && now - Date.parse(t.posted_at) < 7 * DAY).length, fromLive.filter((i) => now - i.at < 7 * DAY).length);
+    const next7 = ts.filter((t) => t.status !== "posted" && t.due_at && Date.parse(t.due_at) > now && Date.parse(t.due_at) - now < 7 * DAY).length;
+    const last = Math.max(0, ...fromLive.map((i) => i.at), ...ts.filter((t) => t.posted_at).map((t) => Date.parse(t.posted_at!))) || null;
     if (goal || week || next7 || last) out.rhythm.push({ space: s, label: spaceName(s), week, goal, next7, last });
   }
   const booked = new Set(targets.filter((t) => t.status !== "posted" && t.due_at).map((t) => new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(t.due_at!))));
@@ -501,8 +566,31 @@ export async function buildAnalytics(range: Range): Promise<Analytics> {
     if (!booked.has(new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(t)))) out.gaps.push(new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", day: "numeric", month: "short" }).format(new Date(t)));
   }
 
-  out.tips = tipsFor(out, rules.crosspost.length > 0, await posts);
+  if (single) {
+    out.tips = tipsFor(out, b.crossposting, b.ideas);
+  } else {
+    // every account together: totals only. What works is each brand's own, side by side
+    out.by_brand = brands.map((br) => brandSum(br, derive(b, br, brands), w));
+    out.tags = []; out.heat = []; out.heat_by = {};
+  }
   return out;
+}
+
+/** One brand's line in "every account" (Grow's side-by-side table, and what the analytics tool hands an AI). */
+function brandSum(br: Brand, a: Analytics, w: Win): BrandSum {
+  const k = (key: string) => a.overview.find((x) => x.key === key);
+  const inPeriod = a.items.filter((i) => i.at >= w.start && i.score != null);
+  const top = [...(inPeriod.length ? inPeriod : a.items.filter((i) => i.score != null))].sort((x, y) => y.score! - x.score!)[0];
+  return {
+    id: br.id, name: br.name, accounts: br.accounts,
+    followers: k("followers")?.value ?? null, net: k("net")?.value ?? null,
+    views: k("views")?.value ?? null, prev_views: k("views")?.prev ?? null,
+    er: k("er")?.value ?? null, shares: k("shares")?.value ?? null,
+    posts: k("posts")?.value ?? 0, prev_posts: k("posts")?.prev ?? 0,
+    median_score: k("median_score")?.value ?? null, hits: k("hits")?.value ?? 0,
+    top: top ? { title: top.title, url: top.url, score: top.score!, fmt: top.fmt } : null,
+    heat: a.heat, heat_metric: a.heat_metric, tags: a.tags,
+  };
 }
 
 /** Every platform together, for the overview scorecard (and for an AI deciding where to put effort). */
@@ -584,7 +672,7 @@ const pct = (n: number) => `${Math.round(n * 100)}%`;
 const times = (n: number) => `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10}×`;
 
 /** What the numbers say to do next, the strongest first. */
-function tipsFor(a: Analytics, crossposting: boolean, posts: { status: string }[]): Tip[] {
+function tipsFor(a: Analytics, crossposting: boolean, ideas: number): Tip[] {
   const tips: Tip[] = [];
   const med = (f: Fmt) => median(a.items.filter((i) => i.fmt === f).map((i) => i.views ?? i.reach ?? 0).filter((v) => v > 0));
   const vs = (x: Fmt, y: Fmt) => {
@@ -635,39 +723,42 @@ function tipsFor(a: Analytics, crossposting: boolean, posts: { status: string }[
     if (r.goal && r.week < r.goal) tips.push({ tone: "warn", title: `${r.goal - r.week} more ${r.label} to hit this week's goal`, body: `${r.week} of ${r.goal} out in the last 7 days${r.next7 ? `, ${r.next7} booked` : ", nothing booked yet"}. Consistency is what the feeds reward most.`, href: "/posts" });
     else if (r.last && Date.now() - r.last > 5 * DAY && r.space !== "ig_story") tips.push({ tone: "warn", title: `Nothing on ${r.label} for ${Math.floor((Date.now() - r.last) / DAY)} days`, body: "Accounts that post steadily get shown more. Pick something from Ideas and book it.", href: "/posts" });
   }
-  if (a.gaps.length >= 4) tips.push({ tone: "warn", title: `${a.gaps.length} of the next 7 days have nothing booked`, body: `Open days: ${a.gaps.slice(0, 5).join(", ")}${a.gaps.length > 5 ? "…" : ""}. Book from your ${posts.filter((p) => p.status === "idea" || p.status === "draft").length || "list of"} ideas and drafts.`, href: "/posts?view=calendar" });
+  if (a.gaps.length >= 4) tips.push({ tone: "warn", title: `${a.gaps.length} of the next 7 days have nothing booked`, body: `Open days: ${a.gaps.slice(0, 5).join(", ")}${a.gaps.length > 5 ? "…" : ""}. Book from your ${ideas || "list of"} ideas and drafts.`, href: "/posts?view=calendar" });
   const nets = new Set(a.accounts.map((x) => x.network));
   if (!crossposting && nets.has("youtube") && nets.has("instagram")) tips.push({ tone: "violet", title: "Cross-post Shorts to Reels", body: "The same vertical video can win twice. Add a rule in Posts → Autopilot: when a Short goes live, post it as a Reel 2 h later.", href: "/posts?view=autopilot" });
   return tips.slice(0, 12);
 }
 
-const KEY = (r: Range) => `workspace/analytics/${r}.json`;
+// v2 keeps every account apart (Base); the v1 copies (workspace/analytics/<days>.json) had them added up already
+const KEY = (r: Range) => `workspace/analytics/base-${r}.json`;
 const FRESH_MS = 30 * 60_000;
 
 const LOCK = (r: Range) => `workspace/analytics/${r}.building.json`;
 const LOCK_MS = 4 * 60_000;
 /** One build per range at a time on this server (and, through the lock in R2, across servers). */
-const building = new Map<Range, Promise<Analytics>>();
+const building = new Map<Range, Promise<Base>>();
 function rebuild(range: Range) {
   let p = building.get(range);
   if (!p) {
     p = (async () => {
-      const a = await buildAnalytics(range);
-      await putJson(KEY(range), a).catch(() => null);
-      return a;
+      const b = await gather(range);
+      await putJson(KEY(range), b).catch(() => null);
+      return b;
     })().finally(() => { building.delete(range); putJson(LOCK(range), { at: 0 }).catch(() => null); });
     building.set(range, p);
   }
   return p;
 }
 
-/** The report for a range. Under 30 minutes old it's served as is. Older, and given `background` (Next's after()), it's
- *  still served at once with `stale: true` while a new one is built behind it; the page asks again to pick it up.
- *  With nothing kept, or `fresh`, it waits for a new one. */
-export async function getAnalytics(range: Range, fresh = false, background?: (p: Promise<unknown>) => void): Promise<Analytics & { cached: boolean; stale: boolean }> {
+const keptBase = async (range: Range) => {
+  const b = await getJson<Base>(KEY(range)).catch(() => null);
+  return b?.v === 2 ? b : null;
+};
+
+async function loadBase(range: Range, fresh: boolean, background?: (p: Promise<unknown>) => void) {
   if (!fresh) {
-    const kept = await getJson<Analytics>(KEY(range)).catch(() => null);
-    if (kept && Date.now() - kept.at < FRESH_MS) return { ...kept, trend: kept.trend ?? [], cached: true, stale: false };
+    const kept = await keptBase(range);
+    if (kept && Date.now() - kept.at < FRESH_MS) return { base: kept, cached: true, stale: false };
     if (kept && background) {
       if (!building.has(range)) {
         const lock = await getJson<{ at: number }>(LOCK(range)).catch(() => null);
@@ -676,11 +767,20 @@ export async function getAnalytics(range: Range, fresh = false, background?: (p:
           background(rebuild(range).catch(() => null));
         }
       }
-      return { ...kept, trend: kept.trend ?? [], cached: true, stale: true };
+      return { base: kept, cached: true, stale: true };
     }
   }
-  const a = await rebuild(range);
-  return { ...a, cached: false, stale: false };
+  return { base: await rebuild(range), cached: false, stale: false };
+}
+
+/** The report for a range: every account together (`acc` left out or "all"), or one brand's (`acc`: a brand id from
+ *  `brands`, or one of its accounts' ids, names or handles). Under 30 minutes old it's served as is. Older, and given
+ *  `background` (Next's after()), it's still served at once with `stale: true` while a new one is built behind it; the
+ *  page asks again to pick it up. With nothing kept, or `fresh`, it waits for a new one. */
+export async function getAnalytics(range: Range, fresh = false, background?: (p: Promise<unknown>) => void, acc?: string | null): Promise<Analytics & { cached: boolean; stale: boolean }> {
+  const { base, cached, stale } = await loadBase(range, fresh, background);
+  const brands = brandsOf(base.accounts);
+  return { ...derive(base, pickBrand(brands, base.accounts, acc), brands), cached, stale };
 }
 
 /** One post in depth (YouTube: retention curve, views by day since upload, traffic; Instagram: every metric for its
@@ -691,7 +791,7 @@ export async function getPostDetail(network: "youtube" | "instagram", id: string
     const kept = await getJson<PostDetail & { kept: number }>(key).catch(() => null);
     if (kept && Date.now() - kept.kept < FRESH_MS) return kept;
   }
-  const report28 = await getJson<Analytics>(KEY(28)).catch(() => null);
+  const report28 = await keptBase(28);
   const item = report28?.items.find((i) => i.id === id && i.network === network);
   const accounts = (await listAccounts()).filter((a) => a.network === network && (!item || a.id === item.account));
   let last: unknown = new Error(`No ${network === "youtube" ? "YouTube channel" : "Instagram account"} connected`);

@@ -4,9 +4,13 @@
 // and on phones the pages as tabs (on wider screens the sidebar lists them). The report is loaded once here (useReport)
 // and handed to the views through useAn(), so moving between them is instant. Live, Competitors and a rival's page run
 // on the minute-by-minute numbers instead (useLive) and don't wait for the report.
+//
+// The account switcher (?acc=<brand id>, lib/brands.ts) picks every account or one brand (Catch the Error's Instagram
+// and YouTube together, Elite Minds…). It lives in the link, so a shared link opens on the same brand; a link without
+// it (the sidebar) opens on the last one picked. Every report page follows it.
 import { ArrowsClockwise, ArrowSquareOut, ChartLineUp, DownloadSimple, FileCsv, LinkSimple, Plus, Printer, Warning } from "@phosphor-icons/react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
 import type { Range } from "@/lib/analytics";
 import { day } from "./anparts";
@@ -16,11 +20,41 @@ import { Select } from "./pop";
 import { LiveChip } from "./Grow";
 import { Empty, Notice, PageHeader, PopMenu } from "./ui";
 import { useLive } from "./useLive";
-import { RANGE_KEY, savedRange, useReport, type Report } from "./useReport";
+import { ACC_KEY, RANGE_KEY, savedAcc, savedRange, useReport, type Report } from "./useReport";
 
 const Ctx = createContext<Report | null>(null);
 /** The report, inside an Analytics view (the shell only renders a view once it has one). */
 export const useAn = () => useContext(Ctx)!;
+
+/** A Grow link that keeps the account picked in the switcher ("" or null: every account). */
+export function growHref(href: string, acc: string | null | undefined) {
+  if (!acc) return href;
+  const [p, q = ""] = href.split("?");
+  const u = new URLSearchParams(q);
+  u.set("acc", acc);
+  return `${p}?${u}`;
+}
+
+/** The account in the link, else the last one picked (put back into the link); "" is every account, null not known yet. */
+function useAcc() {
+  const q = useSearchParams(), path = usePathname(), router = useRouter();
+  const inUrl = q.get("acc");
+  const [saved, setSaved] = useState<string | null>(null);
+  useEffect(() => {
+    if (inUrl != null) { try { localStorage.setItem(ACC_KEY, inUrl === "all" ? "" : inUrl); } catch {} return; }
+    const s = savedAcc();
+    setSaved(s);
+    if (s) router.replace(growHref(`${path}${q.size ? `?${q}` : ""}`, s), { scroll: false });
+  }, [inUrl, path]); // eslint-disable-line react-hooks/exhaustive-deps
+  const acc = inUrl ?? saved;
+  const pick = (v: string) => {
+    try { localStorage.setItem(ACC_KEY, v); } catch {}
+    const u = new URLSearchParams(q.toString());
+    if (v) u.set("acc", v); else u.set("acc", "all");
+    router.replace(`${path}?${u}`, { scroll: false });
+  };
+  return { acc: acc === "all" ? "" : acc, pick };
+}
 
 export const VIEWS = [
   { href: "/analytics", name: "Overview", sub: "How your YouTube and Instagram are doing, and what to post next to grow." },
@@ -57,13 +91,13 @@ export default function AnalyticsShell({ children }: { children: React.ReactNode
   return view.live ? <LiveShell view={view}>{children}</LiveShell> : <ReportShell view={view}>{children}</ReportShell>;
 }
 
-function Tabs({ path, tail }: { path: string; tail?: React.ReactNode }) {
+function Tabs({ path, tail, acc }: { path: string; tail?: React.ReactNode; acc?: string | null }) {
   return (
     <nav className="tabs an-nav" aria-label="Grow pages">
       {VIEWS.map((v) => {
         const on = v.href === "/analytics" ? path === v.href : path.startsWith(v.href);
         return (
-          <Link key={v.href} href={v.href} className={on ? "on" : ""} aria-current={on ? "page" : undefined}>
+          <Link key={v.href} href={growHref(v.href, acc)} className={on ? "on" : ""} aria-current={on ? "page" : undefined}>
             {v.net && <PlatformBadge net={v.net} size={16} />}{v.name}
           </Link>
         );
@@ -76,20 +110,29 @@ function Tabs({ path, tail }: { path: string; tail?: React.ReactNode }) {
 /** Live, Competitors and a rival's page: the minute-by-minute numbers, no report to wait on. */
 /** Which platform the page shows: Overview is every platform, the YouTube and Instagram pages one each. Picking one
  *  goes to its page. */
-function PlatformChip({ path }: { path: string }) {
+function PlatformChip({ path, acc }: { path: string; acc: string | null }) {
   const router = useRouter();
   const v = path.startsWith("/analytics/youtube") ? "youtube" : path.startsWith("/analytics/instagram") ? "instagram" : "all";
-  return <Select className="fx-chip-sel" size="sm" label="Platform" value={v} onChange={(n) => router.push(n === "all" ? "/analytics" : `/analytics/${n}`)}
+  return <Select className="fx-chip-sel" size="sm" label="Platform" value={v} onChange={(n) => router.push(growHref(n === "all" ? "/analytics" : `/analytics/${n}`, acc))}
     options={[["all", "All platforms"], ["youtube", "YouTube"], ["instagram", "Instagram"]]} />;
+}
+
+/** Grow's account switcher: every account, or one brand (its Instagram and YouTube together). Shown from two brands. */
+function AccountChip({ data, pick }: { data: Report | null; pick: (v: string) => void }) {
+  const brands = data?.brands ?? [];
+  if (brands.length < 2) return null;
+  return <Select className="fx-chip-sel" size="sm" label="Account" value={data?.brand ?? ""} onChange={pick}
+    options={[["", "All accounts"] as const, ...brands.map((b) => [b.id, b.name] as const)]} />;
 }
 
 function LiveShell({ view, children }: { view: (typeof VIEWS)[number]; children: React.ReactNode }) {
   const path = usePathname();
+  const acc = useSearchParams().get("acc");
   const { data, paused } = useLive();
   return (
     <>
       <PageHeader className="fx-head" title={view.name} actions={<LiveChip at={data?.at} paused={paused} />} />
-      <Tabs path={path} />
+      <Tabs path={path} acc={acc} />
       <div key={path} className="an-wrap an-view">{children}</div>
     </>
   );
@@ -98,10 +141,11 @@ function LiveShell({ view, children }: { view: (typeof VIEWS)[number]; children:
 /** Radar: its own sources and its own top bar (components/Radar.tsx), no report to wait on. */
 function PlainShell({ view, children }: { view: (typeof VIEWS)[number]; children: React.ReactNode }) {
   const path = usePathname();
+  const acc = useSearchParams().get("acc");
   return (
     <>
       <PageHeader className="fx-head" title={view.name} sub={view.sub} />
-      <Tabs path={path} />
+      <Tabs path={path} acc={acc} />
       <div key={path} className="an-wrap an-view">{children}</div>
     </>
   );
@@ -112,7 +156,8 @@ function ReportShell({ view, children }: { view: (typeof VIEWS)[number]; childre
   const { data: live, paused } = useLive(60_000);
   const [range, setRange] = useState<Range>(28);
   useEffect(() => { setRange(savedRange()); }, []);
-  const { data, err, busy, reload } = useReport(range);
+  const { acc, pick } = useAcc();
+  const { data, err, busy, reload } = useReport(range, acc ?? "");
   const pickRange = (r: Range) => { setRange(r); try { localStorage.setItem(RANGE_KEY, String(r)); } catch {} };
 
   return (
@@ -121,7 +166,8 @@ function ReportShell({ view, children }: { view: (typeof VIEWS)[number]; childre
         actions={<>
           <Select className="fx-chip-sel" size="sm" label="Range" value={range} onChange={pickRange} options={[[7, "Last 7 days"], [28, "Last 28 days"], [90, "Last 90 days"]]} />
           {data && <span className="fx-chip hide-sm" title="Every change on these pages compares with the same number of days just before">Compare to · {day(before(data.from, data.range)[0])} – {day(before(data.from, data.range)[1])}</span>}
-          <PlatformChip path={path} />
+          <PlatformChip path={path} acc={acc} />
+          <AccountChip data={data} pick={pick} />
           <LiveChip at={live?.at} paused={paused} href="/analytics/live" />
           <PopMenu width={230} trigger={({ toggle, ref, open }) => (
             <button ref={ref} type="button" className="fx-export" onClick={toggle} aria-expanded={open} aria-haspopup="menu" disabled={!data}><DownloadSimple size={14} weight="bold" />Export</button>
@@ -140,7 +186,7 @@ function ReportShell({ view, children }: { view: (typeof VIEWS)[number]; childre
         <Notice key={i} icon={<Warning size={18} />} tone="warn" action={n.action === "reconnect" ? <a className="btn ghost sm" href={`/api/publish/${n.network}/connect`}><LinkSimple size={14} />Reconnect</a>
           : n.action === "enable" ? <a className="btn ghost sm" href="https://console.cloud.google.com/apis/library/youtubeanalytics.googleapis.com" target="_blank" rel="noreferrer">Open Google Cloud <ArrowSquareOut size={13} /></a> : undefined}>{n.text}</Notice>
       ))}
-      <Tabs path={path} />
+      <Tabs path={path} acc={acc} />
       {data && <p className="tiny dim an-upd-line" aria-live="polite">{day(data.from)} – {day(data.to)} · {data.stale || busy ? <span className="an-updating">Updating…</span> : `updated ${ago(data.at)}`}</p>}
       {!data && !err ? (
         <div className="an-wrap" aria-busy="true" aria-label="Loading analytics">
