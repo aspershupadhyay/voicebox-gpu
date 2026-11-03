@@ -6,6 +6,13 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Make a video on this… incorporate the screenshot… deep dive research… give the look of Apple TV in it while the user
+  is playing it… use our video to play it of Instagram instead of using someone else"** (2026-11-03, on @instagram's
+  "new on Apple TV" post): `promo/cte-instagram-tv/`. When a video shows a screen playing a video, it plays **our own**
+  Reel (frames from Files, `tools/frames.sh`), never someone else's. The owner's screenshot goes in as the real post
+  (marked up with the pen, not redrawn). Another product's look (Apple TV) is drawn in code as its interface style
+  (the focus lift, the top shelf, the remote) without its logos. Research found the story the post left out: the app
+  went live quietly on Oct 23, it's Instagram's fourth TV in a year, and IGTV (2018-2022) is the catch.
 - **"The script says 20 but the visual shows 19"** and **"remove all the BS so we won't have any collision"**
   (2026-11-03, on the Cyclon v2 Reel): every number on screen must say what the voice says (the counter now lands on
   20 for "almost twenty"); check spoken numbers against the frames before rendering. The v1 kit (`promo/cyclon/`,
