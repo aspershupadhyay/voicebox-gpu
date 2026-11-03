@@ -63,6 +63,35 @@ so a news cut should aim at 30-45 s, an explainer at 60-90 s.
 - **A sound that is the topic**: the TV's click, a printer, a camera shutter: one real sound becomes the beat.
 - **A cold open with no words** (0.5 s of the object doing the thing) before the first line lands on frame 2.
 
+## Real media in every edit (the owner, 2026-11-03)
+"Add images, videos and all to make our edits real… instead of drawing everything our own." The creators going big
+cut between the real thing and their own graphics. So every video carries **at least three real pieces**, and the
+drawing is the glue that explains them:
+- **What counts:** the real post or announcement (screenshot), the product's own press shots, 1-3 s of real footage
+  (the launch clip, a demo, our own screen recording), a headline from the source, the chart from the report, a real
+  comment from our own posts. Get them with VoiceBox `download` (credited, into Files) or the owner's uploads.
+- **How to treat them:** never full-screen and plain. Put them *in the world* (a clipping on the desk, a photo in the
+  case file, a frame on the TV), move them (a push-in, a slide, a 2° tilt), and let the red pen land on them on the
+  word: circle, strike, underline. Cut real ↔ drawn on beats, not at random.
+- **Credit and rights:** a source line on screen ("Instagram, Nov 3") for every real piece; short clips used to
+  comment and fact-check, never someone's whole video or their music; no faces of private people; never edit a real
+  artifact to say something it didn't (we mark it up, we don't fake it). AI-generated images are never passed off as
+  real footage.
+- **Our own footage first:** a screen recording of us trying the thing beats any stock clip. Shoot it if we can.
+
+## The phases of a video (how we work, in order)
+1. **Pick**: the topic (fresh, our audience cares, there's a catch), checked against `analytics` and Radar.
+2. **Research**: primary sources, the dates, what the announcement left out (that's the story), the real media to use.
+3. **Shape**: the format (above), the world (above), the one anchor image, the triple hook (what you see, what you
+   read, what you hear in the first 2 s), the payoff, the ask.
+4. **Write**: the script as it's said, one line per beat, every number checked; the title and the cover.
+5. **Voice**: the trained voice on the GPU, Whisper check, re-voice misheard words.
+6. **Build**: the film timed to the word stamps, real media plus drawing, the red pen on the words.
+7. **Sound**: SFX tied to motion, the music bed as a story (drop out before the catch), the mix at -14 LUFS.
+8. **Review**: the checklist, colours, numbers on screen match the voice, phone-size read.
+9. **Package**: the title, caption, hashtags, credits, cover, the posting slot from `analytics`.
+10. **Post and learn**: reply to comments in the first hour, read the score after 48 h, write what worked here.
+
 ## The check before building
 1. Which format, which world, and why this world for this story?
 2. Is it different from the last two videos (look at `promo/cte-*`)?

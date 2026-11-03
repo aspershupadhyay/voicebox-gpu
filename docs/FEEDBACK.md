@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Nowadays how other people are going crazy famous… we can add images, videos and all to make our edits real and
+  creative instead of just plain explanation and drawing everything our own"** (2026-11-03): every video mixes real
+  media with what we draw: the real post, product shots, a few seconds of real footage, headlines, a chart from the
+  source, each one marked up by the red pen and credited on screen. Drawing is the glue and the explanation, not the
+  whole film. The rules (what to use, how to treat it, credit, rights) are in the video-director skill's
+  `references/formats.md` → "Real media in every edit", with the phases of making a video.
 - **"Whatever you've learned add it… we can't be having the same aesthetic and designs every time… be creative each
   time… suggest what kind of video is going viral and what unique thing we can incorporate"** (2026-11-03, after the
   Instagram TV Reel): the brand is a signature, not a template. Every video picks a format and a world from the
