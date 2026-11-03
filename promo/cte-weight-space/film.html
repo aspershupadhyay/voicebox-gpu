@@ -511,7 +511,7 @@ function cues(){const q=[];const add=(t,f,db=0,o={})=>q.push({t:+t.toFixed(3),f,
   // 7: the lines of reasoning type in; the pen rings 27
   for(let i=0;i<5;i++)add(S('l07')+.25+i*.16,'tick',-18);add(at('l07','answer')-.1,'subtle-pop',-10);add(at('l07','twenty')+.05,'PEN',-6,{synth:'pen',len:.5});
   // 8: the loop: a tick per lap, faster and faster; dead stop; the stamp
-  { const t0=S('l07b'), stop=at('l07b','never')-.05; let tt=t0+.15, dt=.32; while(tt<stop-.03){add(tt,'tick',-14);tt+=dt;dt=Math.max(.045,dt*.88);}
+  { const t0=S('l07b'), stop=at('l07b','never')-.05;
     add(t0+.05,'PEN',-10,{synth:'pen',len:.7}); add(stop,'erreur',-6); add(stop,'whoosh-end-384629',-6,{peak:true,len:1.6,fade:.8}); }
   // 9: the 96 cells, a run
   for(let i=0;i<96;i+=3)add(at('l08','eighty')+i*.022,'soft-pop',-20);add(at('l08','eighty')-.05,'sharp-pop',-9);
@@ -544,15 +544,15 @@ function cues(){const q=[];const add=(t,f,db=0,o={})=>q.push({t:+t.toFixed(3),f,
   CTE.cues(T_ID).forEach(c=>q.push(c));
   return q;}
 window.SFX=cues();
-// music: the bed as a story: under the hook and the setup; out for the loop (a Shepard tone climbs for ever instead);
+// music: the bed as a story: under the hook, the setup and the loop, cut dead on the token limit;
 // back for the operation and the result; cut dead before the catch; quiet under the caveats; back for the bet.
 window.BED='gorila';
 window.MUSIC=()=>[
-  {t0:0,t1:S('l07')-.05,offset:0,fadein:.02,fadeout:.3},
+  {t0:0,t1:at('l07b','never')-.05,offset:0,fadein:.02,fadeout:.03},
   {t0:S('l09'),t1:S('l15')-.45,offset:74,fadein:.3,fadeout:.12},
   {t0:S('l16'),t1:S('l19')-.05,offset:52,fadein:.8,fadeout:.2},
   {t0:S('l19'),t1:T_ID+2.5,offset:14,fadein:.05,fadeout:2.2}];
-window.SHEPARD=()=>[{t0:S('l07'),t1:at('l07b','never')-.05,db:-12,rate:.35}];
+window.SHEPARD=()=>[];
 window.CUTS=SC.map(s=>s.t0);
 const IMGS=['tweet.jpg','qwen_warn.jpg','rerun.jpg','blog_title.jpg','L15.jpg','L19.jpg'].map(f=>{const i=new Image();i.src='assets/real/'+f;return i;});
 window.ready=Promise.all([document.fonts.load('400 60px Jost'),document.fonts.load('40px "Courier Prime"'),document.fonts.load('600 40px Caveat'),document.fonts.load('40px Serif'),document.fonts.load('italic 40px Serif'),document.fonts.load('40px Mono'),...IMGS.map(i=>i.decode().catch(()=>{}))]).then(()=>document.fonts.ready);
