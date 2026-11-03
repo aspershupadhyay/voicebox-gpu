@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"The script says 20 but the visual shows 19"** and **"remove all the BS so we won't have any collision"**
+  (2026-11-03, on the Cyclon v2 Reel): every number on screen must say what the voice says (the counter now lands on
+  20 for "almost twenty"); check spoken numbers against the frames before rendering. The v1 kit (`promo/cyclon/`,
+  the violet slop version) is deleted, and so are its MP4s and the superseded v2 copies in Files: the only Cyclon
+  build is `promo/cte-cyclon/`, and the only reference look is Catch the Error (`docs/BRAND.md`). Posted on
+  2026-11-03 to Catch the Error's Instagram Reels and YouTube Shorts.
 - **"Learn the best way how other people are creating… design rules, psychology, font pairing, visual and focal
   point… a beautiful storyteller… the outro must be our brand outro, animated like Pixar but for our logo… first learn
   and add it in our project"** (2026-11-02, with the Catch the Error logo): the research is in the video-director
@@ -27,7 +33,7 @@ for. Read this before touching the dashboard. Newest first. When something here 
   fast-paced speech, not too fast, just like the Karpathy one"** (2026-11-02, on Adam Zinebi's Cyclon post): Modal sat
   "loading whisper into memory" for 4+ minutes on its A10, so the owner switched to Colab (L4: online in ~2 min, the
   15 lines voiced in 2.5 min). When a cloud GPU stalls on its first load, stop it and start Colab right away rather
-  than wait. The Reel is `promo/cyclon/`: the HackerTube kit with every line on a 120 BPM 8th-note grid, voice at
+  than wait. The v1 Reel (since deleted, 2026-11-03) was the HackerTube kit with every line on a 120 BPM 8th-note grid, voice at
   1.10x, fast transitions (push, zoom-through, a pixel wipe, hard cuts with a punch-in), a beat-stepped accent, and
   the source's demos redrawn in code and labelled as redrawn.
 - **"Turn it off and don't mark it in any future video"** (2026-11-02, on the AI-content label): never set YouTube's

@@ -12,6 +12,7 @@ stills at every hit (`node tools/render.js stills 0.02 17.5 …`). Look at each 
 - [ ] Something new every 2-3 s; no dead air longer than ~3 s.
 - [ ] Colours: `python3 scripts/reels/check_colors.py film.html` prints "clean" (no purple / violet / lavender, no
   Tailwind defaults, no neon, no gradients, no pure black or white: style guide → "Banned colours"); one dull accent.
+- [ ] Every number and name on screen matches what the voice says ("almost twenty" lands on 20, not 19).
 - [ ] Captions only where the screen doesn't already say it; the script's words, not Whisper's mishearing.
 - [ ] Nothing imitates a real product's UI or logo; a generic chat box is fine.
 - [ ] The end card holds still for ≥ 2 s; the last frame isn't the first.
