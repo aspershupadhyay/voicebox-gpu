@@ -87,3 +87,17 @@ and the framework as a 75% / 25% bar: the skill does 75%, your idea, taste and n
   a low thud is "not sent". Both live in `tools/audio.py` (synth cues), since the library has no shutter.
 - When a voice job ran on another GPU, its `/files` links won't open from Colab's tunnel: the WAVs are in the
   library (`get_file`), and word stamps can be remade locally (faster-whisper small.en, fed raw audio from ffmpeg).
+
+## Our build: an AI fixed another AI's brain (2026-11-03, `promo/cte-weight-space/`)
+- **Go past the post to the artifact.** The tweet had the numbers; the published checkpoints and eval samples had the
+  story. A safetensors header is JSON at the front of the file, so one tensor can be fetched with two HTTP range
+  requests (header length, header, then the tensor's byte range): 7 MB instead of 1.6 GB. Diffing base vs edited showed
+  the exact edit, and `eval/samples_*.jsonl` held the real loop ("found 27, then 1,237 repeats, no answer").
+- **The brand mark can be the metaphor.** The logo's red ring became the loop the text runs around; its red letters
+  became the edited nodes. One gesture, two meanings, no new props.
+- **Screenshots in an off-brand colour get toned to ink** (grayscale → ink on sheet paper): Qwen's card is purple on
+  Hugging Face; the clipping keeps every word and loses the colour.
+- **Cerebrium's first myvoice install can hang** with an empty install log: after ~5 minutes start Colab
+  (`gpu action=start purpose=voice`), set `backend prefer=colab`, resend, and put the preference back afterwards.
+- **A spoken number and the exact one:** the voice says "twelve hundred", the counter lands on "1,200+", and the exact
+  1,237 sits in the small evidence line, so the screen never contradicts the voice.
