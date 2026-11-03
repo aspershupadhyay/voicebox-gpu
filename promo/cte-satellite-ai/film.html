@@ -63,8 +63,12 @@ function brackets(col=LINE){const s=46,m=40,y0=120,y1=1500;
 function clock(t){const s=Math.max(0,t);const mm=Math.floor(s/60),ss=Math.floor(s%60),cs=Math.floor((s*100)%100);return `T+${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}.${String(cs).padStart(2,'0')}`;}
 function hud(t,label){return A(70,150,`${MONO};font-size:24px;color:${TX2};width:940px;display:flex;justify-content:space-between`,
   `<span><span style="color:${AMB}">AI, DECODED #1</span> / ${label}</span><span>${clock(t)}</span>`);}
-function cred(t,t0,text){return A(70,190,`${MONO};font-size:18px;color:${TX2};opacity:${(.7*seg(t,t0,.3)).toFixed(2)};width:940px;text-align:right`,text);}  // minimal, the owner's ask
-function con(t,label){return grid()+brackets()+hud(t,label);}
+function cred(t,t0,text){return A(70,150,`${MONO};font-size:18px;color:${TX2};opacity:${(.7*seg(t,t0,.3)).toFixed(2)};width:940px;text-align:right`,text);}  // minimal, the owner's ask
+// the backdrop: Earth's edge from orbit (built from NASA VIIRS, 1 Nov 2026: India and the Bay of Bengal cyclone),
+// dark, slowly drifting, film grain baked in. No grid, no frame, no HUD line (the owner, 2026-11-03).
+function backdrop(t,dim=0){const dx=-80+Math.sin(t*.05)*30-t*.9, dy=-100+t*.35;
+  return img('assets/real/bg_orbit.jpg',`left:${dx.toFixed(1)}px;top:${dy.toFixed(1)}px;width:1240px;height:2120px`)+(dim?A(0,0,`width:1080px;height:1920px;background:${BG};opacity:${dim}`):'');}
+function con(t,label){return backdrop(t);}
 // ---------- the red grease pencil (on the console glass; every gesture draws on, a little wobbly) ----------
 function wob(i,seed,amp){return amp*(Math.sin(i*.9+seed)*.6+Math.sin(i*2.3+seed*1.7)*.4);}
 function penPath(pts,t,t0,d,w=8,col=RED){const p=eio(clamp((t-t0)/d));if(p<=0)return '';let L=0;for(let i=1;i<pts.length;i++)L+=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);
@@ -103,7 +107,7 @@ function scene(t0,draw,opt={}){SC.push({t0,bg:opt.bg||BG,draw,...opt});}
 
 // 1 · the hook (the triple hook: the shutter fires on frame 1, the photo drops, the slot shuts: NOT SENT)
 scene(0,(t)=>{
-  let h=con(t,'ORBIT LOG');
+  let h=backdrop(t,.8);
   const gy=1010+Math.sin(t*.6)*4;
   h+=img(globeSrc(t,10),`left:-10px;top:${gy}px;width:1100px;height:1100px`);
   h+=sat(540,640+Math.sin(t*1.6)*6,120,t);
@@ -122,7 +126,7 @@ scene(0,(t)=>{
 
 // 2 · two thirds of Earth is under cloud: the counter on the real globe, then our own screen: NASA Worldview, day by day
 scene(S('l02'),(t)=>{const lt=t-S('l02'), tB=at('l02','earth')-.12;
-  let h=con(t,'CLOUD COVER');
+  let h=backdrop(t,t<at('l02','earth')-.12?.8:0);
   const n=Math.round(67*eio(clamp((t-at('l02','two'))/.55)));
   if(t<tB){
     h+=img(globeSrc(t,18),`left:100px;top:420px;width:880px;height:880px;${arrive(t,S('l02'),.35,.9)}`);
@@ -273,7 +277,7 @@ scene(S('l11'),(t)=>{const t0=S('l11'), ta=at('l11','alert'), tp=at('l11','pictu
 
 // 12 · the turn: so, what's the catch? (the console goes dark; the music cuts)
 scene(S('l12')-.12,(t)=>{const tc=at('l12','catch');
-  let h=brackets(PANEL);
+  let h=backdrop(t,.6);
   h+=C(640,`font-family:Barlow;font-weight:500;font-size:96px;color:${TX2};text-transform:uppercase`,spoken(t,'l12',['So,','what\'s','the'],0));
   h+=C(760,`font-family:Instr;font-style:italic;font-size:280px;line-height:1;color:${CREAM}`,`<span class="w" style="${rise(t,tc-.06,.24,20)}">catch?</span>`);
   h+=svgL(penRing(540,920,330,170,t,tc+.08,.5,11));
@@ -306,7 +310,6 @@ scene(S('l14'),(t)=>{const t0=S('l14'), tsm=at('l14','smoke'), tcl=at('l14','clo
 // 15 · the payoff: it's deciding what we get to see
 scene(S('l15'),(t)=>{const t0=S('l15'), td=at('l15','deciding');
   let h=con(t,'ORBIT LOG');
-  h+=img(globeSrc(t,10),`left:240px;top:880px;width:600px;height:600px;opacity:.9`);
   h+=sat(540,850,70,t);
   h+=C(300,`font-family:Barlow;font-weight:500;font-size:60px;color:${TX2};text-transform:uppercase;line-height:1.1;padding:0 80px;box-sizing:border-box`,spoken(t,'l15',['The','AI','isn\'t','just','taking','the','pictures.'],0));
   h+=C(470,`font-family:Instr;font-style:italic;font-size:150px;line-height:1;color:${CREAM}`,spoken(t,'l15',['It\'s','deciding'],wordIdx('l15','its')));
@@ -421,7 +424,7 @@ window.MUSIC=()=>[
 window.CUTS=SC.map(s=>s.t0);
 // every image is loaded and decoded before the first frame
 const PRE=[...Array.from({length:GLOBE_N},(_,k)=>`assets/globe/${String(k).padStart(3,'0')}.webp`),...Array.from({length:REC_N},(_,k)=>recSrc(k)),
-  ...Array.from({length:9},(_,i)=>tile(i)),'assets/real/ocean.jpg','assets/real/myriad.jpg','assets/real/cern.jpg','assets/real/phisat2_int.jpg','assets/real/phisat2_science.jpg','assets/real/punjab.jpg','assets/real/punjab_plain.jpg'];
+  ...Array.from({length:9},(_,i)=>tile(i)),'assets/real/ocean.jpg','assets/real/myriad.jpg','assets/real/cern.jpg','assets/real/phisat2_int.jpg','assets/real/phisat2_science.jpg','assets/real/punjab.jpg','assets/real/punjab_plain.jpg','assets/real/bg_orbit.jpg'];
 const IMGS=PRE.map(s=>{const im=new Image();im.src=s;return im;});
 window.ready=Promise.all([document.fonts.load('700 60px Barlow'),document.fonts.load('500 60px Barlow'),document.fonts.load('40px Plex'),document.fonts.load('40px Instr'),document.fonts.load('italic 40px Instr'),document.fonts.load('700 40px Caveat'),document.fonts.load('40px Geist'),document.fonts.load('400 60px Jost'),document.fonts.load('40px "Courier Prime"'),...IMGS.map(i=>i.decode().catch(()=>{}))]).then(()=>document.fonts.ready);
 </script></body></html>
