@@ -264,10 +264,10 @@ export function Heatmap({ heat, metric, tz, title = "When to post", id, action, 
   );
 }
 
-export function Score({ v }: { v: number | null }) {
+export function Score({ v, what = "Views against the usual for this format" }: { v: number | null; what?: string }) {
   if (v == null) return <span className="tiny dim">—</span>;
   const tone = v >= 3 ? "ok" : v >= 1.5 ? "blue" : v >= 0.7 ? "" : "warn";
-  return <span className={`pill ${tone} mono`} title="Views against the usual for this format">{v >= 3 && <Fire size={12} weight="fill" aria-hidden />}{v >= 10 ? Math.round(v) : v.toFixed(1)}×</span>;
+  return <span className={`pill ${tone} mono`} title={what}>{v >= 3 && <Fire size={12} weight="fill" aria-hidden />}{v >= 10 ? Math.round(v) : v.toFixed(1)}×</span>;
 }
 
 /** Every KPI as one grid of tinted cards, in group order (Reach, Watch, Engagement, Growth, Output), each with its

@@ -183,3 +183,25 @@ days Instagram keeps. YouTube gives views by day, not by hour; the hour a post s
 did by when they went out, and on Instagram from when your followers are online.
 
 MCP: `analytics`, `publish_accounts`, `publish_post`, `publish_status`, `automation_rules` (see `docs/API.md`).
+
+## Instagram rivals (Facebook Login, for Grow → Competitors)
+
+Instagram shares another account's followers and posts (Business Discovery) only with an app signed in through
+**Facebook**, through a Facebook Page your Instagram is linked to. Publishing stays on Instagram Login; this is only for
+reading rivals (`lib/publish/facebook.ts`, `lib/rivals-ig.ts`).
+
+1. Link your Instagram to a Facebook Page you admin (the Page's Settings → Linked accounts → Instagram).
+2. In the Meta app (App ID `1607876027034664`): add the product **Facebook Login for Business**; under its Settings add
+   the redirect `https://voiceboxstudio.pages.dev/api/publish/facebook/callback`; add the permissions `instagram_basic`,
+   `pages_show_list`, `pages_read_engagement` and `business_management` to the app (Use cases), and make a
+   configuration (User access token) with exactly those four. Its id (`1676190047634985`) and the App ID are in the code
+   (not secrets; `FACEBOOK_LOGIN_CONFIG_ID` / `FACEBOOK_APP_ID` override them). In Development mode only people with a
+   role on the app (App roles → Roles) can sign in.
+3. `npx wrangler secret put FACEBOOK_APP_SECRET` (App settings → Basic → App secret).
+4. Grow → Competitors → **Connect Facebook**, and tick the Page(s) linked to your Instagram.
+
+On connect the sign-in is swapped for each Page's own token (it doesn't expire while you stay a Page admin), sealed in R2
+(`workspace/publish/facebook.json`), never returned to the browser or a model. Each Instagram rival is read at most every
+3 hours (`workspace/live/ig-rivals/`): profile, the last 100 posts with likes, comments, kind and time, and from that how
+often they post, hits against their own usual (likes with likes), when they post and their hashtags that work.
+Instagram never shares other accounts' views, reach, shares or saves, and only Business and Creator accounts.
