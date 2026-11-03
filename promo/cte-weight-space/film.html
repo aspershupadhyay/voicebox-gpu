@@ -43,11 +43,12 @@ function hash(n){let x=Math.sin(n*127.1+311.7)*43758.5453;return x-Math.floor(x)
 const fmt=n=>Math.round(n).toLocaleString('en-US');
 // ---------- voice timing ----------
 const LINES={};for(const l of VO.lines)LINES[l.id]=l;
-const S=id=>LINES[id].start, E=id=>LINES[id].end;
-function wt(id,i){const l=LINES[id];const w=l.words[Math.min(i,l.words.length-1)];return w?w.s:l.start;}
-function we(id,i){const l=LINES[id];const w=l.words[Math.min(i,l.words.length-1)];return w?w.e:l.end;}
+// a line can be missing in a shorter cut (tools/script.json of the cut): its time is NaN and its scene and cues drop out
+const S=id=>LINES[id]?LINES[id].start:NaN, E=id=>LINES[id]?LINES[id].end:NaN;
+function wt(id,i){const l=LINES[id];if(!l)return NaN;const w=l.words[Math.min(i,l.words.length-1)];return w?w.s:l.start;}
+function we(id,i){const l=LINES[id];if(!l)return NaN;const w=l.words[Math.min(i,l.words.length-1)];return w?w.e:l.end;}
 const norm=s=>s.toLowerCase().replace(/[^a-z0-9]/g,'');
-function wordIdx(id,word,from=0){const l=LINES[id];const k=l.words.findIndex((w,i)=>i>=from&&norm(w.w).startsWith(word));return k<0?0:k;}
+function wordIdx(id,word,from=0){const l=LINES[id];if(!l)return 0;const k=l.words.findIndex((w,i)=>i>=from&&norm(w.w).startsWith(word));return k<0?0:k;}
 const at=(id,word,from=0)=>wt(id,wordIdx(id,word,from));
 function venv(t){for(const l of VO.lines){if(t>=l.start&&t<l.end&&l.env){return l.env[Math.min(l.env.length-1,Math.floor((t-l.start)*30))]||0;}}return 0;}
 // ---------- text motion (the house rise) ----------
@@ -101,7 +102,7 @@ function network(t,o){const {nodes,red=[],ring=null,pulse=1,dark=0,edgeOp=1,r=13
   return svgL(`<g opacity="${edgeOp}">${e}${p}</g>${n}`);}
 // ---------- scenes ----------
 const SC=[];
-function scene(t0,bg,draw,opt={}){SC.push({t0,bg,draw,...opt});}
+function scene(t0,bg,draw,opt={}){if(isFinite(t0))SC.push({t0,bg,draw,...opt});}
 const R=window.REAL;
 const NET1=netNodes(6,[5,7,8,8,7,5],150,930,820,1380,3);
 
@@ -465,7 +466,20 @@ function penWipe(p){const a=p<.5?0:(p-.5)*2, b=p<.5?p*2:1;const y0=lerp(2200,-30
   return `<svg width="1080" height="1920" style="left:0;top:0"><path d="M-60 ${y0+120} C 300 ${y0-60}, 700 ${y0+80}, 1140 ${y0-120} L1140 ${y1-120} C 700 ${y1+80}, 300 ${y1-60}, -60 ${y1+120} Z" fill="${RED}"/></svg>`;}
 const cam=document.getElementById('cam'), cap=document.getElementById('cap'), stage=document.getElementById('stage');
 window.DURATION=T_ID+CTE.DUR+2.2;
+// the cover (t < 0): the story in one frame, everything important inside y 300-1600 so the grid crops keep it
+function cover(){const t=6;let h=`<div class="a" style="inset:0;background:${PAPER}">`+grain(0)+slug(t,0);
+  h+=C(330,`font-size:96px;line-height:1.02;font-weight:500;color:${INK};letter-spacing:-0.035em`,'An AI just fixed');
+  h+=C(440,`font-size:96px;line-height:1.02;font-weight:500;color:${INK};letter-spacing:-0.035em`,'another AI\'s');
+  h+=C(540,`font-size:150px;line-height:1;color:${RED}`,`<span class="serif" style="font-style:italic">brain.</span>`);
+  h+=network(t,{nodes:NET1,red:[[3,3,1],[3,4,1]],pulse:1});
+  const [ax,ay]=NET1[3][3],[bx,by]=NET1[3][4];
+  h+=svgL(penRing((ax+bx)/2,(ay+by)/2,64,86,t,0,.1,8));
+  h+=A(((ax+bx)/2)+60,((ay+by)/2)-178,`font-family:Caveat;font-weight:700;font-size:76px;color:${RED};background:${PAPER};padding:0 14px;border-radius:12px;rotate:-6deg`,'0.016%');
+  h+=C(1450,`font-family:Mono;font-size:50px;font-weight:600;color:${INK};letter-spacing:-0.02em`,`math 7.9% <span style="color:${RED}">→</span> 48.1%`);
+  h+=C(1530,`font-family:'Courier Prime';font-size:28px;letter-spacing:.14em;color:${SOFT}`,'NO RETRAINING · GPT-6 ASTRA · QWEN 3.5');
+  return h+'</div>';}
 window.seek=function(t){
+  if(t<0){stage.style.background=PAPER;cam.style.transform='none';cam.innerHTML=cover();cap.innerHTML='';return Promise.resolve();}
   let i=0;while(i+1<SC.length&&SC[i+1].t0<=t)i++;
   const sc=SC[i], lt=t-sc.t0, t1=(SC[i+1]?.t0)??window.DURATION, prev=SC[i-1];
   stage.style.background=sc.bg;
@@ -485,7 +499,7 @@ window.seek=function(t){
   return Promise.all([...cam.querySelectorAll('img')].map(i=>i.complete?i.decode().catch(()=>{}):new Promise(r=>{i.onload=i.onerror=r;})));
 };
 // ---------- sound: every cue scores something that moves ----------
-function cues(){const q=[];const add=(t,f,db=0,o={})=>q.push({t:+t.toFixed(3),f,db,...o});
+function cues(){const q=[];const add=(t,f,db=0,o={})=>{if(isFinite(t)&&(o.at===undefined||isFinite(o.at))&&(o.len===undefined||isFinite(o.len)))q.push({t:+t.toFixed(3),f,db,...o});};
   // hook: the network firing (soft ticks), the red dots land, the pen rings them
   for(let i=0;i<6;i++)add(.05+i*.27,'tick',-20);
   const fx=at('l01','fixed');add(fx,'sharp-pop',-6);add(fx+.12,'PEN',-8,{synth:'pen',len:.55});
@@ -547,11 +561,12 @@ window.SFX=cues();
 // music: the bed as a story: under the hook, the setup and the loop, cut dead on the token limit;
 // back for the operation and the result; cut dead before the catch; quiet under the caveats; back for the bet.
 window.BED='gorila';
+const S2=(id,f)=>isFinite(S(id))?S(id):f;
 window.MUSIC=()=>[
   {t0:0,t1:at('l07b','never')-.05,offset:0,fadein:.02,fadeout:.03},
   {t0:S('l09'),t1:S('l15')-.45,offset:74,fadein:.3,fadeout:.12},
-  {t0:S('l16'),t1:S('l19')-.05,offset:52,fadein:.8,fadeout:.2},
-  {t0:S('l19'),t1:T_ID+2.5,offset:14,fadein:.05,fadeout:2.2}];
+  {t0:S('l16'),t1:S2('l19',T_ID+2.5)-.05,offset:52,fadein:.8,fadeout:2.2},
+  {t0:S('l19'),t1:T_ID+2.5,offset:14,fadein:.05,fadeout:2.2}].filter(g=>isFinite(g.t0)&&isFinite(g.t1));
 window.SHEPARD=()=>[];
 window.CUTS=SC.map(s=>s.t0);
 const IMGS=['tweet.jpg','qwen_warn.jpg','rerun.jpg','blog_title.jpg','L15.jpg','L19.jpg'].map(f=>{const i=new Image();i.src='assets/real/'+f;return i;});
