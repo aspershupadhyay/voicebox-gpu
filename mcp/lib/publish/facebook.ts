@@ -20,8 +20,10 @@ const FILE = "workspace/publish/facebook.json";
 export const fbConfigured = () => !!process.env.FACEBOOK_APP_SECRET;
 
 export type FbPage = { id: string; name: string; ig: { id: string; username: string } | null };
-type Stored = { by: string; at: number; user: string | null; pages: FbPage[]; sealed: string };
-export type FbStatus = { configured: boolean; connected: boolean; by: string | null; at: number | null; user: string | null; pages: FbPage[] };
+type Stored = { by: string; at: number; user: string | null; pages: FbPage[]; sealed: string; granted?: string[]; declined?: string[] };
+export type FbStatus = { configured: boolean; connected: boolean; by: string | null; at: number | null; user: string | null; pages: FbPage[]; granted: string[]; declined: string[] };
+/** What Business Discovery needs on the sign-in (the configuration asks for these). */
+export const NEEDED = ["instagram_basic", "pages_show_list", "pages_read_engagement", "business_management"];
 
 type GErr = { error?: { message?: string; code?: number; error_subcode?: number; error_user_msg?: string } };
 export class FbError extends Error {
@@ -40,7 +42,8 @@ async function fb<T>(path: string, params: Record<string, string>): Promise<T> {
       17: "Facebook is rate limiting. Try again in a few minutes.",
       110: "Instagram can't find that account, or it isn't a Business or Creator account (Instagram only shares those).",
     };
-    throw new FbError(nice[e.code ?? -1] ?? e.error_user_msg ?? e.message ?? `Facebook ${r.status}`, e.code ?? 0);
+    const said = e.message ? ` (Facebook: "${e.message}", code ${e.code ?? "?"}${e.error_subcode ? `/${e.error_subcode}` : ""})` : "";
+    throw new FbError(`${nice[e.code ?? -1] ?? e.error_user_msg ?? e.message ?? `Facebook ${r.status}`}${nice[e.code ?? -1] ? said : ""}`, e.code ?? 0);
   }
   return j;
 }
@@ -58,6 +61,9 @@ export async function connect(code: string, redirect: string, by: string): Promi
   const short = await fb<{ access_token: string }>("/oauth/access_token", { client_id: APP_ID(), client_secret: process.env.FACEBOOK_APP_SECRET!, redirect_uri: redirect, code });
   const long = await fb<{ access_token: string }>("/oauth/access_token", { grant_type: "fb_exchange_token", client_id: APP_ID(), client_secret: process.env.FACEBOOK_APP_SECRET!, fb_exchange_token: short.access_token }).catch(() => short);
   const me = await fb<{ name?: string }>("/me", { fields: "name", access_token: long.access_token }).catch(() => ({ name: undefined }));
+  const perms = await fb<{ data?: { permission: string; status: string }[] }>("/me/permissions", { access_token: long.access_token }).catch(() => ({ data: [] as { permission: string; status: string }[] }));
+  const granted = (perms.data ?? []).filter((p) => p.status === "granted").map((p) => p.permission);
+  const declined = (perms.data ?? []).filter((p) => p.status !== "granted").map((p) => p.permission);
   type P = { id: string; name: string; access_token?: string; instagram_business_account?: { id: string; username?: string } };
   const pages: P[] = [];
   let next: string | null = `${GRAPH}/me/accounts`;
@@ -69,9 +75,10 @@ export async function connect(code: string, redirect: string, by: string): Promi
   if (!pages.length) throw new FbError("Facebook signed you in but shared no Pages. Connect again and tick the Facebook Page that your Instagram is linked to.");
   const withIg = pages.filter((p) => p.instagram_business_account && p.access_token);
   if (!withIg.length) throw new FbError(`None of your Pages (${pages.map((p) => p.name).join(", ")}) has an Instagram account linked. Link one (the Page's Settings → Linked accounts → Instagram), then connect again.`);
-  const tokens = Object.fromEntries(withIg.map((p) => [p.id, p.access_token!]));
+  // each Page's own token, and the long-lived sign-in itself (60 days) as a fallback: Business Discovery takes either
+  const tokens: Record<string, string> = { ...Object.fromEntries(withIg.map((p) => [p.id, p.access_token!])), __user: long.access_token };
   const stored: Stored = {
-    by, at: Date.now(), user: me.name ?? null, sealed: sealJson(tokens),
+    by, at: Date.now(), user: me.name ?? null, sealed: sealJson(tokens), granted, declined,
     pages: pages.map((p) => ({ id: p.id, name: p.name, ig: p.instagram_business_account ? { id: p.instagram_business_account.id, username: p.instagram_business_account.username ?? "" } : null })),
   };
   await putJson(FILE, stored);
@@ -80,7 +87,7 @@ export async function connect(code: string, redirect: string, by: string): Promi
 
 export async function status(): Promise<FbStatus> {
   const s = await getJson<Stored>(FILE).catch(() => null);
-  return { configured: fbConfigured(), connected: !!s, by: s?.by ?? null, at: s?.at ?? null, user: s?.user ?? null, pages: s?.pages ?? [] };
+  return { configured: fbConfigured(), connected: !!s, by: s?.by ?? null, at: s?.at ?? null, user: s?.user ?? null, pages: s?.pages ?? [], granted: s?.granted ?? [], declined: s?.declined ?? [] };
 }
 
 export async function disconnect() {
@@ -88,12 +95,12 @@ export async function disconnect() {
 }
 
 /** A Page with an Instagram linked and its token, to ask Business Discovery through. */
-async function via(): Promise<{ ig: string; token: string } | null> {
+async function via(): Promise<{ ig: string; token: string; user: string | null } | null> {
   const s = await getJson<Stored>(FILE).catch(() => null);
   if (!s) return null;
   const tokens = unsealJson<Record<string, string>>(s.sealed);
   const p = s.pages.find((x) => x.ig && tokens[x.id]);
-  return p ? { ig: p.ig!.id, token: tokens[p.id] } : null;
+  return p ? { ig: p.ig!.id, token: tokens[p.id], user: tokens.__user ?? null } : null;
 }
 
 export type DiscoveredMedia = {
@@ -112,7 +119,16 @@ export async function discover(username: string, posts = 50): Promise<Discovered
   const v = await via();
   if (!v) throw new FbError("Connect Facebook first (Grow → Competitors → Connect Facebook): Instagram only shares other accounts' numbers that way.");
   const fields = `business_discovery.username(${u}){id,username,name,biography,website,profile_picture_url,followers_count,follows_count,media_count,media.limit(${Math.min(100, Math.max(1, posts))}){id,caption,like_count,comments_count,timestamp,media_type,media_product_type,permalink,thumbnail_url,media_url}}`;
-  const r = await fb<{ business_discovery?: Discovered }>(`/${v.ig}`, { fields, access_token: v.token });
+  const ask = (token: string) => fb<{ business_discovery?: Discovered }>(`/${v.ig}`, { fields, access_token: token });
+  const r = await ask(v.token).catch(async (e: FbError) => {
+    if (e.code !== 10 && e.code !== 200) throw e;
+    // the Page's token was refused: try the sign-in's own token, then say which permissions are missing
+    if (v.user) { const ok = await ask(v.user).catch(() => null); if (ok) return ok; }
+    const dbg = await fb<{ data?: { scopes?: string[]; granular_scopes?: { scope: string }[] } }>("/debug_token", { input_token: v.user ?? v.token, access_token: `${APP_ID()}|${process.env.FACEBOOK_APP_SECRET}` }).catch(() => null);
+    const has = dbg?.data?.scopes ?? [];
+    const missing = NEEDED.filter((p) => !has.includes(p));
+    throw new FbError(`${e.message}${has.length ? ` The connection has: ${has.join(", ")}.${missing.length ? ` Missing: ${missing.join(", ")}.` : ""}` : ""}`, e.code);
+  });
   if (!r.business_discovery) throw new FbError(`Instagram didn't return @${u}. It may be a personal account (Instagram only shares Business and Creator accounts).`);
   return r.business_discovery;
 }
