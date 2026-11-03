@@ -6,6 +6,11 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Remove that square… where it says AI decoded, that's not necessary… it looks AI slop… background is also not
+  good, find out the good way to do it"** (2026-11-03, on the satellite Reel): no HUD chrome. No corner brackets, no
+  series/clock line, no grid wallpaper: those read as generated "tech UI". The background is a real image of the
+  topic instead (here Earth's edge from orbit, built from that day's NASA imagery, dark, slowly drifting, with grain),
+  dimmed where a foreground globe would double it. Credits stay one small line.
 - **"Go ahead and record the video for me… use Sparsh's voice… download the real images… don't make the credits too
   loud, keep it minimal… use Cosmos or Pinterest to fetch the best images… clipping and transitions need to be so
   fast"** (2026-11-03, the satellite Reel, `promo/cte-satellite-ai/`): we record our own screen footage ourselves
