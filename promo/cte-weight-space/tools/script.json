@@ -1,0 +1,23 @@
+{
+ "l01": "An AI just opened up another AI's brain, and fixed it.",
+ "l02": "No retraining. It changed zero point zero one six percent of its weights.",
+ "l03": "And it got six times better at math.",
+ "l04": "Every AI is a giant web of numbers, called weights.",
+ "l05": "This one, Qwen three point five, has eight hundred million.",
+ "l06": "And its own model card warns: it gets stuck in thinking loops.",
+ "l07": "On one problem, it found the answer, twenty-seven.",
+ "l07b": "Then it wrote, wait, I need to check, one thousand two hundred times. And never answered.",
+ "l08": "Eighty-five of its first ninety-six practice answers hit the limit.",
+ "l09": "So, researchers at MIT handed the raw weights to GPT-6 Astra.",
+ "l10": "No training allowed. Just: make it better at math.",
+ "l11": "Astra traced the loop to one direction, written by layers fifteen and nineteen.",
+ "l12": "And subtracted it. A hundred thirty-one thousand weights, out of eight hundred million.",
+ "l13": "Same model. Same settings. Math went from seven point nine percent to forty-eight.",
+ "l14": "Instruction following tripled. An independent rerun got fifty-one.",
+ "l15": "So, what's the catch?",
+ "l16": "They tried it on Google's Gemma, a model that rarely loops. Nothing moved.",
+ "l17": "Editing removed what blocked a skill. It couldn't add one that wasn't there.",
+ "l18": "And it's early: small models, one lab.",
+ "l19": "But their bet is big: AI models that read weights like code, and fix them.",
+ "l20": "Would you let an AI operate on another AI? Yes or no."
+}

@@ -6,6 +6,14 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Make video on this… create it like Cyclon one… the best creative explanation and hook… use the good neural network
+  graph with the red dots of our logo… use the good images or make your illustrations… research and plan the good
+  structure"** (2026-11-03, on Rikiya Takehi's weight-space programming post): `promo/cte-weight-space/`. The look is
+  the Cyclon paper-and-ink house look on purpose (the owner asked), with its own material: an ink neural network whose
+  edited nodes are the logo's red dots, and the logo's pen ring doubling as the thinking loop. Research went past the
+  post to the primary data: the real weight matrices (range requests on the Hugging Face checkpoints, diffed: exactly
+  the 64 columns the paper says) and the model's real looping output, which became the emotional beat ("it found 27,
+  then wrote 'wait, I need to check' 1,237 times"). Find the artifact the story is about, not just the claim.
 - **"Remove that square… where it says AI decoded, that's not necessary… it looks AI slop… background is also not
   good, find out the good way to do it"** (2026-11-03, on the satellite Reel): no HUD chrome. No corner brackets, no
   series/clock line, no grid wallpaper: those read as generated "tech UI". The background is a real image of the
