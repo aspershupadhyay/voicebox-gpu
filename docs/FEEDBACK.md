@@ -6,6 +6,14 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Voicebox grow page is not built for multiple IG and YT"** and **"go ahead and build it"** (2026-11-03, after the
+  Elite Minds review): Grow mixed every account. Elite Minds' viral Reel set the "usual" for Catch the Error, its
+  #billgates showed up as Catch the Error's best hashtag, its May hit set the best posting time, and a post with no
+  views was scored by its likes against other posts' views (the "776×"). Now Grow has an account switcher (All, or one
+  brand with its Instagram and YouTube together, kept in the link as `?acc=`); scores, tips, hashtags and best times are
+  worked out per brand and never mixed; All shows totals and the accounts side by side with no tips; a score compares
+  views with views inside one account. The Writing room's hashtags and the analytics MCP tool (`account`) follow the
+  same rule.
 - **"That SFX sound… which starts at 21 or 23 and ends when token limit shows up, remove that… it won't look
   appropriate"** (2026-11-03, on the weight-space Reel): no synthesized drone (the Shepard tone) and no accelerating
   tick run under a talking scene. The loop plays over the music bed, and the music cuts dead on the token limit: the

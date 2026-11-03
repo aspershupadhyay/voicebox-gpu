@@ -100,6 +100,12 @@ status and history under it, and the actions in a footer. It saves as you type.
 - Grow's live pages (`components/Grow.tsx`, `useLive`) poll every 30 s; the live chip (a beating `--live` dot and how long
   ago the last check landed) sits in every Grow page's top bar, which also holds the range, "Compare to" (the same
   number of days just before), Export (every post as CSV, or the page as PDF) and Refresh.
+- Grow's report pages have an account switcher in the top bar (`AccountChip`, from two brands): All accounts, or one
+  brand, its Instagram and YouTube together (`lib/brands.ts` groups accounts whose names or handles read the same). It
+  lives in the link (`?acc=<brand id>`, the last pick fills a link without one) and every report page follows it.
+  Scores (views ÷ the usual of the same account and format, views only), tips, hashtags and best times are only ever
+  worked out within one brand. All accounts shows totals, "Accounts side by side" (each brand's views, output, typical
+  score and best post; a row switches to it), each brand's best slots, and no next moves.
 - Analytics (`components/AnalyticsShell.tsx`, `Analytics.tsx`, `AnalyticsPlatform.tsx`) answers one question per view, the
   way YouTube Studio and the social suites split theirs, never every number on one screen. The shell holds the header,
   the range, the strips and the view tabs, and loads the report once for every view (`useReport`, shared with Home), so

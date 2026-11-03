@@ -2193,6 +2193,11 @@ article.md hr { border: 0; border-top: 1px solid rgb(255 255 255 / .12); margin:
 a.an-fr:hover { background: var(--hover); }
 .an-fr-n { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .an-fr-n .pbadge { color: var(--ink2); flex: none; }
+/* Grow → every account: each brand side by side (components/Analytics.tsx BrandTable) */
+.an-fr.an-br { grid-template-columns: minmax(0, 1.5fr) minmax(64px, 0.8fr) 76px minmax(76px, 0.8fr) 64px 64px minmax(0, 2fr); }
+.an-br-nets { display: inline-flex; gap: 4px; flex: none; }
+.an-br-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.an-br-top .ellipsis { flex: 1; min-width: 0; }
 .an-share { display: block; height: 4px; border-radius: 4px; background: var(--fill2); margin-top: 6px; overflow: hidden; max-width: 160px; }
 .an-share i { display: block; height: 100%; border-radius: 4px; }
 .an-tips.one { grid-template-columns: 1fr; }
@@ -2246,6 +2251,7 @@ a.an-fr:hover { background: var(--hover); }
   .an-kt-chart { padding: 14px 12px 12px; }
   .an-fr { grid-template-columns: minmax(0, 1fr) minmax(70px, auto) 44px; padding: 10px 14px; gap: 8px; }
   .an-fr .hide-sm { display: none; }
+  .an-fr.an-br { grid-template-columns: minmax(0, 1fr) minmax(56px, auto) 52px; }
   .an-tops { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .an-topc-th { aspect-ratio: 1; }
 }
