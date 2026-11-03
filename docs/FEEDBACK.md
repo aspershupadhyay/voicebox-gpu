@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"If we want to review the rivals' account through our Voicebox, how can we… give me the steps… link to our Facebook
+  account… you go on and do it, first we need to test the feature"** (2026-11-04, on @themoneycipher): Instagram
+  rivals are read through Facebook Login for Business (Business Discovery): Grow → Competitors → Connect Facebook, then
+  each Instagram rival gets the table row and its own page (followers, posts a week, hits against their own usual by
+  likes, when they post, their hashtags); the analytics MCP tool's view "rival" reads any one. Setup is in
+  `docs/PUBLISHING.md` → "Instagram rivals".
 - **"Make sure no matter how many accounts we have, Instagram and YouTube, it should work the same… fix it all… make it
   workable for any apps"** (2026-11-03): Grow works for any number of accounts. Accounts group by name or handle, also
   when one says "Official", "HQ", "TV", "YT", "IG" or "The"; when names don't match, Audience → Accounts → "Group

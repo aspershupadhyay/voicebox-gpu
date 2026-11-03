@@ -2198,6 +2198,27 @@ a.an-fr:hover { background: var(--hover); }
 .an-br-nets { display: inline-flex; gap: 4px; flex: none; }
 .an-br-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .an-br-top .ellipsis { flex: 1; min-width: 0; }
+/* Grow → Competitors → Instagram rivals (components/IgRival.tsx) */
+.ig-fb { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.ig-fb-row { display: flex; align-items: center; gap: 12px; }
+.ig-av { border-radius: 50%; object-fit: cover; flex: none; background: var(--fill); }
+.ig-av.lg { width: 56px; height: 56px; }
+.an-fr.ig-rv-row { grid-template-columns: minmax(0, 1.4fr) minmax(64px, 0.7fr) minmax(70px, 0.7fr) minmax(70px, 0.7fr) 64px minmax(0, 2fr); }
+.an-fr.ig-post-row { grid-template-columns: minmax(0, 3fr) 72px 80px 90px 64px; }
+.an-fr-n .pill { flex: none; }
+.ig-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ig-top .ellipsis { flex: 1; min-width: 0; }
+.ig-err { grid-column: 2 / -1; color: var(--bad); }
+.ig-kinds { display: grid; gap: 10px; }
+.ig-kind { display: grid; grid-template-columns: 90px minmax(0, 1fr) 44px; gap: 4px 10px; align-items: center; font-size: 13.5px; }
+.ig-kind .tiny { grid-column: 1 / -1; }
+.ig-vs { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.ig-vs li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; font-size: 13.5px; }
+.ig-vs li .tiny { grid-column: 1 / -1; }
+@media (max-width: 640px) {
+  .an-fr.ig-rv-row { grid-template-columns: minmax(0, 1fr) 60px 56px; }
+  .an-fr.ig-post-row { grid-template-columns: minmax(0, 1fr) 56px 52px; }
+}
 /* Audience → Accounts → Group accounts */
 .an-group { display: flex; flex-direction: column; gap: 10px; padding: 12px 0 16px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
 .an-group-r { display: grid; grid-template-columns: 20px minmax(0, 1fr) minmax(120px, 0.9fr); gap: 10px; align-items: center; font-size: 13.5px; }

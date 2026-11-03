@@ -19,6 +19,7 @@ import { PlatformBadge } from "./platform";
 import { PixelScene } from "./pixel";
 import { Select } from "./pop";
 import { Empty, Notice } from "./ui";
+import { FacebookLink, IgRivalsTable, IgRivalView, useFacebook } from "./IgRival";
 import { useAgo, useLive } from "./useLive";
 
 const FMT_NAME: Record<Fmt, string> = { yt_short: "Short", yt_video: "Video", ig_reel: "Reel", ig_post: "Post" };
@@ -351,6 +352,7 @@ function VsTable({ chans, slugOf }: { chans: LiveChan[]; slugOf: (c: LiveChan) =
 
 function ManageRivals({ rivals }: { rivals: Rival[] }) {
   const { toast } = useDialog();
+  const { fb } = useFacebook();
   const [list, setList] = useState(rivals);
   const [handle, setHandle] = useState("");
   const [net, setNet] = useState<"youtube" | "instagram">("youtube");
@@ -370,7 +372,7 @@ function ManageRivals({ rivals }: { rivals: Rival[] }) {
           <div key={key(r)} className="gr-rv">
             <PlatformBadge net={r.net} size={18} />
             <span className="ellipsis">{r.handle}</span>
-            {r.net === "instagram" ? <span className="pill warn" title="Instagram only shares other accounts' numbers with apps signed in through Facebook">Needs Facebook Login</span>
+            {r.net === "instagram" ? (fb?.connected ? null : <span className="pill warn" title="Instagram only shares other accounts' numbers with apps signed in through Facebook">Needs Facebook</span>)
               : r.error ? <span className="pill bad" title={r.error}>Not found</span> : !r.id ? <span className="pill">Finding…</span> : null}
             <span className="gr-rv-act">
               <button type="button" className={`icon-btn sm ${r.pinned ? "on" : ""}`} aria-pressed={r.pinned} aria-label={`${r.pinned ? "Unpin" : "Pin"} ${r.handle}`} disabled={busy} onClick={() => send({ pin: { handle: key(r), on: !r.pinned } })}><PushPin size={15} weight={r.pinned ? "fill" : "regular"} /></button>
@@ -384,7 +386,7 @@ function ManageRivals({ rivals }: { rivals: Rival[] }) {
         <label className="gr-add-in"><MagnifyingGlass size={15} aria-hidden /><span className="sr-only">Channel handle or link</span><input value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="@handle or a channel link" /></label>
         <button type="submit" className="sm" disabled={busy || !handle.trim()}><Plus size={14} weight="bold" />Follow</button>
       </form>
-      {list.some((r) => r.net === "instagram") && <p className="tiny dim" style={{ margin: "10px 0 0" }}>Instagram shows other accounts&apos; followers and posts only to apps that sign in through Facebook (a Facebook Page linked to your Instagram). Your Instagram is connected through Instagram&apos;s own sign-in, so these wait until that link exists.</p>}
+      <FacebookLink />
     </section>
   );
 }
@@ -410,6 +412,7 @@ export function CompetitorsView() {
       {!rivals.length && <Notice icon={<Trophy size={18} />}>Finding your rivals&apos; channels. Their numbers appear after the next check (a minute or two).</Notice>}
       <div className="gr-cards">{order.map((c) => <ChanCard key={c.id} c={c} href={slug(c) ? `/analytics/competitors/${slug(c)}` : undefined} />)}</div>
       <VsTable chans={order} slugOf={slug} />
+      <IgRivalsTable rivals={d.rivals} />
       <Outliers items={d.outliers} chans={chans} id="gr-out-h" />
       <div className="an-duo">
         <section className="card an-card" aria-labelledby="gr-their-h">
@@ -434,7 +437,7 @@ export function RivalView({ slug }: { slug: string }) {
   const r = d.rivals.find((x) => rivalSlug(x).toLowerCase() === decodeURIComponent(slug).toLowerCase());
   const c = d.chans.find((x) => r?.id && x.id === r.id);
   if (!r) return <Empty icon={<Trophy size={22} />} title="Not one of your rivals" action={<Link className="btn sm" href="/analytics/competitors">Competitors</Link>}>Follow a channel on Competitors to give it a page.</Empty>;
-  if (r.net === "instagram") return <Empty icon={<Trophy size={22} />} title={`${r.handle} is waiting on Facebook Login`} action={<Link className="btn sm" href="/analytics/competitors">Competitors</Link>}>Instagram only shares other accounts&apos; numbers with apps signed in through Facebook.</Empty>;
+  if (r.net === "instagram") return <IgRivalView handle={r.handle} />;
   if (!c) return <Empty icon={<Trophy size={22} />} title={r.error ? `YouTube doesn't know ${r.handle}` : `Finding ${r.handle}…`}>{r.error ?? "Its numbers appear after the next check."}</Empty>;
   const chans = new Map(d.chans.map((x) => [x.id, x]));
   const mine = d.chans.find((x) => !x.rival && x.net === "youtube");

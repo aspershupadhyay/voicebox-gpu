@@ -105,6 +105,8 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   `/api/cron/backup`, `/api/cron/publish` and `/api/cron/live` take `WORKER_SECRET`, `CRON_SECRET`, the Cloudflare timer's secret (kept as a
   SHA-256), or GitHub's OIDC token for `sweep.yml` on main
   (`lib/cronauth.ts`: signed by GitHub, audience `voicebox-cron`, this repository's workflow only).
+- Facebook Login (`lib/publish/facebook.ts`, `/api/publish/facebook/*`, signed-in only) is only for reading Instagram
+  rivals: the Page tokens are sealed in R2 like the publishing tokens and never returned to the browser or a model.
 - Never loosen the allow-list, the same-origin check or the session expiry.
 
 ## Checks before pushing

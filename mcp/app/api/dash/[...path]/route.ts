@@ -62,6 +62,12 @@ export async function GET(req: Request, ctx: Ctx) {
       const { getPostDetail } = await import("@/lib/analytics");
       return Response.json(await getPostDetail(c, g.path[3], new URL(req.url).searchParams.get("fresh") === "1"));
     }
+    if (a === "facebook" && !b) return Response.json(await (await import("@/lib/publish/facebook")).status());
+    if (a === "ig-rival" && b && /^@?[A-Za-z0-9._]{1,30}$/.test(b)) {
+      // Grow → Competitors → an Instagram rival: profile, posts and what works for them (lib/rivals-ig.ts, kept 3 hours)
+      const { igRival } = await import("@/lib/rivals-ig");
+      return Response.json(await igRival(b, new URL(req.url).searchParams.get("fresh") === "1"));
+    }
     if (a === "analytics" && !b) {
       // the Analytics page: ?range=7|28|90, &acc=<brand id> one brand (left out: every account), &fresh=1 asks YouTube
       // and Instagram again instead of the 30-minute copy. An
@@ -320,6 +326,12 @@ export async function POST(req: Request, ctx: Ctx) {
       await gp.setPrefs(body);
       const s = await gp.gpuState();
       return Response.json({ ...gp.describe(s), modal_url: s.prefs.modal_url, cerebrium_url: s.prefs.cerebrium_url });
+    }
+    if (a === "facebook" && b === "disconnect") {
+      // Grow → Competitors → Disconnect Facebook: forgets the Page tokens (Instagram rivals stop updating)
+      const fb = await import("@/lib/publish/facebook");
+      await fb.disconnect();
+      return Response.json(await fb.status());
     }
     if (a === "analytics" && b === "brands") {
       // Grow → Audience → Accounts → Group accounts: put an account in a brand by hand ({ account, brand }; an empty

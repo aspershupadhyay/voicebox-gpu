@@ -31,18 +31,21 @@ function key() {
   if (s.length < 16) throw new Error("Set PUBLISH_KEY (or MCP_TOKEN) on Vercel before connecting accounts.");
   return createHash("sha256").update(`voicebox-publish-v1:${s}`).digest();
 }
-function seal(t: Tokens) {
+/** Seal anything JSON with the publishing key (AES-256-GCM); lib/publish/facebook.ts keeps its Page tokens this way. */
+export function sealJson(t: unknown) {
   const iv = randomBytes(12);
   const c = createCipheriv("aes-256-gcm", key(), iv);
   const body = Buffer.concat([c.update(JSON.stringify(t), "utf8"), c.final()]);
   return [iv, c.getAuthTag(), body].map((b) => b.toString("base64url")).join(".");
 }
-function unseal(s: string): Tokens {
+export function unsealJson<T>(s: string): T {
   const [iv, tag, body] = s.split(".").map((x) => Buffer.from(x, "base64url"));
   const d = createDecipheriv("aes-256-gcm", key(), iv);
   d.setAuthTag(tag);
   return JSON.parse(Buffer.concat([d.update(body), d.final()]).toString("utf8"));
 }
+const seal = (t: Tokens) => sealJson(t);
+const unseal = (s: string) => unsealJson<Tokens>(s);
 
 export async function listAccounts(): Promise<Account[]> {
   const objs = await listObjs(DIR).catch(() => []);
