@@ -43,7 +43,7 @@ const LINES={};for(const l of VO.lines)LINES[l.id]=l;
 const S=id=>LINES[id].start, E=id=>LINES[id].end;
 function wt(id,i){const l=LINES[id];const w=l.words[Math.min(i,l.words.length-1)];return w?w.s:l.start;}
 const norm=s=>s.toLowerCase().replace(/[^a-z0-9]/g,'');
-function wordIdx(id,word,from=0){const l=LINES[id];const k=l.words.findIndex((w,i)=>i>=from&&norm(w.w).startsWith(word));return k<0?0:k;}
+function wordIdx(id,word,from=0){const l=LINES[id];let k=l.words.findIndex((w,i)=>i>=from&&norm(w.w)===word);if(k<0)k=l.words.findIndex((w,i)=>i>=from&&norm(w.w).startsWith(word));return k<0?0:k;}  // an exact match first ("in" is not "Instagram"), then a prefix
 const at=(id,word,from=0)=>wt(id,wordIdx(id,word,from));
 function venv(t){for(const l of VO.lines){if(t>=l.start&&t<l.end&&l.env){return l.env[Math.min(l.env.length-1,Math.floor((t-l.start)*30))]||0;}}return 0;}
 // ---------- text motion (the house rise: fade, 20 px, a little blur) ----------

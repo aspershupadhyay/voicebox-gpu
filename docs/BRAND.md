@@ -15,7 +15,10 @@ catches what's wrong in the hype.
 | Graphite | `#A6A49F` | the baseline, rules, quiet labels |
 | **Red pen** | `#D8463A` (sampled from the logo) | the one accent: the catch, circles, underlines, strikes, ticks |
 
-Nothing else, except a second dull tone when it carries meaning (a muted green `#5E7D5B` for "true / done").
+These are the brand's colours: the ident, the end card and the default *editor's desk* world. A video's own world
+(the owner, 2026-11-03: "we can't be having the same aesthetic every time") brings its own dull, real-material palette
+(newsprint, sepia, brass, film stock), checked like everything else; the red pen stays the accent of meaning. Inside
+the desk world: nothing else, except a second dull tone when it carries meaning (a muted green `#5E7D5B` for "true / done").
 Never purple, violet, lavender, neon or gradients (the style guide's banned list).
 
 ## Type
@@ -29,6 +32,11 @@ Every emphasis is a pen gesture, drawn on (stroke-dashoffset, slightly wobbly, n
 **circle** for the catch, an **underline** for the idea word, a **strike** for what's wrong, a **tick** for what's
 true, an **arrow** with a handwritten note for context. One pen gesture per beat; the pen is the focal point while it
 draws.
+
+## Signature vs world
+The signature never changes: the "what's the catch?" turn, the red pen as the gesture of meaning, sources on
+screen, the ident. The world changes every video: palette, type pairing, motion grammar, transitions, props, sound.
+The menu and the check are in the video-director skill's `references/formats.md`; don't reuse the last two worlds.
 
 ## The ident (every video ends on it)
 `promo/brand/cte.js` (`CTE.ident(t, {w, h})`, `CTE.cues(t0)`, `CTE.DUR` = 4.3 s, then hold ≥ 1.5 s). A Pixar-style

@@ -38,6 +38,11 @@ engine (`film.html`), the timeline builder (`tools/mkvo.py`), the renderer (`too
 
 ## The workflow
 
+### First: pick the format and the world (every video gets its own look)
+`references/formats.md`: the shape of the story ("they quietly shipped X", spot the error, X vs Y, the timeline…)
+and the art direction (editor's desk, broadsheet, patent drawing, receipt, museum, map…). Not the world of the last
+two videos (`promo/cte-*`). The signature stays: the catch, the red pen, sources, the ident.
+
 ### 0. Start a project
 `project action=start name=<topic>` (VoiceBox MCP). Pass `project` to every tool that makes files, so they land in
 `Projects/<name>-<id>` and you can clean up. Copy the kit: `cp -r promo/claude-video-rules promo/<topic>` and clear

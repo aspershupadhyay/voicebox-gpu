@@ -6,6 +6,13 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Whatever you've learned add it… we can't be having the same aesthetic and designs every time… be creative each
+  time… suggest what kind of video is going viral and what unique thing we can incorporate"** (2026-11-03, after the
+  Instagram TV Reel): the brand is a signature, not a template. Every video picks a format and a world from the
+  video-director skill's `references/formats.md` (a menu of worlds: broadsheet, patent drawing, receipt, museum, map…;
+  formats that get sent: "they quietly shipped X", spot the error, X vs Y, the timeline…) and never reuses the last two
+  worlds. What stays: the catch, the red pen as the gesture of meaning, sources, the ident. The lessons from the
+  Instagram TV build are in the skill's `references/learned-from.md`. `docs/BRAND.md` and CLAUDE.md say the same now.
 - **"Make a video on this… incorporate the screenshot… deep dive research… give the look of Apple TV in it while the user
   is playing it… use our video to play it of Instagram instead of using someone else"** (2026-11-03, on @instagram's
   "new on Apple TV" post): `promo/cte-instagram-tv/`. When a video shows a screen playing a video, it plays **our own**
