@@ -1,0 +1,513 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Jost;src:url(fonts/jost.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:Serif;src:url(fonts/serif.woff2) format("woff2")}
+@font-face{font-family:Serif;font-style:italic;src:url(fonts/serif-i.woff2) format("woff2")}
+@font-face{font-family:"Courier Prime";src:url(fonts/courier-prime.woff2) format("woff2")}
+@font-face{font-family:Caveat;src:url(fonts/caveat.woff2) format("woff2");font-weight:400 700}
+@font-face{font-family:Mono;src:url(fonts/mono.woff2) format("woff2");font-weight:100 900}
+html,body{margin:0;background:#1B1A18;overflow:hidden}
+#stage{position:relative;width:1080px;height:1920px;overflow:hidden;font-family:Jost,sans-serif;-webkit-font-smoothing:antialiased}
+#cam{position:absolute;inset:0;transform-origin:540px 900px}
+.a{position:absolute;box-sizing:border-box}
+.c{left:0;width:1080px;text-align:center}
+.serif{font-family:Serif;font-weight:400;letter-spacing:-0.01em}
+.ty{font-family:"Courier Prime"}
+.mono{font-family:Mono;font-variant-numeric:tabular-nums}
+.w{display:inline-block;white-space:pre}
+#cap{position:absolute;left:0;width:1080px;top:1490px;text-align:center;font-family:Jost;font-weight:500;font-size:58px;letter-spacing:-0.01em}
+#cap span.box{display:inline-block;background:rgba(27,26,24,.92);color:#EDEBE6;border-radius:18px;padding:12px 30px 16px}
+svg{position:absolute;overflow:visible}
+img{position:absolute;display:block}
+</style></head>
+<body><div id="stage"><div id="cam"></div><div id="cap"></div></div>
+<script src="vo.js"></script>
+<script src="cte.js"></script>
+<script>
+// Catch the Error: GDPx, the AI exam where the best model scores 12%.
+// The world: the exam paper (the Cyclon house look: paper, ink, and the red pen, which grades). Real media: SemiAnalysis's post and leaderboard.
+const PAPER='#E7E5E1', PAPER2='#D9D6D0', SHEET='#F4F1EA', INK='#1B1A18', INK2='#2A2926', INKL='#3A3936', SOFT='#57554F',
+      GRAPH='#A6A49F', RED='#D8463A', REDL='#E8705F', OK='#5E7D5B', ONINK='#EDEBE6', ONINK2='#9C9A94';
+// ---------- math ----------
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const lerp=(a,b,p)=>a+(b-a)*p;
+const eo=x=>x<=0?0:x>=1?1:1-Math.pow(2,-10*x);
+const ei=x=>x<=0?0:x>=1?1:x*x*x;
+const eio=x=>x<=0?0:x>=1?1:x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;
+const back=x=>{if(x<=0)return 0;if(x>=1)return 1;const c=1.7;return 1+(c+1)*Math.pow(x-1,3)+c*Math.pow(x-1,2);};
+const seg=(t,t0,d,e=eo)=>e(clamp((t-t0)/d));
+function hash(n){let x=Math.sin(n*127.1+311.7)*43758.5453;return x-Math.floor(x);}
+const fmt=n=>Math.round(n).toLocaleString('en-US');
+// ---------- voice timing ----------
+const LINES={};for(const l of VO.lines)LINES[l.id]=l;
+// a line can be missing in a shorter cut (tools/script.json of the cut): its time is NaN and its scene and cues drop out
+const S=id=>LINES[id]?LINES[id].start:NaN, E=id=>LINES[id]?LINES[id].end:NaN;
+function wt(id,i){const l=LINES[id];if(!l)return NaN;const w=l.words[Math.min(i,l.words.length-1)];return w?w.s:l.start;}
+function we(id,i){const l=LINES[id];if(!l)return NaN;const w=l.words[Math.min(i,l.words.length-1)];return w?w.e:l.end;}
+const norm=s=>s.toLowerCase().replace(/[^a-z0-9]/g,'');
+function wordIdx(id,word,from=0){const l=LINES[id];if(!l)return 0;const k=l.words.findIndex((w,i)=>i>=from&&norm(w.w).startsWith(word));return k<0?0:k;}
+const at=(id,word,from=0)=>wt(id,wordIdx(id,word,from));
+function venv(t){for(const l of VO.lines){if(t>=l.start&&t<l.end&&l.env){return l.env[Math.min(l.env.length-1,Math.floor((t-l.start)*30))]||0;}}return 0;}
+// ---------- text motion (the house rise) ----------
+function rise(t,t0,d=.34,dy=22){const p=seg(t,t0,d);return `opacity:${p.toFixed(3)};transform:translateY(${((1-p)*dy).toFixed(2)}px);filter:blur(${((1-p)*5).toFixed(2)}px)`;}
+function fade(t,t0,d=.3){return `opacity:${seg(t,t0,d).toFixed(3)}`;}
+function arrive(t,t0,d=.42){const p=clamp((t-t0)/d);const s=p<=0?.82:lerp(.82,1,back(p));return `opacity:${clamp(p*3).toFixed(3)};transform:scale(${s.toFixed(4)})`;}
+function ws(t,words,times,style=''){return words.map((w,i)=>`<span class="w" style="${rise(t,times[i]??times[times.length-1],.3,18)};${typeof style==='function'?style(i,w):style}">${w}${i<words.length-1?' ':''}</span>`).join('');}
+function spoken(t,id,words,k=0,style=''){return ws(t,words,words.map((_,i)=>wt(id,k+i)-.06),style);}
+function A(x,y,css,html){return `<div class="a" style="left:${x}px;top:${y}px;${css}">${html??''}</div>`;}
+function C(y,css,html){return `<div class="a c" style="top:${y}px;${css}">${html??''}</div>`;}
+function grain(dark){return `<svg width="1080" height="1920" style="left:0;top:0"><filter id="g${dark?1:0}"><feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="2" seed="${dark?9:4}"/><feColorMatrix values="0 0 0 0 ${dark?.9:.25}  0 0 0 0 ${dark?.88:.24}  0 0 0 0 ${dark?.85:.22}  0 0 0 ${dark?.035:.07} 0"/></filter><rect width="1080" height="1920" filter="url(#g${dark?1:0})"/></svg>`;}
+function slug(t,dark){return A(70,150,`font-family:'Courier Prime';font-size:26px;letter-spacing:.12em;color:${dark?ONINK2:SOFT}`,`cte <span style="color:${RED}">/</span> THE HARDEST AI EXAM`);}
+function src(t,t0,text,dark=0,y=1700){return A(70,y,`${fade(t,t0,.3)};font-family:'Courier Prime';font-size:24px;letter-spacing:.04em;color:${dark?ONINK2:SOFT};width:940px`,text);}
+// ---------- the red pen ----------
+function wob(i,seed,amp){return amp*(Math.sin(i*.9+seed)*.6+Math.sin(i*2.3+seed*1.7)*.4);}
+function penPath(pts,t,t0,d,w=7,col=RED){const p=eio(clamp((t-t0)/d));if(p<=0)return '';let L=0;for(let i=1;i<pts.length;i++)L+=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);
+  return `<path d="M${pts.map(q=>q[0].toFixed(1)+' '+q[1].toFixed(1)).join(' L')}" fill="none" stroke="${col}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${L.toFixed(0)}" stroke-dashoffset="${(L*(1-p)).toFixed(1)}"/>`;}
+function penUnder(x0,x1,y,t,t0,d=.35,w=8,seed=1){const n=24,pts=[];for(let i=0;i<=n;i++){const u=i/n;pts.push([lerp(x0,x1,u),y+wob(i,seed,3)+u*6-8*u*(1-u)]);}return penPath(pts,t,t0,d,w);}
+function penStrike(x0,x1,y,t,t0,d=.25,w=8){const pts=[];for(let i=0;i<=16;i++){const u=i/16;pts.push([lerp(x0,x1,u),y+wob(i,4,2.5)-u*10]);}return penPath(pts,t,t0,d,w);}
+function penRing(cx,cy,rx,ry,t,t0,d=.6,w=7,turns=1.25,seed=2,col=RED){const pts=[],n=120,a0=-2.3;for(let i=0;i<=n;i++){const u=i/n,a=a0+u*Math.PI*2*turns;const r=1+.05*Math.sin(3*a+seed)+.03*Math.sin(5*a+seed*2)+.03*u;pts.push([cx+Math.cos(a)*rx*r,cy+Math.sin(a)*ry*r]);}return penPath(pts,t,t0,d,w,col);}
+function penTick(x,y,s,t,t0,d=.22,w=8){return penPath([[x,y],[x+s*.35,y+s*.4],[x+s,y-s*.55]],t,t0,d,w);}
+function penX(x,y,s,t,t0,w=7){return penPath([[x,y],[x+s,y+s]],t,t0,.12,w)+penPath([[x+s,y],[x,y+s]],t,t0+.1,.12,w);}
+function penArrow(x0,y0,x1,y1,t,t0,d=.3,w=6,bend=24){const pts=[];for(let i=0;i<=16;i++){const u=i/16;pts.push([lerp(x0,x1,u)+Math.sin(u*Math.PI)*bend,lerp(y0,y1,u)]);}
+  const ang=Math.atan2(y1-pts[14][1],x1-pts[14][0]);const h=22;const hd=[[x1-h*Math.cos(ang-.5),y1-h*Math.sin(ang-.5)],[x1,y1],[x1-h*Math.cos(ang+.5),y1-h*Math.sin(ang+.5)]];
+  return penPath(pts,t,t0,d,w)+penPath(hd,t,t0+d*.9,.12,w);}
+function mark(t,t0,inner,kind='ring',d=.5,col=RED,w=7,seed=3){const p=eio(clamp((t-t0)/d));
+  let path='',box='left:-10%;top:-24%;width:120%;height:148%';
+  if(kind==='ring'){const pts=[];for(let i=0;i<=90;i++){const u=i/90,a=-2.3+u*Math.PI*2*1.2;const r=1+.04*Math.sin(3*a+seed)+.03*u;pts.push([50+Math.cos(a)*46*r,50+Math.sin(a)*44*r]);}path='M'+pts.map(q=>q[0].toFixed(2)+' '+q[1].toFixed(2)).join(' L');}
+  if(kind==='strike'){box='left:-4%;top:0;width:108%;height:100%';path='M0 58 C30 52, 60 56, 100 46';}
+  if(kind==='under'){box='left:-3%;top:84%;width:106%;height:22%';path='M0 40 C30 60, 70 30, 100 55';}
+  const svg=p>0?`<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;${box};overflow:visible;pointer-events:none"><path d="${path}" pathLength="1" fill="none" stroke="${col}" stroke-width="${w}" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="1 1" stroke-dashoffset="${(1-p).toFixed(4)}"/></svg>`:'';
+  return `<span style="position:relative;display:inline-block">${inner}${svg}</span>`;}
+function svgL(inner){return `<svg width="1080" height="1920" style="left:0;top:0">${inner}</svg>`;}
+function note(x,y,t,t0,text,size=52,rot=-3,col=RED){return A(x,y,`${rise(t,t0,.3,10)};font-family:Caveat;font-weight:600;font-size:${size}px;color:${col};transform-origin:left;rotate:${rot}deg;white-space:nowrap`,text);}
+// a real piece (screenshot), as a clipping taped to the page: slightly turned, a fold shadow, a credit under it
+function clip(x,y,w,file,iw,ih,t,t0,rot=-1.2,inner='',credit='',dark=0){const h=w*ih/iw;const p=seg(t,t0,.45,back);
+  return `<div class="a" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;opacity:${clamp((t-t0)/.15).toFixed(3)};transform:translateY(${((1-p)*80).toFixed(1)}px) rotate(${rot}deg);box-shadow:0 18px 0 -8px ${dark?INK2:PAPER2}">
+   <img src="assets/real/${file}" style="left:0;top:0;width:${w}px;height:${h}px">${inner}
+   ${credit?`<div class="ty" style="position:absolute;left:0;top:${h+22}px;font-size:22px;letter-spacing:.06em;color:${dark?ONINK2:SOFT};white-space:nowrap">${credit}</div>`:''}</div>`;}
+// ---------- the exam world ----------
+const KRAFT='#CFC0A0', KRAFT2='#B9A988';
+// the top caption (what the reference does well: the line is always on screen, a few words at a time): the phrase
+// group being spoken rises word by word on its spoken times; emphasised words are the serif italic in red
+function topcap(t,id,groups,o={}){const l=LINES[id];if(!l)return '';const {y=250,size=78,emph=[],col=INK,ecol=RED,lh=1.08,w=940}=o;
+  let g=0;groups.forEach(([a],i)=>{if(t>=wt(id,a)-.12)g=i;});const [a,b]=groups[g];
+  const words=l.words.slice(a,b+1).map((x,i)=>{const k=a+i;const e=emph.includes(k);return `<span class="w${e?' serif':''}" style="${rise(t,wt(id,k)-.06,.3,18)};${e?`font-style:italic;color:${ecol};font-size:1.12em`:''}">${x.w}${k<b?' ':''}</span>`;}).join('');
+  return A((1080-w)/2,y,`width:${w}px;text-align:center;font-size:${size}px;line-height:${lh};font-weight:500;color:${col};letter-spacing:-0.03em`,words);}
+// a real screenshot as a card: rounded corners and a soft shadow; the view zooms and pans inside it (the image point
+// cx,cy sits at the card's centre at z screen px per image px); marks are SVG in the image's own pixels
+function shot(o){const {x,y,w,h,file,iw,ih,cx=iw/2,cy=ih/2,z=w/iw,op=1,rp=1,marks='',r=34,filt='',credit='',cred0=0,t=0}=o;
+  const ix=w/2-cx*z, iy=h/2-cy*z;
+  return `<div class="a" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;border-radius:${r}px;overflow:hidden;opacity:${op.toFixed(3)};transform:translateY(${((1-rp)*110).toFixed(1)}px) scale(${lerp(.92,1,rp).toFixed(4)});box-shadow:0 44px 70px -34px rgba(27,26,24,.6),0 0 0 2px rgba(27,26,24,.12);background:#101113">
+    <div style="position:absolute;left:${ix.toFixed(1)}px;top:${iy.toFixed(1)}px;width:${iw}px;height:${ih}px;transform-origin:0 0;transform:scale(${z.toFixed(4)})">
+    <img src="assets/real/${file}" style="left:0;top:0;width:${iw}px;height:${ih}px;${filt}"><svg width="${iw}" height="${ih}" style="left:0;top:0">${marks}</svg></div></div>`+
+    (credit?A(x,y+h+22,`${fade(t,cred0,.3)};font-family:'Courier Prime';font-size:24px;letter-spacing:.05em;color:${SOFT}`,credit):'');}
+// the exam paper: a header, eight questions, the red pen marks them, the grade written in the corner
+function sheet(t,o={}){const {x=150,y=520,w=780,h=1010,rot=-2,x0=Infinity,grade=Infinity,ring=Infinity,dim=0}=o;
+  let s=`<div class="a" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;background:${SHEET};rotate:${rot}deg;border-radius:8px;box-shadow:0 34px 60px -30px rgba(27,26,24,.5),0 0 0 1.5px rgba(27,26,24,.10)">`;
+  s+=`<div class="ty" style="position:absolute;left:50px;top:44px;font-size:28px;letter-spacing:.06em;color:${INK}">GDPx v1.0 · FINAL EXAM</div>`;
+  s+=`<div class="ty" style="position:absolute;left:50px;top:92px;font-size:22px;letter-spacing:.04em;color:${SOFT}">CANDIDATE: <span style="color:${INK}">Claude Opus 5.5</span></div>`;
+  s+=`<div class="ty" style="position:absolute;left:50px;top:128px;font-size:20px;letter-spacing:.06em;color:${SOFT}">206 TASKS · 11 FIELDS · 8 HRS</div>`;
+  s+=`<div style="position:absolute;left:50px;right:50px;top:178px;height:2px;background:${INK}"></div>`;
+  const marks=[];
+  for(let i=0;i<8;i++){const qy=230+i*94;
+    s+=`<div class="ty" style="position:absolute;left:50px;top:${qy}px;font-size:26px;color:${INK}">Q${i+1}.</div>`;
+    const w1=300+hash(i*3+1)*260, w2=180+hash(i*7+2)*300;
+    s+=`<div style="position:absolute;left:130px;top:${qy+12}px;width:${w1}px;height:9px;border-radius:5px;background:${GRAPH};opacity:.7"></div><div style="position:absolute;left:130px;top:${qy+44}px;width:${w2}px;height:9px;border-radius:5px;background:${GRAPH};opacity:.45"></div>`;
+    marks.push(i===4?penTick(w-110,qy+40,44,t,x0+i*.07,.14,7):penX(w-112,qy+6,38,t,x0+i*.07,7));}
+  // the grade: 12% written by hand, then ringed
+  const gp=seg(t,grade,.42,x=>x);
+  s+=`<div style="position:absolute;left:${w-262}px;top:34px;width:240px;text-align:center;font-family:Caveat;font-weight:700;font-size:128px;line-height:1.05;color:${RED};clip-path:inset(0 ${((1-gp)*100).toFixed(1)}% 0 0);rotate:-6deg">12%</div>`;
+  s+=`<svg width="${w}" height="${h}" style="left:0;top:0">${marks.join('')}${penRing(w-142,108,122,70,t,ring,.5,7,1.2,4)}</svg>`;
+  if(dim)s+=`<div style="position:absolute;inset:0;background:${PAPER};opacity:${dim}"></div>`;
+  return s+'</div>';}
+const DOM=[['RSI',10],['CHIPS',34],['CYBER',18],['BIO',13],['FIN',24],['LAW',20],['QUANT',10],['HW',21],['MAT',23],['ALIGN',18],['SWE',15]];
+// the 206 tasks as cells, one column per field (the real counts from gdpx.semianalysis.com/domains)
+function taskGrid(t,o){const {fill=1,labels=Infinity,lit=-1,dimOthers=0,base=1230}=o;let s='',k=0;const total=206,shown=Math.floor(fill*total+1e-6);
+  DOM.forEach(([name,n],c)=>{const cx=540+(c-5)*86;const isLit=c===lit;const op=lit>=0&&!isLit?(1-.7*dimOthers):1;
+    for(let i=0;i<n;i++){const row=Math.floor(i/2), col=i%2;const on=k<shown;k++;if(!on)continue;
+      s+=`<rect x="${cx-29+col*30}" y="${base-28-row*30}" width="26" height="26" rx="4" fill="${isLit?RED:INK}" opacity="${op}"/>`;}
+    s+=`<text x="${cx}" y="${base+40}" text-anchor="middle" font-family="Courier Prime" font-size="21" letter-spacing="1" fill="${isLit?RED:SOFT}" opacity="${seg(t,labels+c*.05,.25).toFixed(3)}">${name}</text>`;
+    s+=`<text x="${cx}" y="${base-28-Math.ceil(n/2)*30-4}" text-anchor="middle" font-family="Mono" font-size="22" font-weight="600" fill="${isLit?RED:INK}" opacity="${(seg(t,labels+c*.05,.25)*op).toFixed(3)}">${n}</text>`;});
+  return svgL(s);}
+function credit(t,t0,text,dark=0,y=1700){return src(t,t0,text,dark,y);}
+// ---------- scenes ----------
+const SC=[];
+function scene(t0,bg,draw,opt={}){if(isFinite(t0))SC.push({t0,bg,draw,...opt});}
+
+// 1 · the hook: the exam is already on the desk; the pen marks it wrong, wrong, wrong… and writes the grade: 12%
+scene(0,PAPER,(t)=>{
+  let h=grain(0)+slug(t,0);
+  const sc=at('l01','scored'), tw=at('l01','twelve'), pc=at('l01','percent');
+  h+=C(232,`font-size:84px;line-height:1.04;font-weight:500;color:${INK};letter-spacing:-0.035em`,`The <span class="serif" style="font-style:italic;font-size:1.12em">best</span> AI in the world`);
+  h+=C(330,`font-size:84px;line-height:1.04;font-weight:500;color:${INK};letter-spacing:-0.035em`,`just took a new exam.`);
+  const z=1+.16*seg(t,tw-.1,.6,eio), dy=(1-seg(t,-.35,.75,eo))*260;
+  h+=`<div class="a" style="inset:0;transform-origin:780px 640px;transform:translateY(${dy.toFixed(1)}px) scale(${z.toFixed(4)})">${sheet(t,{x0:sc-.05,grade:tw-.02,ring:pc+.05})}</div>`;
+  return h;
+});
+
+// 2 · "And that's the top score.": the real post, the pen under its own words
+scene(S('l02'),PAPER,(t)=>{
+  const t0=S('l02');let h=grain(0)+slug(t,0);
+  const tp=at('l02','top'), sc=at('l02','score');
+  h+=topcap(t,'l02',[[0,4]],{size:90,emph:[3,4]});
+  const z=860/595;
+  const marks=penUnder(338,578,155,t,tp,.35,3.5,3)+penRing(30,165,30,19,t,sc+.05,.45,3.5,1.25,6);
+  h+=shot({t,x:110,y:430,w:860,h:780*z,file:'tweet.png',iw:595,ih:780,rp:seg(t,t0-.08,.45,back),marks,credit:'@SemiAnalysis_ on X · Nov 2, 2026',cred0:t0+.3});
+  return h;
+},{tr:'whip',dir:1});
+
+// 3 · the leaderboard: pan to Gemini, to the price column, back to GPT-6 Astra
+scene(S('l03'),PAPER,(t)=>{
+  const t0=S('l03');let h=grain(0)+slug(t,0);
+  const gm=at('l03','gemini'), pr=at('l03','price'), as=at('l03','astra');
+  h+=topcap(t,'l03',[[0,4],[5,10],[11,13]],{size:76,emph:[2,10,13]});
+  // the camera inside the screenshot: whole board → names → prices → names
+  const p1=seg(t,gm-.25,.5,eio), p2=seg(t,pr-.45,.5,eio), p3=seg(t,as-.3,.45,eio);
+  let cx=lerp(1060,660,p1), cy=lerp(1018,520,p1), z=lerp(.453,.98,p1);
+  cx=lerp(cx,1480,p2); cx=lerp(cx,660,p3); cy=lerp(cy,560,p3);
+  const marks=penUnder(190,470,528,t,gm+.1,.35,5,2)+penRing(1745,495,105,46,t,pr-.05,.45,5,1.2,3)+penRing(1745,375,105,46,t,pr+.35,.4,4,1.1,7,GRAPH)+penUnder(190,420,648,t,as+.05,.3,5,5);
+  h+=shot({t,x:60,y:470,w:960,h:940,file:'leaderboard.jpg',iw:2120,ih:2036,cx,cy,z,rp:seg(t,t0-.05,.4,back),marks,filt:'filter:saturate(.55)'});
+  h+=A(60,1440,`${rise(t,pr+.1)};font-family:Mono;font-size:38px;color:${INK};width:960px;text-align:center`,`per task: Opus <span style="color:${SOFT}">$51.41</span> · Gemini <span style="color:${RED}">$16.29</span>`);
+  h+=credit(t,t0+.3,'gdpx.semianalysis.com · leaderboard, Nov 2, 2026',0,1520);
+  return h;
+},{tr:'cut',punch:1.05});
+
+// 4 · the name: GDPx, from SemiAnalysis
+scene(S('l04'),PAPER,(t)=>{
+  const t0=S('l04');let h=grain(0)+slug(t,0);
+  const g=at('l04','gdpx'), se=at('l04','semianalysis');
+  h+=topcap(t,'l04',[[0,3]],{size:80,y:420});
+  const L=['G','D','P'];
+  h+=C(640,`font-size:300px;line-height:1;font-weight:500;color:${INK};letter-spacing:-0.06em`,L.map((c,i)=>`<span class="w" style="${rise(t,g-.05+i*.08,.3,40)}">${c}</span>`).join('')+`<span class="w serif" style="${rise(t,g+.22,.3,40)};font-style:italic;color:${RED};letter-spacing:0">x</span>`);
+  h+=svgL(penUnder(330,750,975,t,g+.45,.35,8,3));
+  h+=C(1060,`${rise(t,se-.1)};font-size:64px;color:${INK}`,`from <span class="serif" style="font-style:italic">SemiAnalysis</span>`);
+  h+=C(1170,`${rise(t,se+.25)};font-family:'Courier Prime';font-size:28px;letter-spacing:.1em;color:${SOFT}`,'v1.0 · RELEASED NOV 2, 2026');
+  return h;
+},{tr:'pen'});
+
+// 5 · most tests are a quiz: one question, one answer
+scene(S('l05'),PAPER,(t)=>{
+  const t0=S('l05');let h=grain(0)+slug(t,0);
+  const qz=at('l05','quiz'), oq=at('l05','one'), oa=at('l05','one',wordIdx('l05','one')+1), an=at('l05','answer');
+  h+=topcap(t,'l05',[[0,5],[6,9]],{size:84,emph:[5,9]});
+  h+=A(290,640,`${arrive(t,t0+.05,.4)};width:500px;height:520px;background:${SHEET};border-radius:10px;box-shadow:0 30px 50px -28px rgba(27,26,24,.45),0 0 0 1.5px rgba(27,26,24,.1);rotate:1.5deg`,
+    `<div class="ty" style="position:absolute;left:44px;top:40px;font-size:26px;letter-spacing:.08em;color:${SOFT}">QUESTION 1 OF 1</div>
+     <div style="position:absolute;left:44px;top:96px;font-family:Mono;font-size:56px;color:${INK}">17 × 3 = ?</div>
+     ${['A  41','B  51','C  61'].map((x,i)=>`<div style="position:absolute;left:44px;top:${210+i*90}px;font-family:Mono;font-size:44px;color:${INK};${rise(t,oq+i*.12,.25,10)}">${x}</div>`).join('')}
+     <svg width="500" height="520" style="left:0;top:0">${penRing(92,330,62,44,t,an-.1,.4,6)}${penTick(330,300,70,t,an+.25,.18,8)}</svg>`);
+  h+=credit(t,oa,'a quiz: one prompt in, one answer out',0,1250);
+  return h;
+},{tr:'cut',punch:1.04});
+
+// 6 · a real job, and eight hours: the quiz card shrinks; the job folder lands; the clock runs
+scene(S('l06'),PAPER,(t)=>{
+  const t0=S('l06');let h=grain(0)+slug(t,0);
+  const jb=at('l06','job'), eh=at('l06','eight'), hr=at('l06','hours');
+  h+=topcap(t,'l06',[[0,6],[7,14]],{size:78,emph:[6,10,11]});
+  // the quiz card, tiny now, next to the job
+  h+=A(96,560,`${fade(t,t0,.2)};width:150px;height:156px;background:${SHEET};border-radius:6px;box-shadow:0 0 0 1.5px rgba(27,26,24,.15);rotate:1.5deg`,`<div style="position:absolute;left:14px;top:14px;font-family:Mono;font-size:17px;color:${INK}">17 × 3 = ?</div><div class="ty" style="position:absolute;left:0;width:150px;text-align:center;top:180px;font-size:20px;color:${SOFT}">a quiz</div>`);
+  // the folder
+  const fp=seg(t,t0+.05,.45,back);
+  h+=`<div class="a" style="left:300px;top:${(540+(1-fp)*200).toFixed(1)}px;width:690px;height:640px;opacity:${clamp((t-t0-.05)/.15).toFixed(3)};rotate:-1.5deg">
+    <div style="position:absolute;left:0;top:0;width:260px;height:70px;background:${KRAFT2};border-radius:14px 14px 0 0"></div>
+    <div style="position:absolute;left:0;top:50px;width:690px;height:590px;background:${KRAFT};border-radius:0 14px 14px 14px;box-shadow:0 34px 60px -30px rgba(27,26,24,.5)"></div>
+    <div class="ty" style="position:absolute;left:40px;top:96px;font-size:30px;letter-spacing:.08em;color:${INK}">A REAL JOB · ONE TASK</div>
+    ${['open the files','work in the real tools','run it, check it, fix it','hand in the result'].map((x,i)=>`<div class="ty" style="position:absolute;left:40px;top:${170+i*58}px;font-size:30px;color:${INK2};${rise(t,jb+.2+i*.12,.25,10)}">— ${x}</div>`).join('')}
+  </div>`;
+  // the clock: 0:00:00 → 8:00:00 across "eight hours"
+  const cp=seg(t,eh-.05,Math.max(.6,hr-eh+.35),eio);const sec=Math.round(cp*8*3600);
+  const hh=Math.floor(sec/3600), mm=Math.floor(sec/60)%60, ss=sec%60;
+  h+=C(1250,`${rise(t,eh-.1)};font-family:Mono;font-size:150px;font-weight:600;color:${cp>=1?RED:INK};letter-spacing:-0.03em`,`${hh}:${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`);
+  h+=credit(t,hr,'default time limit per task: 8 hours (some are shorter)',0,1460);
+  return h;
+},{tr:'zoom'});
+
+// 7 · 206 tasks across 11 fields: the real counts, cell by cell
+scene(S('l07'),PAPER,(t)=>{
+  const t0=S('l07');let h=grain(0)+slug(t,0);
+  const tw=at('l07','two'), tk=at('l07','tasks'), el=at('l07','eleven'), va=at('l07','valuable');
+  h+=topcap(t,'l07',[[0,4],[5,11]],{size:78,emph:[4,6,10]});
+  const fill=seg(t,tw,Math.max(.6,tk-tw+.3),x=>x);
+  h+=C(440,`${rise(t,tw-.1)};font-family:Mono;font-size:130px;font-weight:600;color:${INK};letter-spacing:-0.04em`,`${Math.round(fill*206)}<span style="font-family:Jost;font-weight:400;font-size:48px;color:${SOFT};letter-spacing:0"> tasks</span>`);
+  h+=taskGrid(t,{fill,labels:el});
+  h+=credit(t,el+.4,'tasks per field · GDPx v1.0 · gdpx.semianalysis.com',0,1340);
+  return h;
+},{tr:'whip',dir:1});
+
+// 8 · Chips. Cyber. Biology. Trading. Law.: one word per beat, its column lights
+const L8=[['chips',1,'chip design · 34 tasks'],['cyber',2,'cybersecurity · 18 tasks'],['biology',3,'biology · 13 tasks'],['trading',6,'quant trading · 10 tasks'],['law',5,'legal · 20 tasks']];
+scene(S('l08'),PAPER,(t)=>{
+  const t0=S('l08');let h=grain(0)+slug(t,0);
+  let k=0;L8.forEach(([w],i)=>{if(t>=at('l08',w)-.08)k=i;});const [w,col,sub]=L8[k];const tw=at('l08',w)-.08;
+  h+=C(300,`${rise(t,tw,.22,30)};font-size:200px;line-height:1;font-weight:500;color:${INK};letter-spacing:-0.05em`,`<span class="serif" style="font-style:italic">${LINES.l08?LINES.l08.words[k].w.replace(/[.]/g,''):w}</span>`);
+  h+=C(540,`${rise(t,tw+.05,.22,12)};font-family:'Courier Prime';font-size:34px;letter-spacing:.06em;color:${RED}`,sub);
+  h+=taskGrid(t,{fill:1,labels:-9,lit:col,dimOthers:1});
+  return h;
+},{tr:'cut',punch:1.03});
+
+// 9 · one task: an $880M buyout and a deal room of 4,000 files
+scene(S('l09'),PAPER,(t)=>{
+  const t0=S('l09');let h=grain(0)+slug(t,0);
+  const ei=at('l09','eight'), bo=at('l09','buyout'), fo=at('l09','four'), fi=at('l09','files');
+  h+=topcap(t,'l09',[[0,7],[8,15]],{size:74,emph:[7,11]});
+  h+=C(450,`${rise(t,ei-.05)};font-family:Mono;font-size:170px;font-weight:600;color:${INK};letter-spacing:-0.04em`,`$880M`);
+  h+=note(812,440,t,bo+.15,'one task',58,-8);
+  // the deal room: 80 × 50 = 4,000 files, filling row by row
+  const fp=seg(t,fo-.05,Math.max(.6,fi-fo+.3),eio);const rows=fp*50, full=Math.floor(rows), part=rows-full;
+  const gx=100,gy=720,cw=11,chh=12;
+  h+=`<svg width="1080" height="1920" style="left:0;top:0"><defs><pattern id="fl" width="${cw}" height="${chh}" patternUnits="userSpaceOnUse"><rect x="1" y="1" width="${cw-3}" height="${chh-3}" rx="1.5" fill="${INK}" opacity=".78"/></pattern></defs>
+    <rect x="${gx}" y="${gy}" width="${80*cw}" height="${full*chh}" fill="url(#fl)"/><rect x="${gx}" y="${gy+full*chh}" width="${Math.floor(part*80)*cw}" height="${chh}" fill="url(#fl)"/></svg>`;
+  h+=C(1350,`${rise(t,fo)};font-family:Mono;font-size:64px;font-weight:600;color:${fp>=1?RED:INK}`,`${fmt(fp*4000)} <span style="font-family:Jost;font-weight:400;font-size:44px;color:${SOFT}">files in the deal room</span>`);
+  h+=credit(t,fi,'a GDPx finance task (Living Context): a fund buys ~62% of a snack company for $880M',0,1460);
+  return h;
+},{tr:'whip',dir:-1});
+
+// 10 · graded on results: does the chip work? does the strategy beat the expert's?
+scene(S('l10'),PAPER,(t)=>{
+  const t0=S('l10');let h=grain(0)+slug(t,0);
+  const rs=at('l10','results'), ch=at('l10','chip'), wk=at('l10','work'), st=at('l10','strategy'), ex=at('l10','experts');
+  h+=topcap(t,'l10',[[0,3],[4,7],[8,13]],{size:80,emph:[3,7,11]});
+  // the chip (left) and its verdict
+  const ca=seg(t,t0+.05,.35,back);
+  let g=`<g transform="translate(300 700) scale(${(.8+.2*ca).toFixed(3)})" opacity="${clamp((t-t0-.05)/.15).toFixed(3)}"><rect x="-110" y="-110" width="220" height="220" rx="14" fill="${SHEET}" stroke="${INK}" stroke-width="6"/><rect x="-55" y="-55" width="110" height="110" rx="6" fill="none" stroke="${INK}" stroke-width="4"/>`;
+  for(let i=0;i<5;i++){const p=-80+i*40;g+=`<line x1="${p}" y1="-110" x2="${p}" y2="-145" stroke="${INK}" stroke-width="6"/><line x1="${p}" y1="110" x2="${p}" y2="145" stroke="${INK}" stroke-width="6"/><line x1="-110" y1="${p}" x2="-145" y2="${p}" stroke="${INK}" stroke-width="6"/><line x1="110" y1="${p}" x2="145" y2="${p}" stroke="${INK}" stroke-width="6"/>`;}
+  g+=`</g>`;
+  h+=svgL(g+penTick(560,690,90,t,wk+.15,.22,10));
+  h+=A(680,640,`${rise(t,wk+.05)};font-size:52px;color:${INK};line-height:1.15`,`it works, or<br>it scores <span style="color:${RED}">0</span>`);
+  // the strategy vs the expert's (an illustration)
+  const X=u=>140+u*800, Y=v=>1340-v*260;
+  const ex1=[0,.08,.05,.18,.22,.3,.28,.38,.42,.5], ag=[0,.05,.12,.1,.24,.2,.36,.44,.5,.62];
+  const dp=seg(t,st-.1,Math.max(.6,ex-st+.2),x=>x);
+  const pl=(arr,p)=>{const n=arr.length-1, m=p*n, k=Math.floor(m);let pts=arr.slice(0,k+1).map((v,i)=>`${X(i/n).toFixed(1)},${Y(v).toFixed(1)}`);if(k<n)pts.push(`${X(m/n).toFixed(1)},${Y(lerp(arr[k],arr[k+1],m-k)).toFixed(1)}`);return pts.join(' ');};
+  let c=`<line x1="140" y1="1340" x2="940" y2="1340" stroke="${INK}" stroke-width="3" opacity="${seg(t,st-.3,.3).toFixed(3)}"/>`;
+  c+=`<polyline points="${pl(ex1,dp)}" fill="none" stroke="${GRAPH}" stroke-width="6" stroke-dasharray="14 10"/><polyline points="${pl(ag,dp)}" fill="none" stroke="${INK}" stroke-width="7" stroke-linejoin="round"/>`;
+  if(dp>=1)c+=`<text x="880" y="${Y(.5)+44}" font-family="Mono" font-size="26" fill="${SOFT}" text-anchor="end" dy="16">expert's</text><text x="880" y="${Y(.62)-36}" font-family="Mono" font-size="26" font-weight="700" fill="${INK}" text-anchor="end">the AI's</text>`;
+  h+=svgL(c+penRing(X(1),Y(.62),40,40,t,ex+.1,.4,6));
+  h+=A(140,960,`${rise(t,st-.2)};font-family:'Courier Prime';font-size:26px;letter-spacing:.08em;color:${SOFT}`,'PROFIT & LOSS, OVER THE TEST');
+  h+=credit(t,ex,'illustration · chips are scored against an expert design; trading against a reference strategy',0,1420);
+  return h;
+},{tr:'cut',punch:1.04});
+
+// 11 · three tries; the score is the average
+scene(S('l11'),PAPER,(t)=>{
+  const t0=S('l11');let h=grain(0)+slug(t,0);
+  const th=at('l11','three'), tr=at('l11','tries'), ta=at('l11','task'), av=at('l11','average');
+  h+=topcap(t,'l11',[[0,3],[4,7]],{size:84,emph:[1,7]});
+  const T3=[th,tr,ta];
+  for(let i=0;i<3;i++){const x=130+i*290;
+    h+=A(x,620,`${arrive(t,T3[i]-.1,.35)};width:240px;height:300px;background:${SHEET};border-radius:10px;box-shadow:0 26px 40px -26px rgba(27,26,24,.45),0 0 0 1.5px rgba(27,26,24,.1)`,`<div class="ty" style="position:absolute;left:0;width:240px;text-align:center;top:30px;font-size:28px;letter-spacing:.1em;color:${SOFT}">TRY ${i+1}</div>`);
+    h+=svgL(i===1?penTick(x+70,820,100,t,T3[i]+.12,.2,11):penX(x+75,750,90,t,T3[i]+.12,10));}
+  h+=C(1020,`${rise(t,av-.1)};font-family:Mono;font-size:170px;font-weight:600;color:${INK};letter-spacing:-0.04em`,`= 33<span style="font-size:90px">%</span>`);
+  h+=svgL(penUnder(370,720,1215,t,av+.2,.35,8,4));
+  h+=credit(t,av,'illustration: one pass/fail task, three attempts, averaged',0,1300);
+  return h;
+},{tr:'cut',punch:1.04});
+
+// 12 · "So, what's the catch?" (ink; silence before)
+scene(S('l12'),INK,(t)=>{
+  let h=grain(1);const c=at('l12','catch');
+  h+=C(640,`font-size:90px;color:${ONINK2};font-weight:400`,spoken(t,'l12',['So,'],0));
+  h+=C(760,`font-size:190px;line-height:1;color:${ONINK}`,`<span class="serif" style="font-style:italic">${spoken(t,'l12',["what's",'the'],1)}<br>${mark(t,c+.05,ws(t,['catch?'],[c-.06]),'ring',.6,RED,10,5)}</span>`);
+  return h;
+},{tr:'cut',punch:1.07});
+
+// 13 · finance and law: every model scored zero → partial credit
+const MOD4=['OPUS 5.5','GEMINI 4','GPT-6','MUSE'];
+scene(S('l13'),PAPER,(t)=>{
+  const t0=S('l13');let h=grain(0)+slug(t,0);
+  const fn=at('l13','finance'), lw=at('l13','law'), ze=at('l13','zero'), pa=at('l13','partial');
+  h+=topcap(t,'l13',[[0,3],[4,8],[9,13]],{size:78,emph:[1,3,8,12,13]});
+  h+=A(100,560,`${rise(t,t0)};font-family:'Courier Prime';font-size:28px;letter-spacing:.08em;color:${INK}`,`GRADING: ${mark(t,pa-.05,'PASS / FAIL','strike',.3,RED,6)}`);
+  h+=note(560,540,t,pa+.25,'partial credit',62,-4);
+  MOD4.forEach((m,i)=>h+=A(330+i*165,660,`${rise(t,t0+.1+i*.05)};width:150px;text-align:center;font-family:'Courier Prime';font-size:22px;letter-spacing:.04em;color:${SOFT}`,m));
+  [['FINANCE',fn],['LAW',lw]].forEach(([r,rt],j)=>{const y=760+j*190;
+    h+=A(100,y,`${rise(t,rt-.05)};font-family:Jost;font-size:50px;font-weight:500;color:${INK}`,r);
+    h+=`<div class="a" style="left:100px;top:${y+110}px;width:880px;height:2px;background:${GRAPH};${fade(t,rt)}"></div>`;
+    MOD4.forEach((_,i)=>{const tz=ze-.15+(j*4+i)*.05;h+=A(330+i*165,y-30,`${rise(t,tz,.18,10)};width:150px;text-align:center;font-family:Caveat;font-weight:700;font-size:110px;line-height:1;color:${RED}`,'0');});});
+  h+=C(1250,`${rise(t,ze+.3)};font-family:'Courier Prime';font-size:32px;color:${INK};padding:0 100px;line-height:1.4`,`"basically every model scores exactly 0"`);
+  h+=credit(t,ze+.4,'SemiAnalysis, GDPx write-up · so finance and legal report average partial scores',0,1420);
+  return h;
+},{tr:'pen'});
+
+// 14 · safety filters held back Opus and Astra on cyber and biology
+scene(S('l14'),PAPER,(t)=>{
+  const t0=S('l14');let h=grain(0)+slug(t,0);
+  const sf=at('l14','safety'), hb=at('l14','held'), op=at('l14','opus'), as=at('l14','astra'), cy=at('l14','cyber'), bi=at('l14','biology');
+  h+=topcap(t,'l14',[[0,3],[4,10]],{size:80,emph:[2,3,8,10]});
+  // the filter: a dashed wall; two bars run into it and stop
+  const wx=700;
+  h+=svgL(`<line x1="${wx}" y1="600" x2="${wx}" y2="1080" stroke="${RED}" stroke-width="6" stroke-dasharray="18 12" opacity="${seg(t,sf-.1,.3).toFixed(3)}"/>`);
+  h+=A(wx-160,560,`${rise(t,sf)};width:320px;text-align:center;font-family:'Courier Prime';font-size:24px;letter-spacing:.1em;color:${RED}`,'SAFETY FILTER');
+  [['Opus 5.5',op],['GPT-6 Astra',as]].forEach(([m,mt],i)=>{const y=700+i*200;const bp=seg(t,mt-.05,.45,eo);const bump=Math.sin(clamp((t-mt-.4)/.25)*Math.PI)*8;
+    h+=A(100,y-70,`${rise(t,mt-.1)};font-size:48px;font-weight:500;color:${INK}`,m);
+    h+=`<div class="a" style="left:100px;top:${y}px;height:40px;width:${(bp*(wx-108)-bump).toFixed(1)}px;background:${INK};border-radius:20px"></div>`;});
+  [['cyber',cy,180],['biology',bi,450]].forEach(([w,wt0,x])=>h+=A(x,1140,`${arrive(t,wt0-.05,.3)};font-family:'Courier Prime';font-size:40px;color:${INK};border:3px solid ${INK};border-radius:40px;padding:8px 30px`,w));
+  h+=C(1290,`${rise(t,bi+.2)};font-family:'Courier Prime';font-size:30px;color:${INK};padding:0 100px;line-height:1.4`,`"sandbagged overall scores due to their safety classifiers"`);
+  h+=credit(t,bi+.3,'SemiAnalysis, on Opus 5.5 and GPT-6 Astra (cyber, biology, alignment)',0,1430);
+  return h;
+},{tr:'cut',punch:1.04});
+
+// 15 · their own test; no one has rerun it
+scene(S('l15'),PAPER,(t)=>{
+  const t0=S('l15');let h=grain(0)+slug(t,0);
+  const ow=at('l15','own'), rr=at('l15','rerun'), yt=at('l15','yet');
+  h+=topcap(t,'l15',[[0,4],[5,10]],{size:80,emph:[3,8]});
+  const rows=[['BUILT BY','SemiAnalysis + 14 data partners',t0+.1],['SCORED BY','SemiAnalysis',ow-.1],['RERUN BY','',rr-.15]];
+  rows.forEach(([k,v,ti],i)=>{const y=640+i*170;
+    h+=A(100,y,`${rise(t,ti)};font-family:'Courier Prime';font-size:28px;letter-spacing:.12em;color:${SOFT}`,k);
+    h+=A(100,y+44,`${rise(t,ti+.05)};font-size:56px;font-weight:500;color:${INK}`,v||`<span style="display:inline-block;width:420px;border-bottom:4px solid ${INK};height:56px"></span>`);});
+  h+=svgL(penRing(310,1060,250,42,t,rr+.1,.5,7));
+  h+=note(600,960,t,yt-.05,'nobody, yet',66,-5);
+  h+=credit(t,yt+.2,'no third-party reproduction reported as of Nov 4, 2026',0,1300);
+  return h;
+},{tr:'whip',dir:1});
+
+// 16 · still: 12% today; a new version every 3-6 months; watch that number
+scene(S('l16'),PAPER,(t)=>{
+  const t0=S('l16');let h=grain(0)+slug(t,0);
+  const tw=at('l16','twelve'), nv=at('l16','new'), mo=at('l16','months'), wa=at('l16','watch');
+  h+=topcap(t,'l16',[[0,3],[4,12],[13,15]],{size:76,emph:[1,2,6,15]});
+  h+=`<div class="a" style="inset:0;transform-origin:540px 700px;transform:scale(.62) translateY(-120px)">${sheet(t,{x0:-99,grade:-99,ring:-99})}</div>`;
+  // the timeline
+  const y=1260;
+  h+=svgL(`<line x1="140" y1="${y}" x2="${lerp(140,940,seg(t,nv-.1,.5,eio)).toFixed(1)}" y2="${y}" stroke="${INK}" stroke-width="4"/>`+
+    [[160,'v1.0','NOV 2026',nv-.1],[540,'v1.1','+3–6 MO',nv+.35],[920,'v1.2','+3–6 MO',mo-.05]].map(([x,v,d,ti])=>`<g opacity="${seg(t,ti,.25).toFixed(3)}"><circle cx="${x}" cy="${y}" r="14" fill="${x===160?RED:SHEET}" stroke="${INK}" stroke-width="4"/><text x="${x}" y="${y+70}" text-anchor="middle" font-family="Mono" font-size="34" font-weight="600" fill="${INK}">${v}</text><text x="${x}" y="${y+110}" text-anchor="middle" font-family="Courier Prime" font-size="24" fill="${SOFT}">${d}</text></g>`).join(''));
+  h+=svgL(penArrow(930,1120,800,640,t,wa,.4,7,30));
+  h+=note(760,1130,t,wa+.25,'watch this',62,-6);
+  return h;
+},{tr:'pen'});
+
+// 17 · the ask: which field falls first? one word in the comments
+const FIELDS=['chips','cyber','biology','trading','law','code','materials','hardware'];
+scene(S('l17'),PAPER,(t)=>{
+  const t0=S('l17');let h=grain(0)+slug(t,0);
+  const cr=at('l17','crack'), ow=at('l17','one'), cm=at('l17','comments');
+  h+=C(260,`font-size:100px;line-height:1.04;color:${INK};padding:0 60px`,`<span class="serif" style="font-style:italic">${spoken(t,'l17',['Which','field','will','AI'],0)} ${mark(t,cr+.2,spoken(t,'l17',['crack'],4),'under',.3,RED,7)} ${spoken(t,'l17',['first?'],5)}</span>`);
+  FIELDS.forEach((f,i)=>{const col=i%2, row=Math.floor(i/2);h+=A(170+col*390,640+row*130,`${arrive(t,cr-.1+i*.06,.3)};width:350px;text-align:center;font-family:Jost;font-size:52px;font-weight:500;color:${INK};border:4px solid ${INK};border-radius:60px;padding:10px 0;box-sizing:border-box`,f);});
+  h+=svgL(penArrow(540,1190,540,1340,t,ow,.35,7,0));
+  h+=C(1370,`${rise(t,ow+.1)};font-family:'Courier Prime';font-size:42px;letter-spacing:.1em;color:${INK}`,`ONE WORD · IN THE <span style="color:${RED}">COMMENTS</span>`);
+  return h;
+},{tr:'whip',dir:1});
+
+// 18 · the brand ident: holds still at the end
+const T_ID=E('l17')+1.0;
+scene(T_ID,CTE.PAPER,(t)=>CTE.ident(t-T_ID,{w:1080,h:1920}),{tr:'fadeup',still:true});
+
+// ---------- captions (only where a scene asks; the top captions carry the words) ----------
+function caption(t){
+  const sc=SC.filter(s=>s.t0<=t).pop();if(!sc||!sc.cap)return '';
+  const l=LINES[sc.cap];if(!l||t<l.start-.05||t>l.end+.2)return '';
+  const W=l.words;let k=W.findIndex(w=>t<w.e+.04);if(k<0)k=W.length-1;
+  const g=Math.floor(k/2)*2;const grp=W.slice(g,g+2);
+  return `<span class="box">${grp.map((w,i)=>`<span style="color:${g+i===k?REDL:'#EDEBE6'}">${w.w}</span>`).join(' ')}</span>`;
+}
+// ---------- transitions (0.25 s, each motivated) ----------
+const TR=.25;
+function layer(sc,t,css){return `<div class="a" style="inset:0;background:${sc.bg};${css}">${sc.draw(t)}</div>`;}
+function penWipe(p){const a=p<.5?0:(p-.5)*2, b=p<.5?p*2:1;const y0=lerp(2200,-300,b), y1=lerp(2200,-300,a);
+  return `<svg width="1080" height="1920" style="left:0;top:0"><path d="M-60 ${y0+120} C 300 ${y0-60}, 700 ${y0+80}, 1140 ${y0-120} L1140 ${y1-120} C 700 ${y1+80}, 300 ${y1-60}, -60 ${y1+120} Z" fill="${RED}"/></svg>`;}
+const cam=document.getElementById('cam'), cap=document.getElementById('cap'), stage=document.getElementById('stage');
+window.DURATION=T_ID+CTE.DUR+2.2;
+// the cover (t < 0): the story in one frame, everything important inside y 300-1600
+function cover(){const t=30;let h=`<div class="a" style="inset:0;background:${PAPER}">`+grain(0)+slug(t,0);
+  h+=C(300,`font-size:92px;line-height:1.02;font-weight:500;color:${INK};letter-spacing:-0.035em`,'The best AI scored');
+  h+=`<div class="a" style="inset:0;transform:translateY(-40px)">${sheet(t,{x0:0,grade:0,ring:0})}</div>`;
+  h+=C(1560,`font-family:'Courier Prime';font-size:30px;letter-spacing:.14em;color:${SOFT}`,'GDPx · 206 REAL JOBS · 8 HRS EACH');
+  return h+'</div>';}
+window.seek=function(t){
+  if(t<0){stage.style.background=PAPER;cam.style.transform='none';cam.innerHTML=cover();cap.innerHTML='';return Promise.all([...cam.querySelectorAll('img')].map(i=>i.decode().catch(()=>{})));}
+  let i=0;while(i+1<SC.length&&SC[i+1].t0<=t)i++;
+  const sc=SC[i], lt=t-sc.t0, t1=(SC[i+1]?.t0)??window.DURATION, prev=SC[i-1];
+  stage.style.background=sc.bg;
+  let s=1;if(!sc.still)s=1+(sc.punch?sc.punch-1:.025)*(1-eo(clamp(lt/.3)))+.025*clamp(lt/Math.max(1,t1-sc.t0));
+  const tr=sc.tr||'cut';let html;
+  if(prev&&lt<TR&&tr!=='cut'){
+    const p=eio(lt/TR), d=sc.dir||1;
+    if(tr==='whip') html=layer(prev,t,`transform:translateY(${(-d*1920*p).toFixed(1)}px);filter:blur(${(p*14).toFixed(1)}px)`)+layer(sc,t,`transform:translateY(${(d*1920*(1-p)).toFixed(1)}px);filter:blur(${((1-p)*14).toFixed(1)}px)`);
+    else if(tr==='zoom') html=layer(sc,t,`transform:scale(${(.85+.15*p).toFixed(4)});opacity:${p.toFixed(3)}`)+layer(prev,t,`transform:scale(${(1+.6*p).toFixed(4)});opacity:${(1-p).toFixed(3)};filter:blur(${(p*12).toFixed(1)}px)`);
+    else if(tr==='pull') html=layer(prev,t,`transform:scale(${(1-.25*p).toFixed(4)});opacity:${(1-p).toFixed(3)}`)+layer(sc,t,`transform:scale(${(1.25-.25*p).toFixed(4)});opacity:${p.toFixed(3)}`);
+    else if(tr==='pen') html=(lt/TR<.5?layer(prev,t,''):layer(sc,t,''))+penWipe(lt/TR);
+    else if(tr==='fadeup') html=layer(prev,t,`opacity:${(1-p).toFixed(3)};transform:translateY(${(-40*p).toFixed(1)}px)`)+`<div class="a" style="inset:0;opacity:${p.toFixed(3)}">${layer(sc,t,'')}</div>`;
+  } else html=layer(sc,t,'');
+  cam.style.transform=`scale(${s.toFixed(5)})`;
+  cam.innerHTML=html;
+  cap.innerHTML=caption(t);
+  return Promise.all([...cam.querySelectorAll('img')].map(i=>i.complete?i.decode().catch(()=>{}):new Promise(r=>{i.onload=i.onerror=r;})));
+};
+// ---------- sound: every cue scores something that moves ----------
+function cues(){const q=[];const add=(t,f,db=0,o={})=>{if(isFinite(t)&&(o.at===undefined||isFinite(o.at))&&(o.len===undefined||isFinite(o.len)))q.push({t:+t.toFixed(3),f,db,...o});};
+  const PEN=(t,len,db=-10)=>add(t,'PEN',db,{synth:'pen',len});
+  // transitions
+  SC.forEach((s,i)=>{if(!i)return;const tr=s.tr||'cut';
+    if(tr==='whip')add(s.t0,'swoosh-014-383768',-8,{peak:true,at:s.t0+.12});
+    else if(tr==='zoom'||tr==='pull')add(s.t0,'simple-whoosh-02-433006',-10,{peak:true,at:s.t0+.12});
+    else if(tr==='pen'){PEN(s.t0,.28,-8);add(s.t0,'woosh-230554',-11,{peak:true,at:s.t0+.12});}
+    else if(tr==='fadeup')add(s.t0,'simple-whoosh-382724',-14,{peak:true,at:s.t0+.15});
+    else add(s.t0,'mouse-click',-16);});
+  // 1: the paper slides in; a pen mark per question; the grade written; the one big hit on "twelve"; the ring
+  add(0,'flipcard',-12);
+  { const sc=at('l01','scored');for(let i=0;i<8;i++)PEN(sc-.05+i*.07,i===4?.14:.2,-13); }
+  const tw=at('l01','twelve');add(tw-.6,'shine-6-268910',-12,{reverse:true,len:.6});add(tw-.02,'whoosh-end-384629',-4,{peak:true,len:2,fade:1});PEN(tw-.02,.42,-6);PEN(at('l01','percent')+.05,.5,-8);
+  // 2: the card lands; pen under; ring on 12%
+  add(S('l02')+.05,'flipcard',-12);PEN(at('l02','top'),.35,-10);PEN(at('l02','score')+.05,.45,-9);add(at('l02','score')+.05,'subtle-pop',-12);
+  // 3: the board lands; each pan a soft swish; pen marks
+  add(S('l03'),'pop-402324',-12);
+  [at('l03','gemini')-.25,at('l03','price')-.45,at('l03','astra')-.3].forEach(x=>add(x,'swoosh-06-351021',-15,{peak:true,at:x+.25}));
+  PEN(at('l03','gemini')+.1,.35);PEN(at('l03','price')-.05,.45,-8);PEN(at('l03','price')+.35,.4,-14);PEN(at('l03','astra')+.05,.3);add(at('l03','price')+.1,'subtle-pop',-12);
+  // 4: GDPx: one sharp pop per letter; the pen under it
+  const g=at('l04','gdpx');[0,.08,.16].forEach(d=>add(g-.05+d,'soft-pop',-10));add(g+.22,'sharp-pop',-6);PEN(g+.45,.35);add(at('l04','semianalysis')-.1,'subtle-pop',-13);
+  // 5: the quiz card; options tick in; ring + tick
+  add(at('l05','quiz')-.15,'pop-402324',-10);{const o1=at('l05','one');[0,.12,.24].forEach(d=>add(o1+d,'tick',-14));}
+  PEN(at('l05','answer')-.1,.4,-9);PEN(at('l05','answer')+.25,.18,-9);add(at('l05','answer')+.3,'marimba',-14);
+  // 6: the folder drops; its lines; the clock runs to 8:00:00 and lands
+  add(S('l06'),'woosh-230554',-10,{peak:true,at:S('l06')+.2});add(S('l06')+.25,'flipcard',-10);
+  for(let i=0;i<4;i++)add(at('l06','job')+.2+i*.12,'soft-pop',-17);
+  { const e=at('l06','eight'), h=at('l06','hours'), d=Math.max(.6,h-e+.35);for(let i=0;i<12;i++)add(e-.05+d*eio(i/12),'tick',-15);add(e-.05+d,'sharp-pop',-6); }
+  // 7: the cells fill (a run of pops), the counter; labels tick in
+  { const a=at('l07','two'), b=at('l07','tasks'), d=Math.max(.6,b-a+.3);add(a,'data',-17,{len:d,fade:.2});for(let i=0;i<16;i++)add(a+d*i/16,'soft-pop',-19);add(a+d,'sharp-pop',-7);
+    const el=at('l07','eleven');for(let i=0;i<11;i++)add(el+i*.05,'tick',-19);PEN(at('l07','valuable'),.2,-14); }
+  // 8: one word per beat, each a hard cut with a pop
+  L8.forEach(([w])=>{add(at('l08',w)-.08,'sharp-pop',-7);add(at('l08',w)-.08,'mouse-click',-14);});
+  // 9: $880M lands; the note; 4,000 files fill
+  add(at('l09','eight')-.05,'sharp-pop',-7);PEN(at('l09','buyout')+.15,.3,-12);
+  { const a=at('l09','four'), b=at('l09','files'), d=Math.max(.6,b-a+.3);add(a,'data',-16,{len:d+.1,fade:.2});add(a+d,'pop-402324',-8); }
+  // 10: the chip drops in; its tick; the chart draws; the ring
+  add(S('l10')+.1,'pop-402324',-9);PEN(at('l10','work')+.15,.22,-8);add(at('l10','work')+.2,'accept',-14);
+  { const s=at('l10','strategy'), e=at('l10','experts');add(s-.1,'data',-19,{len:Math.max(.6,e-s+.2),fade:.2});PEN(e+.1,.4,-9); }
+  // 11: three cards; X ✓ X; the average lands
+  [at('l11','three'),at('l11','tries'),at('l11','task')].forEach((x,i)=>{add(x-.1,'soft-pop',-11);PEN(x+.12,i===1?.2:.24,-9);});add(at('l11','average')-.1,'sharp-pop',-6);PEN(at('l11','average')+.2,.35,-11);
+  // 12: the catch: silence, then the pen and one big hit
+  add(at('l12','catch')+.03,'whoosh-end-384629',-2,{peak:true,len:2.2,fade:1});PEN(at('l12','catch')+.05,.6,-4);
+  // 13: rows; a red zero per cell (a run); the strike; the note
+  { const z=at('l13','zero');for(let i=0;i<8;i++)PEN(z-.15+i*.05,.12,-14);add(z-.15,'erreur',-14);PEN(at('l13','partial')-.05,.3,-8);PEN(at('l13','partial')+.25,.4,-12); }
+  // 14: the wall; bars run in and bounce off; the tags
+  add(at('l14','safety')-.1,'sound-off',-15,{len:.5,fade:.3});
+  [at('l14','opus'),at('l14','astra')].forEach(x=>{add(x-.05,'swoosh-010-352856',-15,{peak:true,at:x+.2});add(x+.4,'subtle-pop',-10);});
+  [at('l14','cyber'),at('l14','biology')].forEach(x=>add(x-.05,'pop-402324',-11));
+  // 15: the ledger rows; the empty line ringed; the note
+  [S('l15')+.1,at('l15','own')-.1,at('l15','rerun')-.15].forEach(x=>add(x,'tick',-13));PEN(at('l15','rerun')+.1,.5,-7);PEN(at('l15','yet')-.05,.35,-12);
+  // 16: the timeline draws; dots land; the arrow
+  add(at('l16','new')-.1,'simple-whoosh-382724',-15,{peak:true,at:at('l16','new')+.15});[at('l16','new')-.1,at('l16','new')+.35,at('l16','months')-.05].forEach(x=>add(x,'soft-pop',-11));
+  PEN(at('l16','watch'),.4,-8);add(at('l16','watch')+.4,'glint',-15,{len:1,fade:.6});
+  // 17: the chips pop in a run; the arrow; the comment line
+  for(let i=0;i<FIELDS.length;i++)add(at('l17','crack')-.1+i*.06,'soft-pop',-14);PEN(at('l17','crack')+.2,.3,-11);PEN(at('l17','one'),.35,-10);add(at('l17','one')+.1,'notify',-13);
+  CTE.cues(T_ID).forEach(c=>q.push(c));
+  return q;}
+window.SFX=cues();
+// music: nightfall at 120 BPM, as a story. The drop under the hook and the explainer; cut dead before the catch;
+// the breakdown under the caveats; the second drop for the payoff, fading under the ident. Every segment is phased so
+// the track's beats land on the film's 0.5 s grid (the track's kick sits at 0.04 s past each half second), the same
+// grid the voice lines start on (tools/mkvo.py snaps them to 8th notes).
+window.BED='nightfall120';
+const ph=(base,t0)=>base+.04+(((t0%.5)+.5)%.5);
+window.MUSIC=()=>[
+  {t0:0,t1:S('l08'),offset:ph(16,0),fadein:.02,fadeout:.01},
+  {t0:S('l08'),t1:S('l12')-.45,offset:ph(18,S('l08')),fadein:.01,fadeout:.04},   // the drop again, from its top, on the word montage
+  {t0:S('l13'),t1:S('l16')-.02,offset:ph(48,S('l13')),fadein:.5,fadeout:.15},
+  {t0:S('l16'),t1:T_ID+3,offset:ph(80,S('l16')),fadein:.05,fadeout:2.6}].filter(g=>isFinite(g.t0)&&isFinite(g.t1));
+window.SHEPARD=()=>[];
+window.CUTS=SC.map(s=>s.t0);
+const IMGS=['tweet.png','leaderboard.jpg'].map(f=>{const i=new Image();i.src='assets/real/'+f;return i;});
+window.ready=Promise.all([document.fonts.load('400 60px Jost'),document.fonts.load('40px "Courier Prime"'),document.fonts.load('600 40px Caveat'),document.fonts.load('40px Serif'),document.fonts.load('italic 40px Serif'),document.fonts.load('40px Mono'),...IMGS.map(i=>i.decode().catch(()=>{}))]).then(()=>document.fonts.ready);
+</script></body></html>
