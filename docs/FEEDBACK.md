@@ -6,6 +6,14 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Can we make it like a collection of top AI models' logos, popping quickly, including open source, instead of this
+  generic shit… make it really look like a thumbnail"** and **"use the real logo… make them like this"** (2026-11-04,
+  with a ring of app-icon tiles as the reference, on the GDPx cover and hook): an exam sheet with grey lines read as
+  generic. Now the hook and the cover are the line-up itself: the labs' **real marks in their real colours** as
+  rounded app-icon tiles in a ring (Claude, Gemini, OpenAI, Meta, DeepSeek and Z.ai open, xAI), popping in one per
+  16th note, a score badge on each, the big 12% in the middle ringed by the red pen. The exception to the banned
+  colours: real logos keep their brand colours, like screenshots (they live in `logos.js`, real media, never in the
+  film's own palette). Thumbnails: few big things, real faces of the topic (the logos), one number.
 - **"Make a post on this… make it exactly like Cyclon… use the best SFX in sync and good 120 BPM… screenshot give
   good round radius… explain it well what it exactly is… take a good reference from this, not the AI slop part…
   learn the psychology of each platform… visual psychology (text, sound, voiceover, visuals)"** (2026-11-04, on

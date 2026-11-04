@@ -23,6 +23,7 @@ img{position:absolute;display:block}
 </style></head>
 <body><div id="stage"><div id="cam"></div><div id="cap"></div></div>
 <script src="vo.js"></script>
+<script src="logos.js"></script>
 <script src="cte.js"></script>
 <script>
 // Catch the Error: GDPx, the AI exam where the best model scores 12%.
@@ -102,25 +103,24 @@ function shot(o){const {x,y,w,h,file,iw,ih,cx=iw/2,cy=ih/2,z=w/iw,op=1,rp=1,mark
     <div style="position:absolute;left:${ix.toFixed(1)}px;top:${iy.toFixed(1)}px;width:${iw}px;height:${ih}px;transform-origin:0 0;transform:scale(${z.toFixed(4)})">
     <img src="assets/real/${file}" style="left:0;top:0;width:${iw}px;height:${ih}px;${filt}"><svg width="${iw}" height="${ih}" style="left:0;top:0">${marks}</svg></div></div>`+
     (credit?A(x,y+h+22,`${fade(t,cred0,.3)};font-family:'Courier Prime';font-size:24px;letter-spacing:.05em;color:${SOFT}`,credit):'');}
-// the exam paper: a header, eight questions, the red pen marks them, the grade written in the corner
-function sheet(t,o={}){const {x=150,y=520,w=780,h=1010,rot=-2,x0=Infinity,grade=Infinity,ring=Infinity,dim=0}=o;
-  let s=`<div class="a" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;background:${SHEET};rotate:${rot}deg;border-radius:8px;box-shadow:0 34px 60px -30px rgba(27,26,24,.5),0 0 0 1.5px rgba(27,26,24,.10)">`;
-  s+=`<div class="ty" style="position:absolute;left:50px;top:44px;font-size:28px;letter-spacing:.06em;color:${INK}">GDPx v1.0 · FINAL EXAM</div>`;
-  s+=`<div class="ty" style="position:absolute;left:50px;top:92px;font-size:22px;letter-spacing:.04em;color:${SOFT}">CANDIDATE: <span style="color:${INK}">Claude Opus 5.5</span></div>`;
-  s+=`<div class="ty" style="position:absolute;left:50px;top:128px;font-size:20px;letter-spacing:.06em;color:${SOFT}">206 TASKS · 11 FIELDS · 8 HRS</div>`;
-  s+=`<div style="position:absolute;left:50px;right:50px;top:178px;height:2px;background:${INK}"></div>`;
-  const marks=[];
-  for(let i=0;i<8;i++){const qy=230+i*94;
-    s+=`<div class="ty" style="position:absolute;left:50px;top:${qy}px;font-size:26px;color:${INK}">Q${i+1}.</div>`;
-    const w1=300+hash(i*3+1)*260, w2=180+hash(i*7+2)*300;
-    s+=`<div style="position:absolute;left:130px;top:${qy+12}px;width:${w1}px;height:9px;border-radius:5px;background:${GRAPH};opacity:.7"></div><div style="position:absolute;left:130px;top:${qy+44}px;width:${w2}px;height:9px;border-radius:5px;background:${GRAPH};opacity:.45"></div>`;
-    marks.push(i===4?penTick(w-110,qy+40,44,t,x0+i*.07,.14,7):penX(w-112,qy+6,38,t,x0+i*.07,7));}
-  // the grade: 12% written by hand, then ringed
-  const gp=seg(t,grade,.42,x=>x);
-  s+=`<div style="position:absolute;left:${w-262}px;top:34px;width:240px;text-align:center;font-family:Caveat;font-weight:700;font-size:128px;line-height:1.05;color:${RED};clip-path:inset(0 ${((1-gp)*100).toFixed(1)}% 0 0);rotate:-6deg">12%</div>`;
-  s+=`<svg width="${w}" height="${h}" style="left:0;top:0">${marks.join('')}${penRing(w-142,108,122,70,t,ring,.5,7,1.2,4)}</svg>`;
-  if(dim)s+=`<div style="position:absolute;inset:0;background:${PAPER};opacity:${dim}"></div>`;
-  return s+'</div>';}
+// the line-up: the labs' real marks as app-icon tiles in a ring (pop in one per 16th note), a score badge on each,
+// the big number in the middle; on the focus the #1 lifts, the rest dim, the pen rings the number
+function logoRing(t,o={}){const {cx=540,cy=960,R=330,size=220,pop=-9,badge=-9,focus=-9,ring=-9,center=-9,spin=4,num='12%',numSize=230,sub=true}=o;
+  let h='';const n=LOGOS.length, fp=seg(t,focus,.4,eio);
+  LOGOS.forEach((L,i)=>{const a=(-90+i*360/n+t*spin)*Math.PI/180, x=cx+Math.cos(a)*R, y=cy+Math.sin(a)*R;
+    const tp=pop+i*.125, p=clamp((t-tp)/.36), sc=p<=0?0:lerp(.35,1,back(p)), fl=Math.sin(t*1.6+i*1.3)*4;
+    const isTop=i===0, k=sc*(isTop?1+.16*fp:1), op=clamp(p*4)*(isTop?1:1-.3*fp);
+    const bp=seg(t,badge+i*.06,.25,back);
+    h+=`<div class="a" style="left:${(x-size/2).toFixed(1)}px;top:${(y-size/2+fl).toFixed(1)}px;width:${size}px;height:${size}px;opacity:${op.toFixed(3)};transform:scale(${k.toFixed(4)});z-index:${isTop?3:1}">
+      <div style="position:absolute;inset:0;border-radius:${(size*.23).toFixed(0)}px;background:${L.bg};box-shadow:0 ${(size*.12).toFixed(0)}px ${(size*.2).toFixed(0)}px -${(size*.1).toFixed(0)}px rgba(27,26,24,.45),0 0 0 1.5px rgba(27,26,24,.08)"></div>
+      <svg viewBox="0 0 24 24" style="left:${(size*.24).toFixed(0)}px;top:${(size*.24).toFixed(0)}px;width:${(size*.52).toFixed(0)}px;height:${(size*.52).toFixed(0)}px">${L.svg}</svg>
+      ${bp>0?`<div style="position:absolute;right:${(-size*.1).toFixed(0)}px;bottom:${(-size*.08).toFixed(0)}px;transform:scale(${bp.toFixed(3)});transform-origin:right bottom;background:${isTop?RED:INK};color:${ONINK};font-family:Mono;font-weight:600;font-size:${(size*.15).toFixed(0)}px;line-height:1;padding:${(size*.045).toFixed(0)}px ${(size*.07).toFixed(0)}px;border-radius:${(size*.1).toFixed(0)}px;white-space:nowrap;box-shadow:0 0 0 ${(size*.02).toFixed(1)}px ${PAPER}">${L.score.toFixed(1)}%${L.open?` <span style="font-family:'Courier Prime';font-weight:400;font-size:.72em;letter-spacing:.06em;opacity:.8">OPEN</span>`:''}</div>`:''}
+    </div>`;});
+  const cp=seg(t,center,.4,back);
+  if(cp>0){h+=A(cx-300,cy-numSize*.62,`opacity:${clamp(cp*3).toFixed(3)};transform:scale(${lerp(.6,1,cp).toFixed(4)});width:600px;text-align:center;font-size:${numSize}px;line-height:1.1;font-weight:500;color:${INK};letter-spacing:-0.05em`,num);
+    if(sub)h+=A(cx-300,cy+numSize*.52,`${rise(t,center+.2)};width:600px;text-align:center;font-family:'Courier Prime';font-size:${(numSize*.12).toFixed(0)}px;letter-spacing:.1em;color:${SOFT}`,'THE TOP SCORE');
+    h+=svgL(penRing(cx,cy+numSize*.02,numSize*.95,numSize*.55,t,ring,.5,Math.max(5,numSize*.035),1.2,4));}
+  return h;}
 const DOM=[['RSI',10],['CHIPS',34],['CYBER',18],['BIO',13],['FIN',24],['LAW',20],['QUANT',10],['HW',21],['MAT',23],['ALIGN',18],['SWE',15]];
 // the 206 tasks as cells, one column per field (the real counts from gdpx.semianalysis.com/domains)
 function taskGrid(t,o){const {fill=1,labels=Infinity,lit=-1,dimOthers=0,base=1230}=o;let s='',k=0;const total=206,shown=Math.floor(fill*total+1e-6);
@@ -135,14 +135,16 @@ function credit(t,t0,text,dark=0,y=1700){return src(t,t0,text,dark,y);}
 const SC=[];
 function scene(t0,bg,draw,opt={}){if(isFinite(t0))SC.push({t0,bg,draw,...opt});}
 
-// 1 · the hook: the exam is already on the desk; the pen marks it wrong, wrong, wrong… and writes the grade: 12%
+// 1 · the hook: the line-up pops in around the frame (the real labs, open models too); "It scored" puts a score on
+// every tile; on "twelve" the middle lands: 12%, the #1 lifts, the pen rings it
 scene(0,PAPER,(t)=>{
   let h=grain(0)+slug(t,0);
   const sc=at('l01','scored'), tw=at('l01','twelve'), pc=at('l01','percent');
   h+=C(232,`font-size:84px;line-height:1.04;font-weight:500;color:${INK};letter-spacing:-0.035em`,`The <span class="serif" style="font-style:italic;font-size:1.12em">best</span> AI in the world`);
   h+=C(330,`font-size:84px;line-height:1.04;font-weight:500;color:${INK};letter-spacing:-0.035em`,`just took a new exam.`);
-  const z=1+.16*seg(t,tw-.1,.6,eio), dy=(1-seg(t,-.35,.75,eo))*260;
-  h+=`<div class="a" style="inset:0;transform-origin:780px 640px;transform:translateY(${dy.toFixed(1)}px) scale(${z.toFixed(4)})">${sheet(t,{x0:sc-.05,grade:tw-.02,ring:pc+.05})}</div>`;
+  const z=1+.05*seg(t,tw-.1,.6,eio);
+  h+=`<div class="a" style="inset:0;transform-origin:540px 960px;transform:scale(${z.toFixed(4)})">${logoRing(t,{pop:-.25,badge:sc-.05,focus:tw-.02,center:tw-.02,ring:pc+.05,numSize:190,sub:false})}</div>`;
+  h+=C(1560,`${rise(t,pc+.2)};font-family:'Courier Prime';font-size:30px;letter-spacing:.12em;color:${SOFT}`,`GDPx · CLAUDE OPUS 5.5 · #1`);
   return h;
 });
 
@@ -368,13 +370,13 @@ scene(S('l16'),PAPER,(t)=>{
   const t0=S('l16');let h=grain(0)+slug(t,0);
   const tw=at('l16','twelve'), nv=at('l16','new'), mo=at('l16','months'), wa=at('l16','watch');
   h+=topcap(t,'l16',[[0,3],[4,12],[13,15]],{size:76,emph:[1,2,6,15]});
-  h+=`<div class="a" style="inset:0;transform-origin:540px 700px;transform:scale(.62) translateY(-120px)">${sheet(t,{x0:-99,grade:-99,ring:-99})}</div>`;
+  h+=logoRing(t,{cx:540,cy:800,R:250,size:150,pop:t0-.9,badge:t0-.9,focus:t0-.9,center:t0-.9,ring:t0-.9,numSize:150,sub:false});
   // the timeline
   const y=1260;
   h+=svgL(`<line x1="140" y1="${y}" x2="${lerp(140,940,seg(t,nv-.1,.5,eio)).toFixed(1)}" y2="${y}" stroke="${INK}" stroke-width="4"/>`+
     [[160,'v1.0','NOV 2026',nv-.1],[540,'v1.1','+3–6 MO',nv+.35],[920,'v1.2','+3–6 MO',mo-.05]].map(([x,v,d,ti])=>`<g opacity="${seg(t,ti,.25).toFixed(3)}"><circle cx="${x}" cy="${y}" r="14" fill="${x===160?RED:SHEET}" stroke="${INK}" stroke-width="4"/><text x="${x}" y="${y+70}" text-anchor="middle" font-family="Mono" font-size="34" font-weight="600" fill="${INK}">${v}</text><text x="${x}" y="${y+110}" text-anchor="middle" font-family="Courier Prime" font-size="24" fill="${SOFT}">${d}</text></g>`).join(''));
-  h+=svgL(penArrow(930,1120,800,640,t,wa,.4,7,30));
-  h+=note(760,1130,t,wa+.25,'watch this',62,-6);
+  h+=svgL(penArrow(940,1140,690,860,t,wa,.4,7,30));
+  h+=note(770,1140,t,wa+.25,'watch this',62,-6);
   return h;
 },{tr:'pen'});
 
@@ -410,10 +412,10 @@ function penWipe(p){const a=p<.5?0:(p-.5)*2, b=p<.5?p*2:1;const y0=lerp(2200,-30
 const cam=document.getElementById('cam'), cap=document.getElementById('cap'), stage=document.getElementById('stage');
 window.DURATION=T_ID+CTE.DUR+2.2;
 // the cover (t < 0): the story in one frame, everything important inside y 300-1600
-function cover(){const t=30;let h=`<div class="a" style="inset:0;background:${PAPER}">`+grain(0)+slug(t,0);
-  h+=C(300,`font-size:92px;line-height:1.02;font-weight:500;color:${INK};letter-spacing:-0.035em`,'The best AI scored');
-  h+=`<div class="a" style="inset:0;transform:translateY(-40px)">${sheet(t,{x0:0,grade:0,ring:0})}</div>`;
-  h+=C(1560,`font-family:'Courier Prime';font-size:30px;letter-spacing:.14em;color:${SOFT}`,'GDPx · 206 REAL JOBS · 8 HRS EACH');
+function cover(){const t=40;let h=`<div class="a" style="inset:0;background:${PAPER}">`+grain(0);
+  h+=C(250,`font-size:104px;line-height:1;font-weight:500;color:${INK};letter-spacing:-0.04em`,`The <span class="serif" style="font-style:italic">best</span> AI scored`);
+  h+=logoRing(t,{cx:540,cy:930,R:375,size:220,pop:0,badge:99,focus:99,center:0,ring:0,numSize:240,sub:false,spin:0});
+  h+=C(1420,`font-family:'Courier Prime';font-size:34px;letter-spacing:.14em;color:${INK}`,`GDPx · <span style="color:${RED}">THE HARDEST AI EXAM</span>`);
   return h+'</div>';}
 window.seek=function(t){
   if(t<0){stage.style.background=PAPER;cam.style.transform='none';cam.innerHTML=cover();cap.innerHTML='';return Promise.all([...cam.querySelectorAll('img')].map(i=>i.decode().catch(()=>{})));}
@@ -446,9 +448,9 @@ function cues(){const q=[];const add=(t,f,db=0,o={})=>{if(isFinite(t)&&(o.at===u
     else if(tr==='fadeup')add(s.t0,'simple-whoosh-382724',-14,{peak:true,at:s.t0+.15});
     else add(s.t0,'mouse-click',-16);});
   // 1: the paper slides in; a pen mark per question; the grade written; the one big hit on "twelve"; the ring
-  add(0,'flipcard',-12);
-  { const sc=at('l01','scored');for(let i=0;i<8;i++)PEN(sc-.05+i*.07,i===4?.14:.2,-13); }
-  const tw=at('l01','twelve');add(tw-.6,'shine-6-268910',-12,{reverse:true,len:.6});add(tw-.02,'whoosh-end-384629',-4,{peak:true,len:2,fade:1});PEN(tw-.02,.42,-6);PEN(at('l01','percent')+.05,.5,-8);
+  for(let i=2;i<LOGOS.length;i++)add(-.25+i*.125,i%2?'soft-pop':'pop-402324',i%2?-10:-11);   // each tile pops on a 16th note
+  { const sc=at('l01','scored');for(let i=0;i<LOGOS.length;i++)add(sc-.05+i*.06,'tick',-14); }   // a badge per tile
+  const tw=at('l01','twelve');add(tw-.6,'shine-6-268910',-12,{reverse:true,len:.6});add(tw-.02,'whoosh-end-384629',-4,{peak:true,len:2,fade:1});add(tw-.02,'sharp-pop',-6);PEN(at('l01','percent')+.05,.5,-8);
   // 2: the card lands; pen under; ring on 12%
   add(S('l02')+.05,'flipcard',-12);PEN(at('l02','top'),.35,-10);PEN(at('l02','score')+.05,.45,-9);add(at('l02','score')+.05,'subtle-pop',-12);
   // 3: the board lands; each pan a soft swish; pen marks
