@@ -101,3 +101,20 @@ and the framework as a 75% / 25% bar: the skill does 75%, your idea, taste and n
   (`gpu action=start purpose=voice`), set `backend prefer=colab`, resend, and put the preference back afterwards.
 - **A spoken number and the exact one:** the voice says "twelve hundred", the counter lands on "1,200+", and the exact
   1,237 sits in the small evidence line, so the screen never contradicts the voice.
+
+## Our build: GDPx, the best AI scored 12% (2026-11-04, `promo/cte-gdpx/`)
+- **The reference** (speedy_devv, "abliteration", 2:07 vertical, -14.2 LUFS, LRA 2.4): the spoken line sits at the
+  top all the time, two to six words, each rising on its word, the key word marked; one object in the centre that the
+  camera keeps moving through; real pages (arXiv, GitHub, Hugging Face) as rounded white cards with a soft shadow,
+  highlighted on the word; counting numbers; "here's the strange part". Its violet glow and neon 3D are what the owner
+  called the slop part: not taken. Our version is `topcap()` (phrase groups, the emphasised words in red serif italic).
+- **120 BPM as one grid**: `tools/mkvo.py` snaps every line start to 0.25 s; the music bed's kick was measured
+  (nightfall at 1.2×: 0.04 s past each half second) and each segment's offset is phased with `ph(base, t0)` so the kick
+  lands on the film's half seconds. Check it: low-pass the music stem and find the onset phase (it should print 0.0).
+- **Screenshots you can move through**: `shot()` puts the image in a rounded card and takes a view (`cx, cy, z`), so
+  the camera pans from the whole leaderboard to a row, to the price column and back, with pen marks drawn in the
+  screenshot's own pixels so they stay on their numbers while it moves.
+- **Cerebrium's myvoice exited while loading** (15 s, "see logs/myvoice.log"): Colab was online in ~2.5 min and voiced
+  17 lines in ~3.5 min. Put `backend prefer` back afterwards.
+- **`ffmpeg` in a `while read` loop eats the list**: it reads stdin, so every name after the first lost its first
+  letter. Use `ffmpeg -nostdin` (and `curl … </dev/null`) inside loops.

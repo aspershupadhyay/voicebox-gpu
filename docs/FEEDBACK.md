@@ -6,6 +6,17 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Make a post on this… make it exactly like Cyclon… use the best SFX in sync and good 120 BPM… screenshot give
+  good round radius… explain it well what it exactly is… take a good reference from this, not the AI slop part…
+  learn the psychology of each platform… visual psychology (text, sound, voiceover, visuals)"** (2026-11-04, on
+  SemiAnalysis's GDPx post and speedy_devv's Reel): `promo/cte-gdpx/`. The Cyclon paper-ink-red-pen look as an exam
+  paper the pen grades 12%. 120 BPM for real: every voice line starts on an 8th note and the music is phased per
+  segment so its kick lands on the film's half seconds (`ph()`), so cuts, pops and beats share one grid. Real
+  screenshots are rounded cards (34 px radius, soft shadow) with the camera panning inside them and the pen marking
+  them in their own pixels. From the reference: the spoken line always on screen at the top, a few words at a time,
+  the key word set apart (ours: red serif italic, not a selection box), and one central object; not its glowing
+  violet 3D and neon point clouds. Platform notes are in the plan (Reels: sends and one-word comments; Shorts: a cut
+  every 1-3 s and a callback payoff).
 - **"If we want to review the rivals' account through our Voicebox, how can we… give me the steps… link to our Facebook
   account… you go on and do it, first we need to test the feature"** (2026-11-04, on @themoneycipher): Instagram
   rivals are read through Facebook Login for Business (Business Discovery): Grow → Competitors → Connect Facebook, then
