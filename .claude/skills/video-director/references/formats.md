@@ -53,6 +53,10 @@ so a news cut should aim at 30-45 s, an explainer at 60-90 s.
 8. **The reply**: a Reel answering the top comment on the last one (the comment card on screen).
 9. **Numbered series**: "Catch #12" on the cover, so returning viewers know it's ours.
 10. **The local angle**: "is it out in India?" (most of our audience): the honest answer, the workaround if real.
+11. **The launch ad, with the catch** (terminal-mac, 2026-11-04): made like a paid spot for an open-source tool:
+    hook on the product doing the impossible (real footage, frame 1) → the viewer's pain → the name → proof (their own
+    demo, credited, sped up and labelled) → how it works (dots, bars) → reach (tools, clients, the one-line install) →
+    "what's the catch?" (the fine print, sourced) → callback payoff → a yes/no ask. Never labelled #ad unless paid.
 
 ## Unique things to try (pick one per video, don't stack them)
 - **A planted error** in the first frame that the pen catches in the last (rule 2 above).

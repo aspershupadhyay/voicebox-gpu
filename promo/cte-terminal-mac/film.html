@@ -1,0 +1,618 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Geist;src:url(fonts/geist.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:Serif;src:url(fonts/serif.woff2) format("woff2")}
+@font-face{font-family:Serif;font-style:italic;src:url(fonts/serif-i.woff2) format("woff2")}
+@font-face{font-family:Caveat;src:url(fonts/caveat.woff2) format("woff2");font-weight:400 700}
+@font-face{font-family:Mono;src:url(fonts/mono.woff2) format("woff2");font-weight:100 900}
+html,body{margin:0;background:#1A1917;overflow:hidden}
+#stage{position:relative;width:1080px;height:1920px;overflow:hidden;font-family:Geist,sans-serif;-webkit-font-smoothing:antialiased}
+#cam{position:absolute;inset:0;transform-origin:540px 900px}
+.a{position:absolute;box-sizing:border-box}
+.c{left:0;width:1080px;text-align:center}
+.serif{font-family:Serif;font-weight:400;letter-spacing:-0.01em}
+.mono{font-family:Mono;font-variant-numeric:tabular-nums}
+.w{display:inline-block;white-space:pre}
+svg{position:absolute;overflow:visible}
+img{position:absolute;display:block}
+</style></head>
+<body><div id="stage"><div id="cam"></div></div>
+<script src="vo.js"></script>
+<script src="cte.js"></script>
+<script>
+// Catch the Error: terminal-mac, a whole Mac inside a terminal, for your AI agent (github.com/govijr/terminal-mac).
+// The world: the desktop. A warm sand desk surface where everything is a window: matte terminal windows, drawn
+// screens with cursors (yours in ink, the agent's in red), and the real footage as rounded cards the camera moves
+// inside. The red pen is still the one gesture of meaning. Real media: @kirtandopamine's two launch videos.
+const DESK='#E0D9CC', DESK2='#C9C0AF', SURF='#E8E2D6', SURF2='#DCD4C5', INK='#1D1C1A', INK2='#2B2926', SOFT='#4C473F',
+      WIN='#1A1917', BAR='#272521', HAIR='#3B3833', TXT='#EAE4D8', TXT2='#A9A295', RED='#D8463A', REDL='#E8705F',
+      OK='#7FA886', SAND='#CDB98D', DOT1='#C8594C',
+      REDT='#A8322A', DIM='#6A655B';   // REDT: red for words and pills on light (4.6:1 on the desk; the pen stroke stays RED); DIM: dots not reached yet (3:1 on the window)
+// ---------- math ----------
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const lerp=(a,b,p)=>a+(b-a)*p;
+const eo=x=>x<=0?0:x>=1?1:1-Math.pow(2,-10*x);
+const eio=x=>x<=0?0:x>=1?1:x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;
+const back=x=>{if(x<=0)return 0;if(x>=1)return 1;const c=1.7;return 1+(c+1)*Math.pow(x-1,3)+c*Math.pow(x-1,2);};
+const seg=(t,t0,d,e=eo)=>e(clamp((t-t0)/d));
+function hash(n){let x=Math.sin(n*127.1+311.7)*43758.5453;return x-Math.floor(x);}
+// ---------- voice timing ----------
+const LINES={};for(const l of VO.lines)LINES[l.id]=l;
+const S=id=>LINES[id]?LINES[id].start:NaN, E=id=>LINES[id]?LINES[id].end:NaN;
+function wt(id,i){const l=LINES[id];if(!l)return NaN;const w=l.words[Math.min(i,l.words.length-1)];return w?w.s:l.start;}
+const norm=s=>s.toLowerCase().replace(/[^a-z0-9]/g,'');
+function wordIdx(id,word,from=0){const l=LINES[id];if(!l)return 0;const k=l.words.findIndex((w,i)=>i>=from&&norm(w.w).startsWith(word));return k<0?0:k;}
+const at=(id,word,from=0)=>wt(id,wordIdx(id,word,from));
+// ---------- text motion (the house rise) ----------
+function rise(t,t0,d=.34,dy=22){const p=seg(t,t0,d);return `opacity:${p.toFixed(3)};transform:translateY(${((1-p)*dy).toFixed(2)}px);filter:blur(${((1-p)*5).toFixed(2)}px)`;}
+function fade(t,t0,d=.3){return `opacity:${seg(t,t0,d).toFixed(3)}`;}
+function arrive(t,t0,d=.42){const p=clamp((t-t0)/d);const s=p<=0?.82:lerp(.82,1,back(p));return `opacity:${clamp(p*3).toFixed(3)};transform:scale(${s.toFixed(4)})`;}
+function ws(t,words,times,style=''){return words.map((w,i)=>`<span class="w" style="${rise(t,times[i]??times[times.length-1],.3,18)};${style}">${w}${i<words.length-1?' ':''}</span>`).join('');}
+function spoken(t,id,words,k=0,style=''){return ws(t,words,words.map((_,i)=>wt(id,k+i)-.06),style);}
+function A(x,y,css,html){return `<div class="a" style="left:${x}px;top:${y}px;${css}">${html??''}</div>`;}
+function C(y,css,html){return `<div class="a c" style="top:${y}px;${css}">${html??''}</div>`;}
+function grain(dark){return `<svg width="1080" height="1920" style="left:0;top:0"><filter id="g${dark?1:0}"><feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="2" seed="${dark?9:4}"/><feColorMatrix values="0 0 0 0 ${dark?.9:.25}  0 0 0 0 ${dark?.88:.24}  0 0 0 0 ${dark?.85:.22}  0 0 0 ${dark?.035:.07} 0"/></filter><rect width="1080" height="1920" filter="url(#g${dark?1:0})"/></svg>`;}
+function slug(t,dark){return A(70,150,`font-family:Mono;font-size:24px;letter-spacing:.1em;color:${dark?TXT2:SOFT}`,`cte <span style="color:${dark?REDL:RED}">/</span> A MAC FOR YOUR AGENT`);}
+function credit(t,t0,text,dark=0,y=1700){return A(70,y,`${fade(t,t0,.3)};font-family:Mono;font-size:22px;letter-spacing:.03em;color:${dark?TXT2:SOFT};width:940px;line-height:1.45`,text);}
+function svgL(inner){return `<svg width="1080" height="1920" style="left:0;top:0">${inner}</svg>`;}
+function note(x,y,t,t0,text,size=52,rot=-3,col=REDT){return A(x,y,`${rise(t,t0,.3,10)};font-family:Caveat;font-weight:600;font-size:${size}px;color:${col};transform-origin:left;rotate:${rot}deg;white-space:nowrap`,text);}
+// ---------- the red pen ----------
+function wob(i,seed,amp){return amp*(Math.sin(i*.9+seed)*.6+Math.sin(i*2.3+seed*1.7)*.4);}
+function penPath(pts,t,t0,d,w=7,col=RED){const p=eio(clamp((t-t0)/d));if(p<=0)return '';let L=0;for(let i=1;i<pts.length;i++)L+=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);
+  return `<path d="M${pts.map(q=>q[0].toFixed(1)+' '+q[1].toFixed(1)).join(' L')}" fill="none" stroke="${col}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${L.toFixed(0)}" stroke-dashoffset="${(L*(1-p)).toFixed(1)}"/>`;}
+function penUnder(x0,x1,y,t,t0,d=.35,w=8,seed=1,col=RED){const n=24,pts=[];for(let i=0;i<=n;i++){const u=i/n;pts.push([lerp(x0,x1,u),y+wob(i,seed,3)+u*6-8*u*(1-u)]);}return penPath(pts,t,t0,d,w,col);}
+function penStrike(x0,x1,y,t,t0,d=.25,w=8,col=RED){const pts=[];for(let i=0;i<=16;i++){const u=i/16;pts.push([lerp(x0,x1,u),y+wob(i,4,2.5)-u*10]);}return penPath(pts,t,t0,d,w,col);}
+function penRing(cx,cy,rx,ry,t,t0,d=.6,w=7,turns=1.25,seed=2,col=RED){const pts=[],n=120,a0=-2.3;for(let i=0;i<=n;i++){const u=i/n,a=a0+u*Math.PI*2*turns;const r=1+.05*Math.sin(3*a+seed)+.03*Math.sin(5*a+seed*2)+.03*u;pts.push([cx+Math.cos(a)*rx*r,cy+Math.sin(a)*ry*r]);}return penPath(pts,t,t0,d,w,col);}
+function penTick(x,y,s,t,t0,d=.22,w=8,col=RED){return penPath([[x,y],[x+s*.35,y+s*.4],[x+s,y-s*.55]],t,t0,d,w,col);}
+function penX(x,y,s,t,t0,w=7,col=RED){return penPath([[x,y],[x+s,y+s]],t,t0,.12,w,col)+penPath([[x+s,y],[x,y+s]],t,t0+.1,.12,w,col);}
+function penArrow(x0,y0,x1,y1,t,t0,d=.3,w=6,bend=24,col=RED){const pts=[];for(let i=0;i<=16;i++){const u=i/16;pts.push([lerp(x0,x1,u)+Math.sin(u*Math.PI)*bend,lerp(y0,y1,u)]);}
+  const ang=Math.atan2(y1-pts[14][1],x1-pts[14][0]);const h=22;const hd=[[x1-h*Math.cos(ang-.5),y1-h*Math.sin(ang-.5)],[x1,y1],[x1-h*Math.cos(ang+.5),y1-h*Math.sin(ang+.5)]];
+  return penPath(pts,t,t0,d,w,col)+penPath(hd,t,t0+d*.9,.12,w,col);}
+// an inline mark on a word (ring / strike / under), drawn in the word's own box
+function mark(t,t0,inner,kind='ring',d=.5,col=RED,w=7,seed=3){const p=eio(clamp((t-t0)/d));
+  let path='',box='left:-10%;top:-24%;width:120%;height:148%';
+  if(kind==='ring'){const pts=[];for(let i=0;i<=90;i++){const u=i/90,a=-2.3+u*Math.PI*2*1.2;const r=1+.04*Math.sin(3*a+seed)+.03*u;pts.push([50+Math.cos(a)*46*r,50+Math.sin(a)*44*r]);}path='M'+pts.map(q=>q[0].toFixed(2)+' '+q[1].toFixed(2)).join(' L');}
+  if(kind==='strike'){box='left:-4%;top:0;width:108%;height:100%';path='M0 58 C30 52, 60 56, 100 46';}
+  if(kind==='under'){box='left:-3%;top:84%;width:106%;height:22%';path='M0 40 C30 60, 70 30, 100 55';}
+  const svg=p>0?`<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;${box};overflow:visible;pointer-events:none"><path d="${path}" pathLength="1" fill="none" stroke="${col}" stroke-width="${w}" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="1 1" stroke-dashoffset="${(1-p).toFixed(4)}"/></svg>`:'';
+  return `<span style="position:relative;display:inline-block">${inner}${svg}</span>`;}
+// the top caption: the phrase being spoken rises word by word on its spoken times; idea words are the serif italic
+// in red; marks: {index: [kind, time]} lets the pen strike, ring or underline a word as it's said
+function topcap(t,id,groups,o={}){const l=LINES[id];if(!l)return '';const {y=250,size=78,emph=[],col=INK,ecol=REDT,lh=1.08,w=960,marks={}}=o;
+  let g=0;groups.forEach(([a],i)=>{if(t>=wt(id,a)-.12)g=i;});const [a,b]=groups[g];
+  const words=l.words.slice(a,b+1).map((x,i)=>{const k=a+i;const e=emph.includes(k);let inner=x.w;
+    if(marks[k])inner=mark(t,marks[k][1],inner,marks[k][0],marks[k][2]||.35,ecol,7,k);
+    return `<span class="w${e?' serif':''}" style="${rise(t,wt(id,k)-.06,.3,18)};${e?`font-style:italic;color:${ecol};font-size:1.12em`:''}">${inner}${k<b?' ':''}</span>`;}).join('');
+  return A((1080-w)/2,y,`width:${w}px;text-align:center;font-size:${size}px;line-height:${lh};font-weight:600;color:${col};letter-spacing:-0.035em`,words);}
+// ---------- the desktop world ----------
+// a cursor: yours in ink, the agent's in red (an arrow with a light rim so it reads on any surface)
+function cursor(x,y,col=INK,s=1,op=1){return `<svg width="${40*s}" height="${52*s}" viewBox="-3 -3 40 52" style="left:${x.toFixed(1)}px;top:${y.toFixed(1)}px;opacity:${op};overflow:visible"><path d="M0 0 L0 36 L9.5 27.5 L16 42 L22.5 39 L16 25 L28 25 Z" fill="${col}" stroke="${TXT}" stroke-width="3" stroke-linejoin="round"/></svg>`;}
+// a matte terminal window: title bar with three dull dots, a mono title, content inside
+function win(x,y,w,h,inner,o={}){const {title='',css='',r=22,bar=50}=o;
+  return `<div class="a" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;border-radius:${r}px;background:${WIN};box-shadow:0 40px 70px -36px rgba(29,28,26,.75),0 0 0 1.5px ${HAIR};overflow:hidden;${css}">
+    <div style="position:absolute;left:0;top:0;width:${w}px;height:${bar}px;background:${BAR}"></div>
+    ${[DOT1,SAND,OK].map((c,i)=>`<div style="position:absolute;left:${22+i*24}px;top:${bar/2-7}px;width:14px;height:14px;border-radius:7px;background:${c}"></div>`).join('')}
+    <div class="mono" style="position:absolute;left:0;width:${w}px;top:${bar/2-13}px;text-align:center;font-size:20px;color:${TXT2}">${title}</div>
+    <div style="position:absolute;left:0;top:${bar}px;width:${w}px;height:${h-bar}px">${inner}</div></div>`;}
+// a drawn screen (a generic display on a stand): the surface, a thin menu strip, whatever's inside
+function screen(x,y,w,h,inner,o={}){const {surf=SURF,label='',lcol=SOFT,css='',border=''}=o;
+  return `<div class="a" style="left:${x}px;top:${y}px;width:${w}px;height:${h+70}px;${css}">
+    <div style="position:absolute;left:${w/2-60}px;top:${h}px;width:120px;height:46px;background:${DESK2};clip-path:polygon(18% 0,82% 0,100% 100%,0 100%)"></div>
+    <div style="position:absolute;left:${w/2-110}px;top:${h+42}px;width:220px;height:10px;border-radius:5px;background:${DESK2}"></div>
+    <div style="position:absolute;left:0;top:0;width:${w}px;height:${h}px;border-radius:22px;background:${WIN};box-shadow:0 34px 60px -32px rgba(29,28,26,.7)"></div>
+    <div style="position:absolute;left:12px;top:12px;width:${w-24}px;height:${h-24}px;border-radius:12px;background:${surf};overflow:hidden;${border}">
+      <div style="position:absolute;left:0;top:0;width:100%;height:22px;background:${SURF2}"></div>${inner}</div>
+    ${label?`<div class="mono" style="position:absolute;left:0;width:${w}px;top:${h+64}px;text-align:center;font-size:24px;letter-spacing:.12em;color:${lcol}">${label}</div>`:''}</div>`;}
+// real footage / a screenshot as a rounded card; the view zooms and pans inside it (image point cx,cy at the card's
+// centre at z screen px per image px); marks are SVG in the image's own pixels
+function shot(o){const {x,y,w,h,src,iw,ih,cx=iw/2,cy=ih/2,z=w/iw,op=1,rp=1,marks='',r=30}=o;
+  const ix=w/2-cx*z, iy=h/2-cy*z;
+  return `<div class="a" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;border-radius:${r}px;overflow:hidden;opacity:${op.toFixed(3)};transform:translateY(${((1-rp)*110).toFixed(1)}px) scale(${lerp(.92,1,rp).toFixed(4)});box-shadow:0 44px 70px -34px rgba(29,28,26,.7),0 0 0 2px rgba(29,28,26,.14);background:${WIN}">
+    <div style="position:absolute;left:${ix.toFixed(1)}px;top:${iy.toFixed(1)}px;width:${iw}px;height:${ih}px;transform-origin:0 0;transform:scale(${z.toFixed(4)})">
+    <img src="${src}" style="left:0;top:0;width:${iw}px;height:${ih}px"><svg width="${iw}" height="${ih}" style="left:0;top:0">${marks}</svg></div></div>`;}
+// a frame of the real footage (assets/clips/<dir>/NNN.jpg, 30 fps): the clip plays from t0, holds its last frame
+const CLIP={a:141,b:30,c:204};
+function frame(dir,t,t0){const k=clamp(Math.floor((t-t0)*30)+1,1,CLIP[dir]);return `assets/clips/${dir}/${String(k).padStart(3,'0')}.jpg`;}
+const FW=1280, FH=819;
+// a pill / chip
+function chip(text,o={}){const {fg=INK,bg='transparent',bd=INK,size=30,pad='10px 26px',css=''}=o;return `<span style="display:inline-block;font-family:Mono;font-size:${size}px;color:${fg};background:${bg};border:3px solid ${bd};border-radius:60px;padding:${pad};white-space:nowrap;${css}">${text}</span>`;}
+// the Droste: the real "Mac in a terminal" frame, with the same frame inside its own desktop, and again, and again
+const DR={x0:89,y0:95,x1:1177,y1:774};   // the guest desktop inside a clip-a frame (1280 × 819)
+function droste(w,depth=5,src='assets/clips/a/141.jpg',agent=-1){const h=w*FH/FW;let s='';
+  const k=.46, dw=(DR.x1-DR.x0), dh=(DR.y1-DR.y0);
+  function lvl(i,W){if(i>=depth)return '';const H=W*FH/FW, sc=W/FW;const iw=dw*sc*k, ih=iw*FH/FW;const ix=(DR.x0+dw*.5)*sc-iw/2, iy=(DR.y0+dh*.47)*sc-ih/2;
+    return `<div style="position:absolute;left:0;top:0;width:${W.toFixed(1)}px;height:${H.toFixed(1)}px;border-radius:${Math.max(3,W*.02).toFixed(1)}px;overflow:hidden;box-shadow:0 ${(W*.03).toFixed(1)}px ${(W*.05).toFixed(1)}px -${(W*.02).toFixed(1)}px rgba(29,28,26,.8)"><img src="${src}" style="left:0;top:0;width:${W.toFixed(1)}px;height:${H.toFixed(1)}px">
+      <div style="position:absolute;left:${ix.toFixed(1)}px;top:${iy.toFixed(1)}px;width:${iw.toFixed(1)}px;height:${ih.toFixed(1)}px">${lvl(i+1,iw)}</div></div>`;}
+  return lvl(0,w);}
+// ---------- scenes ----------
+const SC=[];
+function scene(t0,bg,draw,opt={}){if(isFinite(t0))SC.push({t0,bg,draw,...opt});}
+const A0=at('l01','mac')-1.2-.03;   // clip a: macOS boots inside the terminal on "Mac"
+
+// 1 · the hook: the real footage is already playing (terminal-mac typed); the headline is on screen from frame 1;
+// on "Mac" macOS boots inside the terminal and the pen rings the word; "terminal" underlined
+scene(0,DESK,(t)=>{
+  let h=grain(0)+slug(t,0);
+  const mac=at('l01','mac'), te=at('l01','terminal');
+  const hp=seg(t,-.2,.3);
+  h+=C(200,`opacity:${hp};font-size:74px;line-height:1.04;font-weight:600;color:${INK};letter-spacing:-0.04em`,`Someone just put`);
+  h+=C(292,`opacity:${hp};font-size:128px;line-height:1.04;font-weight:600;color:${INK};letter-spacing:-0.045em`,`a whole ${mark(t,mac+.05,`<span class="serif" style="font-style:italic;color:${REDT};font-size:1.12em">Mac</span>`,'ring',.45,RED,8,2)}`);
+  h+=C(452,`opacity:${hp};font-size:74px;line-height:1.04;font-weight:600;color:${INK};letter-spacing:-0.04em`,`inside a ${mark(t,te+.1,`<span class="serif" style="font-style:italic;font-size:1.12em">terminal.</span>`,'under',.35,RED,7)}`);
+  const z=1+.04*seg(t,mac-.05,.5,eio)+.012*t;
+  h+=`<div class="a" style="inset:0;transform-origin:540px 900px;transform:scale(${z.toFixed(4)})">`+shot({x:40,y:600,w:1000,h:1000*FH/FW,src:frame('a',t,A0),iw:FW,ih:FH})+`</div>`;
+  h+=credit(t,0,'real footage · @kirtandopamine on X · terminal-mac',0,1290);
+  return h;
+});
+
+// 2 · not for you: for your AI agent. The footage keeps running; "you." is struck; the agent's red cursor flies in
+scene(S('l02'),DESK,(t)=>{
+  let h=grain(0)+slug(t,0);
+  const yo=at('l02','you'), ag=at('l02','agent');
+  h+=topcap(t,'l02',[[0,4],[5,9]],{size:86,emph:[8,9],marks:{4:['strike',yo+.15,.25]}});
+  h+=shot({x:40,y:540,w:1000,h:1000*FH/FW,src:frame('a',t,A0),iw:FW,ih:FH});
+  // the agent's cursor arrives on an arc and starts working the guest desktop
+  const p=seg(t,ag-.2,.55,eio);const x=lerp(1120,560,p)+Math.sin(p*Math.PI)*-60, y=lerp(1500,820,p)-Math.sin(p*Math.PI)*120;
+  if(p>0){const jig=t>ag+.4?Math.sin((t-ag)*5)*30:0;h+=cursor(x+jig,y+jig*.4,RED,1.7);}
+  h+=note(300,1250,t,ag+.25,'the agent drives this one',58,-3);
+  h+=credit(t,S('l02'),'real footage · @kirtandopamine on X · terminal-mac',0,1330);
+  return h;
+},{tr:'cut',punch:1.03});
+
+// 3 · the pain: an agent on YOUR computer takes your mouse, your screen, your clipboard
+function yourScreen(t,o){const {mo=99,dlg=99,del=99,cant=99}=o;
+  let s='';
+  // a notes window you're typing in
+  const typed='Q4 plan: ship the beta, then';const nTyped=Math.min(typed.length,Math.floor(clamp((Math.min(t,cant)-S('l03')+1)*9,0,99)));
+  s+=`<div style="position:absolute;left:70px;top:70px;width:470px;height:300px;border-radius:12px;background:${TXT};box-shadow:0 18px 30px -18px rgba(29,28,26,.5)">
+    <div class="mono" style="position:absolute;left:22px;top:16px;font-size:18px;color:${SOFT}">notes.txt</div>
+    <div style="position:absolute;left:22px;top:60px;width:420px;font-family:Geist;font-size:30px;line-height:1.35;color:${INK}">${typed.slice(0,nTyped)}<span style="display:inline-block;width:3px;height:32px;background:${t<cant&&Math.floor(t*3)%2?'transparent':INK};vertical-align:-5px"></span></div>
+    ${t>cant?`<div class="mono" style="position:absolute;left:22px;top:230px;font-size:20px;color:${REDT};${fade(t,cant,.2)}">typing… blocked</div>`:''}</div>`;
+  // the dialog the agent clicks
+  if(t>dlg){const dp=seg(t,dlg,.3,back);s+=`<div style="position:absolute;left:190px;top:150px;width:420px;height:210px;border-radius:14px;background:${TXT};box-shadow:0 26px 40px -18px rgba(29,28,26,.6),0 0 0 1.5px ${DESK2};transform:scale(${lerp(.85,1,dp).toFixed(3)});opacity:${clamp(dp*3).toFixed(3)}">
+    <div style="position:absolute;left:26px;top:24px;width:370px;font-size:26px;font-weight:600;color:${INK};line-height:1.2">Move “Taxes 2026” to the Trash?</div>
+    <div style="position:absolute;left:150px;top:128px;width:110px;height:50px;border-radius:10px;background:${SURF2};font-size:22px;color:${INK};text-align:center;line-height:50px">Cancel</div>
+    <div style="position:absolute;left:275px;top:128px;width:120px;height:50px;border-radius:10px;background:${t>del?REDT:INK};font-size:22px;color:${TXT};text-align:center;line-height:50px">Move</div></div>`;}
+  // cursors: yours (ink) until the agent takes the mouse; then the agent's (red), heading for the dialog
+  const mp=seg(t,mo-.1,.3);
+  if(mp<1)s+=cursor(560+Math.sin(t*2)*6,330,INK,1.3,(1-mp).toFixed(2));
+  if(mp>0){let cx=lerp(640,560,mp), cy=lerp(420,330,mp);
+    if(t>dlg){const q=seg(t,dlg+.2,Math.max(.3,del-dlg-.3),eio);cx=lerp(560,520,q);cy=lerp(330,300,q);}
+    else cx+=Math.sin(t*4)*40*seg(t,mo+.3,.3);
+    const press=t>del&&t<del+.15?.85:1;s+=cursor(cx,cy,RED,1.3*press);}
+  return s;}
+scene(S('l03'),DESK,(t)=>{
+  const t0=S('l03');let h=grain(0)+slug(t,0);
+  const mo=at('l03','mouse'), sc=at('l03','screen'), cl=at('l03','clipboard');
+  h+=topcap(t,'l03',[[0,6],[7,10],[11,15]],{size:78,emph:[10,12,15]});
+  const red=t>sc?`box-shadow:inset 0 0 0 ${(6*seg(t,sc-.05,.25)).toFixed(1)}px ${RED}`:'';
+  h+=screen(140,520,800,500,yourScreen(t,{mo,cant:99}),{label:'YOUR MAC',border:red,css:arrive(t,t0,.4)});
+  if(t>sc)h+=A(560,580,`${arrive(t,sc,.3)};font-family:Mono;font-size:22px;color:${TXT};background:${REDT};padding:6px 14px;border-radius:8px`,'agent is driving');
+  if(t>cl)h+=A(640,880,`${arrive(t,cl,.3)};width:260px;border-radius:12px;background:${INK};padding:14px 18px;font-family:Mono;font-size:20px;color:${TXT};line-height:1.35`,`clipboard<br><span style="color:${REDL}">replaced by the agent</span>`);
+  // the three things it takes, one per word
+  [['MOUSE',mo],['SCREEN',sc],['CLIPBOARD',cl]].forEach(([n,tt],i)=>{const on=t>tt;const x=[150,410,690][i];
+    h+=A(x,1180,`${rise(t,t0+.3+i*.08)}`,chip(n,{fg:on?TXT:INK,bg:on?REDT:'transparent',bd:on?REDT:INK,size:28}));
+    if(on)h+=A(x+10,1250,`${rise(t,tt,.25,10)};font-family:Mono;font-size:20px;color:${REDT}`,'→ the agent');});
+  return h;
+},{tr:'zoom'});
+
+// 4 · you can't work; every wrong click is your click
+scene(S('l04'),DESK,(t)=>{
+  const t0=S('l04');let h=grain(0)+slug(t,0);
+  const wk=at('l04','work'), wr=at('l04','wrong'), ck=at('l04','click'), yc=at('l04','click',wordIdx('l04','click')+1);
+  h+=topcap(t,'l04',[[0,2],[3,9]],{size:84,emph:[2,6,9]});
+  h+=screen(140,520,800,500,yourScreen(t,{mo:-9,cant:wk,dlg:wr-.35,del:ck+.05}),{label:'YOUR MAC',border:`box-shadow:inset 0 0 0 6px ${RED}`});
+  h+=svgL(penRing(140+12+190+275+60,520+12+150+128+25,96,44,t,yc-.05,.45,7));
+  h+=note(300,1130,t,yc+.2,'your files. your account.',58,-3);
+  return h;
+},{tr:'cut',punch:1.04});
+
+// 5 · the name: terminal-mac gives the agent its own Mac (two screens; the red cursor hops over to its own)
+function twoMacs(t,o){const {y=880,right=-9,hop=-9,typing=true}=o;let h='';
+  h+=screen(70,y,440,280,'',{label:'YOURS'});
+  const rp=seg(t,right,.4,back);
+  if(t>right)h+=`<div class="a" style="left:0;top:0;width:1080px;height:1920px;opacity:${clamp(rp*3).toFixed(3)};transform-origin:790px ${y+140}px;transform:scale(${lerp(.7,1,rp).toFixed(3)})">${screen(570,y,440,280,`<div style="position:absolute;left:30px;top:50px;width:200px;height:140px;border-radius:10px;background:${WIN}"><div class="mono" style="position:absolute;left:14px;top:12px;font-size:15px;color:${TXT2}">agent at work</div></div>`,{surf:SURF2,label:"THE AGENT'S",lcol:REDT})}</div>`;
+  // your cursor stays home; the agent's hops on an arc from yours to its own
+  h+=cursor(300+Math.sin(t*2.2)*14,y+150+Math.cos(t*1.7)*8,INK,1.2);
+  const p=seg(t,hop,.5,eio);const cx=lerp(230,800,p), cy=lerp(y+120,y+130,p)-Math.sin(p*Math.PI)*190;
+  const land=t>hop+.5&&t<hop+.7?1-.15*Math.sin((t-hop-.5)/.2*Math.PI):1;
+  h+=cursor(cx+(p>=1?Math.sin(t*5)*30:0),cy,RED,1.2*land);
+  return h;}
+scene(S('l05'),DESK,(t)=>{
+  const t0=S('l05');let h=grain(0)+slug(t,0);
+  const gv=at('l05','gives'), ow=at('l05','own'), mc=at('l05','mac');
+  const name='terminal-mac', n=Math.round(clamp((t-t0+.05)/.5)*name.length);
+  h+=C(330,`font-family:Mono;font-size:118px;font-weight:600;color:${INK};letter-spacing:-0.04em`,`${name.slice(0,n)}<span style="color:${REDT};opacity:${n<name.length||Math.floor(t*3)%2?1:0}">▌</span>`);
+  h+=C(500,`font-size:72px;font-weight:600;color:${INK};letter-spacing:-0.03em`,spoken(t,'l05',['gives','the','agent','its'],1)+' '+mark(t,ow+.15,`<span class="serif" style="font-style:italic;color:${REDT};font-size:1.12em">${spoken(t,'l05',['own'],5)}</span>`,'ring',.4)+` <span class="serif" style="font-style:italic;color:${REDT};font-size:1.12em">${spoken(t,'l05',['Mac.'],6)}</span>`);
+  h+=twoMacs(t,{y:820,right:ow-.15,hop:mc-.1});
+  return h;
+},{tr:'whip',dir:1});
+
+// 6 · real macOS, in Apple's own virtual machine (the real About window, ringed), on Apple silicon
+scene(S('l06'),DESK,(t)=>{
+  const t0=S('l06');let h=grain(0)+slug(t,0);
+  const vm=at('l06','virtual'), si=at('l06','silicon');
+  h+=topcap(t,'l06',[[0,1],[2,6],[7,11]],{size:80,emph:[1,5,6,10]});
+  const zp=seg(t,vm-.35,.6,eio);
+  const cx=lerp(FW/2,730,zp), cy=lerp(FH/2,330,zp), z=lerp(1000/FW,1.32,zp);
+  const marks=penRing(725,298,150,30,t,vm+.15,.45,4)+penUnder(795,915,388,t,si,.3,4,3);
+  h+=shot({x:40,y:540,w:1000,h:1000*FH/FW,src:frame('b',t,t0-.2),iw:FW,ih:FH,cx,cy,z,rp:seg(t,t0-.05,.4,back),marks});
+  h+=note(330,1250,t,si+.3,'Apple M4 Pro (Virtual)',58,-3);
+  h+=credit(t,t0+.3,'real footage · the guest’s own System Settings → About · @kirtandopamine',0,1330);
+  return h;
+},{tr:'cut',punch:1.05});
+
+// 7 · the dots: what the agent's Mac can see. Your Mac is full of your things; two pipes cross (control, tools);
+// your home folder, clipboard and camera are struck off
+scene(S('l07'),DESK,(t)=>{
+  const t0=S('l07');let h=grain(0)+slug(t,0);
+  const tw=at('l07','two'), ho=at('l07','home'), cl=at('l07','clipboard'), ca=at('l07','camera');
+  h+=topcap(t,'l07',[[0,4],[5,8],[9,14]],{size:78,emph:[2,3,4]});
+  let s='';
+  // your Mac: a box of dots (your things)
+  s+=`<rect x="110" y="500" width="860" height="330" rx="26" fill="none" stroke="${INK}" stroke-width="4" opacity="${seg(t,t0,.3).toFixed(3)}"/>`;
+  for(let r=0;r<5;r++)for(let c=0;c<20;c++){const i=r*20+c, tt=t0+.05+hash(i)*.5;const x=160+c*40, y=560+r*40;
+    s+=`<circle cx="${x}" cy="${y}" r="${(9*seg(t,tt,.2,back)).toFixed(2)}" fill="${INK}"/>`;}
+  s+=`<text x="130" y="486" font-family="Mono" font-size="24" letter-spacing="3" fill="${SOFT}" opacity="${seg(t,t0,.3).toFixed(3)}">YOUR MAC · YOUR THINGS</text>`;
+  // the agent's Mac: a dark box with a few ivory dots
+  s+=`<rect x="110" y="1120" width="860" height="260" rx="26" fill="${WIN}" opacity="${seg(t,t0+.15,.3).toFixed(3)}"/>`;
+  for(let i=0;i<14;i++){const x=180+i*52, y=1250+Math.sin(i*1.7)*36;s+=`<circle cx="${x}" cy="${y}" r="${(8*seg(t,t0+.3+i*.03,.2,back)).toFixed(2)}" fill="${TXT}"/>`;}
+  s+=`<text x="130" y="1166" font-family="Mono" font-size="24" letter-spacing="3" fill="${TXT2}" opacity="${seg(t,t0+.15,.3).toFixed(3)}">THE AGENT'S MAC</text>`;
+  // the two pipes, drawn on "two", packets flowing (control both ways, tools one way, read-only)
+  const pp=seg(t,tw-.05,.35,eio);
+  [[400,'control','read / write',1],[680,'tools','read-only',0]].forEach(([x,n,sub,both],j)=>{
+    s+=`<line x1="${x}" y1="830" x2="${x}" y2="${lerp(830,1120,pp).toFixed(1)}" stroke="${INK}" stroke-width="10" stroke-linecap="round"/>`;
+    if(pp>=1)for(let k=0;k<3;k++){const u=((t*.9+k/3+j*.17)%1), dn=both&&k%2?1-u:u;s+=`<circle cx="${x}" cy="${(840+dn*270).toFixed(1)}" r="11" fill="${RED}"/>`;}
+    s+=`<text x="${x+26}" y="965" font-family="Mono" font-size="30" font-weight="600" fill="${INK}" opacity="${seg(t,tw+.1+j*.12,.25).toFixed(3)}">${n}</text><text x="${x+26}" y="1003" font-family="Mono" font-size="22" fill="${SOFT}" opacity="${seg(t,tw+.1+j*.12,.25).toFixed(3)}">${sub}</text>`;});
+  h+=svgL(s);
+  // your things the agent can't reach, struck as they're said
+  [['HOME FOLDER',ho,140],['CLIPBOARD',cl,450],['CAMERA',ca,720]].forEach(([n,tt,x])=>{
+    h+=A(x,764,`${rise(t,tt-.25,.25,10)}`,chip(n,{size:24,bg:DESK,pad:'6px 18px'}));
+    h+=svgL(penStrike(x-8,x+(n.length*14.5+56),790,t,tt+.12,.22,7));});
+  h+=credit(t,tw+.3,'terminal-mac README · isolation model: the guest sees two shares, control and tools; home, projects, clipboard, mic and camera aren’t attached',0,1430);
+  return h;
+},{tr:'pen'});
+
+// 8-9 · the real demo: Claude Code drives the guest (the prompt, then 16× while it draws in Freeform)
+const C0=S('l08')-.05;
+function demo(t,cx,cy,z,rp=1,marks=''){return shot({x:40,y:520,w:1000,h:700,src:frame('c',t,C0),iw:FW,ih:FH,cx,cy,z,rp,marks});}
+scene(S('l08'),DESK,(t)=>{
+  const t0=S('l08');let h=grain(0)+slug(t,0);
+  const cd=at('l08','claude'), fr=at('l08','freeform');
+  h+=topcap(t,'l08',[[0,0],[1,8]],{size:82,emph:[3,8]});
+  const zp=seg(t,t0+.3,.6,eio), pp=seg(t,fr-.3,.6,eio);
+  const cx=lerp(lerp(FW/2,330,zp),950,pp), cy=lerp(lerp(FH/2,495,zp),400,pp), z=lerp(lerp(1000/FW,1.55,zp),1.6,pp);
+  h+=demo(t,cx,cy,z,seg(t,t0-.05,.4,back),penUnder(30,620,528,t,cd,.4,4,2));
+  const sp=t>C0+1.6;h+=A(860,540,`opacity:${sp?1:0};font-family:Mono;font-size:24px;color:${TXT};background:${REDT};padding:6px 14px;border-radius:8px`,'16×');
+  h+=credit(t,t0+.2,'real footage · Claude Code + terminal-mac · @kirtandopamine on X (sped up 16×)',0,1270);
+  return h;
+},{tr:'whip',dir:1});
+scene(S('l09'),DESK,(t)=>{
+  const t0=S('l09');let h=grain(0)+slug(t,0);
+  const nv=at('l09','never');
+  h+=topcap(t,'l09',[[0,4],[5,10]],{size:82,emph:[1,2,4,9]});
+  const dr=.04*Math.sin((t-t0)*.8);
+  h+=demo(t,950+dr*300,400,1.6+dr);
+  h+=A(860,540,`font-family:Mono;font-size:24px;color:${TXT};background:${REDT};padding:6px 14px;border-radius:8px`,'16×');
+  // the badge: your pointer, untouched
+  h+=A(250,1260,`${arrive(t,nv-.1,.35)};width:580px;height:96px;border-radius:48px;background:${TXT};box-shadow:0 18px 30px -18px rgba(29,28,26,.5);font-family:Mono;font-size:28px;color:${INK};line-height:96px;padding-left:96px`,`your pointer: untouched`);
+  h+=`<div class="a" style="left:290px;top:1282px;${fade(t,nv-.1,.2)}">${cursor(0,0,INK,1)}</div>`;
+  h+=svgL(penTick(760,1300,44,t,nv+.25,.22,8));
+  h+=credit(t,t0,'real footage · Claude Code + terminal-mac · @kirtandopamine on X (sped up 16×)',0,1400);
+  return h;
+},{tr:'cut',punch:1.03});
+
+// 10 · the clever part (mode change: dark). A helper inside the guest watches its screen → frames → your terminal
+scene(S('l10'),WIN,(t)=>{
+  const t0=S('l10');let h=grain(1)+slug(t,1);
+  const he=at('l10','helper'), wa=at('l10','watches'), sc=at('l10','screen');
+  h+=topcap(t,'l10',[[0,3],[4,11]],{size:84,emph:[2,5,11],col:TXT,ecol:REDL});
+  // the guest's screen
+  h+=A(200,520,`${arrive(t,t0+.1,.4)};width:680px;height:420px;border-radius:20px;background:${SURF};box-shadow:0 0 0 3px ${HAIR}`,
+    `<div class="mono" style="position:absolute;left:24px;top:-50px;font-size:22px;letter-spacing:.12em;color:${TXT2}">GUEST MAC</div>
+     <div style="position:absolute;left:60px;top:70px;width:300px;height:200px;border-radius:12px;background:${TXT};box-shadow:0 0 0 2px ${SURF2}"></div>
+     ${cursor(400+Math.sin(t*2)*60,190+Math.cos(t*1.4)*40,RED,1.2)}
+     ${t>wa?`<div style="position:absolute;left:0;top:${(((t-wa)*260)%420).toFixed(1)}px;width:680px;height:4px;background:${REDT};opacity:.8"></div>`:''}
+     <div style="position:absolute;left:400px;top:300px;${arrive(t,he-.05,.35)};background:${INK};color:${TXT};font-family:Mono;font-size:21px;padding:10px 16px;border-radius:10px;white-space:nowrap">TerminalMacGuest.app</div>`);
+  if(t>wa)h+=A(200,960,`${rise(t,wa,.3,10)};width:680px;text-align:center;font-family:Mono;font-size:22px;color:${TXT2}`,'ScreenCaptureKit · inside the guest');
+  // frames down to your terminal
+  const fp=seg(t,sc-.1,.35,eio);
+  h+=svgL(`<line x1="540" y1="1010" x2="540" y2="${lerp(1010,1150,fp).toFixed(1)}" stroke="${TXT2}" stroke-width="5" stroke-dasharray="10 10"/>`+(fp>=1?[0,1,2].map(k=>{const u=((t*1.6+k/3)%1);return `<rect x="526" y="${(1010+u*140).toFixed(1)}" width="28" height="18" rx="3" fill="${REDL}"/>`;}).join(''):''));
+  h+=`<div class="a" style="left:240px;top:1170px;${arrive(t,sc,.35)}">${win(0,0,600,190,`<div class="mono" style="position:absolute;left:24px;top:22px;font-size:22px;color:${TXT2}">~ % terminal-mac view</div><div style="position:absolute;left:24px;top:64px;width:180px;height:64px;border-radius:6px;background:${SURF}"></div><div class="mono" style="position:absolute;left:224px;top:84px;font-size:22px;color:${OK}">● live</div>`,{title:'your terminal'})}</div>`;
+  return h;
+},{tr:'pull'});
+
+// 11 · the dot timeline: a frame only when something changes, up to thirty a second (each dot is 1/30 s)
+function moving(u){return (u>.12&&u<.42)||(u>1.55&&u<1.7)||(u>2&&u<3);}   // when the guest's screen changes (s)
+scene(S('l11'),WIN,(t)=>{
+  const t0=S('l11');let h=grain(1)+slug(t,1);
+  const ch=at('l11','changes'), th=at('l11','thirty');
+  h+=topcap(t,'l11',[[0,4],[5,7],[8,12]],{size:82,emph:[1,4,7,10],col:TXT,ecol:REDL});
+  const T0=t0+.2, u=clamp(t-T0,0,3);
+  // the guest screen, its cursor moving only while the screen changes
+  let cx=0;for(let k=0;k<Math.floor(u*30);k++)if(moving(k/30))cx+=9;
+  h+=A(290,500,`${arrive(t,t0,.35)};width:500px;height:300px;border-radius:16px;background:${SURF}`,`${cursor(60+(cx%380),120+Math.sin(cx/40)*40,RED,1.1)}<div class="mono" style="position:absolute;left:0;top:-44px;font-size:22px;letter-spacing:.12em;color:${TXT2}">GUEST SCREEN</div>`);
+  // 3 rows × 30 dots = 3 seconds; a dot lights when a frame is sent
+  let s='', sent=0;
+  for(let r=0;r<3;r++)for(let c=0;c<30;c++){const k=r*30+c, tk=k/30;const x=125+c*29, y=920+r*90;
+    const past=u>=tk;const lit=past&&moving(tk);if(lit)sent++;
+    s+=lit?`<circle cx="${x}" cy="${y}" r="11" fill="${REDL}"/>`:`<circle cx="${x}" cy="${y}" r="9" fill="none" stroke="${past?TXT2:DIM}" stroke-width="3"/>`;}
+  [0,1,2].forEach(r=>s+=`<text x="${125-14}" y="${920+r*90-28}" font-family="Mono" font-size="20" fill="${TXT2}">SECOND ${r+1}</text>`);
+  s+=`<line x1="${(125+u*30*29-14).toFixed(1)}" y1="${(900+Math.min(2,Math.floor(u))*90).toFixed(1)}" x2="${(125+(u%1)*30*29-14).toFixed(1)}" y2="${(940+Math.min(2,Math.floor(u))*90).toFixed(1)}" stroke="${TXT}" stroke-width="0"/>`;
+  h+=svgL(s);
+  h+=A(125,1200,`font-family:Mono;font-size:44px;font-weight:600;color:${TXT}`,`${sent} <span style="font-size:26px;font-weight:400;color:${TXT2}">frames sent</span>`);
+  // on "thirty": the full row is bracketed
+  h+=svgL(penRing(540,1100,470,40,t,th+.05,.5,6,1.15,3,REDL));
+  h+=A(700,1205,`${rise(t,th+.2)};font-family:Mono;font-size:30px;color:${REDL}`,'max 30 / s');
+  h+=credit(t,ch,'README: a frame only when the screen changes (up to 30 fps), lossless lz4, sized to your terminal · illustration',1,1330);
+  return h;
+},{tr:'cut',punch:1.03});
+
+// 12 · the bars: an idle desktop sends zero frames (vs. a fixed 30 fps stream)
+scene(S('l12'),WIN,(t)=>{
+  const t0=S('l12');let h=grain(1)+slug(t,1);
+  const id=at('l12','idle'), ze=at('l12','zero'), no=at('l12','nothing');
+  h+=topcap(t,'l12',[[0,2],[3,4],[5,7]],{size:86,emph:[1,3,7],col:TXT,ecol:REDL});
+  const base=1240, H=560, X=[200,330,620,750];
+  let s=`<line x1="150" y1="${base}" x2="930" y2="${base}" stroke="${TXT2}" stroke-width="3"/>`;
+  s+=`<defs><pattern id="hat" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="16" height="16" fill="${BAR}"/><rect width="6" height="16" fill="${HAIR}"/></pattern></defs>`;
+  const grow=seg(t,t0,.5,eio);
+  // busy screen: stream 30, terminal-mac 30 · idle desktop: stream 30, terminal-mac 30 → 0 on "zero"
+  const drop=seg(t,ze-.1,.45,eio);
+  const vals=[30,30,30,30*(1-drop)];
+  vals.forEach((v,i)=>{const hh=H*v/30*grow, x=X[i];const tm=i%2===1;
+    s+=`<rect x="${x}" y="${(base-hh).toFixed(1)}" width="110" height="${hh.toFixed(1)}" rx="6" fill="${tm?TXT:'url(#hat)'}" ${tm?'':`stroke="${HAIR}" stroke-width="2"`}/>`;
+    s+=`<text x="${x+55}" y="${(base-hh-18).toFixed(1)}" text-anchor="middle" font-family="Mono" font-size="34" font-weight="600" fill="${i===3&&drop>.5?REDL:TXT}" opacity="${grow.toFixed(3)}">${Math.round(v)}</text>`;});
+  s+=`<text x="320" y="${base+50}" text-anchor="middle" font-family="Mono" font-size="24" letter-spacing="2" fill="${TXT2}">BUSY SCREEN</text><text x="740" y="${base+50}" text-anchor="middle" font-family="Mono" font-size="24" letter-spacing="2" fill="${t>id?TXT:TXT2}">IDLE DESKTOP</text>`;
+  s+=`<text x="150" y="${base-H-100}" font-family="Mono" font-size="22" fill="${TXT2}">frames sent per second</text>`;
+  s+=penRing(805,base-20,90,46,t,ze+.25,.45,6,1.2,4,REDL);
+  h+=svgL(s);
+  h+=A(150,base+90,`font-family:Mono;font-size:22px;color:${TXT2}`,`<span style="display:inline-block;width:22px;height:22px;background:${BAR};border:2px solid ${HAIR};vertical-align:-4px"></span>  a fixed 30 fps stream     <span style="display:inline-block;width:22px;height:22px;background:${TXT};vertical-align:-4px"></span>  terminal-mac`);
+  h+=note(620,base-150,t,no,'costs nothing',58,-4,REDL);
+  h+=credit(t,t0+.3,'illustration · the stream also stops 15 s after the viewer leaves (README)',1,1430);
+  return h;
+},{tr:'cut',punch:1.04});
+
+// 13 · seven tools, popping around the MCP server on their words
+const TOOLS=['screenshot','click','drag','scroll','type','key','status'];
+function toolRing(t,o){const {cx=540,cy=930,R=300,pops=[],sz=1,dim=0}=o;let s='',l='';
+  TOOLS.forEach((n,i)=>{const a=(-90+i*360/7)*Math.PI/180, x=cx+Math.cos(a)*R, y=cy+Math.sin(a)*R*.9;const p=seg(t,pops[i]??-9,.3,back);
+    l+=`<line x1="${cx}" y1="${cy}" x2="${(lerp(cx,x,clamp(p))).toFixed(1)}" y2="${(lerp(cy,y,clamp(p))).toFixed(1)}" stroke="${INK}" stroke-width="4" opacity="${(1-dim*.6).toFixed(2)}"/><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${(7*p).toFixed(1)}" fill="${RED}"/>`;
+    s+=A(x-110,y-36,`width:220px;text-align:center;opacity:${(clamp(p*3)*(1-dim*.6)).toFixed(3)};transform:scale(${lerp(.5,1,p).toFixed(3)}) translateY(${(Math.sin(a)>.2?44:-44)}px)`,chip(n,{size:28*sz,bg:DESK,pad:'6px 18px'}));});
+  return svgL(l)+A(cx-100,cy-100,`width:200px;height:200px;border-radius:100px;background:${WIN};box-shadow:0 20px 40px -20px rgba(29,28,26,.7)`,`<div class="mono" style="position:absolute;left:0;width:200px;top:62px;text-align:center;font-size:40px;font-weight:600;color:${TXT}">MCP</div><div class="mono" style="position:absolute;left:0;width:200px;top:116px;text-align:center;font-size:18px;color:${TXT2}">terminal-mac</div>`)+s;}
+scene(S('l13'),DESK,(t)=>{
+  const t0=S('l13');let h=grain(0)+slug(t,0);
+  h+=topcap(t,'l13',[[0,1],[2,9]],{size:84,emph:[0,1]});
+  const pops=TOOLS.map(n=>at('l13',n)-.06);
+  h+=toolRing(t,{pops});
+  h+=credit(t,pops[6],'the MCP tools, from the README: screenshot, click, drag, scroll, type, key, status',0,1400);
+  return h;
+},{tr:'whip',dir:-1});
+
+// 14 · any MCP client: three clients land and plug in; the real install line for Claude Code
+scene(S('l14'),DESK,(t)=>{
+  const t0=S('l14');let h=grain(0)+slug(t,0);
+  const cc=at('l14','claude'), cu=at('l14','cursor'), cx=at('l14','codex'), an=at('l14','any');
+  h+=topcap(t,'l14',[[0,3],[4,6]],{size:82,emph:[5,6]});
+  const cl=[['Claude Code',cc,170],['Cursor',cu,540],['Codex',cx,910]];
+  let s='';cl.forEach(([n,tt,x])=>{const p=seg(t,tt-.08,.3,eio);s+=`<line x1="${x}" y1="640" x2="${x}" y2="${lerp(640,820,p).toFixed(1)}" stroke="${INK}" stroke-width="4"/><line x1="${x}" y1="820" x2="${lerp(x,540,p).toFixed(1)}" y2="${lerp(820,900,p).toFixed(1)}" stroke="${INK}" stroke-width="4"/>`;});
+  h+=svgL(s);
+  cl.forEach(([n,tt,x])=>h+=`<div class="a" style="left:${x-145}px;top:520px;${arrive(t,tt-.08,.35)}">${win(0,0,290,120,`<div style="position:absolute;left:0;width:290px;top:16px;text-align:center;font-size:30px;font-weight:600;color:${TXT}">${n}</div>`,{title:'',bar:28})}</div>`);
+  h+=A(440,900,`${arrive(t,t0,.3)};width:200px;height:90px;border-radius:45px;background:${WIN};font-family:Mono;font-size:26px;color:${TXT};text-align:center;line-height:90px`,'terminal-mac');
+  h+=A(240,1040,`${arrive(t,an,.35)};width:600px;height:110px;border-radius:24px;border:4px dashed ${INK};font-size:40px;font-weight:600;color:${INK};text-align:center;line-height:102px`,`+ any <span class="serif" style="font-style:italic;color:${REDT}">MCP</span> client`);
+  h+=A(70,1220,`${rise(t,an+.3)};width:940px;font-family:Mono;font-size:25px;color:${INK};background:${TXT};border-radius:14px;padding:18px 22px;line-height:1.4`,`<span style="color:${SOFT}">Claude Code:</span> /plugin install terminal-mac --marketplace govijr/terminal-mac`);
+  h+=credit(t,an+.3,'README: Cursor, VS Code, Codex, Windsurf… paste the output of terminal-mac mcp --config',0,1400);
+  return h;
+},{tr:'cut',punch:1.04});
+
+// 15 · one line to install (the real command, typed)
+const CURL='curl -fsSL https://github.com/govijr/terminal-mac/releases/latest/download/get.sh | bash';
+scene(S('l15'),DESK,(t)=>{
+  const t0=S('l15');let h=grain(0)+slug(t,0);
+  const on=at('l15','one'), li=at('l15','line');
+  h+=topcap(t,'l15',[[0,5]],{size:90,emph:[4,5]});
+  const n=Math.round(clamp((t-t0-.05)/1.0)*CURL.length);
+  h+=`<div class="a" style="left:60px;top:560px;${arrive(t,t0-.05,.3)}">${win(0,0,960,420,`<div class="mono" style="position:absolute;left:30px;top:34px;width:900px;font-size:34px;line-height:1.5;color:${TXT};word-break:break-all"><span style="color:${OK}">~ %</span> ${CURL.slice(0,n)}<span style="color:${REDL};opacity:${n<CURL.length||Math.floor(t*3)%2?1:0}">▌</span></div>`,{title:'zsh'})}</div>`;
+  h+=svgL(penUnder(120,960,1010,t,li+.05,.4,8,2));
+  h+=A(70,1070,`${rise(t,li+.25)};width:940px;text-align:center;font-family:Mono;font-size:26px;color:${SOFT}`,'checks its SHA-256 · no admin rights · then just: terminal-mac');
+  return h;
+},{tr:'whip',dir:1});
+
+// 16 · "So, what's the catch?" (ink; silence before)
+scene(S('l16'),WIN,(t)=>{
+  let h=grain(1);const c=at('l16','catch');
+  h+=C(640,`font-size:90px;color:${TXT2};font-weight:500`,spoken(t,'l16',['So,'],0));
+  h+=C(760,`font-size:190px;line-height:1;color:${TXT}`,`<span class="serif" style="font-style:italic">${spoken(t,'l16',["what's",'the'],1)}<br>${mark(t,c+.05,ws(t,['catch?'],[c-.06]),'ring',.6,RED,10,5)}</span>`);
+  return h;
+},{tr:'cut',punch:1.07});
+
+// 17 · the fine print: early release candidate, self-signed, not notarized
+scene(S('l17'),DESK,(t)=>{
+  const t0=S('l17');let h=grain(0)+slug(t,0);
+  const ea=at('l17','early'), ss=at('l17','selfsigned'), no=at('l17','notarized');
+  h+=topcap(t,'l17',[[0,4],[5,9]],{size:80,emph:[2,5,7]});
+  const rows=[['VERSION','0.2.0 · build 6',t0+.1],['STATUS','early release candidate',ea-.05],['SIGNED','self-signed',ss-.05],['NOTARIZED','',no-.05]];
+  h+=A(110,540,`${arrive(t,t0-.05,.35)};width:860px;height:620px;border-radius:18px;background:${TXT};box-shadow:0 30px 50px -28px rgba(29,28,26,.55)`,
+    `<div class="mono" style="position:absolute;left:44px;top:36px;font-size:26px;letter-spacing:.14em;color:${SOFT}">THE FINE PRINT</div>`+
+    rows.map(([k,v,tt],i)=>`<div style="position:absolute;left:44px;top:${110+i*120}px;width:772px;border-top:2px solid ${SURF2};${rise(t,tt,.3,12)}"><div class="mono" style="position:absolute;left:0;top:24px;font-size:24px;letter-spacing:.1em;color:${SOFT}">${k}</div><div style="position:absolute;left:260px;top:16px;font-size:40px;font-weight:600;color:${INK}">${v}</div></div>`).join(''));
+  h+=note(420,985,t,no+.15,'no',110,-6);
+  h+=svgL(penRing(640,800,250,44,t,ea+.2,.4,6,1.15,3));
+  h+=credit(t,no,'terminal-mac README and releases, v0.2.0 build 6 (Nov 3, 2026): “early release candidate… self-signed (no Apple notarization)”',0,1230);
+  return h;
+},{tr:'pen'});
+
+// 18 · the first run downloads macOS: several gigabytes
+scene(S('l18'),DESK,(t)=>{
+  const t0=S('l18');let h=grain(0)+slug(t,0);
+  const dl=at('l18','downloads'), sv=at('l18','several');
+  h+=topcap(t,'l18',[[0,4],[5,6]],{size:84,emph:[4,5,6]});
+  const p=seg(t,dl-.1,Math.max(1.2,E('l18')-dl),x=>1-Math.pow(1-x,1.6));const cells=34, on=Math.floor(p*cells);
+  h+=`<div class="a" style="left:60px;top:560px;${arrive(t,t0-.05,.3)}">${win(0,0,960,470,
+    `<div class="mono" style="position:absolute;left:30px;top:30px;width:900px;font-size:30px;line-height:1.6;color:${TXT}"><span style="color:${OK}">~ %</span> terminal-mac up<br><span style="color:${TXT2}">downloading macOS restore image from Apple…</span><br>${'█'.repeat(on)}<span style="color:${HAIR}">${'█'.repeat(cells-on)}</span> ${Math.round(p*100)}%<br><span style="color:${TXT2};${fade(t,sv)}">several GB · cached for next time</span></div>`,{title:'zsh'})}</div>`;
+  h+=A(70,1090,`${rise(t,sv+.2)};width:940px;text-align:center;font-family:Mono;font-size:26px;color:${SOFT}`,'plus a 64 GiB virtual disk (sparse: it grows as it fills)');
+  h+=credit(t,t0+.3,'README · “Internet on first run to download macOS directly from Apple” · progress shown is an illustration',0,1230);
+  return h;
+},{tr:'cut',punch:1.04});
+
+// 19 · online by default: the guest reaches the internet (and your network); --offline cuts the line
+scene(S('l19'),DESK,(t)=>{
+  const t0=S('l19');let h=grain(0)+slug(t,0);
+  const onl=at('l19','online'), ad=at('l19','add'), cu=at('l19','cut');
+  h+=topcap(t,'l19',[[0,6],[7,13]],{size:80,emph:[4,10,12]});
+  const cut=t>cu+.1;
+  h+=A(100,640,`${arrive(t,t0,.35)};width:330px;height:220px;border-radius:20px;background:${WIN}`,`<div class="mono" style="position:absolute;left:0;width:330px;top:84px;text-align:center;font-size:30px;color:${TXT}">the guest</div>`);
+  h+=A(650,640,`${arrive(t,onl-.1,.35)};width:330px;height:220px;border-radius:110px;border:4px solid ${INK}`,`<div class="mono" style="position:absolute;left:0;width:322px;top:62px;text-align:center;font-size:28px;color:${INK};line-height:1.4">internet<br><span style="font-size:22px;color:${SOFT}">+ your network</span></div>`);
+  let s=`<line x1="430" y1="750" x2="${lerp(430,650,seg(t,onl-.1,.3,eio)).toFixed(1)}" y2="750" stroke="${INK}" stroke-width="6"/>`;
+  if(!cut&&t>onl+.2)for(let k=0;k<3;k++){const u=(t*1.2+k/3)%1;s+=`<circle cx="${(440+u*200).toFixed(1)}" cy="750" r="10" fill="${RED}"/>`;}
+  s+=penX(512,712,76,t,cu+.05,8);
+  h+=svgL(s);
+  h+=A(100,900,`${rise(t,onl+.1)};font-family:Mono;font-size:24px;color:${SOFT}`,'default: NAT networking, on');
+  const cmd='terminal-mac up --offline';const n=Math.round(clamp((t-ad+.05)/.8)*cmd.length);
+  if(t>ad-.1)h+=`<div class="a" style="left:100px;top:1010px;${arrive(t,ad-.1,.3)}">${win(0,0,880,150,`<div class="mono" style="position:absolute;left:28px;top:24px;font-size:36px;color:${TXT}"><span style="color:${OK}">~ %</span> ${cmd.slice(0,n).replace('--offline',`<span style="color:${REDL}">--offline</span>`)}</div>`,{title:'zsh'})}</div>`;
+  h+=credit(t,cu,'README: “not a network-isolated or hardened hostile-code environment. --offline removes that network path.”',0,1230);
+  return h;
+},{tr:'cut',punch:1.04});
+
+// 20 · the payoff: back to the two Macs (callback to the name), free and open source
+scene(S('l20'),DESK,(t)=>{
+  const t0=S('l20');let h=grain(0)+slug(t,0);
+  const fr=at('l20','free'), ag=at('l20','agent'), ke=at('l20','keep');
+  h+=topcap(t,'l20',[[0,4],[5,8],[9,12]],{size:82,emph:[2,3,8,12]});
+  h+=twoMacs(t,{y:620,right:t0-1,hop:t0-1});
+  h+=svgL(penRing(790,760,240,170,t,ag-.05,.5,6)+penRing(290,760,240,170,t,ke,.5,6,1.2,5));
+  h+=C(1100,`${rise(t,fr)};font-family:Mono;font-size:34px;color:${INK};letter-spacing:.06em`,`FREE · OPEN SOURCE · <span style="color:${REDT}">MIT</span>`);
+  h+=C(1170,`${rise(t,fr+.3)};font-family:Mono;font-size:30px;color:${SOFT}`,'github.com/govijr/terminal-mac');
+  h+=credit(t,ke,'needs an Apple silicon Mac on macOS 14 or later',0,1260);
+  return h;
+},{tr:'whip',dir:-1});
+
+// 21 · the ask over the Droste (a Mac in a terminal in a Mac in a terminal…): yes or no
+scene(S('l21'),DESK,(t)=>{
+  const t0=S('l21');let h=grain(0)+slug(t,0);
+  const ye=at('l21','yes'), no=at('l21','no'), cm=at('l21','comments');
+  h+=C(240,`font-size:84px;line-height:1.06;font-weight:600;color:${INK};letter-spacing:-0.035em;padding:0 60px`,spoken(t,'l21',['Would','you','let','an','agent'],0)+' '+`<span class="serif" style="font-style:italic;color:${REDT};font-size:1.12em">${spoken(t,'l21',['drive'],5)}</span> `+spoken(t,'l21',['your','Mac?'],6));
+  // the Droste, pushing in slowly: Macs all the way down
+  const z=1+.12*seg(t,t0,4,x=>x);
+  h+=`<div class="a" style="left:140px;top:560px;width:800px;height:${800*FH/FW}px;transform-origin:400px ${0.47*800*FH/FW}px;transform:scale(${z.toFixed(4)});${fade(t,t0-.1,.3)}"><div style="position:relative">${droste(800,5)}</div></div>`;
+  [['YES',ye,170],['NO',no,600]].forEach(([w,tt,x])=>h+=A(x,1210,`${arrive(t,tt-.05,.35)};width:310px;height:120px;border-radius:60px;background:${w==='YES'?INK:'transparent'};border:5px solid ${INK};font-size:58px;font-weight:600;color:${w==='YES'?TXT:INK};text-align:center;line-height:110px`,w));
+  h+=C(1380,`${rise(t,cm-.1)};font-family:Mono;font-size:38px;letter-spacing:.1em;color:${INK}`,`ONE WORD · IN THE <span style="color:${REDT}">COMMENTS</span>`);
+  return h;
+},{tr:'zoom'});
+
+// 22 · the brand ident: holds still at the end
+const T_ID=E('l21')+.9;
+scene(T_ID,CTE.PAPER,(t)=>CTE.ident(t-T_ID,{w:1080,h:1920}),{tr:'fadeup',still:true});
+
+// ---------- transitions (0.25 s, each motivated) ----------
+const TR=.25;
+function layer(sc,t,css){return `<div class="a" style="inset:0;background:${sc.bg};${css}"><div class="a" style="inset:0;transform:translateY(${sc.still?0:120}px)">${sc.draw(t)}</div></div>`;}
+function penWipe(p){const a=p<.5?0:(p-.5)*2, b=p<.5?p*2:1;const y0=lerp(2200,-300,b), y1=lerp(2200,-300,a);
+  return `<svg width="1080" height="1920" style="left:0;top:0"><path d="M-60 ${y0+120} C 300 ${y0-60}, 700 ${y0+80}, 1140 ${y0-120} L1140 ${y1-120} C 700 ${y1+80}, 300 ${y1-60}, -60 ${y1+120} Z" fill="${RED}"/></svg>`;}
+const cam=document.getElementById('cam'), stage=document.getElementById('stage');
+window.DURATION=T_ID+CTE.DUR+2.2;
+// the cover (t < 0): the Droste (a Mac in a terminal, inside a Mac in a terminal…), the promise in five words
+function cover(){const t=30;let h=`<div class="a" style="inset:0;background:${DESK}">`+grain(0);
+  h+=C(250,`font-size:112px;line-height:1;font-weight:600;color:${INK};letter-spacing:-0.045em`,`Your AI gets`);
+  h+=C(372,`font-size:130px;line-height:1;font-weight:600;color:${INK};letter-spacing:-0.045em`,`its ${mark(99,0,`<span class="serif" style="font-style:italic;color:${REDT};font-size:1.1em">own</span>`,'ring',.1,RED,9,2)} Mac.`);
+  h+=`<div class="a" style="left:50px;top:610px;width:980px;transform:rotate(-2deg)"><div style="position:relative">${droste(980,6)}</div></div>`;
+  h+=cursor(700,1000,RED,2.4);
+  h+=C(1330,`font-family:Mono;font-size:44px;letter-spacing:.04em;color:${INK}`,`<span style="background:${WIN};color:${TXT};padding:10px 24px;border-radius:14px">~ % terminal-mac</span>`);
+  h+=C(1450,`font-family:Mono;font-size:30px;letter-spacing:.14em;color:${SOFT}`,`A WHOLE MAC · INSIDE YOUR <span style="color:${REDT}">TERMINAL</span>`);
+  return h+'</div>';}
+window.seek=function(t){
+  if(t<0){stage.style.background=DESK;cam.style.transform='none';cam.innerHTML=cover();return Promise.all([...cam.querySelectorAll('img')].map(i=>i.decode().catch(()=>{})));}
+  let i=0;while(i+1<SC.length&&SC[i+1].t0<=t)i++;
+  const sc=SC[i], lt=t-sc.t0, t1=(SC[i+1]?.t0)??window.DURATION, prev=SC[i-1];
+  stage.style.background=sc.bg;
+  let s=1;if(!sc.still)s=1+(sc.punch?sc.punch-1:.025)*(1-eo(clamp(lt/.3)))+.025*clamp(lt/Math.max(1,t1-sc.t0));
+  const tr=sc.tr||'cut';let html;
+  if(prev&&lt<TR&&tr!=='cut'){
+    const p=eio(lt/TR), d=sc.dir||1;
+    if(tr==='whip') html=layer(prev,t,`transform:translateY(${(-d*1920*p).toFixed(1)}px);filter:blur(${(p*14).toFixed(1)}px)`)+layer(sc,t,`transform:translateY(${(d*1920*(1-p)).toFixed(1)}px);filter:blur(${((1-p)*14).toFixed(1)}px)`);
+    else if(tr==='zoom') html=layer(sc,t,`transform:scale(${(.85+.15*p).toFixed(4)});opacity:${p.toFixed(3)}`)+layer(prev,t,`transform:scale(${(1+.6*p).toFixed(4)});opacity:${(1-p).toFixed(3)};filter:blur(${(p*12).toFixed(1)}px)`);
+    else if(tr==='pull') html=layer(prev,t,`transform:scale(${(1-.25*p).toFixed(4)});opacity:${(1-p).toFixed(3)}`)+layer(sc,t,`transform:scale(${(1.25-.25*p).toFixed(4)});opacity:${p.toFixed(3)}`);
+    else if(tr==='pen') html=(lt/TR<.5?layer(prev,t,''):layer(sc,t,''))+penWipe(lt/TR);
+    else if(tr==='fadeup') html=layer(prev,t,`opacity:${(1-p).toFixed(3)};transform:translateY(${(-40*p).toFixed(1)}px)`)+`<div class="a" style="inset:0;opacity:${p.toFixed(3)}">${layer(sc,t,'')}</div>`;
+  } else html=layer(sc,t,'');
+  cam.style.transform=`scale(${s.toFixed(5)})`;
+  cam.innerHTML=html;
+  return Promise.all([...cam.querySelectorAll('img')].map(i=>i.complete?i.decode().catch(()=>{}):new Promise(r=>{i.onload=i.onerror=r;})));
+};
+// ---------- sound: every cue scores something that moves ----------
+function cues(){const q=[];const add=(t,f,db=0,o={})=>{if(isFinite(t)&&(o.at===undefined||isFinite(o.at))&&(o.len===undefined||isFinite(o.len)))q.push({t:+t.toFixed(3),f,db,...o});};
+  const PEN=(t,len,db=-10)=>add(t,'PEN',db,{synth:'pen',len});
+  SC.forEach((s,i)=>{if(!i)return;const tr=s.tr||'cut';
+    if(tr==='whip')add(s.t0,'swoosh-014-383768',-8,{peak:true,at:s.t0+.12});
+    else if(tr==='zoom'||tr==='pull')add(s.t0,'simple-whoosh-02-433006',-10,{peak:true,at:s.t0+.12});
+    else if(tr==='pen'){PEN(s.t0,.28,-8);add(s.t0,'woosh-230554',-11,{peak:true,at:s.t0+.12});}
+    else if(tr==='fadeup')add(s.t0,'simple-whoosh-382724',-14,{peak:true,at:s.t0+.15});
+    else add(s.t0,'mouse-click',-16);});
+  // 1: keys under the typed command (the footage's own action), the boot is the one hit, the pen
+  add(0,'typing',-16,{len:Math.max(.3,A0+1.15),fade:.15});
+  const mac=at('l01','mac');add(mac-.55,'shine-6-268910',-12,{reverse:true,len:.55});add(mac-.02,'whoosh-end-384629',-4,{peak:true,len:2,fade:1});add(mac,'sharp-pop',-8);
+  PEN(mac+.05,.45,-8);PEN(at('l01','terminal')+.1,.35,-10);
+  // 2: the strike; the agent's cursor swoops in; the note
+  PEN(at('l02','you')+.15,.25,-8);add(at('l02','agent')-.2,'swoosh-06-351021',-12,{peak:true,at:at('l02','agent')+.08});add(at('l02','agent')+.35,'mouse-click',-12);PEN(at('l02','agent')+.25,.3,-13);
+  // 3: your typing; the agent takes each thing: a click on the mouse, the red frame on the screen, a pop on the clipboard
+  add(S('l03')+.1,'typing',-20,{len:1.8,fade:.3});
+  add(at('l03','mouse'),'mouse-click',-8);add(at('l03','mouse')+.02,'subtle-pop',-12);
+  add(at('l03','screen'),'pop-402324',-10);add(at('l03','clipboard'),'uipop',-9);
+  // 4: blocked; the dialog pops; the agent's click on Move; the pen
+  add(at('l04','work'),'sound-off',-15,{len:.4,fade:.2});add(at('l04','wrong')-.35,'pop-402324',-11);
+  add(at('l04','click')+.05,'mouse-click',-6);add(at('l04','click')+.08,'erreur',-14);PEN(at('l04','click',wordIdx('l04','click')+1)-.05,.45,-8);PEN(at('l04','click',wordIdx('l04','click')+1)+.2,.3,-14);
+  // 5: the name typed; the second Mac lands; the cursor hops across
+  add(S('l05'),'typing',-14,{len:.5,fade:.1});add(at('l05','own')-.15,'pop-402324',-9);PEN(at('l05','own')+.15,.4,-9);
+  add(at('l05','mac')-.1,'swoosh-010-352856',-13,{peak:true,at:at('l05','mac')+.15});add(at('l05','mac')+.42,'subtle-pop',-10);
+  // 6: the push into the About window; the pen
+  add(at('l06','virtual')-.35,'swoosh-06-351021',-15,{peak:true,at:at('l06','virtual')-.05});PEN(at('l06','virtual')+.15,.45,-9);PEN(at('l06','silicon'),.3,-11);
+  // 7: dots pop in (a run), the pipes draw (data), strikes
+  for(let i=0;i<12;i++)add(S('l07')+.05+i*.045,'soft-pop',-20);
+  add(at('l07','two')-.05,'data',-18,{len:.6,fade:.2});add(at('l07','two')+.1,'tick',-12);add(at('l07','two')+.22,'tick',-12);
+  ['home','clipboard','camera'].forEach(w=>{add(at('l07',w)-.25,'tick',-14);PEN(at('l07',w)+.12,.22,-8);});
+  // 8-9: the push into the prompt and the pan to the board; the 16× tag; the pointer badge + tick
+  add(S('l08')+.3,'swoosh-06-351021',-16,{peak:true,at:S('l08')+.6});PEN(at('l08','claude'),.4,-11);
+  add(at('l08','freeform')-.3,'swoosh-010-352856',-15,{peak:true,at:at('l08','freeform')});add(C0+1.6,'tick',-12);
+  ['clicks','drags','types'].forEach(w=>add(at('l09',w),'mouse-click',-13));
+  add(at('l09','never')-.1,'pop-402324',-10);PEN(at('l09','never')+.25,.22,-8);add(at('l09','never')+.3,'accept',-15);
+  // 10: the helper pops; the scan line; frames flow
+  add(at('l10','helper')-.05,'uipop',-9);add(at('l10','watches'),'data',-19,{len:1,fade:.3});add(at('l10','screen'),'pop-402324',-11);
+  // 11: a tick per frame sent (only while the screen changes), the ring on "thirty"
+  { const T0=S('l11')+.2;for(let k=0;k<90;k++)if(moving(k/30)&&k%2===0)add(T0+k/30,'tick',-21);PEN(at('l11','thirty')+.05,.5,-9); }
+  // 12: bars grow; the idle bar drops to zero (the sound drops out with it); the ring
+  add(S('l12'),'swoosh-06-351021',-16,{peak:true,at:S('l12')+.25});add(at('l12','zero')-.1,'sound-off',-10,{len:.5,fade:.3});PEN(at('l12','zero')+.25,.45,-8);add(at('l12','nothing'),'subtle-pop',-12);
+  // 13: one pop per tool, on its word
+  TOOLS.forEach(n=>add(at('l13',n)-.06,'soft-pop',-9));add(S('l13')+.05,'pop-402324',-11);
+  // 14: clients land; the dashed card; the command
+  ['claude','cursor','codex'].forEach(w=>add(at('l14',w)-.08,'pop-402324',-10));add(at('l14','any'),'sharp-pop',-8);add(at('l14','any')+.3,'tick',-14);
+  // 15: the command typed (keys), the pen under it
+  add(S('l15')+.05,'typing',-12,{len:1.0,fade:.15});PEN(at('l15','line')+.05,.4,-8);add(at('l15','line')+.3,'accept',-15);
+  // 16: the catch: silence, then the pen and the hit
+  add(at('l16','catch')+.03,'whoosh-end-384629',-2,{peak:true,len:2.2,fade:1});PEN(at('l16','catch')+.05,.6,-4);
+  // 17: the label card; a tick per row; "no"
+  add(S('l17'),'flipcard',-11);[S('l17')+.1,at('l17','early')-.05,at('l17','selfsigned')-.05,at('l17','notarized')-.05].forEach(x=>add(x,'tick',-13));PEN(at('l17','early')+.2,.4,-10);PEN(at('l17','notarized')+.15,.3,-8);add(at('l17','notarized')+.2,'erreur',-15);
+  // 18: the download (data under the bar)
+  add(S('l18')+.05,'typing',-15,{len:.4,fade:.1});add(at('l18','downloads')-.1,'data',-17,{len:2.4,fade:.6});
+  // 19: the line draws, packets; --offline typed; the pen cuts
+  add(at('l19','online')-.1,'swoosh-06-351021',-15,{peak:true,at:at('l19','online')+.1});add(at('l19','add')-.05,'typing',-13,{len:.8,fade:.1});PEN(at('l19','cut')+.05,.25,-6);add(at('l19','cut')+.1,'sound-off',-12,{len:.4,fade:.2});
+  // 20: the rings, the MIT line
+  PEN(at('l20','agent')-.05,.5,-9);PEN(at('l20','keep'),.5,-9);add(at('l20','free'),'sharp-pop',-9);add(at('l20','free')+.3,'tick',-14);
+  // 21: yes / no pop; the comment line
+  add(at('l21','yes')-.05,'pop-402324',-8);add(at('l21','no')-.05,'pop-402324',-8);add(at('l21','comments')-.1,'notify',-13);
+  CTE.cues(T_ID).forEach(c=>q.push(c));
+  return q;}
+window.SFX=cues();
+// music: gorila at 120 BPM (105.3 BPM sped 1.1396×), as a story. The drop under the hook and the pain; restarted
+// from its second drop on "Here's the clever part" (the re-hook); cut dead before the catch; the breakdown under the
+// fine print; the ending under the payoff and the ident. Every segment is phased so the kick (0.37 s past each half
+// second of the track) lands on the film's half seconds, the grid the voice lines start on.
+window.BED='gorila120';
+const ph=(base,t0)=>{const b=base-(((base-.37)%.5)+.5)%.5;return b+(((t0%.5)+.5)%.5);};
+window.MUSIC=()=>[
+  {t0:0,t1:S('l10'),offset:ph(12,0),fadein:.02,fadeout:.05},
+  {t0:S('l10'),t1:S('l16')-.45,offset:ph(65,S('l10')),fadein:.01,fadeout:.04},
+  {t0:S('l17'),t1:S('l20')-.02,offset:ph(46,S('l17')),fadein:.5,fadeout:.1},
+  {t0:S('l20'),t1:T_ID+4,offset:ph(84,S('l20')),fadein:.05,fadeout:3}].filter(g=>isFinite(g.t0)&&isFinite(g.t1));
+window.SHEPARD=()=>[];
+window.CUTS=SC.map(s=>s.t0);
+window.ready=Promise.all([document.fonts.load('600 60px Geist'),document.fonts.load('600 40px Caveat'),document.fonts.load('40px Serif'),document.fonts.load('italic 40px Serif'),document.fonts.load('40px Mono')]).then(()=>document.fonts.ready);
+</script></body></html>
