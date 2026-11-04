@@ -6,6 +6,15 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Three logos not visible: xAI, ChatGPT and the Z one… check each and everything meticulously… save it as a
+  learning that colours are visible properly against what we are building"** (2026-11-04, on the GDPx v2 cover): the
+  OpenAI, xAI and Z.ai marks rendered black on black tiles (their colour came from `fill="currentColor"` on the outer
+  `<svg>` tag, which was stripped when the marks were inlined, so the paths fell back to black). The rule now: **every
+  mark, icon and word must read against what it sits on**, 3:1 or better for graphics and 4.5:1 for text, checked by a
+  tool, not by eye on a thumbnail. `promo/cte-gdpx/tools/check_logos.js` draws every tile as the film does and fails
+  any mark that vanished or is under 3:1; it caught all three and one more (Claude's ivory on clay was 2.7:1, so Claude
+  is now its clay mark on an ink tile, 5.3:1). Look at every still at full size before a render, and when you inline an
+  SVG, carry its root `fill` onto a `<g>`.
 - **"Can we make it like a collection of top AI models' logos, popping quickly, including open source, instead of this
   generic shit… make it really look like a thumbnail"** and **"use the real logo… make them like this"** (2026-11-04,
   with a ring of app-icon tiles as the reference, on the GDPx cover and hook): an exam sheet with grey lines read as
