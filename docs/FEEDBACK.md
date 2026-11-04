@@ -6,6 +6,13 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Did you change the logo's text… bring back the old… make sure in future no subtitle text like this"**
+  (2026-11-04, on the terminal-mac Reel): the ident rendered "cte" and the tagline in a fallback serif, because the kit
+  dropped `fonts/jost.woff2` and `fonts/courier-prime.woff2` (the film didn't use them, but `cte.js` draws "cte" in
+  **Jost** and "CATCH - THE - ERROR" in **Courier Prime**). Every kit keeps both fonts with their `@font-face` and waits
+  for them in `window.ready`; look at the ident's last frame at full size before rendering. And **no footnote text**:
+  no small grey lines under a scene explaining the source or "illustration · …" (the facts live in PLAN.md and the
+  post's description). The only small text allowed is a short credit on real footage (e.g. "@kirtandopamine on X").
 - **"Create a video on this (github.com/govijr/terminal-mac)… 10 seconds show its own video… present it like we're
   getting paid around 10k dollars to advertise… thumbnail must be creative, no simple page… research how we keep the
   user engaged and make them watch the entire video… the bar graph and dot-dot explanation was quite good… make it

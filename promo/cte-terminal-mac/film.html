@@ -1,6 +1,8 @@
 <!doctype html>
 <html><head><meta charset="utf-8">
 <style>
+@font-face{font-family:Jost;src:url(fonts/jost.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:"Courier Prime";src:url(fonts/courier-prime.woff2) format("woff2")}
 @font-face{font-family:Geist;src:url(fonts/geist.woff2) format("woff2");font-weight:100 900}
 @font-face{font-family:Serif;src:url(fonts/serif.woff2) format("woff2")}
 @font-face{font-family:Serif;font-style:italic;src:url(fonts/serif-i.woff2) format("woff2")}
@@ -141,7 +143,7 @@ scene(0,DESK,(t)=>{
   h+=C(452,`opacity:${hp};font-size:74px;line-height:1.04;font-weight:600;color:${INK};letter-spacing:-0.04em`,`inside a ${mark(t,te+.1,`<span class="serif" style="font-style:italic;font-size:1.12em">terminal.</span>`,'under',.35,RED,7)}`);
   const z=1+.04*seg(t,mac-.05,.5,eio)+.012*t;
   h+=`<div class="a" style="inset:0;transform-origin:540px 900px;transform:scale(${z.toFixed(4)})">`+shot({x:40,y:600,w:1000,h:1000*FH/FW,src:frame('a',t,A0),iw:FW,ih:FH})+`</div>`;
-  h+=credit(t,0,'real footage · @kirtandopamine on X · terminal-mac',0,1290);
+  h+=credit(t,0,'@kirtandopamine on X',0,1290);
   return h;
 });
 
@@ -155,7 +157,7 @@ scene(S('l02'),DESK,(t)=>{
   const p=seg(t,ag-.2,.55,eio);const x=lerp(1120,560,p)+Math.sin(p*Math.PI)*-60, y=lerp(1500,820,p)-Math.sin(p*Math.PI)*120;
   if(p>0){const jig=t>ag+.4?Math.sin((t-ag)*5)*30:0;h+=cursor(x+jig,y+jig*.4,RED,1.7);}
   h+=note(300,1250,t,ag+.25,'the agent drives this one',58,-3);
-  h+=credit(t,S('l02'),'real footage · @kirtandopamine on X · terminal-mac',0,1330);
+  h+=credit(t,S('l02'),'@kirtandopamine on X',0,1330);
   return h;
 },{tr:'cut',punch:1.03});
 
@@ -238,7 +240,7 @@ scene(S('l06'),DESK,(t)=>{
   const marks=penRing(725,298,150,30,t,vm+.15,.45,4)+penUnder(795,915,388,t,si,.3,4,3);
   h+=shot({x:40,y:540,w:1000,h:1000*FH/FW,src:frame('b',t,t0-.2),iw:FW,ih:FH,cx,cy,z,rp:seg(t,t0-.05,.4,back),marks});
   h+=note(330,1250,t,si+.3,'Apple M4 Pro (Virtual)',58,-3);
-  h+=credit(t,t0+.3,'real footage · the guest’s own System Settings → About · @kirtandopamine',0,1330);
+  h+=credit(t,t0+.3,'@kirtandopamine on X',0,1330);
   return h;
 },{tr:'cut',punch:1.05});
 
@@ -269,7 +271,6 @@ scene(S('l07'),DESK,(t)=>{
   [['HOME FOLDER',ho,140],['CLIPBOARD',cl,450],['CAMERA',ca,720]].forEach(([n,tt,x])=>{
     h+=A(x,764,`${rise(t,tt-.25,.25,10)}`,chip(n,{size:24,bg:DESK,pad:'6px 18px'}));
     h+=svgL(penStrike(x-8,x+(n.length*14.5+56),790,t,tt+.12,.22,7));});
-  h+=credit(t,tw+.3,'terminal-mac README · isolation model: the guest sees two shares, control and tools; home, projects, clipboard, mic and camera aren’t attached',0,1430);
   return h;
 },{tr:'pen'});
 
@@ -284,7 +285,7 @@ scene(S('l08'),DESK,(t)=>{
   const cx=lerp(lerp(FW/2,330,zp),950,pp), cy=lerp(lerp(FH/2,495,zp),400,pp), z=lerp(lerp(1000/FW,1.55,zp),1.6,pp);
   h+=demo(t,cx,cy,z,seg(t,t0-.05,.4,back),penUnder(30,620,528,t,cd,.4,4,2));
   const sp=t>C0+1.6;h+=A(860,540,`opacity:${sp?1:0};font-family:Mono;font-size:24px;color:${TXT};background:${REDT};padding:6px 14px;border-radius:8px`,'16×');
-  h+=credit(t,t0+.2,'real footage · Claude Code + terminal-mac · @kirtandopamine on X (sped up 16×)',0,1270);
+  h+=credit(t,t0+.2,'@kirtandopamine on X',0,1270);
   return h;
 },{tr:'whip',dir:1});
 scene(S('l09'),DESK,(t)=>{
@@ -298,7 +299,7 @@ scene(S('l09'),DESK,(t)=>{
   h+=A(250,1260,`${arrive(t,nv-.1,.35)};width:580px;height:96px;border-radius:48px;background:${TXT};box-shadow:0 18px 30px -18px rgba(29,28,26,.5);font-family:Mono;font-size:28px;color:${INK};line-height:96px;padding-left:96px`,`your pointer: untouched`);
   h+=`<div class="a" style="left:290px;top:1282px;${fade(t,nv-.1,.2)}">${cursor(0,0,INK,1)}</div>`;
   h+=svgL(penTick(760,1300,44,t,nv+.25,.22,8));
-  h+=credit(t,t0,'real footage · Claude Code + terminal-mac · @kirtandopamine on X (sped up 16×)',0,1400);
+  h+=credit(t,t0,'@kirtandopamine on X',0,1400);
   return h;
 },{tr:'cut',punch:1.03});
 
@@ -314,7 +315,6 @@ scene(S('l10'),WIN,(t)=>{
      ${cursor(400+Math.sin(t*2)*60,190+Math.cos(t*1.4)*40,RED,1.2)}
      ${t>wa?`<div style="position:absolute;left:0;top:${(((t-wa)*260)%420).toFixed(1)}px;width:680px;height:4px;background:${REDT};opacity:.8"></div>`:''}
      <div style="position:absolute;left:400px;top:300px;${arrive(t,he-.05,.35)};background:${INK};color:${TXT};font-family:Mono;font-size:21px;padding:10px 16px;border-radius:10px;white-space:nowrap">TerminalMacGuest.app</div>`);
-  if(t>wa)h+=A(200,960,`${rise(t,wa,.3,10)};width:680px;text-align:center;font-family:Mono;font-size:22px;color:${TXT2}`,'ScreenCaptureKit · inside the guest');
   // frames down to your terminal
   const fp=seg(t,sc-.1,.35,eio);
   h+=svgL(`<line x1="540" y1="1010" x2="540" y2="${lerp(1010,1150,fp).toFixed(1)}" stroke="${TXT2}" stroke-width="5" stroke-dasharray="10 10"/>`+(fp>=1?[0,1,2].map(k=>{const u=((t*1.6+k/3)%1);return `<rect x="526" y="${(1010+u*140).toFixed(1)}" width="28" height="18" rx="3" fill="${REDL}"/>`;}).join(''):''));
@@ -344,7 +344,6 @@ scene(S('l11'),WIN,(t)=>{
   // on "thirty": the full row is bracketed
   h+=svgL(penRing(540,1100,470,40,t,th+.05,.5,6,1.15,3,REDL));
   h+=A(700,1205,`${rise(t,th+.2)};font-family:Mono;font-size:30px;color:${REDL}`,'max 30 / s');
-  h+=credit(t,ch,'README: a frame only when the screen changes (up to 30 fps), lossless lz4, sized to your terminal · illustration',1,1330);
   return h;
 },{tr:'cut',punch:1.03});
 
@@ -369,7 +368,6 @@ scene(S('l12'),WIN,(t)=>{
   h+=svgL(s);
   h+=A(150,base+90,`font-family:Mono;font-size:22px;color:${TXT2}`,`<span style="display:inline-block;width:22px;height:22px;background:${BAR};border:2px solid ${HAIR};vertical-align:-4px"></span>  a fixed 30 fps stream     <span style="display:inline-block;width:22px;height:22px;background:${TXT};vertical-align:-4px"></span>  terminal-mac`);
   h+=note(620,base-150,t,no,'costs nothing',58,-4,REDL);
-  h+=credit(t,t0+.3,'illustration · the stream also stops 15 s after the viewer leaves (README)',1,1430);
   return h;
 },{tr:'cut',punch:1.04});
 
@@ -385,7 +383,6 @@ scene(S('l13'),DESK,(t)=>{
   h+=topcap(t,'l13',[[0,1],[2,9]],{size:84,emph:[0,1]});
   const pops=TOOLS.map(n=>at('l13',n)-.06);
   h+=toolRing(t,{pops});
-  h+=credit(t,pops[6],'the MCP tools, from the README: screenshot, click, drag, scroll, type, key, status',0,1400);
   return h;
 },{tr:'whip',dir:-1});
 
@@ -401,7 +398,6 @@ scene(S('l14'),DESK,(t)=>{
   h+=A(440,900,`${arrive(t,t0,.3)};width:200px;height:90px;border-radius:45px;background:${WIN};font-family:Mono;font-size:26px;color:${TXT};text-align:center;line-height:90px`,'terminal-mac');
   h+=A(240,1040,`${arrive(t,an,.35)};width:600px;height:110px;border-radius:24px;border:4px dashed ${INK};font-size:40px;font-weight:600;color:${INK};text-align:center;line-height:102px`,`+ any <span class="serif" style="font-style:italic;color:${REDT}">MCP</span> client`);
   h+=A(70,1220,`${rise(t,an+.3)};width:940px;font-family:Mono;font-size:25px;color:${INK};background:${TXT};border-radius:14px;padding:18px 22px;line-height:1.4`,`<span style="color:${SOFT}">Claude Code:</span> /plugin install terminal-mac --marketplace govijr/terminal-mac`);
-  h+=credit(t,an+.3,'README: Cursor, VS Code, Codex, Windsurf… paste the output of terminal-mac mcp --config',0,1400);
   return h;
 },{tr:'cut',punch:1.04});
 
@@ -414,7 +410,6 @@ scene(S('l15'),DESK,(t)=>{
   const n=Math.round(clamp((t-t0-.05)/1.0)*CURL.length);
   h+=`<div class="a" style="left:60px;top:560px;${arrive(t,t0-.05,.3)}">${win(0,0,960,420,`<div class="mono" style="position:absolute;left:30px;top:34px;width:900px;font-size:34px;line-height:1.5;color:${TXT};word-break:break-all"><span style="color:${OK}">~ %</span> ${CURL.slice(0,n)}<span style="color:${REDL};opacity:${n<CURL.length||Math.floor(t*3)%2?1:0}">▌</span></div>`,{title:'zsh'})}</div>`;
   h+=svgL(penUnder(120,960,1010,t,li+.05,.4,8,2));
-  h+=A(70,1070,`${rise(t,li+.25)};width:940px;text-align:center;font-family:Mono;font-size:26px;color:${SOFT}`,'checks its SHA-256 · no admin rights · then just: terminal-mac');
   return h;
 },{tr:'whip',dir:1});
 
@@ -437,7 +432,6 @@ scene(S('l17'),DESK,(t)=>{
     rows.map(([k,v,tt],i)=>`<div style="position:absolute;left:44px;top:${110+i*120}px;width:772px;border-top:2px solid ${SURF2};${rise(t,tt,.3,12)}"><div class="mono" style="position:absolute;left:0;top:24px;font-size:24px;letter-spacing:.1em;color:${SOFT}">${k}</div><div style="position:absolute;left:260px;top:16px;font-size:40px;font-weight:600;color:${INK}">${v}</div></div>`).join(''));
   h+=note(420,985,t,no+.15,'no',110,-6);
   h+=svgL(penRing(640,800,250,44,t,ea+.2,.4,6,1.15,3));
-  h+=credit(t,no,'terminal-mac README and releases, v0.2.0 build 6 (Nov 3, 2026): “early release candidate… self-signed (no Apple notarization)”',0,1230);
   return h;
 },{tr:'pen'});
 
@@ -449,8 +443,6 @@ scene(S('l18'),DESK,(t)=>{
   const p=seg(t,dl-.1,Math.max(1.2,E('l18')-dl),x=>1-Math.pow(1-x,1.6));const cells=34, on=Math.floor(p*cells);
   h+=`<div class="a" style="left:60px;top:560px;${arrive(t,t0-.05,.3)}">${win(0,0,960,470,
     `<div class="mono" style="position:absolute;left:30px;top:30px;width:900px;font-size:30px;line-height:1.6;color:${TXT}"><span style="color:${OK}">~ %</span> terminal-mac up<br><span style="color:${TXT2}">downloading macOS restore image from Apple…</span><br>${'█'.repeat(on)}<span style="color:${HAIR}">${'█'.repeat(cells-on)}</span> ${Math.round(p*100)}%<br><span style="color:${TXT2};${fade(t,sv)}">several GB · cached for next time</span></div>`,{title:'zsh'})}</div>`;
-  h+=A(70,1090,`${rise(t,sv+.2)};width:940px;text-align:center;font-family:Mono;font-size:26px;color:${SOFT}`,'plus a 64 GiB virtual disk (sparse: it grows as it fills)');
-  h+=credit(t,t0+.3,'README · “Internet on first run to download macOS directly from Apple” · progress shown is an illustration',0,1230);
   return h;
 },{tr:'cut',punch:1.04});
 
@@ -466,10 +458,8 @@ scene(S('l19'),DESK,(t)=>{
   if(!cut&&t>onl+.2)for(let k=0;k<3;k++){const u=(t*1.2+k/3)%1;s+=`<circle cx="${(440+u*200).toFixed(1)}" cy="750" r="10" fill="${RED}"/>`;}
   s+=penX(512,712,76,t,cu+.05,8);
   h+=svgL(s);
-  h+=A(100,900,`${rise(t,onl+.1)};font-family:Mono;font-size:24px;color:${SOFT}`,'default: NAT networking, on');
   const cmd='terminal-mac up --offline';const n=Math.round(clamp((t-ad+.05)/.8)*cmd.length);
   if(t>ad-.1)h+=`<div class="a" style="left:100px;top:1010px;${arrive(t,ad-.1,.3)}">${win(0,0,880,150,`<div class="mono" style="position:absolute;left:28px;top:24px;font-size:36px;color:${TXT}"><span style="color:${OK}">~ %</span> ${cmd.slice(0,n).replace('--offline',`<span style="color:${REDL}">--offline</span>`)}</div>`,{title:'zsh'})}</div>`;
-  h+=credit(t,cu,'README: “not a network-isolated or hardened hostile-code environment. --offline removes that network path.”',0,1230);
   return h;
 },{tr:'cut',punch:1.04});
 
@@ -482,7 +472,6 @@ scene(S('l20'),DESK,(t)=>{
   h+=svgL(penRing(790,760,240,170,t,ag-.05,.5,6)+penRing(290,760,240,170,t,ke,.5,6,1.2,5));
   h+=C(1100,`${rise(t,fr)};font-family:Mono;font-size:34px;color:${INK};letter-spacing:.06em`,`FREE · OPEN SOURCE · <span style="color:${REDT}">MIT</span>`);
   h+=C(1170,`${rise(t,fr+.3)};font-family:Mono;font-size:30px;color:${SOFT}`,'github.com/govijr/terminal-mac');
-  h+=credit(t,ke,'needs an Apple silicon Mac on macOS 14 or later',0,1260);
   return h;
 },{tr:'whip',dir:-1});
 
@@ -614,5 +603,5 @@ window.MUSIC=()=>[
   {t0:S('l20'),t1:T_ID+4,offset:ph(84,S('l20')),fadein:.05,fadeout:3}].filter(g=>isFinite(g.t0)&&isFinite(g.t1));
 window.SHEPARD=()=>[];
 window.CUTS=SC.map(s=>s.t0);
-window.ready=Promise.all([document.fonts.load('600 60px Geist'),document.fonts.load('600 40px Caveat'),document.fonts.load('40px Serif'),document.fonts.load('italic 40px Serif'),document.fonts.load('40px Mono')]).then(()=>document.fonts.ready);
+window.ready=Promise.all([document.fonts.load('400 60px Jost'),document.fonts.load('40px "Courier Prime"'),document.fonts.load('600 60px Geist'),document.fonts.load('600 40px Caveat'),document.fonts.load('40px Serif'),document.fonts.load('italic 40px Serif'),document.fonts.load('40px Mono')]).then(()=>document.fonts.ready);
 </script></body></html>

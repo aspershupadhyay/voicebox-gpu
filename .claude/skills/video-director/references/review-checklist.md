@@ -21,6 +21,10 @@ stills at every hit (`node tools/render.js stills 0.02 17.5 …`). Look at each 
 - [ ] Captions only where the screen doesn't already say it; the script's words, not Whisper's mishearing.
 - [ ] Nothing imitates a real product's UI or logo; a generic chat box is fine.
 - [ ] The end card holds still for ≥ 2 s; the last frame isn't the first.
+- [ ] The ident is the real logo: "cte" in Jost, "CATCH - THE - ERROR" in Courier Prime (both fonts in the kit's
+  `fonts/` with `@font-face`, never removed as "unused": `cte.js` needs them). Check its last frame at full size.
+- [ ] No footnote / subtitle text: no small source or "illustration" lines under scenes (sources go in PLAN.md and the
+  post description); only a short credit on real footage.
 
 ## Sound
 - [ ] Voice on top everywhere (listen at the busiest moments: the wipes, the hits).
