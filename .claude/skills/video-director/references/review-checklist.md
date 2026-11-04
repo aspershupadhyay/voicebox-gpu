@@ -12,6 +12,11 @@ stills at every hit (`node tools/render.js stills 0.02 17.5 …`). Look at each 
 - [ ] Something new every 2-3 s; no dead air longer than ~3 s.
 - [ ] Colours: `python3 scripts/reels/check_colors.py film.html` prints "clean" (no purple / violet / lavender, no
   Tailwind defaults, no neon, no gradients, no pure black or white: style guide → "Banned colours"); one dull accent.
+- [ ] **Everything reads against what it sits on** (the owner, 2026-11-04): every logo, icon, badge and word, 3:1 or better
+  for graphics and 4.5:1 for text, on its own tile or background and also when dimmed. Measure it (logos:
+  `tools/check_logos.js` in `promo/cte-gdpx/`, copy it into the kit), then look at every still at full size: a black
+  mark on a black tile is invisible on a contact sheet. Inlined SVGs lose the root `fill`: wrap the paths in
+  `<g fill=…>`.
 - [ ] Every number and name on screen matches what the voice says ("almost twenty" lands on 20, not 19).
 - [ ] Captions only where the screen doesn't already say it; the script's words, not Whisper's mishearing.
 - [ ] Nothing imitates a real product's UI or logo; a generic chat box is fine.

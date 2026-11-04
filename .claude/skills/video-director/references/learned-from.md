@@ -118,3 +118,7 @@ and the framework as a 75% / 25% bar: the skill does 75%, your idea, taste and n
   17 lines in ~3.5 min. Put `backend prefer` back afterwards.
 - **`ffmpeg` in a `while read` loop eats the list**: it reads stdin, so every name after the first lost its first
   letter. Use `ffmpeg -nostdin` (and `curl … </dev/null`) inside loops.
+- **Real logos, and the contrast miss** (v2/v3): the owner wanted the labs' real logos as app-icon tiles in a ring
+  (cover and hook). Three marks shipped invisible (black on black: `fill="currentColor"` lived on the stripped root
+  `<svg>`). `tools/check_logos.js` now renders each tile and fails a mark under 3:1 or barely visible; run it, and the
+  colour check, before every render. Real logos keep their brand colours (like screenshots), on a tile they read on.

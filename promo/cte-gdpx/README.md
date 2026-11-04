@@ -18,4 +18,5 @@ crashed on load, so we switched).
 Build: `python3 tools/mkvo.py <voice dir>` → `node tools/render.js cues` → `python3 tools/audio.py <SFX wav dir>`
 (aliases: `tick`, `sharp-pop`, `soft-pop`, `subtle-pop`, `data`, `erreur`, `accept`, `marimba`, `notify`, `glint`,
 `flipcard`, `mouse-click`, `sound-off`, `swoosh-snap`, `nightfall120` = nightfall at `atempo=1.2`) →
-`python3 tools/mix.py` → `node tools/render.js out/video.mp4 4` → mux. Cover: `node tools/render.js stills -1`.
+`python3 tools/mix.py` → `node tools/check_logos.js` (every logo reads on its tile, 3:1+) →
+`node tools/render.js out/video.mp4 4` → mux. Cover: `node tools/render.js stills -1`.

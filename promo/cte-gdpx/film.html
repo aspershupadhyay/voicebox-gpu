@@ -124,7 +124,7 @@ function logoRing(t,o={}){const {cx=540,cy=960,R=330,size=220,pop=-9,badge=-9,fo
 const DOM=[['RSI',10],['CHIPS',34],['CYBER',18],['BIO',13],['FIN',24],['LAW',20],['QUANT',10],['HW',21],['MAT',23],['ALIGN',18],['SWE',15]];
 // the 206 tasks as cells, one column per field (the real counts from gdpx.semianalysis.com/domains)
 function taskGrid(t,o){const {fill=1,labels=Infinity,lit=-1,dimOthers=0,base=1230}=o;let s='',k=0;const total=206,shown=Math.floor(fill*total+1e-6);
-  DOM.forEach(([name,n],c)=>{const cx=540+(c-5)*86;const isLit=c===lit;const op=lit>=0&&!isLit?(1-.7*dimOthers):1;
+  DOM.forEach(([name,n],c)=>{const cx=540+(c-5)*86;const isLit=c===lit;const op=lit>=0&&!isLit?(1-.5*dimOthers):1;   // dimmed, still 3:1 on paper
     for(let i=0;i<n;i++){const row=Math.floor(i/2), col=i%2;const on=k<shown;k++;if(!on)continue;
       s+=`<rect x="${cx-29+col*30}" y="${base-28-row*30}" width="26" height="26" rx="4" fill="${isLit?RED:INK}" opacity="${op}"/>`;}
     s+=`<text x="${cx}" y="${base+40}" text-anchor="middle" font-family="Courier Prime" font-size="21" letter-spacing="1" fill="${isLit?RED:SOFT}" opacity="${seg(t,labels+c*.05,.25).toFixed(3)}">${name}</text>`;
@@ -283,7 +283,7 @@ scene(S('l10'),PAPER,(t)=>{
   const dp=seg(t,st-.1,Math.max(.6,ex-st+.2),x=>x);
   const pl=(arr,p)=>{const n=arr.length-1, m=p*n, k=Math.floor(m);let pts=arr.slice(0,k+1).map((v,i)=>`${X(i/n).toFixed(1)},${Y(v).toFixed(1)}`);if(k<n)pts.push(`${X(m/n).toFixed(1)},${Y(lerp(arr[k],arr[k+1],m-k)).toFixed(1)}`);return pts.join(' ');};
   let c=`<line x1="140" y1="1340" x2="940" y2="1340" stroke="${INK}" stroke-width="3" opacity="${seg(t,st-.3,.3).toFixed(3)}"/>`;
-  c+=`<polyline points="${pl(ex1,dp)}" fill="none" stroke="${GRAPH}" stroke-width="6" stroke-dasharray="14 10"/><polyline points="${pl(ag,dp)}" fill="none" stroke="${INK}" stroke-width="7" stroke-linejoin="round"/>`;
+  c+=`<polyline points="${pl(ex1,dp)}" fill="none" stroke="${SOFT}" stroke-width="6" stroke-dasharray="14 10"/><polyline points="${pl(ag,dp)}" fill="none" stroke="${INK}" stroke-width="7" stroke-linejoin="round"/>`;
   if(dp>=1)c+=`<text x="880" y="${Y(.5)+44}" font-family="Mono" font-size="26" fill="${SOFT}" text-anchor="end" dy="16">expert's</text><text x="880" y="${Y(.62)-36}" font-family="Mono" font-size="26" font-weight="700" fill="${INK}" text-anchor="end">the AI's</text>`;
   h+=svgL(c+penRing(X(1),Y(.62),40,40,t,ex+.1,.4,6));
   h+=A(140,960,`${rise(t,st-.2)};font-family:'Courier Prime';font-size:26px;letter-spacing:.08em;color:${SOFT}`,'PROFIT & LOSS, OVER THE TEST');
