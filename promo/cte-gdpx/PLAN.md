@@ -9,8 +9,9 @@
 **World:** *the exam paper*, in the Cyclon house look (the owner asked for "exactly like Cyclon"): paper, ink and the
 red pen, which here does what a red pen does on an exam: marks, grades and circles. Kraft-paper job folder for the
 "real job". Ink scene only for the catch.
-**Anchor image:** the exam sheet: eight questions, the pen marks seven wrong and one right, and writes **12%** in
-the corner (about one in eight). It comes back for the payoff.
+**Anchor image:** the line-up (the owner's v2 note): the labs' real marks in their real colours as app-icon tiles in a
+ring, popping in one per 16th note, a score badge on each (OPEN on the open models), and **12%** in the middle, ringed
+by the red pen on "twelve". It is the cover and comes back, small, for the payoff.
 **The unique thing:** the real counts. 206 cells in 11 columns, one per field, at the real numbers from
 gdpx.semianalysis.com/domains (RSI 10, chips 34, cyber 18, bio 13, finance 24, legal 20, quant 10, hardware 21,
 materials 23, alignment 18, software 15). The word montage lights their columns.
@@ -37,7 +38,7 @@ Not taken (the owner's "not the AI slop part"): the glowing violet 3D logo, the 
 ## Beats
 | # | Voice | Picture (on which word) | Sound |
 | --- | --- | --- | --- |
-| l01 | The best AI in the world just took a new exam. It scored twelve percent. | the exam sheet; 7 ✗ and 1 ✓ in a run from "scored"; 12% written on "twelve", ringed on "percent" | flip, pen per mark, riser → sub hit on "twelve" |
+| l01 | The best AI in the world just took a new exam. It scored twelve percent. | the line-up pops in (7 real logo tiles); "scored" puts a badge on each; 12% lands in the middle on "twelve", Claude lifts, the pen rings it | a pop per tile on 16ths, a tick per badge, riser → sub hit on "twelve" |
 | l02 | And that's the top score. | REAL: the post, rounded; pen under "even the best model scores just", ring on 12% | flip, pens |
 | l03 | Google's unreleased Gemini came second, at a third of the price. GPT-6 Astra, third. | REAL: the leaderboard; the camera pans to Gemini, to the $/task column ($16.29 vs $51.41), back to Astra | swishes per pan, pens |
 | l04 | The test is called GDPx, from SemiAnalysis. | GDP + serif red x land letter by letter, pen under | pops, sharp pop |
@@ -52,7 +53,7 @@ Not taken (the owner's "not the AI slop part"): the glowing violet 3D logo, the 
 | l13 | In finance and law, basically every model scored zero. So those get partial credit. | red zeros in a run; PASS/FAIL struck; "partial credit" | pens, erreur |
 | l14 | Safety filters held back Opus and Astra on cyber and biology. | two bars stop at a dashed red wall | swishes, pops |
 | l15 | And it's SemiAnalysis's own test. No one has rerun it yet. | BUILT BY / SCORED BY / RERUN BY ____ ringed; "nobody, yet" | ticks, pen |
-| l16 | Still: twelve percent today, and a new version every three to six months. Watch that number. | the sheet returns; v1.0 → v1.1 → v1.2 timeline; "watch this" arrow | whoosh, pops, glint |
+| l16 | Still: twelve percent today, and a new version every three to six months. Watch that number. | the line-up returns, small; v1.0 → v1.1 → v1.2 timeline; "watch this" arrow | whoosh, pops, glint |
 | l17 | Which field will AI crack first? One word, in the comments. | field chips; ONE WORD · IN THE COMMENTS | pop run, notify |
 | ident | | the brand ident | |
 

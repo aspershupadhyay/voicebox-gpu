@@ -26,5 +26,5 @@ Source: @SemiAnalysis_ on X and gdpx.semianalysis.com (Nov 2, 2026). Leaderboard
 https://gdpx.semianalysis.com · https://newsletter.semianalysis.com/p/gdpx-measuring-frontier-model-capabilities"
 
 **Labels:** `youtube.synthetic: false`, `instagram.ai_generated: false` (the owner's call).
-**Cover:** `node tools/render.js stills -1`: "The best AI scored" over the exam graded 12%.
+**Cover:** `node tools/render.js stills -1`: "The best AI scored" over the ring of the labs' real logos around a red-ringed 12%.
 **Slot:** from `analytics` best times for Catch the Error when posting.

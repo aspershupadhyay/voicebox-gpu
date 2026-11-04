@@ -3,8 +3,8 @@
 On SemiAnalysis's GDPx benchmark (Nov 2, 2026). Plan, beats, sources and the reference notes: `PLAN.md`; posting:
 `POSTING.md`.
 
-**World:** the exam paper, in the Cyclon house look (paper, ink, the red pen that grades). The anchor is the exam
-sheet graded 12%; the real media are SemiAnalysis's post and the leaderboard, as rounded cards the camera pans
+**World:** the exam, in the Cyclon house look (paper, ink, the red pen that grades). The anchor is the line-up: the
+labs' real marks as app-icon tiles in a ring around 12% (`logoRing()`, marks in `logos.js`, MIT, @lobehub/icons); the real media are SemiAnalysis's post and the leaderboard, as rounded cards the camera pans
 inside (`shot()`), marked by the pen in the screenshot's own pixels.
 
 **Rhythm:** 120 BPM. `tools/mkvo.py` starts every line on an 8th note (0.25 s), so every cut lands on the grid, and
