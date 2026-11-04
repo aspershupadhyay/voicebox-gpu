@@ -6,6 +6,19 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Create a video on this (github.com/govijr/terminal-mac)… 10 seconds show its own video… present it like we're
+  getting paid around 10k dollars to advertise… thumbnail must be creative, no simple page… research how we keep the
+  user engaged and make them watch the entire video… the bar graph and dot-dot explanation was quite good… make it
+  the best"** (2026-11-04): `promo/cte-terminal-mac/`. A launch ad with the honest catch: hook → pain → product →
+  proof → how it works → reach → *what's the catch?* → payoff → one-word ask. About 13 s of the maker's own footage
+  (the boot inside the terminal, the About window, Claude drawing in Freeform at 16×, labelled) as rounded cards the
+  camera moves inside. The explainers the owner liked come back as dots (what the agent's Mac can see; which frames
+  get sent) and bars (an idle desktop sends zero frames), each labelled as an illustration. The cover is a Droste: the
+  real "macOS in a terminal" frame inside its own desktop, five deep. Retention: nested open loops ("it's for your
+  agent" → "watch" → "here's the clever part" re-hook with the music's second drop → "what's the catch?"), a mode
+  change about every 10 s, every line on screen as it's said. "Like we're paid" is the production value, not a label:
+  nobody paid, so no #ad and no paid-partnership tag. Red words on a light background use a darker text red (#A8322A,
+  4.6:1); the brand red stays the pen stroke.
 - **"Three logos not visible: xAI, ChatGPT and the Z one… check each and everything meticulously… save it as a
   learning that colours are visible properly against what we are building"** (2026-11-04, on the GDPx v2 cover): the
   OpenAI, xAI and Z.ai marks rendered black on black tiles (their colour came from `fill="currentColor"` on the outer

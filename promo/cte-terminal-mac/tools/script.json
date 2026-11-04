@@ -1,0 +1,23 @@
+{
+ "l01": "Someone just put a whole Mac inside a terminal.",
+ "l02": "And it's not for you. It's for your AI agent.",
+ "l03": "Today, when an agent uses your computer, it takes your mouse, your screen and your clipboard.",
+ "l04": "You can't work. And every wrong click is your click.",
+ "l05": "terminal-mac gives the agent its own Mac.",
+ "l06": "Real macOS, in Apple's own virtual machine, on your Apple silicon Mac.",
+ "l07": "It sees two shared folders. Not your home folder, not your clipboard, not your camera.",
+ "l08": "Watch. This is Claude, drawing a diagram in Freeform.",
+ "l09": "It clicks, drags and types, and the real mouse never moves.",
+ "l10": "Here's the clever part. A helper inside the guest watches its screen.",
+ "l11": "It only sends a frame when something changes. Up to thirty a second.",
+ "l12": "An idle desktop? Zero frames. It costs nothing.",
+ "l13": "Seven tools: screenshot, click, drag, scroll, type, key and status.",
+ "l14": "Claude Code, Cursor, Codex. Any MCP client.",
+ "l15": "And it installs with one line.",
+ "l16": "So, what's the catch?",
+ "l17": "It's an early release candidate, self-signed, not notarized by Apple.",
+ "l18": "The first run downloads macOS. Several gigabytes.",
+ "l19": "And the guest is online by default. Add dash dash offline to cut it.",
+ "l20": "Still: a free, open-source Mac just for your agent, while you keep yours.",
+ "l21": "Would you let an agent drive your Mac? Yes or no, in the comments."
+}
