@@ -6,6 +6,14 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Make a video on this 'Markdown is the New Malware'… do your own verification… chop chop"** (2026-11-05, with a
+  research brief on Forever Security's AGENTS.md / Downloads-folder report): `promo/cte-markdown/`. Verify the brief,
+  not just the topic: its link served the site's home page (the article is at `/blog/hijacking-ai-agents-via-downloads-folder`),
+  its ~50% Claude Code number was for a file the researchers wrote (not the one caught in the wild), and its "antivirus
+  treats .md as inert" line isn't in the article. Read the primary source end to end and say what's corrected (PLAN.md →
+  "Corrections to the brief"). When the source sells a fix for the problem it reports, the catch says so. Also: never
+  put a double-quoted font name (`font-family:"Courier Prime"`) inside an HTML `style="…"` attribute: it ends the
+  attribute and the text silently falls back to black (caught on a still); use single quotes.
 - **"Did you change the logo's text… bring back the old… make sure in future no subtitle text like this"**
   (2026-11-04, on the terminal-mac Reel): the ident rendered "cte" and the tagline in a fallback serif, because the kit
   dropped `fonts/jost.woff2` and `fonts/courier-prime.woff2` (the film didn't use them, but `cte.js` draws "cte" in

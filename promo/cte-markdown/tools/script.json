@@ -1,0 +1,23 @@
+{
+ "l01": "This file has no code. And it just tried to install malware on a real computer.",
+ "l02": "It's called AGENTS.md, and it was sitting in someone's Downloads folder.",
+ "l03": "Nobody put it there. Nobody knew how it got there.",
+ "l04": "Here's the problem. Your AI coding agent reads this file and does what it says.",
+ "l05": "And Downloads is the one folder a website can write to. No click. No permission.",
+ "l06": "So a web page can plant orders in a folder your agent trusts.",
+ "l07": "Forever Security caught it live, then ran the real file on Codex, in a sealed machine.",
+ "l08": "It reads like thirteen kilobytes of boring engineering notes.",
+ "l09": "But one section tells Codex to add a server to its own config, and install a package from npm.",
+ "l10": "That package is function-color. Known malware.",
+ "l11": "Codex ran it in more than ninety percent of attempts.",
+ "l12": "And that config is machine-wide. You can leave the folder. The poison stays.",
+ "l13": "Then they wrote their own version for Claude Code.",
+ "l14": "Claude was much harder to fool. Their file tells it to send its traffic through the attacker's server.",
+ "l15": "Claude wrote that setting about half the time, and that alone leaks its login token.",
+ "l16": "So, what's the catch?",
+ "l17": "There's no bug to patch. Both agents did exactly what they were built to do.",
+ "l18": "And Forever sells protection against this. The numbers are from their own tests.",
+ "l19": "So never start an agent in Downloads, and read any agent file you didn't write.",
+ "l20": "Because Markdown is the new executable.",
+ "l21": "Do you read these files before your agent does? Yes or no."
+}
