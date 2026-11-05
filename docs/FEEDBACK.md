@@ -6,81 +6,16 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **Video feedback moved** (2026-11-05, the owner: "move all the learning to a specific git project… so we won't
+  conflict"): every note on videos, Reels, covers and posting now lives in aspershupadhyay/content-creation
+  `docs/FEEDBACK.md`, with the video-director skill, `docs/REELS.md`, `docs/BRAND.md`, the brand ident and every video kit.
+
 - **"Why does our analytics page just say updating?"** (2026-11-05): the report older than 30 minutes was served at once
   marked stale and rebuilt with `after()` (Workers `waitUntil`), which Cloudflare cancels about 30 s after the response;
   a build of every account now takes longer (the log: "waitUntil() tasks did not complete… cancelled", 33 s), so it
   never landed and the page polled for two minutes, then sat on "Updating…". Now the page asks once more with
   `&wait=1`, which builds it inside that request (no 30 s limit), and a build older than 90 s is never joined (a
   cancelled one never settles). Rule: on Workers, nothing that can take over ~25 s goes into `after()`.
-- **"Instead of blank sheet show a real markdown file just like it was opened in the mac window… properly visible what's
-  written… text on text… use the real icons of files… improve the UI so it looks more premium… perfectly aligned…
-  visuals, text, voiceover must be in sync… the json one appeared before it was even mentioned… white cards look like
-  real sticky notes… starting must be a masterpiece and an amazing thumbnail"** (2026-11-05, on the Markdown Reel v1):
-  `promo/cte-markdown/` v2. A document the story is about is shown **as itself, readable**: the real published text in
-  an editor window (`macwin()` + `md()`: line numbers, headings, code spans, the pen on phrases), never grey bars; the
-  hook opens on it and zooms *inside* the window to the malicious line (zooming the whole frame pushed it over the
-  caption). Scrolling is a reader scrolling inside a window (clipped, scrollbar, cursor), never a sheet sliding over
-  the caption. Files get real-looking type icons (the Markdown mark is the real CC0 one). Paper is real paper (grain,
-  a sheet behind, tape); handwritten notes go on sticky notes. Rows of chips sit in a centred row with their space
-  reserved, so nothing overlaps or shifts. **Every element appears on the word that names it** (`at(line, word)`), not
-  at the scene start; check each scene's first frame for anything shown early. The cover gives each big thing its own
-  space: the title, the file icon ringed, the real malicious line.
-- **"Make a video on this 'Markdown is the New Malware'… do your own verification… chop chop"** (2026-11-05, with a
-  research brief on Forever Security's AGENTS.md / Downloads-folder report): `promo/cte-markdown/`. Verify the brief,
-  not just the topic: its link served the site's home page (the article is at `/blog/hijacking-ai-agents-via-downloads-folder`),
-  its ~50% Claude Code number was for a file the researchers wrote (not the one caught in the wild), and its "antivirus
-  treats .md as inert" line isn't in the article. Read the primary source end to end and say what's corrected (PLAN.md →
-  "Corrections to the brief"). When the source sells a fix for the problem it reports, the catch says so. Also: never
-  put a double-quoted font name (`font-family:"Courier Prime"`) inside an HTML `style="…"` attribute: it ends the
-  attribute and the text silently falls back to black (caught on a still); use single quotes.
-- **"Did you change the logo's text… bring back the old… make sure in future no subtitle text like this"**
-  (2026-11-04, on the terminal-mac Reel): the ident rendered "cte" and the tagline in a fallback serif, because the kit
-  dropped `fonts/jost.woff2` and `fonts/courier-prime.woff2` (the film didn't use them, but `cte.js` draws "cte" in
-  **Jost** and "CATCH - THE - ERROR" in **Courier Prime**). Every kit keeps both fonts with their `@font-face` and waits
-  for them in `window.ready`; look at the ident's last frame at full size before rendering. And **no footnote text**:
-  no small grey lines under a scene explaining the source or "illustration · …" (the facts live in PLAN.md and the
-  post's description). The only small text allowed is a short credit on real footage (e.g. "@kirtandopamine on X").
-- **"Create a video on this (github.com/govijr/terminal-mac)… 10 seconds show its own video… present it like we're
-  getting paid around 10k dollars to advertise… thumbnail must be creative, no simple page… research how we keep the
-  user engaged and make them watch the entire video… the bar graph and dot-dot explanation was quite good… make it
-  the best"** (2026-11-04): `promo/cte-terminal-mac/`. A launch ad with the honest catch: hook → pain → product →
-  proof → how it works → reach → *what's the catch?* → payoff → one-word ask. About 13 s of the maker's own footage
-  (the boot inside the terminal, the About window, Claude drawing in Freeform at 16×, labelled) as rounded cards the
-  camera moves inside. The explainers the owner liked come back as dots (what the agent's Mac can see; which frames
-  get sent) and bars (an idle desktop sends zero frames), each labelled as an illustration. The cover is a Droste: the
-  real "macOS in a terminal" frame inside its own desktop, five deep. Retention: nested open loops ("it's for your
-  agent" → "watch" → "here's the clever part" re-hook with the music's second drop → "what's the catch?"), a mode
-  change about every 10 s, every line on screen as it's said. "Like we're paid" is the production value, not a label:
-  nobody paid, so no #ad and no paid-partnership tag. Red words on a light background use a darker text red (#A8322A,
-  4.6:1); the brand red stays the pen stroke.
-- **"Three logos not visible: xAI, ChatGPT and the Z one… check each and everything meticulously… save it as a
-  learning that colours are visible properly against what we are building"** (2026-11-04, on the GDPx v2 cover): the
-  OpenAI, xAI and Z.ai marks rendered black on black tiles (their colour came from `fill="currentColor"` on the outer
-  `<svg>` tag, which was stripped when the marks were inlined, so the paths fell back to black). The rule now: **every
-  mark, icon and word must read against what it sits on**, 3:1 or better for graphics and 4.5:1 for text, checked by a
-  tool, not by eye on a thumbnail. `promo/cte-gdpx/tools/check_logos.js` draws every tile as the film does and fails
-  any mark that vanished or is under 3:1; it caught all three and one more (Claude's ivory on clay was 2.7:1, so Claude
-  is now its clay mark on an ink tile, 5.3:1). Look at every still at full size before a render, and when you inline an
-  SVG, carry its root `fill` onto a `<g>`.
-- **"Can we make it like a collection of top AI models' logos, popping quickly, including open source, instead of this
-  generic shit… make it really look like a thumbnail"** and **"use the real logo… make them like this"** (2026-11-04,
-  with a ring of app-icon tiles as the reference, on the GDPx cover and hook): an exam sheet with grey lines read as
-  generic. Now the hook and the cover are the line-up itself: the labs' **real marks in their real colours** as
-  rounded app-icon tiles in a ring (Claude, Gemini, OpenAI, Meta, DeepSeek and Z.ai open, xAI), popping in one per
-  16th note, a score badge on each, the big 12% in the middle ringed by the red pen. The exception to the banned
-  colours: real logos keep their brand colours, like screenshots (they live in `logos.js`, real media, never in the
-  film's own palette). Thumbnails: few big things, real faces of the topic (the logos), one number.
-- **"Make a post on this… make it exactly like Cyclon… use the best SFX in sync and good 120 BPM… screenshot give
-  good round radius… explain it well what it exactly is… take a good reference from this, not the AI slop part…
-  learn the psychology of each platform… visual psychology (text, sound, voiceover, visuals)"** (2026-11-04, on
-  SemiAnalysis's GDPx post and speedy_devv's Reel): `promo/cte-gdpx/`. The Cyclon paper-ink-red-pen look as an exam
-  paper the pen grades 12%. 120 BPM for real: every voice line starts on an 8th note and the music is phased per
-  segment so its kick lands on the film's half seconds (`ph()`), so cuts, pops and beats share one grid. Real
-  screenshots are rounded cards (34 px radius, soft shadow) with the camera panning inside them and the pen marking
-  them in their own pixels. From the reference: the spoken line always on screen at the top, a few words at a time,
-  the key word set apart (ours: red serif italic, not a selection box), and one central object; not its glowing
-  violet 3D and neon point clouds. Platform notes are in the plan (Reels: sends and one-word comments; Shorts: a cut
-  every 1-3 s and a callback payoff).
 - **"If we want to review the rivals' account through our Voicebox, how can we… give me the steps… link to our Facebook
   account… you go on and do it, first we need to test the feature"** (2026-11-04, on @themoneycipher): Instagram
   rivals are read through Facebook Login for Business (Business Discovery): Grow → Competitors → Connect Facebook, then
@@ -101,109 +36,6 @@ for. Read this before touching the dashboard. Newest first. When something here 
   worked out per brand and never mixed; All shows totals and the accounts side by side with no tips; a score compares
   views with views inside one account. The Writing room's hashtags and the analytics MCP tool (`account`) follow the
   same rule.
-- **"That SFX sound… which starts at 21 or 23 and ends when token limit shows up, remove that… it won't look
-  appropriate"** (2026-11-03, on the weight-space Reel): no synthesized drone (the Shepard tone) and no accelerating
-  tick run under a talking scene. The loop plays over the music bed, and the music cuts dead on the token limit: the
-  stop is the sound. Shepard tones stay out of voiced Reels unless the owner asks.
-- **"Make video on this… create it like Cyclon one… the best creative explanation and hook… use the good neural network
-  graph with the red dots of our logo… use the good images or make your illustrations… research and plan the good
-  structure"** (2026-11-03, on Rikiya Takehi's weight-space programming post): `promo/cte-weight-space/`. The look is
-  the Cyclon paper-and-ink house look on purpose (the owner asked), with its own material: an ink neural network whose
-  edited nodes are the logo's red dots, and the logo's pen ring doubling as the thinking loop. Research went past the
-  post to the primary data: the real weight matrices (range requests on the Hugging Face checkpoints, diffed: exactly
-  the 64 columns the paper says) and the model's real looping output, which became the emotional beat ("it found 27,
-  then wrote 'wait, I need to check' 1,237 times"). Find the artifact the story is about, not just the claim.
-- **"Remove that square… where it says AI decoded, that's not necessary… it looks AI slop… background is also not
-  good, find out the good way to do it"** (2026-11-03, on the satellite Reel): no HUD chrome. No corner brackets, no
-  series/clock line, no grid wallpaper: those read as generated "tech UI". The background is a real image of the
-  topic instead (here Earth's edge from orbit, built from that day's NASA imagery, dark, slowly drifting, with grain),
-  dimmed where a foreground globe would double it. Credits stay one small line.
-- **"Go ahead and record the video for me… use Sparsh's voice… download the real images… don't make the credits too
-  loud, keep it minimal… use Cosmos or Pinterest to fetch the best images… clipping and transitions need to be so
-  fast"** (2026-11-03, the satellite Reel, `promo/cte-satellite-ai/`): we record our own screen footage ourselves
-  (a headless browser on the real site, e.g. NASA Worldview), credits are one small mono line in a corner, transitions
-  are 0.2 s and cuts land every 2-4 s. Real images come first from the primary source (NASA GIBS, ESA's image pages
-  through VoiceBox `download`); Pinterest / Cosmos when the source has nothing usable.
-- **"Nowadays how other people are going crazy famous… we can add images, videos and all to make our edits real and
-  creative instead of just plain explanation and drawing everything our own"** (2026-11-03): every video mixes real
-  media with what we draw: the real post, product shots, a few seconds of real footage, headlines, a chart from the
-  source, each one marked up by the red pen and credited on screen. Drawing is the glue and the explanation, not the
-  whole film. The rules (what to use, how to treat it, credit, rights) are in the video-director skill's
-  `references/formats.md` → "Real media in every edit", with the phases of making a video.
-- **"Whatever you've learned add it… we can't be having the same aesthetic and designs every time… be creative each
-  time… suggest what kind of video is going viral and what unique thing we can incorporate"** (2026-11-03, after the
-  Instagram TV Reel): the brand is a signature, not a template. Every video picks a format and a world from the
-  video-director skill's `references/formats.md` (a menu of worlds: broadsheet, patent drawing, receipt, museum, map…;
-  formats that get sent: "they quietly shipped X", spot the error, X vs Y, the timeline…) and never reuses the last two
-  worlds. What stays: the catch, the red pen as the gesture of meaning, sources, the ident. The lessons from the
-  Instagram TV build are in the skill's `references/learned-from.md`. `docs/BRAND.md` and CLAUDE.md say the same now.
-- **"Make a video on this… incorporate the screenshot… deep dive research… give the look of Apple TV in it while the user
-  is playing it… use our video to play it of Instagram instead of using someone else"** (2026-11-03, on @instagram's
-  "new on Apple TV" post): `promo/cte-instagram-tv/`. When a video shows a screen playing a video, it plays **our own**
-  Reel (frames from Files, `tools/frames.sh`), never someone else's. The owner's screenshot goes in as the real post
-  (marked up with the pen, not redrawn). Another product's look (Apple TV) is drawn in code as its interface style
-  (the focus lift, the top shelf, the remote) without its logos. Research found the story the post left out: the app
-  went live quietly on Oct 23, it's Instagram's fourth TV in a year, and IGTV (2018-2022) is the catch.
-- **"The script says 20 but the visual shows 19"** and **"remove all the BS so we won't have any collision"**
-  (2026-11-03, on the Cyclon v2 Reel): every number on screen must say what the voice says (the counter now lands on
-  20 for "almost twenty"); check spoken numbers against the frames before rendering. The v1 kit (`promo/cyclon/`,
-  the violet slop version) is deleted, and so are its MP4s and the superseded v2 copies in Files: the only Cyclon
-  build is `promo/cte-cyclon/`, and the only reference look is Catch the Error (`docs/BRAND.md`). Posted on
-  2026-11-03 to Catch the Error's Instagram Reels and YouTube Shorts.
-- **"Learn the best way how other people are creating… design rules, psychology, font pairing, visual and focal
-  point… a beautiful storyteller… the outro must be our brand outro, animated like Pixar but for our logo… first learn
-  and add it in our project"** (2026-11-02, with the Catch the Error logo): the research is in the video-director
-  skill's `references/craft.md` (story spine, audience psychology, one focal point per frame, type with one job per
-  family, Disney's motion principles, sound that scores motion, the ten-point checklist). The brand is `docs/BRAND.md`
-  and `promo/brand/` (logo, fonts, `cte.js`: the ident where the "e" hops in like Pixar's lamp, breaks through the
-  baseline, and the red pen catches it). v2 of the Cyclon Reel is `promo/cte-cyclon/`: paper, ink and the red pen as
-  the one visual language, a story with a turn ("So, what's the catch?"), sourced marks on the claim, and the ident.
-  Every video ends on it from now on.
-- **"Never use this purple slop… list all the slop colours AI agents generate… hard rules"** and **"it's completely
-  slop design… the outro is shit… the swipe and typing SFX suck… not engaging… the script needs to feel professional"**
-  (2026-11-02, on the v1 Cyclon Reel's violet-on-ivory end card): banned for good: purple / violet / indigo /
-  lavender in any shade, purple-blue gradients, Tailwind and shadcn default colours, neon cyan and magenta, slate
-  navy, pure black and white, Claude's clay, rainbow tiles (the full list: the video-director style guide → "Banned
-  colours"). `scripts/reels/check_colors.py` must pass before any render. Also: a design is not a template with a new
-  accent; every video gets its own idea for how it looks and how it ends, synthesized swooshes and clicky typing are
-  out (use the SFX library, sounds tied to what moves), and the outro is a scene with a payoff, not a card of buttons.
-- **"Use the Colab GPU, Modal is not working"** and **"create a video on it… cool animation, fast transitions, 120 BPM,
-  fast-paced speech, not too fast, just like the Karpathy one"** (2026-11-02, on Adam Zinebi's Cyclon post): Modal sat
-  "loading whisper into memory" for 4+ minutes on its A10, so the owner switched to Colab (L4: online in ~2 min, the
-  15 lines voiced in 2.5 min). When a cloud GPU stalls on its first load, stop it and start Colab right away rather
-  than wait. The v1 Reel (since deleted, 2026-11-03) was the HackerTube kit with every line on a 120 BPM 8th-note grid, voice at
-  1.10x, fast transitions (push, zoom-through, a pixel wipe, hard cuts with a punch-in), a beat-stepped accent, and
-  the source's demos redrawn in code and labelled as redrawn.
-- **"Turn it off and don't mark it in any future video"** (2026-11-02, on the AI-content label): never set YouTube's
-  altered/synthetic flag (`publish_post youtube.synthetic`) or Instagram's `ai_generated` on any post: always false,
-  the owner's call (the voice is Sparsh's own trained voice, used with his consent on his channel). It was switched on
-  for https://youtu.be/ChJ-WWLyBHg and switched back off the same day; every other post was already off.
-- **"Post the v1 video, the 2-minute one, with this thumbnail"** (2026-11-02): v1 went out on YouTube
-  (https://youtu.be/ChJ-WWLyBHg) over the 54 s Director's Cut, which waits for its fixes (a low bed under the middle
-  instead of silence, one big idea per rule, Reel on screen from the start, SKILL.md hosted before the CTA). Titles
-  come from Radar (`keyword_research` → `seo_score` → `title_lab`): on this channel, under 50 characters and a
-  question win, numbers lose (-16), and the keyword goes first as a phrase. Thumbnails: the owner makes them in
-  ChatGPT and picks the final one; a real celebrity's face (Nolan) is out, since it implies they're involved.
-- **"Make it more faster, based on the user's attention span… don't you think it looks like AI slop?"**, **"keep that
-  yellow one, the REEL"**, **"don't copy the colour of Claude, make our unique blob"**, **"in the end ask them to comment
-  for the skill.md, in a creative way"** (2026-11-02, on the v2 plan: a Nolan-style rewind cut): v2 is
-  `promo/directors-cut/` (1920×1080, 54 s, was 2:11). Our character is **Reel**, a marigold pixel blob with a backwards
-  cap and a finger viewfinder (`blob.js`, drawn in code; the three sketches are `sketch.html`), and its marigold is the
-  accent, never Claude's clay orange. What reads as AI slop: the generic dark-cards-and-tiny-mono-labels look, so keep
-  labels few and big, show one continuous world, and give every video a structure with a payoff. Fast means short
-  lines voiced at 1.15x with 0.08 s gaps and something new every 1-2 s, but the breaths that carry the story stay (the
-  silence before the reveal). The CTA is a scene, not a card: the character holds a slate reading SKILL.md / TAKE:
-  YOURS, the comment box types SKILL, the character replies with the file. Details in the skill (`video-director`).
-- **"Make a tutorial video and a skill to create such videos… use the voice Sparsh, Modal for GPU… use the SFX folder
-  properly… analyse each and everything granularly and make it the best landscape video"** (2026-11-02, with two
-  references: an Opus 5.5 editing tutorial on YouTube and miftahul_islam_efaz's "it's not the prompt, it's the skill"
-  Reel): the video is `promo/claude-video-rules/` (1920×1080, "7 rules for directing Claude"), and the skill is
-  `.claude/skills/video-director/` (the workflow, the style guide, the planning sheet, the sound guide mapped onto the
-  SFX library with each sound's measured peak, the review checklist, and what both references taught). Landscape
-  videos are now a format we make, with the same rules as Reels (voice-led, word-timed, SFX tied to what's on screen).
-  The SFX folder (92 files, ~82 distinct) is the sound library for every video; music beds come from it too. The
-  first myvoice load on a fresh Modal container hung importing from the Volume for 15+ minutes, so the voice was
-  made on a Colab L4 instead: check `worker_status logs=myvoice` early and fall back rather than wait.
 - **"Check why Cerebrium is running on its own even when I turn it off"** (2026-11-02, two containers running on two
   providers, two terminating): an open dashboard kept every cloud GPU awake (each tab's status poll, metrics and job
   list reached it, and every request restarts its sleep timer), and Stop exited the container, which Cerebrium takes
@@ -276,12 +108,6 @@ for. Read this before touching the dashboard. Newest first. When something here 
   finished it. Now a click's run takes 22 s and hands over, the timer carries busy posts on every minute inside its
   own request (`/api/cron/publish`), the sweep does its work inside the request, and a lock lasts only as long as its
   run. Anything long on the Worker runs inside a request the timer waits for, never in `after()` (docs/PUBLISHING.md).
-- **"Read this tweet and make a video on it, like the Fable 5.1 launch video: fast paced"** (2026-11-01, on Karpathy's
-  HackerTube post): a news Reel can take a launch-film look instead of the paper house look when the owner names it:
-  ivory and near-black scenes cut hard on spoken words, a serif for the idea words, mono for the real details, counters
-  and checklists built from the post's own facts, the source's screenshot credited on screen. Still voiced in a trained
-  voice with a ducked bed and on-screen SFX (rule 13). The owner makes the thumbnail in ChatGPT: hand them a prompt
-  (`promo/hackertube/POSTING.md`).
 - **Auto-DM, round 3 (2026-11-01)**: "do it all and verify each one by one", "UI don't clutter, be creative: the
   current one feels too cluttered and not structured properly". Every one of the ten features has its own end-to-end
   checks (`mcp/scripts/check-autodm.cts`) before the next was started. The page was restructured: five tabs that each
@@ -299,37 +125,9 @@ for. Read this before touching the dashboard. Newest first. When something here 
   the Rewind Reel, instead of ManyChat): Auto-DM is built in (Posts → Auto-DM, MCP `auto_dm`, `docs/PUBLISHING.md` →
   Auto-DM) and sends nothing until Meta grants the messaging permission.
 
-- **"I want the video with complete voiceover and scripts… just music feels like BS. Music shouldn't be too loud, use
-  cool SFX related to the video"**, then **"generate two voices, one from Harsh and another from Sparsh"** (2026-11-01,
-  on the Prompt Motion "Rewind" brand film): every video we make, promos and brand films included, ships with a full
-  written script voiced in the creators' own trained voices (`myvoice`, `harsh` / `sparsh`; one version per voice when
-  asked), never music alone. Captions on the lines the screen doesn't already say. Music is a bed about 12 dB under the
-  voice and ducked under every word; sound effects belong to what's on screen (a click on each click, keys on typing, a
-  tape whirr on a rewind, pops on landings, swishes on page changes). The rule and the mix numbers are in
-  `docs/REELS.md` rule 13.
 - **"Remove the post approval, I don't want that"** (2026-11-01): `publish_post go=now` / `share_to_story` and
   `auto_post go=now` no longer wait for a click (`lib/auto/wrap.ts`; the switch is gone from Settings → Automation).
   A model still publishes only when the user asked. Scheduled posts never asked; publishing rules still do.
-- **Posting times** (2026-11-01): the owner posts the YouTube Short right away and the Instagram Reel at 7 PM IST.
-  Their numbers: weekday afternoons (2:30-3 PM IST) and early evenings (6-8 PM IST) win; mornings and late nights flop.
-  Titles must stay accurate even when keyword research suggests a bigger search term (it pushed "AI Code Review" for
-  EGM, which reviews plans, not code).
-- **"Use the GPU while rendering instead of leaning on the CPU, on by default"** (2026-11-01), and given the choice,
-  **speed over file size** ("go with 1"): `scripts/reels/fast_render.py` makes every Reel render send raw frames and
-  encode with NVENC on Colab (278 s -> 59 s for a 76 s Reel); the files come out ~3.5x larger at the same look, which
-  the owner accepted. Details in `docs/REELS.md` step 6b.
-- **The EGM Reel, round 3 (2026-11-01)**: "alignment issues", "the last and first slide are the same, and it goes
-  transparent at the end", "the elephant is cut off", "the visuals are too simple: explain it like ByteByteGo", and
-  "learn from these two Reels (hook, sound effects, transitions, how they explain), don't copy". Now: every element sits
-  in the safe area and centres on the frame's true centre; characters are placed by their real extents (never cropped);
-  the film ends on its own end card that holds still (no ghosted crossfade back into the hook); the explaining is a
-  system-design diagram (header, stepper, numbered steps, cards, arrows carrying packets, the real commands and files);
-  the sound is voice-led with booms on reveals and UI sounds tied to what appears (no drum loop). The rules and what
-  the two Reels taught are in `docs/REELS.md`.
-- **Videos (the EGM Reel)**: "hook it like the posts that go viral" (authority + news + stakes: "Google just
-  open-sourced…"), "triple hook, fast paced, attention spans are short", "keep the v1 visuals, they were perfect",
-  "nothing that looks like AI slop: informative, no stamps and all that", "one video that can go viral". All of it,
-  with the pipeline, is in `docs/REELS.md`: read it before making any Reel or Short.
 - **"Pasting an image in Files says 'Upload failed: the connection dropped', and the card can't be deleted"**: the
   browser PUT straight to the R2 hostname, which a browser refuses cross-site after the move to pages.dev and reports
   only as a dropped connection. Files, the post drawer and upload links now send up to 95 MB through our own
