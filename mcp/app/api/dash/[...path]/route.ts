@@ -70,13 +70,14 @@ export async function GET(req: Request, ctx: Ctx) {
     }
     if (a === "analytics" && !b) {
       // the Analytics page: ?range=7|28|90, &acc=<brand id> one brand (left out: every account), &fresh=1 asks YouTube
-      // and Instagram again instead of the 30-minute copy. An
-      // older copy is answered at once (stale: true) and rebuilt after the response, so the page never waits on the platforms
+      // and Instagram again instead of the 30-minute copy. An older copy is answered at once (stale: true), and the page
+      // then asks again with &wait=1, which rebuilds it inside that request. Not after the response: Workers cancel
+      // waitUntil work about 30 s in, and a build of every account takes longer, so the page sat on "Updating…".
       const q = new URL(req.url).searchParams;
       const { getAnalytics, RANGES } = await import("@/lib/analytics");
       const range = (RANGES as readonly number[]).includes(Number(q.get("range"))) ? (Number(q.get("range")) as (typeof RANGES)[number]) : 28;
       const acc = (q.get("acc") ?? "").slice(0, 64) || null;
-      return Response.json(await getAnalytics(range, q.get("fresh") === "1", (p) => after(p), acc));
+      return Response.json(await getAnalytics(range, q.get("fresh") === "1", q.get("wait") === "1" ? undefined : null, acc));
     }
     if (a === "upload-keys" && !b) return Response.json({ keys: await (await import("@/lib/inbox")).listKeys() });
     if (a === "automation" && b === "keys") return Response.json({ keys: await (await import("@/lib/auto/keys")).listModelKeys() });

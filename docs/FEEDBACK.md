@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Why does our analytics page just say updating?"** (2026-11-05): the report older than 30 minutes was served at once
+  marked stale and rebuilt with `after()` (Workers `waitUntil`), which Cloudflare cancels about 30 s after the response;
+  a build of every account now takes longer (the log: "waitUntil() tasks did not complete… cancelled", 33 s), so it
+  never landed and the page polled for two minutes, then sat on "Updating…". Now the page asks once more with
+  `&wait=1`, which builds it inside that request (no 30 s limit), and a build older than 90 s is never joined (a
+  cancelled one never settles). Rule: on Workers, nothing that can take over ~25 s goes into `after()`.
 - **"Instead of blank sheet show a real markdown file just like it was opened in the mac window… properly visible what's
   written… text on text… use the real icons of files… improve the UI so it looks more premium… perfectly aligned…
   visuals, text, voiceover must be in sync… the json one appeared before it was even mentioned… white cards look like

@@ -750,17 +750,22 @@ const FRESH_MS = 30 * 60_000;
 
 const LOCK = (r: Range) => `workspace/analytics/${r}.building.json`;
 const LOCK_MS = 4 * 60_000;
-/** One build per range at a time on this server (and, through the lock in R2, across servers). */
-const building = new Map<Range, Promise<Base>>();
+/** One build per range at a time on this server (and, through the lock in R2, across servers). A build older than
+ *  BUILD_MS is never joined: on Workers a build handed to waitUntil is cancelled about 30 s after the response, and its
+ *  promise never settles, so joining it would hang the request (that left the Analytics page on "Updating…" for good). */
+const BUILD_MS = 90_000;
+const building = new Map<Range, { p: Promise<Base>; at: number }>();
+const live = (range: Range) => { const b = building.get(range); return b && Date.now() - b.at < BUILD_MS ? b.p : null; };
 function rebuild(range: Range) {
-  let p = building.get(range);
+  let p = live(range);
   if (!p) {
-    p = (async () => {
+    const mine: Promise<Base> = (async () => {
       const b = await gather(range);
       await putJson(KEY(range), b).catch(() => null);
       return b;
-    })().finally(() => { building.delete(range); putJson(LOCK(range), { at: 0 }).catch(() => null); });
-    building.set(range, p);
+    })().finally(() => { if (building.get(range)?.p === mine) building.delete(range); putJson(LOCK(range), { at: 0 }).catch(() => null); });
+    building.set(range, { p: mine, at: Date.now() });
+    p = mine;
   }
   return p;
 }
@@ -770,12 +775,16 @@ const keptBase = async (range: Range) => {
   return b?.v === 2 ? b : null;
 };
 
-async function loadBase(range: Range, fresh: boolean, background?: (p: Promise<unknown>) => void) {
+/** `background`: a function (waitUntil) builds a new copy after the response; null serves the old copy marked stale and
+ *  builds nothing (the caller asks again with `wait`, which builds it in the request: no 30 s limit there); left out,
+ *  an old copy is rebuilt before answering. */
+async function loadBase(range: Range, fresh: boolean, background?: ((p: Promise<unknown>) => void) | null) {
   if (!fresh) {
     const kept = await keptBase(range);
     if (kept && Date.now() - kept.at < FRESH_MS) return { base: kept, cached: true, stale: false };
+    if (kept && background === null) return { base: kept, cached: true, stale: true };
     if (kept && background) {
-      if (!building.has(range)) {
+      if (!live(range)) {
         const lock = await getJson<{ at: number }>(LOCK(range)).catch(() => null);
         if (!lock || Date.now() - lock.at > LOCK_MS) {
           await putJson(LOCK(range), { at: Date.now() }).catch(() => null);
@@ -792,7 +801,7 @@ async function loadBase(range: Range, fresh: boolean, background?: (p: Promise<u
  *  `brands`, or one of its accounts' ids, names or handles). Under 30 minutes old it's served as is. Older, and given
  *  `background` (Next's after()), it's still served at once with `stale: true` while a new one is built behind it; the
  *  page asks again to pick it up. With nothing kept, or `fresh`, it waits for a new one. */
-export async function getAnalytics(range: Range, fresh = false, background?: (p: Promise<unknown>) => void, acc?: string | null): Promise<Analytics & { cached: boolean; stale: boolean }> {
+export async function getAnalytics(range: Range, fresh = false, background?: ((p: Promise<unknown>) => void) | null, acc?: string | null): Promise<Analytics & { cached: boolean; stale: boolean }> {
   const [{ base, cached, stale }, groups] = await Promise.all([loadBase(range, fresh, background), getGroups()]);
   const brands = brandsOf(base.accounts, groups);
   return { ...derive(base, pickBrand(brands, base.accounts, acc), brands), groups, cached, stale };
