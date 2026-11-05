@@ -1,7 +1,8 @@
 "use client";
 // The analytics report, shared by Home and every Analytics page: one copy per range kept in memory, so moving between
 // the sub-pages (or from Home) shows it at once, and one request at a time per range. The server answers an old copy
-// at once marked `stale` while it builds a new one; this hook then asks again every few seconds to pick that up. `acc` is
+// at once marked `stale`; this hook then asks once more with `wait`, which builds the new one inside that request (the
+// server can't build it after answering: Workers cancel that work about 30 s in). `acc` is
 // Grow's account switcher (a brand id, "" for every account): each brand's report is kept apart.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Analytics, Range } from "@/lib/analytics";
@@ -17,11 +18,11 @@ const REUSE_MS = 2 * 60_000;
 
 const slot = (range: Range, acc: string) => `${range}${acc ? `:${acc}` : ""}`;
 
-function ask(range: Range, acc: string, fresh = false) {
-  const at = slot(range, acc), key = `${at}${fresh ? "!" : ""}`;
+function ask(range: Range, acc: string, fresh = false, wait = false) {
+  const at = slot(range, acc), key = `${at}${fresh ? "!" : wait ? "~" : ""}`;
   let p = asking.get(key);
   if (!p) {
-    p = api<Report>(`analytics?range=${range}${acc ? `&acc=${encodeURIComponent(acc)}` : ""}${fresh ? "&fresh=1" : ""}`)
+    p = api<Report>(`analytics?range=${range}${acc ? `&acc=${encodeURIComponent(acc)}` : ""}${fresh ? "&fresh=1" : wait ? "&wait=1" : ""}`)
       .then((r) => { kept.set(at, { r, got: Date.now() }); bigSet(`report:${at}`, r); return r; })
       .finally(() => asking.delete(key));
     asking.set(key, p);
@@ -66,15 +67,15 @@ export function useReport(range: Range, acc = "") {
     load();
   }, [at, load]);
 
-  // a stale copy: the new one is being built behind it, so look again shortly (for up to about two minutes)
+  // a stale copy: ask once more with `wait`, which builds the new one in that request (about 15-40 s); "Updating…"
+  // stays on while it runs, and a failure leaves the old copy up and lets the next visit try again
+  const [waiting, setWaiting] = useState(false);
   useEffect(() => {
-    if (!data?.stale || tries.current >= 20) return;
-    const t = setTimeout(() => {
-      tries.current++;
-      ask(range, acc).then(setData).catch(() => {});
-    }, 6000);
-    return () => clearTimeout(t);
+    if (!data?.stale || tries.current >= 1) return;
+    tries.current++;
+    setWaiting(true);
+    ask(range, acc, false, true).then(setData).catch(() => {}).finally(() => setWaiting(false));
   }, [data, range, acc]);
 
-  return { data, err, busy, reload: load };
+  return { data, err, busy: busy || waiting, reload: load };
 }
