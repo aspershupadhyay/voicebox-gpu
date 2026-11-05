@@ -122,3 +122,18 @@ and the framework as a 75% / 25% bar: the skill does 75%, your idea, taste and n
   (cover and hook). Three marks shipped invisible (black on black: `fill="currentColor"` lived on the stripped root
   `<svg>`). `tools/check_logos.js` now renders each tile and fails a mark under 3:1 or barely visible; run it, and the
   colour check, before every render. Real logos keep their brand colours (like screenshots), on a tile they read on.
+
+## What the terminal-mac Reel taught (our first viral one, posted 2026-11-04; numbers on 2026-11-05)
+`promo/cte-terminal-mac/`. Instagram Reel: **69,066 views, 60,889 reached (99.9% non-followers), 60× our usual**,
+2,899 saves, 984 shares, 1,264 likes, 17 comments; followers 54 → 178 in a day. The YouTube Short of the same file:
+296 views (6× usual, but small).
+- **It travelled on saves and sends, not completion.** 42 saves and 14 shares per 1,000 views; saves beat likes 2.3×.
+  A free tool people want to try later is a "save it" post. Average watch was 18 s of 87 s and 38% skipped: most
+  people got the hook and the demo, then saved. So: the product doing the impossible in the first 3 s (real footage),
+  and the "how to get it" before the halfway mark.
+- **The yes/no ask barely worked** (17 comments on 69k views). Ask for something the viewer already holds: "which
+  app would you let your agent use?" or "comment MAC and I'll send the link".
+- **87 s is too long for Shorts.** Make the ~45 s Shorts cut (docs/REELS.md 7c) for YouTube every time: hook, demo,
+  how it works in one beat, the catch in one line, the ask.
+- **Format that won:** the launch ad with the catch, about an open-source tool for AI agents, with the maker's own
+  footage. Repeat the format; a sibling tool (govijr/terminal-phone) is the natural follow-up while the audience is warm.
