@@ -5,8 +5,11 @@ AGENTS.md in ~/Downloads turns your own coding agent against you. Plan, beats an
 `PLAN.md`; posting: `POSTING.md`.
 
 **World:** the case file (new; the last two were the desktop and the exam paper): a dark walnut evidence desk, the
-planted AGENTS.md sealed in an evidence bag (`bag()`, `theBag()`), typed exhibits on paper (`sheet()`, `finding()`),
-manila tags on strings (`tag()`), manila-folder scenes for the explainers, and the red pen as the investigator's.
+real AGENTS.md and CLAUDE.md open in an editor window (`macwin()`, `md()`: the published text, readable, the pen on
+phrases as they're said), the Downloads folder in a Finder-style window with file-type icons (`finder()`, `docIcon()`,
+the real CC0 Markdown mark), findings on taped paper (`paper()`), notes on sticky notes (`sticky()`), manila tags on
+strings (`tag()`), manila scenes for the explainers, and the red pen as the investigator's. v2 (owner's notes): every
+element lands on the word that names it.
 Jost for statements, serif italic for the idea word, Courier Prime for the evidence, Mono for code.
 
 **Real media** (`assets/real/`, `node tools/shoot.js`, phrase positions from `node tools/marks.js`): the article's

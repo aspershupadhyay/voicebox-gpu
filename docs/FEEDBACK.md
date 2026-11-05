@@ -6,6 +6,19 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Instead of blank sheet show a real markdown file just like it was opened in the mac window… properly visible what's
+  written… text on text… use the real icons of files… improve the UI so it looks more premium… perfectly aligned…
+  visuals, text, voiceover must be in sync… the json one appeared before it was even mentioned… white cards look like
+  real sticky notes… starting must be a masterpiece and an amazing thumbnail"** (2026-11-05, on the Markdown Reel v1):
+  `promo/cte-markdown/` v2. A document the story is about is shown **as itself, readable**: the real published text in
+  an editor window (`macwin()` + `md()`: line numbers, headings, code spans, the pen on phrases), never grey bars; the
+  hook opens on it and zooms *inside* the window to the malicious line (zooming the whole frame pushed it over the
+  caption). Scrolling is a reader scrolling inside a window (clipped, scrollbar, cursor), never a sheet sliding over
+  the caption. Files get real-looking type icons (the Markdown mark is the real CC0 one). Paper is real paper (grain,
+  a sheet behind, tape); handwritten notes go on sticky notes. Rows of chips sit in a centred row with their space
+  reserved, so nothing overlaps or shifts. **Every element appears on the word that names it** (`at(line, word)`), not
+  at the scene start; check each scene's first frame for anything shown early. The cover gives each big thing its own
+  space: the title, the file icon ringed, the real malicious line.
 - **"Make a video on this 'Markdown is the New Malware'… do your own verification… chop chop"** (2026-11-05, with a
   research brief on Forever Security's AGENTS.md / Downloads-folder report): `promo/cte-markdown/`. Verify the brief,
   not just the topic: its link served the site's home page (the article is at `/blog/hijacking-ai-agents-via-downloads-folder`),
