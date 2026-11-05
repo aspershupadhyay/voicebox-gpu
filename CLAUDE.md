@@ -18,16 +18,10 @@ request as the change, so the next session doesn't repeat the mistake.
 
 ## Videos
 
-Reels and Shorts follow `docs/REELS.md` (the owner's rules: a viral-style hook, informative not slop, the house look,
-and the voice → animation → Files pipeline). Any video (landscape tutorials too) goes through the
-`video-director` skill (`.claude/skills/video-director/`: workflow, style guide, planning sheet, the SFX library map,
-review checklist); `promo/claude-video-rules/` is its landscape kit.
-Hard rule: no slop colours in any video or design (no purple / violet / indigo / lavender, no purple-blue gradients, no
-Tailwind defaults, no neon, no pure black or white): the list is in the skill's style guide → "Banned colours", and
-`python3 scripts/reels/check_colors.py <file>` must pass before a render. The channel is **Catch the Error** (`docs/BRAND.md`):
-every video keeps its signature (the catch, the red pen, sources) in a world designed fresh for that video (the
-skill's `references/formats.md`: never the same look twice in a row) and ends on its Pixar-style ident (`promo/brand/cte.js`); the craft
-behind it (story, psychology, type, motion) is the skill's `references/craft.md`.
+Videos (Reels, Shorts, tutorials) are made in **aspershupadhyay/content-creation**, not here (the owner, 2026-11-05):
+the video-director skill, the video rules, the brand and its ident, every video kit and the owner's video feedback
+live there. This repo is the app they use through the VoiceBox MCP (voice, Files, publishing, analytics). Don't add
+video kits or video rules here.
 
 ## Design
 
