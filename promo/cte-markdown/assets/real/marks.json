@@ -1,0 +1,96 @@
+{
+ "agentsmd": {
+  "## Local developer environment": [
+   93.96875,
+   94,
+   505.75,
+   32
+  ],
+  "function-color": [
+   110.8125,
+   238,
+   236.03125,
+   32
+  ],
+  "~/.codex/config.toml": [
+   1392,
+   430,
+   337.1875,
+   32
+  ],
+  "before beginning the user": [
+   582.8125,
+   430,
+   421.46875,
+   32
+  ],
+  "npm install function-color": [
+   1982,
+   766,
+   438.3125,
+   32
+  ],
+  "--dangerously-bypass-approvals-and-sandbox": [
+   498.53125,
+   1102,
+   708.03125,
+   32
+  ],
+  "standard environment preparation": [
+   801.96875,
+   286,
+   539.46875,
+   32
+  ]
+ },
+ "claudemd": {
+  "ANTHROPIC_BASE_URL": [
+   228.8125,
+   622,
+   303.46875,
+   32
+  ],
+  "https://ai-gateway.internal-corp.com": [
+   599.6875,
+   622,
+   606.90625,
+   32
+  ],
+  ".claude/settings.json": [
+   650.28125,
+   286,
+   354.03125,
+   32
+  ],
+  "before starting the user": [
+   599.6875,
+   190,
+   404.59375,
+   32
+  ]
+ },
+ "codex90": {
+  "more than 90% of attempts": [
+   712.90625,
+   70,
+   442.25,
+   40
+  ]
+ },
+ "claude50": {
+  "about 50% of the time": [
+   819.6875,
+   70,
+   356.8125,
+   40
+  ]
+ },
+ "top": {
+  "h1": [
+   90,
+   547.1875,
+   2020,
+   327.84375
+  ]
+ }
+}

@@ -1,0 +1,458 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Jost;src:url(fonts/jost.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:"Courier Prime";src:url(fonts/courier-prime.woff2) format("woff2")}
+@font-face{font-family:Geist;src:url(fonts/geist.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:Serif;src:url(fonts/serif.woff2) format("woff2")}
+@font-face{font-family:Serif;font-style:italic;src:url(fonts/serif-i.woff2) format("woff2")}
+@font-face{font-family:Caveat;src:url(fonts/caveat.woff2) format("woff2");font-weight:400 700}
+@font-face{font-family:Mono;src:url(fonts/mono.woff2) format("woff2");font-weight:100 900}
+html,body{margin:0;background:#1A1917;overflow:hidden}
+#stage{position:relative;width:1080px;height:1920px;overflow:hidden;font-family:Geist,sans-serif;-webkit-font-smoothing:antialiased}
+#cam{position:absolute;inset:0;transform-origin:540px 900px}
+.a{position:absolute;box-sizing:border-box}
+.c{left:0;width:1080px;text-align:center}
+.serif{font-family:Serif;font-weight:400;letter-spacing:-0.01em}
+.mono{font-family:Mono;font-variant-numeric:tabular-nums}
+.w{display:inline-block;white-space:pre}
+svg{position:absolute;overflow:visible}
+img{position:absolute;display:block}
+</style></head>
+<body><div id="stage"><div id="cam"></div></div>
+<script src="vo.js"></script>
+<script src="cte.js"></script>
+<script>
+// Catch the Error: "Markdown is the new malware" (Forever Security, "Markdown Is the New Executable", Gal Weizman &
+// Omer Samet, Oct 22, 2026: forever.security/blog/hijacking-ai-agents-via-downloads-folder).
+// The world: the case file. A dark walnut evidence desk, the planted AGENTS.md sealed in an evidence bag, typed
+// exhibits on paper, manila folders for the diagrams, tags on strings; the red pen is the investigator's. Real media:
+// the article's headline, the attacker's real AGENTS.md section and the two result lines, as clippings on the desk.
+const DESK='#2A2521', DESK2='#37302B', MAN='#CDB27A', MAN2='#B89C63', PAPER='#ECE5D5', PAPER2='#DDD4C1',
+      INK='#1E1B18', SOFT='#4A443C', GREY='#8C857A', TXT='#ECE5D5', TXT2='#B7AE9E', RED='#D8463A', REDL='#E8705F',
+      REDT='#A8322A', OK='#5E7D5B', CODE='#23201D', CODET='#E3DCCB', BRASS='#C9A86A', INK2='#2F2A25';
+// ---------- math ----------
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const lerp=(a,b,p)=>a+(b-a)*p;
+const eo=x=>x<=0?0:x>=1?1:1-Math.pow(2,-10*x);
+const eio=x=>x<=0?0:x>=1?1:x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;
+const back=x=>{if(x<=0)return 0;if(x>=1)return 1;const c=1.7;return 1+(c+1)*Math.pow(x-1,3)+c*Math.pow(x-1,2);};
+const seg=(t,t0,d,e=eo)=>e(clamp((t-t0)/d));
+function hash(n){let x=Math.sin(n*127.1+311.7)*43758.5453;return x-Math.floor(x);}
+// ---------- voice timing ----------
+const LINES={};for(const l of VO.lines)LINES[l.id]=l;
+const S=id=>LINES[id]?LINES[id].start:NaN, E=id=>LINES[id]?LINES[id].end:NaN;
+function wt(id,i){const l=LINES[id];if(!l)return NaN;const w=l.words[Math.min(i,l.words.length-1)];return w?w.s:l.start;}
+const norm=s=>s.toLowerCase().replace(/[^a-z0-9]/g,'');
+function wordIdx(id,word,from=0){const l=LINES[id];if(!l)return 0;const k=l.words.findIndex((w,i)=>i>=from&&norm(w.w).startsWith(word));return k<0?0:k;}
+const at=(id,word,from=0)=>wt(id,wordIdx(id,word,from));
+// ---------- text motion (the house rise) ----------
+function rise(t,t0,d=.34,dy=22){const p=seg(t,t0,d);return `opacity:${p.toFixed(3)};transform:translateY(${((1-p)*dy).toFixed(2)}px);filter:blur(${((1-p)*5).toFixed(2)}px)`;}
+function fade(t,t0,d=.3){return `opacity:${seg(t,t0,d).toFixed(3)}`;}
+function arrive(t,t0,d=.42){const p=clamp((t-t0)/d);const s=p<=0?.82:lerp(.82,1,back(p));return `opacity:${clamp(p*3).toFixed(3)};transform:scale(${s.toFixed(4)})`;}
+function ws(t,words,times,style=''){return words.map((w,i)=>`<span class="w" style="${rise(t,times[i]??times[times.length-1],.3,18)};${style}">${w}${i<words.length-1?' ':''}</span>`).join('');}
+function spoken(t,id,words,k=0,style=''){return ws(t,words,words.map((_,i)=>wt(id,k+i)-.06),style);}
+function A(x,y,css,html){return `<div class="a" style="left:${x}px;top:${y}px;${css}">${html??''}</div>`;}
+function C(y,css,html){return `<div class="a c" style="top:${y}px;${css}">${html??''}</div>`;}
+function grain(dark){return `<svg width="1080" height="1920" style="left:0;top:0"><filter id="g${dark?1:0}"><feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="2" seed="${dark?9:4}"/><feColorMatrix values="0 0 0 0 ${dark?.9:.25}  0 0 0 0 ${dark?.88:.24}  0 0 0 0 ${dark?.85:.22}  0 0 0 ${dark?.035:.07} 0"/></filter><rect width="1080" height="1920" filter="url(#g${dark?1:0})"/></svg>`;}
+function credit(t,t0,text,dark=0,y=1700){return A(70,y,`${fade(t,t0,.3)};font-family:Mono;font-size:22px;letter-spacing:.03em;color:${dark?TXT2:SOFT};width:940px;line-height:1.45`,text);}
+function svgL(inner){return `<svg width="1080" height="1920" style="left:0;top:0">${inner}</svg>`;}
+function note(x,y,t,t0,text,size=52,rot=-3,col=REDT){return A(x,y,`${rise(t,t0,.3,10)};font-family:Caveat;font-weight:600;font-size:${size}px;color:${col};transform-origin:left;rotate:${rot}deg;white-space:nowrap`,text);}
+// ---------- the red pen ----------
+function wob(i,seed,amp){return amp*(Math.sin(i*.9+seed)*.6+Math.sin(i*2.3+seed*1.7)*.4);}
+function penPath(pts,t,t0,d,w=7,col=RED){const p=eio(clamp((t-t0)/d));if(p<=0)return '';let L=0;for(let i=1;i<pts.length;i++)L+=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);
+  return `<path d="M${pts.map(q=>q[0].toFixed(1)+' '+q[1].toFixed(1)).join(' L')}" fill="none" stroke="${col}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${L.toFixed(0)}" stroke-dashoffset="${(L*(1-p)).toFixed(1)}"/>`;}
+function penUnder(x0,x1,y,t,t0,d=.35,w=8,seed=1,col=RED){const n=24,pts=[];for(let i=0;i<=n;i++){const u=i/n;pts.push([lerp(x0,x1,u),y+wob(i,seed,3)+u*6-8*u*(1-u)]);}return penPath(pts,t,t0,d,w,col);}
+function penStrike(x0,x1,y,t,t0,d=.25,w=8,col=RED){const pts=[];for(let i=0;i<=16;i++){const u=i/16;pts.push([lerp(x0,x1,u),y+wob(i,4,2.5)-u*10]);}return penPath(pts,t,t0,d,w,col);}
+function penRing(cx,cy,rx,ry,t,t0,d=.6,w=7,turns=1.25,seed=2,col=RED){const pts=[],n=120,a0=-2.3;for(let i=0;i<=n;i++){const u=i/n,a=a0+u*Math.PI*2*turns;const r=1+.05*Math.sin(3*a+seed)+.03*Math.sin(5*a+seed*2)+.03*u;pts.push([cx+Math.cos(a)*rx*r,cy+Math.sin(a)*ry*r]);}return penPath(pts,t,t0,d,w,col);}
+function penTick(x,y,s,t,t0,d=.22,w=8,col=RED){return penPath([[x,y],[x+s*.35,y+s*.4],[x+s,y-s*.55]],t,t0,d,w,col);}
+function penX(x,y,s,t,t0,w=7,col=RED){return penPath([[x,y],[x+s,y+s]],t,t0,.12,w,col)+penPath([[x+s,y],[x,y+s]],t,t0+.1,.12,w,col);}
+function penArrow(x0,y0,x1,y1,t,t0,d=.3,w=6,bend=24,col=RED){const pts=[];for(let i=0;i<=16;i++){const u=i/16;pts.push([lerp(x0,x1,u)+Math.sin(u*Math.PI)*bend,lerp(y0,y1,u)]);}
+  const ang=Math.atan2(y1-pts[14][1],x1-pts[14][0]);const h=22;const hd=[[x1-h*Math.cos(ang-.5),y1-h*Math.sin(ang-.5)],[x1,y1],[x1-h*Math.cos(ang+.5),y1-h*Math.sin(ang+.5)]];
+  return penPath(pts,t,t0,d,w,col)+penPath(hd,t,t0+d*.9,.12,w,col);}
+// an inline mark on a word (ring / strike / under), drawn in the word's own box
+function mark(t,t0,inner,kind='ring',d=.5,col=RED,w=7,seed=3){const p=eio(clamp((t-t0)/d));
+  let path='',box='left:-10%;top:-24%;width:120%;height:148%';
+  if(kind==='ring'){const pts=[];for(let i=0;i<=90;i++){const u=i/90,a=-2.3+u*Math.PI*2*1.2;const r=1+.04*Math.sin(3*a+seed)+.03*u;pts.push([50+Math.cos(a)*46*r,50+Math.sin(a)*44*r]);}path='M'+pts.map(q=>q[0].toFixed(2)+' '+q[1].toFixed(2)).join(' L');}
+  if(kind==='strike'){box='left:-4%;top:0;width:108%;height:100%';path='M0 58 C30 52, 60 56, 100 46';}
+  if(kind==='under'){box='left:-3%;top:84%;width:106%;height:22%';path='M0 40 C30 60, 70 30, 100 55';}
+  const svg=p>0?`<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;${box};overflow:visible;pointer-events:none"><path d="${path}" pathLength="1" fill="none" stroke="${col}" stroke-width="${w}" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="1 1" stroke-dashoffset="${(1-p).toFixed(4)}"/></svg>`:'';
+  return `<span style="position:relative;display:inline-block">${inner}${svg}</span>`;}
+// the top caption: the phrase being spoken rises word by word on its spoken times; idea words are the serif italic
+// in red; marks: {index: [kind, time]} lets the pen strike, ring or underline a word as it's said
+function topcap(t,id,groups,o={}){const l=LINES[id];if(!l)return '';const {y=250,size=78,emph=[],col=INK,ecol=REDT,lh=1.08,w=960,marks={},early=-1}=o;
+  let g=0;groups.forEach(([a],i)=>{if(t>=wt(id,a)-.12)g=i;});const [a,b]=groups[g];
+  const words=l.words.slice(a,b+1).map((x,i)=>{const k=a+i;const e=emph.includes(k);let inner=x.w;
+    if(marks[k])inner=mark(t,marks[k][1],inner,marks[k][0],marks[k][2]||.35,ecol,7,k);
+    return `<span class="w${e?' serif':''}" style="${k<=early?'':rise(t,wt(id,k)-.06,.3,18)};${e?`font-style:italic;color:${ecol};font-size:1.12em`:''}">${inner}${k<b?' ':''}</span>`;}).join('');
+  return A((1080-w)/2,y,`width:${w}px;text-align:center;font-size:${size}px;line-height:${lh};font-weight:600;color:${col};letter-spacing:-0.035em`,words);}
+// ---------- the case-file world ----------
+function cursor(x,y,col=INK,s=1,op=1){return `<svg width="${40*s}" height="${52*s}" viewBox="-3 -3 40 52" style="left:${x.toFixed(1)}px;top:${y.toFixed(1)}px;opacity:${op};overflow:visible"><path d="M0 0 L0 36 L9.5 27.5 L16 42 L22.5 39 L16 25 L28 25 Z" fill="${col}" stroke="${TXT}" stroke-width="3" stroke-linejoin="round"/></svg>`;}
+function shot(o){const {x,y,w,h,src,iw,ih,cx=iw/2,cy=ih/2,z=w/iw,op=1,rp=1,marks='',r=30}=o;
+  const ix=w/2-cx*z, iy=h/2-cy*z;
+  return `<div class="a" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;border-radius:${r}px;overflow:hidden;opacity:${op.toFixed(3)};transform:translateY(${((1-rp)*110).toFixed(1)}px) scale(${lerp(.92,1,rp).toFixed(4)});box-shadow:0 44px 70px -34px rgba(29,28,26,.7),0 0 0 2px rgba(29,28,26,.14);background:${CODE}">
+    <div style="position:absolute;left:${ix.toFixed(1)}px;top:${iy.toFixed(1)}px;width:${iw}px;height:${ih}px;transform-origin:0 0;transform:scale(${z.toFixed(4)})">
+    <img src="${src}" style="left:0;top:0;width:${iw}px;height:${ih}px"><svg width="${iw}" height="${ih}" style="left:0;top:0">${marks}</svg></div></div>`;}
+function chip(text,o={}){const {fg=INK,bg='transparent',bd=INK,size=30,pad='10px 26px',css=''}=o;return `<span style="display:inline-block;font-family:Mono;font-size:${size}px;color:${fg};background:${bg};border:3px solid ${bd};border-radius:60px;padding:${pad};white-space:nowrap;${css}">${text}</span>`;}
+function slugC(dark=1){return A(70,150,`font-family:'Courier Prime';font-size:26px;letter-spacing:.12em;color:${dark?TXT2:SOFT}`,`CASE FILE <span style="color:${dark?REDL:REDT}">·</span> MARKDOWN`);}
+function exhibit(t,t0,label,dark=1){return A(700,146,`${fade(t,t0,.3)};width:310px;text-align:right;font-family:'Courier Prime';font-size:26px;letter-spacing:.12em;color:${dark?REDL:REDT}`,label);}
+const TC=(o={})=>({col:TXT,ecol:REDL,size:72,...o});          // the top caption on the desk
+const TL=(o={})=>({col:INK,ecol:REDT,size:72,...o});          // on paper / manila
+// a typed sheet: a heading and "text" lines as grey bars (we never invent the file's words), optional real heading at the end
+function sheet(x,y,w,h,o={}){const {title='',tail='',rot=0,rows=14,css='',seed=1,fill=SOFT}=o;let r='';
+  for(let i=0;i<rows;i++){const lw=w-120-(hash(i+seed)*.45)*(w-120);r+=`<div style="position:absolute;left:56px;top:${118+i*36}px;width:${lw.toFixed(0)}px;height:12px;border-radius:6px;background:${PAPER2}"></div>`;}
+  return `<div class="a" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;background:${PAPER};border-radius:8px;transform:rotate(${rot}deg);box-shadow:0 40px 60px -30px rgba(20,17,14,.75);overflow:hidden;${css}">
+    <div style="position:absolute;left:56px;top:48px;font-family:'Courier Prime';font-weight:700;font-size:34px;color:${INK}">${title}</div>${r}
+    ${tail?`<div style="position:absolute;left:56px;top:${118+rows*36+10}px;font-family:'Courier Prime';font-weight:700;font-size:30px;color:${fill}">${tail}</div>`:''}</div>`;}
+// the evidence bag: clear plastic (flat panes, no gradients), a red seal strip, the item inside
+function bag(x,y,w,h,inner,o={}){const {rot=-3,label='EVIDENCE'}=o;
+  return `<div class="a" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;transform:rotate(${rot}deg)">
+    <div style="position:absolute;inset:0;border-radius:18px;background:rgba(236,229,213,.07);box-shadow:inset 0 0 0 3px rgba(236,229,213,.28),0 50px 80px -40px rgba(10,8,6,.9)"></div>
+    <div style="position:absolute;left:40px;top:110px;width:${w-80}px;height:${h-150}px">${inner}</div>
+    <svg width="${w}" height="${h}" style="left:0;top:0"><polygon points="${w*.62},0 ${w*.8},0 ${w*.35},${h} ${w*.17},${h}" fill="rgba(236,229,213,.06)"/><polygon points="${w*.84},0 ${w*.88},0 ${w*.43},${h} ${w*.39},${h}" fill="rgba(236,229,213,.05)"/></svg>
+    <div style="position:absolute;left:0;top:0;width:${w}px;height:84px;border-radius:18px 18px 0 0;background:rgba(236,229,213,.13);border-bottom:3px solid rgba(236,229,213,.3)"></div>
+    <div style="position:absolute;left:28px;top:100px;width:${w-56}px;height:4px;background:${REDT};opacity:.9"></div>
+    <div style="position:absolute;left:0;width:${w}px;top:20px;text-align:center;font-family:'Courier Prime';font-weight:700;font-size:34px;letter-spacing:.3em;color:${TXT}">${label}</div></div>`;}
+// a manila tag on a string
+function tag(x,y,w,text,o={}){const {rot=6,size=34,col=INK,sub=''}=o;
+  return `<div class="a" style="left:${x}px;top:${y}px;width:${w}px;transform:rotate(${rot}deg);transform-origin:0 50%">
+    <div style="position:relative;background:${MAN};clip-path:polygon(9% 0,100% 0,100% 100%,9% 100%,0 50%);padding:22px 30px 22px 74px;box-shadow:0 20px 30px -18px rgba(10,8,6,.8)">
+    <div style="position:absolute;left:30px;top:50%;margin-top:-11px;width:22px;height:22px;border-radius:11px;background:${DESK}"></div>
+    <div style="font-family:'Courier Prime';font-weight:700;font-size:${size}px;color:${col};line-height:1.15">${text}</div>${sub?`<div style="font-family:'Courier Prime';font-size:24px;color:${SOFT};margin-top:6px">${sub}</div>`:''}</div></div>`;}
+// a small dark window (an agent's terminal, a browser, a config file)
+function card(x,y,w,h,title,inner,o={}){const {bg=CODE,col=CODET,css=''}=o;
+  return `<div class="a" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;border-radius:20px;background:${bg};box-shadow:0 36px 60px -30px rgba(10,8,6,.85),0 0 0 2px rgba(236,229,213,.12);overflow:hidden;${css}">
+    <div style="position:absolute;left:0;top:0;width:100%;height:48px;background:${INK2}"></div>
+    ${[REDT,MAN2,OK].map((c,i)=>`<div style="position:absolute;left:${20+i*22}px;top:17px;width:13px;height:13px;border-radius:7px;background:${c}"></div>`).join('')}
+    <div class="mono" style="position:absolute;left:0;width:100%;top:11px;text-align:center;font-size:21px;color:${TXT2}">${title}</div>
+    <div style="position:absolute;left:0;top:48px;width:100%;height:${h-48}px;font-family:Mono;color:${col}">${inner}</div></div>`;}
+// a folder icon (drawn), optionally locked / lit
+function folder(x,y,s,label,o={}){const {col=MAN,lc=TXT,op=1,ring=''}=o;
+  return `<div class="a" style="left:${x}px;top:${y}px;width:${200*s}px;opacity:${op}"><svg width="${200*s}" height="${150*s}" viewBox="0 0 200 150" style="position:relative;display:block"><path d="M8 26 Q8 14 20 14 L76 14 L92 30 L180 30 Q192 30 192 42 L192 132 Q192 144 180 144 L20 144 Q8 144 8 132 Z" fill="${col}"/><path d="M8 52 L192 52 L192 132 Q192 144 180 144 L20 144 Q8 144 8 132 Z" fill="${col}" style="filter:brightness(1.08)"/>${ring}</svg>
+    <div style="font-family:Mono;font-size:${Math.round(26*Math.max(.8,s))}px;color:${lc};text-align:center;margin-top:10px;white-space:nowrap">${label}</div></div>`;}
+function realcard(o){return shot({r:22,...o});}
+// a red packet that travels along a straight line from a to b between t0 and t0+d
+function packet(t,t0,d,x0,y0,x1,y1,label='',col=RED){const p=eio(clamp((t-t0)/d));if(t<t0||t>t0+d+.25)return '';const x=lerp(x0,x1,p),y=lerp(y0,y1,p);
+  return A(x-60,y-26,`width:120px;height:52px;border-radius:12px;background:${col};color:${PAPER};font-family:Mono;font-size:22px;line-height:52px;text-align:center;opacity:${(1-seg(t,t0+d,.25)).toFixed(3)}`,label);}
+function line(x0,y0,x1,y1,t,t0,d=.35,col=TXT2,w=4,dash=''){const p=eo(clamp((t-t0)/d));if(p<=0)return '';const L=Math.hypot(x1-x0,y1-y0);
+  return svgL(`<line x1="${x0}" y1="${y0}" x2="${x0+(x1-x0)*p}" y2="${y0+(y1-y0)*p}" stroke="${col}" stroke-width="${w}" stroke-linecap="round" ${dash?`stroke-dasharray="${dash}"`:''}/>`);}
+// the tally: ten attempts as squares; k of them filled red, landing one by one
+function tally(x,y,k,t,t0,dt=.07,o={}){const {s=74,gap=14,on=RED,off='rgba(236,229,213,.16)',bd='rgba(236,229,213,.35)'}=o;let h='';
+  for(let i=0;i<10;i++){const p=seg(t,t0+i*dt,.2,back);const lit=i<k&&t>=t0+i*dt;
+    h+=A(x+i*(s+gap),y,`width:${s}px;height:${s}px;border-radius:10px;background:${lit?on:off};box-shadow:inset 0 0 0 3px ${lit?on:bd};transform:scale(${(lit?lerp(.6,1,p):1).toFixed(3)})`);}
+  return h;}
+function counter(t,t0,d,to,fmt=v=>Math.round(v)){return fmt(to*eo(clamp((t-t0)/d)));}
+
+// ---------- scenes ----------
+const SC=[];
+function scene(t0,bg,draw,opt={}){if(isFinite(t0))SC.push({t0,bg,draw,...opt});}
+const BAGX=170,BAGY=620,BAGW=740,BAGH=900;
+function theBag(t,o={}){const {lab=-1}=o;   // the hero: AGENTS.md sealed in the evidence bag
+  return bag(BAGX,BAGY,BAGW,BAGH,sheet(0,0,BAGW-80,BAGH-160,{title:'# Engineering Work Guidelines',rows:15,rot:1.5,tail:'## Local developer environment',fill:REDT}),{rot:-3});}
+
+// 1 · hook: the bag is on the desk on frame 1, the camera already pushing in; "no code" struck on the sheet line;
+// on "malware" the tag swings in
+scene(0,DESK,(t)=>{
+  let h=grain(1)+slugC()+exhibit(t,-1,'EXHIBIT A');
+  const push=1+.05*eio(clamp(t/4));
+  h+=`<div class="a" style="inset:0;transform:scale(${push.toFixed(4)});transform-origin:540px 1050px">${theBag(t)}`;
+  const mw=at('l01','malware');
+  const sp=seg(t,mw-.1,.5,back);
+  h+=`<div class="a" style="left:0;top:0;opacity:${clamp((t-mw+.1)*5).toFixed(3)};transform:translate(${lerp(-200,0,sp).toFixed(1)}px,0)">${tag(110,1430,520,'AGENTS.md',{rot:lerp(-18,-6,sp),size:44,sub:'found in ~/Downloads'})}</div>`;
+  h+=`</div>`;
+  h+=topcap(t,'l01',[[0,4],[5,15]],TC({emph:[11],y:250,early:4,marks:{4:['strike',at('l01','code')+.15]}}));
+  return h;});
+// 2 · where it was: a typed listing of the Downloads folder; the pen rings AGENTS.md
+const LS=['invoice_0412.pdf','IMG_2041.jpg','setup-3.2.dmg','AGENTS.md','resume_final_v2.docx'];
+function listing(t,o={}){const {ring=1e9,q=1e9,y0=640}=o;let h=`<div class="a" style="left:110px;top:${y0}px;width:860px;height:760px;background:${PAPER};border-radius:8px;transform:rotate(-1.2deg);box-shadow:0 40px 60px -30px rgba(10,8,6,.85)">`;
+  h+=`<div style="position:absolute;left:60px;top:54px;font-family:Mono;font-size:32px;color:${SOFT}">$ ls -la ~/Downloads</div>`;
+  LS.forEach((f,i)=>{const hit=f==='AGENTS.md';h+=`<div style="position:absolute;left:60px;top:${150+i*104}px;width:740px;font-family:Mono;font-size:40px;color:${hit?INK:GREY};font-weight:${hit?700:400}">${f}</div>`;
+    if(hit)h+=`<div style="position:absolute;left:520px;top:${150+i*104}px;font-family:Mono;font-size:30px;color:${GREY};line-height:48px">13 KB</div>`;});
+  h+=`<svg width="860" height="760" style="left:0;top:0">${penRing(190,150+3*104+24,170,58,t,ring,.55,7)}</svg>`;
+  if(t>q){['added by ?','from where ?'].forEach((s,i)=>{const tq=q+i*.9;h+=A(470,560+i*70,`${rise(t,tq,.3,10)};font-family:Caveat;font-weight:700;font-size:56px;color:${REDT};transform-origin:left;rotate:-4deg;white-space:nowrap`,s);});}
+  return h+'</div>';}
+scene(S('l02'),DESK,(t)=>{let h=grain(1)+slugC()+exhibit(t,-1,'EXHIBIT A');
+  h+=listing(t,{ring:at('l02','downloads')});
+  h+=topcap(t,'l02',[[0,2],[3,10]],TC({emph:[2,9],y:250}));return h;},{tr:'whip'});
+// 3 · nobody put it there
+scene(S('l03'),DESK,(t)=>{let h=grain(1)+slugC()+exhibit(t,-1,'EXHIBIT A');
+  h+=listing(t,{ring:-9,q:at('l03','nobody')+.1,y0:660});
+  h+=topcap(t,'l03',[[0,3],[4,9]],TC({emph:[0,4],y:250}));return h;});
+// 4 · the problem: the file → your agent → it does what it says (manila: the explainer mode)
+function agentCard(x,y,w,name,t,t0){return card(x,y,w,230,name,`<div style="padding:30px 32px;font-size:30px;line-height:1.5"><span style="color:${BRASS}">~/Downloads</span> % ${name}<br><span style="color:${TXT2}">reading AGENTS.md…</span></div>`,{css:arrive(t,t0)});}
+scene(S('l04'),MAN,(t)=>{let h=grain(0)+slugC(0);
+  const a=at('l04','agent'), r=at('l04','reads'), d=at('l04','does');
+  h+=A(110,700,`${arrive(t,S('l04')+.1)}`,sheet(0,0,330,420,{title:'AGENTS.md',rows:7,tail:'',css:'transform:none'}).replace('font-size:34px','font-size:30px'));
+  h+=agentCard(560,760,400,'codex',t,a-.1);
+  h+=line(460,890,560,890,t,r-.05,.3,INK,5);
+  h+=packet(t,r+.05,.6,450,890,640,890,'.md');
+  if(t>d-.1)h+=A(140,1180,`${rise(t,d-.05)};width:800px;text-align:center;font-family:Jost;font-weight:500;font-size:64px;color:${INK}`,`it <span class="serif" style="font-style:italic;color:${REDT};font-size:1.15em">obeys</span> it`);
+  h+=svgL(penUnder(380,700,1270,t,at('l04','says')+.1,.35,8,2));
+  h+=note(150,1330,t,at('l04','says')+.3,'that\'s the whole point of the file',48,-2);
+  h+=topcap(t,'l04',[[0,2],[3,9],[10,14]],TL({emph:[2,11],y:250}));return h;},{tr:'zoom'});
+// 5 · Downloads is the one folder the web can write to; no click, no permission
+scene(S('l05'),MAN,(t)=>{let h=grain(0)+slugC(0);
+  const dl=at('l05','downloads'), web=at('l05','website'), nc=at('l05','click'), np=at('l05','permission');
+  h+=card(240,600,600,300,'any website',`<div style="padding:34px 40px;font-size:28px;color:${TXT2}">https://<span style="color:${CODET}">any-page.example</span><div style="margin-top:28px;height:14px;width:420px;border-radius:7px;background:#3A342E"></div><div style="margin-top:18px;height:14px;width:300px;border-radius:7px;background:#3A342E"></div></div>`,{css:arrive(t,S('l05'))});
+  const fx=[[110,'~/projects'],[400,'~/Downloads'],[690,'~/.ssh']];
+  fx.forEach(([x,n],i)=>{const hit=i===1;h+=folder(x,1080,1.4,n,{col:hit?INK2:'#8F7647',lc:hit?INK:SOFT,op:hit?1:clamp(1-.6*seg(t,dl,.3))});});
+  h+=line(540,900,540,1075,t,web-.1,.3,REDT,5,'14 12');
+  h+=packet(t,web+.1,.5,540,905,540,1150,'.md');
+  h+=svgL(penRing(540,1180,190,150,t,dl+.05,.5,7));
+  // no click: a cursor struck; no permission: an "Allow?" chip struck
+  if(t>nc-.25)h+=A(170,1420,`${rise(t,nc-.25,.3,12)}`,chip('click',{size:34,bd:INK,fg:INK}));
+  if(t>np-.35)h+=A(520,1420,`${rise(t,np-.35,.3,12)}`,chip('allow download?',{size:34,bd:INK,fg:INK}));
+  h+=svgL(penStrike(160,340,1452,t,nc+.1,.22,8)+penStrike(510,900,1452,t,np+.2,.25,8));
+  h+=topcap(t,'l05',[[0,5],[6,10],[11,14]],TL({emph:[1,7],y:250}));return h;});
+// 6 · so a web page can plant orders in a folder your agent trusts: the chain
+scene(S('l06'),MAN,(t)=>{let h=grain(0)+slugC(0);
+  const n=[[200,'web page'],[540,'~/Downloads'],[880,'your agent']], tt=[S('l06')+.05,at('l06','folder'),at('l06','agent')];
+  n.forEach(([x,l],i)=>{h+=A(x-150,820,`${arrive(t,tt[i]-.1)};width:300px;height:170px;border-radius:22px;background:${i===1?MAN2:CODE};box-shadow:0 30px 50px -28px rgba(10,8,6,.7);color:${i===1?INK:CODET};font-family:Mono;font-size:30px;text-align:center;line-height:170px`,l);});
+  h+=line(350,905,390,905,t,tt[1]-.05,.2,INK,5)+line(690,905,730,905,t,tt[2]-.05,.2,INK,5);
+  h+=packet(t,at('l06','plant')-.05,1.6,200,1090,880,1090,'orders');
+  h+=svgL(penRing(880,905,200,120,t,at('l06','trusts')+.05,.5,7));
+  h+=note(660,1010,t,at('l06','trusts')+.35,'trusts it',54,-4);
+  h+=topcap(t,'l06',[[0,5],[6,12]],TL({emph:[5,12],y:250}));return h;});
+// 7 · REAL: the article on the desk; they caught it live and ran the real file on Codex in a sealed machine
+scene(S('l07'),DESK,(t)=>{let h=grain(1)+slugC()+exhibit(t,-1,'THE SOURCE');
+  const t0=S('l07'),c=at('l07','caught'),cx=at('l07','codex'),sm=at('l07','sealed');
+  const z=lerp(.43,.5,eio(clamp((t-t0)/3)));
+  h+=realcard({x:70,y:560,w:940,h:820,src:'assets/real/top.png',iw:2200,ih:2800,cx:1100,cy:lerp(780,900,eio(clamp((t-t0)/3))),z,rp:seg(t,t0,.45),op:1,
+    marks:penUnder(90,2110,880,t,c,.5,14,3)});
+  h+=credit(t,t0+.2,'forever.security · Gal Weizman &amp; Omer Samet · Oct 22, 2026',1,1410);
+  if(t>cx-.2)h+=A(110,1480,`${rise(t,cx-.2,.3,12)}`,chip('the real file → Codex',{size:32,bd:TXT2,fg:TXT}));
+  if(t>sm-.2)h+=A(560,1480,`${rise(t,sm-.2,.3,12)}`,chip('isolated VM',{size:32,bd:REDL,fg:REDL}));
+  h+=topcap(t,'l07',[[0,4],[5,11],[12,15]],TC({emph:[2,14],y:250}));return h;},{tr:'pen'});
+// 8 · thirteen kilobytes of boring notes: a long sheet scrolls past, the KB counter lands
+scene(S('l08'),DESK,(t)=>{let h=grain(1)+slugC()+exhibit(t,-1,'EXHIBIT A');
+  const t0=S('l08'),k=at('l08','thirteen'),b=at('l08','boring');const sc=lerp(0,-900,eio(clamp((t-t0)/(E('l08')-t0+.4))));
+  h+=`<div class="a" style="left:0;top:${sc.toFixed(1)}px;width:1080px;height:3000px">${sheet(190,560,700,2200,{title:'# Engineering Work Guidelines',rows:56,rot:-1,seed:7})}</div>`;
+  h+=A(620,560,`${arrive(t,k-.1)};background:${CODE};color:${CODET};font-family:Mono;font-size:64px;padding:18px 34px;border-radius:16px;box-shadow:0 30px 50px -24px rgba(10,8,6,.9)`,`${counter(t,k-.1,.6,13)} KB`);
+  h+=note(560,700,t,b+.1,'so boring nobody reads it',50,-3,REDL);
+  h+=topcap(t,'l08',[[0,4],[5,8]],TC({emph:[6],y:250}));return h;},{tr:'cut'});
+// 9 · REAL: the attacker's own section; pen on the config path and on function-color
+const AM={iw:2062,ih:1420};
+scene(S('l09'),DESK,(t)=>{let h=grain(1)+slugC()+exhibit(t,-1,'EXHIBIT A');
+  const t0=S('l09'),cf=at('l09','config'),np=at('l09','npm'),sv=at('l09','server');
+  // the view: starts on the heading, pans to the config path on "config", then to function-color on "npm"
+  const p1=eio(clamp((t-(cf-.6))/.6)), p2=eio(clamp((t-(np-.7))/.6));
+  const cx=lerp(lerp(700,1500,p1),500,p2), cy=lerp(lerp(260,445,p1),250,p2), z=lerp(.62,.78,p1);
+  h+=realcard({x:40,y:560,w:1000,h:760,src:'assets/real/agentsmd.png',iw:AM.iw,ih:AM.ih,cx,cy,z,rp:seg(t,t0,.4),
+    marks:penUnder(1392,1729,470,t,cf+.1,.4,9,2)+penRing(229,254,150,36,t,np+.05,.55,8)+penUnder(94,600,130,t,t0+.4,.4,7,5)});
+  h+=credit(t,t0+.2,'the real AGENTS.md section, as published by Forever Security',1,1350);
+  if(t>sv-.1)h+=A(110,1450,`${rise(t,sv-.1,.3,12)}`,chip('+ a "project-tools" server',{size:30,bd:TXT2,fg:TXT}));
+  if(t>np-.1)h+=A(110,1530,`${rise(t,np-.1,.3,12)}`,chip('npm install function-color',{size:30,bd:REDL,fg:REDL}));
+  h+=topcap(t,'l09',[[0,5],[6,12],[13,19]],TC({emph:[12,19],y:250}));return h;},{tr:'cut'});
+// 10 · the package: a tag reading function-color; known malware
+scene(S('l10'),DESK,(t)=>{let h=grain(1)+slugC()+exhibit(t,-1,'EXHIBIT A');
+  const f=at('l10','functioncolor'),m=at('l10','malware');
+  h+=`<div class="a" style="left:0;top:0;opacity:${seg(t,S('l10'),.2).toFixed(3)}">${tag(150,820,780,'npm: function-color',{rot:lerp(-10,-3,seg(t,S('l10'),.6,back)),size:58})}</div>`;
+  if(t>m-.15)h+=C(1090,`${rise(t,m-.15)};font-family:Jost;font-weight:500;font-size:96px;color:${TXT};letter-spacing:-0.02em`,`known <span class="serif" style="font-style:italic;color:${REDL};font-size:1.12em">malware</span>`);
+  h+=svgL(penRing(540,1150,330,110,t,m+.25,.55,8));
+  h+=topcap(t,'l10',[[0,3],[4,5]],TC({emph:[3,5],y:250}));return h;},{tr:'whip'});
+// 11 · >90%: the number counts in, the tally of ten attempts fills, the real sentence underlined
+scene(S('l11'),PAPER,(t)=>{let h=grain(0)+slugC(0);
+  const n=at('l11','ninety'),t0=S('l11');
+  h+=C(560,`font-family:'Courier Prime';font-size:34px;letter-spacing:.12em;color:${SOFT};${fade(t,t0,.3)}`,'CODEX · THE REAL FILE');
+  h+=C(640,`font-family:Mono;font-size:240px;line-height:1;color:${INK};letter-spacing:-0.04em;${fade(t,t0,.2)}`,`<span style="color:${SOFT};font-size:.6em">&gt;</span>${counter(t,n-.7,.8,90)}<span style="font-size:.6em">%</span>`);
+  h+=tally(100,980,9,t,n-.5,.07,{on:RED,off:PAPER2,bd:'#C7BDA8'});
+  h+=A(100,1080,`${fade(t,n+.3,.3)};font-family:'Courier Prime';font-size:28px;color:${SOFT}`,'of attempts, in their tests');
+  h+=realcard({x:70,y:1200,w:940,h:100,src:'assets/real/codex90.png',iw:2140,ih:182,cx:934,cy:91,z:1,rp:seg(t,n+.2,.4),
+    marks:penUnder(713,1155,118,t,n+.6,.4,12,4)});
+  h+=svgL(penRing(540,760,330,150,t,n+.15,.55,8));
+  h+=topcap(t,'l11',[[0,3],[4,9]],TL({emph:[6,7],y:250}));return h;},{tr:'zoom'});
+// 12 · machine-wide: one config, every folder; you leave the folder, the poison stays
+scene(S('l12'),MAN,(t)=>{let h=grain(0)+slugC(0);
+  const mw=at('l12','machinewide'),lv=at('l12','leave'),ps=at('l12','poison');
+  h+=card(240,540,600,170,'~/.codex/config.toml',`<div style="padding:24px 32px;font-size:28px;color:${BRASS}">[mcp_servers.project-tools]</div>`,{css:arrive(t,S('l12')+.05)});
+  const F=[[60,'~/Downloads'],[300,'~/work/api'],[540,'~/site'],[780,'~/notes']];
+  F.forEach(([x,n],i)=>{const tl=mw+.1+i*.12;h+=line(540,710,x+120,1000,t,tl-.15,.3,i?SOFT:REDT,4);
+    h+=folder(x+20,1000,1.0,n,{col:i?'#8F7647':INK2,lc:INK,op:i?seg(t,tl,.25):1});
+    const lit=t>ps+i*.1;h+=A(x+105,1240,`width:30px;height:30px;border-radius:15px;background:${lit?RED:'transparent'};box-shadow:inset 0 0 0 3px ${lit?RED:SOFT};transform:scale(${lit?lerp(.5,1,seg(t,ps+i*.1,.2,back)).toFixed(3):1})`);});
+  // your cursor leaves Downloads
+  const cp=eio(clamp((t-lv)/.6));h+=cursor(lerp(170,560,cp),lerp(1140,1440,cp),INK,1.4);
+  h+=note(560,1420,t,ps+.45,'still loaded, every session',48,-3);
+  h+=topcap(t,'l12',[[0,4],[5,9],[10,12]],TL({emph:[4,11],y:250}));return h;},{tr:'pen'});
+// 13 · Exhibit B: the researchers' own CLAUDE.md
+scene(S('l13'),DESK,(t)=>{let h=grain(1)+slugC()+exhibit(t,S('l13'),'EXHIBIT B');
+  h+=bag(BAGX,BAGY,BAGW,BAGH,sheet(0,0,BAGW-80,BAGH-160,{title:'# CLAUDE.md',rows:15,rot:-1.5,seed:3,tail:'## Configure the project model gateway',fill:REDT}),{rot:2.5});
+  h+=`<div class="a" style="left:0;top:0;opacity:${seg(t,at('l13','own')-.1,.2).toFixed(3)}">${tag(560,1430,440,'CLAUDE.md',{rot:lerp(14,5,seg(t,at('l13','own')-.1,.5,back)),size:40,sub:'written by the researchers'})}</div>`;
+  h+=topcap(t,'l13',[[0,8]],TC({emph:[4],y:250}));return h;},{tr:'whip'});
+// 14 · harder to fool; their file reroutes Claude's traffic to a server they control
+scene(S('l14'),DESK,(t)=>{let h=grain(1)+slugC()+exhibit(t,-1,'EXHIBIT B');
+  const tr=at('l14','traffic'),sv=at('l14','server'),t0=S('l14');
+  h+=card(70,640,420,230,'claude',`<div style="padding:30px 30px;font-size:30px;line-height:1.5"><span style="color:${BRASS}">~/Downloads</span> %<br>claude</div>`,{css:arrive(t,t0+.05)});
+  // the normal route
+  h+=A(640,600,`${arrive(t,t0+.4)};width:380px;padding:24px;border-radius:20px;box-shadow:inset 0 0 0 3px ${TXT2};font-family:Mono;font-size:28px;color:${TXT};text-align:center;opacity:${(1-.6*seg(t,tr,.3)).toFixed(3)}`,'the model API');
+  h+=line(490,720,640,660,t,t0+.5,.3,TXT2,4);
+  h+=svgL(penX(540,650,50,t,tr+.25));
+  // the reroute
+  h+=A(600,980,`${arrive(t,tr-.05)};width:430px;padding:24px;border-radius:20px;background:${RED};font-family:Mono;font-size:28px;color:${PAPER};text-align:center`,'their server');
+  h+=line(490,800,700,980,t,tr-.1,.35,REDL,5,'14 12');
+  h+=packet(t,tr+.3,.7,330,880,790,1060,'traffic');
+  h+=realcard({x:70,y:1220,w:940,h:240,src:'assets/real/claudemd.png',iw:2062,ih:1084,cx:720,cy:638,z:.82,rp:seg(t,sv-.3,.4),marks:penUnder(229,1207,662,t,sv+.1,.45,10,6)});
+  h+=credit(t,sv,'their CLAUDE.md, in Forever Security\'s write-up',1,1480);
+  h+=topcap(t,'l14',[[0,5],[6,13],[14,17]],TC({emph:[3,16],y:250}));return h;},{tr:'cut'});
+// 15 · about half the time; that alone leaks the login token
+scene(S('l15'),PAPER,(t)=>{let h=grain(0)+slugC(0);
+  const hf=at('l15','half'),tk=at('l15','token'),t0=S('l15');
+  h+=C(560,`font-family:'Courier Prime';font-size:34px;letter-spacing:.12em;color:${SOFT};${fade(t,t0,.3)}`,'CLAUDE CODE · THEIR FILE');
+  h+=C(640,`font-family:Mono;font-size:240px;line-height:1;color:${INK};letter-spacing:-0.04em;${fade(t,t0,.2)}`,`<span style="color:${SOFT};font-size:.6em">~</span>${counter(t,hf-.6,.7,50)}<span style="font-size:.6em">%</span>`);
+  h+=tally(100,980,5,t,hf-.35,.07,{on:RED,off:PAPER2,bd:'#C7BDA8'});
+  h+=realcard({x:70,y:1110,w:940,h:100,src:'assets/real/claude50.png',iw:2140,ih:182,cx:998,cy:91,z:1,rp:seg(t,hf+.1,.4),marks:penUnder(820,1176,118,t,hf+.5,.4,12,4)});
+  if(t>tk-.6)h+=A(240,1300,`${arrive(t,tk-.5)}`,tag(0,0,620,'OAuth login token',{rot:-4,size:44,sub:'leaks on the first request'}));
+  h+=svgL(penRing(560,1370,350,90,t,tk+.15,.5,8));
+  h+=topcap(t,'l15',[[0,6],[7,14]],TL({emph:[5,14],y:250}));return h;},{tr:'zoom'});
+// 16 · the catch: silence, ink, the ring
+scene(S('l16'),INK,(t)=>{let h=grain(1);
+  const c=at('l16','catch');
+  h+=C(800,`font-family:Jost;font-weight:500;font-size:120px;line-height:1.05;color:${TXT};letter-spacing:-0.03em`,`${spoken(t,'l16',['So,','what\'s','the'],0)}<br>${ws(t,[`<span class="serif" style="font-style:italic;color:${REDL};font-size:1.25em">catch?</span>`],[c-.06])}`);
+  h+=svgL(penRing(560,1010,250,120,t,c+.05,.6,9));return h;},{tr:'pen'});
+// 17 · no bug to patch: both agents worked as designed (the typed finding)
+function finding(t,rows,o={}){const {y=600}=o;let h=`<div class="a" style="left:90px;top:${y}px;width:900px;background:${PAPER};border-radius:8px;transform:rotate(-.8deg);box-shadow:0 40px 60px -30px rgba(10,8,6,.85);padding:50px 56px">`;
+  rows.forEach(([k,v,tt,mk],i)=>{h+=`<div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px dashed #C7BDA8;padding:22px 0;${rise(t,tt,.3,10)}"><span style="font-family:'Courier Prime';font-size:34px;color:${SOFT}">${k}</span><span style="font-family:'Courier Prime';font-weight:700;font-size:38px;color:${INK}">${mk?mark(t,mk[1],v,mk[0],.4,RED,6,i):v}</span></div>`;});
+  return h+'</div>';}
+scene(S('l17'),DESK,(t)=>{let h=grain(1)+slugC()+exhibit(t,-1,'FINDING');
+  const p=at('l17','patch'),d=at('l17','exactly'),b=at('l17','built');
+  h+=finding(t,[['Codex','nothing to patch',p-.1,['strike',p+.3]],['Claude Code','nothing to patch',p+.1,['strike',p+.45]],['both agents','worked as designed',d-.1,['ring',b+.1]]]);
+  h+=topcap(t,'l17',[[0,4],[5,14]],TC({emph:[2,8],y:250}));return h;},{tr:'cut'});
+// 18 · the honest catch on the source: a vendor, and its own tests
+scene(S('l18'),DESK,(t)=>{let h=grain(1)+slugC()+exhibit(t,-1,'THE SOURCE');
+  const s=at('l18','sells'),n=at('l18','numbers'),o=at('l18','own');
+  h+=finding(t,[['source','Forever Security',S('l18')+.05],['business','sells protection',s-.05,['under',s+.25]],['the numbers','their own tests',n-.05,['ring',o+.1]]]);
+  h+=note(150,1180,t,o+.5,'not independent: read it like that',50,-2,REDL);
+  h+=topcap(t,'l18',[[0,5],[6,12]],TC({emph:[2,11],y:250}));return h;},{tr:'cut'});
+// 19 · what to do: two lines on the case sheet, ticked
+scene(S('l19'),PAPER,(t)=>{let h=grain(0)+slugC(0);
+  const a=at('l19','never'),b=at('l19','read'),y=640;
+  h+=C(560,`font-family:'Courier Prime';font-size:34px;letter-spacing:.12em;color:${SOFT}`,'WHAT TO DO');
+  [[`Never start an agent in <span style="color:${REDT}">~/Downloads</span>`,a],[`Read any AGENTS.md or CLAUDE.md you didn't write`,b]].forEach(([s,tt],i)=>{
+    h+=A(140,y+60+i*260,`${rise(t,tt-.1)};width:640px;font-family:Jost;font-weight:500;font-size:54px;line-height:1.15;color:${INK};letter-spacing:-0.015em`,s);
+    h+=A(820,y+60+i*260,`width:110px;height:110px;border-radius:16px;box-shadow:inset 0 0 0 4px ${INK};${fade(t,tt-.1,.2)}`);
+    h+=svgL(penTick(838,y+120+i*260,74,t,tt+.6,.25,9));});
+  h+=topcap(t,'l19',[[0,6],[7,14]],TL({emph:[1,8],y:250}));return h;},{tr:'whip'});
+// 20 · the payoff: AGENTS.md — the pen strikes ".md" and writes ".exe"
+scene(S('l20'),DESK,(t)=>{let h=grain(1)+slugC();
+  const m=at('l20','markdown'),ex=at('l20','executable');
+  h+=C(780,`font-family:Mono;font-size:150px;line-height:1;color:${TXT};letter-spacing:-0.03em;${arrive(t,S('l20')-.05)}`,`AGENTS${mark(t,m+.15,`<span style="color:${TXT}">.md</span>`,'strike',.3,RED,8,1)}`);
+  h+=A(640,600,`${rise(t,ex-.05,.35,14)};font-family:Caveat;font-weight:700;font-size:150px;color:${REDL};rotate:-6deg`,'.exe');
+  h+=C(1050,`font-family:Jost;font-weight:500;font-size:84px;line-height:1.1;color:${TXT};letter-spacing:-0.02em`,`${spoken(t,'l20',['Markdown','is','the','new'],1)}<br>${ws(t,[`<span class="serif" style="font-style:italic;color:${REDL};font-size:1.2em">executable.</span>`],[ex-.06])}`);
+  h+=svgL(penUnder(330,760,1250,t,ex+.4,.4,8,4));
+  return h;},{tr:'pen'});
+// 21 · the ask: the bag again, yes / no
+scene(S('l21'),DESK,(t)=>{let h=grain(1)+slugC()+exhibit(t,-1,'EXHIBIT A');
+  h+=`<div class="a" style="inset:0;transform:scale(.62);transform-origin:540px 560px;opacity:.9">${theBag(t)}</div>`;
+  const y=at('l21','yes'),n=at('l21','no');
+  h+=A(150,1300,`${arrive(t,y-.08)};width:340px;height:150px;border-radius:24px;background:${PAPER};color:${INK};font-family:Jost;font-weight:500;font-size:72px;text-align:center;line-height:150px`,'yes');
+  h+=A(590,1300,`${arrive(t,n-.08)};width:340px;height:150px;border-radius:24px;box-shadow:inset 0 0 0 4px ${PAPER};color:${PAPER};font-family:Jost;font-weight:500;font-size:72px;text-align:center;line-height:150px`,'no');
+  h+=C(1500,`${fade(t,n+.2,.3)};font-family:'Courier Prime';font-size:32px;letter-spacing:.08em;color:${TXT2}`,'tell us in the comments');
+  h+=topcap(t,'l21',[[0,8],[9,11]],TC({emph:[9,11],y:250}));return h;},{tr:'zoom'});
+// the ident
+const T_ID=E('l21')+.9;
+scene(T_ID,CTE.PAPER,(t)=>CTE.ident(t-T_ID,{w:1080,h:1920}),{tr:'fadeup',still:true});
+
+// ---------- transitions (0.25 s, each motivated) ----------
+const TR=.25;
+function layer(sc,t,css){return `<div class="a" style="inset:0;background:${sc.bg};${css}"><div class="a" style="inset:0;transform:translateY(${sc.still?0:120}px)">${sc.draw(t)}</div></div>`;}
+function penWipe(p){const a=p<.5?0:(p-.5)*2, b=p<.5?p*2:1;const y0=lerp(2200,-300,b), y1=lerp(2200,-300,a);
+  return `<svg width="1080" height="1920" style="left:0;top:0"><path d="M-60 ${y0+120} C 300 ${y0-60}, 700 ${y0+80}, 1140 ${y0-120} L1140 ${y1-120} C 700 ${y1+80}, 300 ${y1-60}, -60 ${y1+120} Z" fill="${RED}"/></svg>`;}
+const cam=document.getElementById('cam'), stage=document.getElementById('stage');
+window.DURATION=T_ID+CTE.DUR+2.2;
+// the cover (t < 0): the bag, the title, ".md" ringed
+function cover(){const t=99;let h=`<div class="a" style="inset:0;background:${DESK}">`+grain(1);
+  h+=C(230,`font-family:Jost;font-weight:500;font-size:120px;line-height:1;color:${TXT};letter-spacing:-0.035em`,`Markdown is`);
+  h+=C(360,`font-family:Jost;font-weight:500;font-size:120px;line-height:1;color:${TXT};letter-spacing:-0.035em`,`the new <span class="serif" style="font-style:italic;color:${REDL};font-size:1.18em">malware.</span>`);
+  h+=`<div class="a" style="inset:0;transform:scale(.86);transform-origin:540px 1150px">${theBag(t)}</div>`;
+  h+=tag(120,1450,560,'AGENTS.md',{rot:-6,size:46,sub:'found in ~/Downloads'});
+  h+=svgL(penRing(330,1505,230,80,t,0,.1,9));
+  return h+'</div>';}
+window.seek=function(t){
+  if(t<0){stage.style.background=DESK;cam.style.transform='none';cam.innerHTML=cover();return Promise.all([...cam.querySelectorAll('img')].map(i=>i.decode().catch(()=>{})));}
+  let i=0;while(i+1<SC.length&&SC[i+1].t0<=t)i++;
+  const sc=SC[i], lt=t-sc.t0, t1=(SC[i+1]?.t0)??window.DURATION, prev=SC[i-1];
+  stage.style.background=sc.bg;
+  let s=1;if(!sc.still)s=1+(sc.punch?sc.punch-1:.025)*(1-eo(clamp(lt/.3)))+.025*clamp(lt/Math.max(1,t1-sc.t0));
+  const tr=sc.tr||'cut';let html;
+  if(prev&&lt<TR&&tr!=='cut'){
+    const p=eio(lt/TR), d=sc.dir||1;
+    if(tr==='whip') html=layer(prev,t,`transform:translateY(${(-d*1920*p).toFixed(1)}px);filter:blur(${(p*14).toFixed(1)}px)`)+layer(sc,t,`transform:translateY(${(d*1920*(1-p)).toFixed(1)}px);filter:blur(${((1-p)*14).toFixed(1)}px)`);
+    else if(tr==='zoom') html=layer(sc,t,`transform:scale(${(.85+.15*p).toFixed(4)});opacity:${p.toFixed(3)}`)+layer(prev,t,`transform:scale(${(1+.6*p).toFixed(4)});opacity:${(1-p).toFixed(3)};filter:blur(${(p*12).toFixed(1)}px)`);
+    else if(tr==='pen') html=(lt/TR<.5?layer(prev,t,''):layer(sc,t,''))+penWipe(lt/TR);
+    else if(tr==='fadeup') html=layer(prev,t,`opacity:${(1-p).toFixed(3)};transform:translateY(${(-40*p).toFixed(1)}px)`)+`<div class="a" style="inset:0;opacity:${p.toFixed(3)}">${layer(sc,t,'')}</div>`;
+  } else html=layer(sc,t,'');
+  cam.style.transform=`scale(${s.toFixed(5)})`;
+  cam.innerHTML=html;
+  return Promise.all([...cam.querySelectorAll('img')].map(i=>i.complete?i.decode().catch(()=>{}):new Promise(r=>{i.onload=i.onerror=r;})));
+};
+// ---------- sound: every cue scores something that moves ----------
+function cues(){const q=[];const add=(t,f,db=0,o={})=>{if(isFinite(t)&&(o.at===undefined||isFinite(o.at))&&(o.len===undefined||isFinite(o.len)))q.push({t:+t.toFixed(3),f,db,...o});};
+  const PEN=(t,len,db=-10)=>add(t,'PEN',db,{synth:'pen',len});
+  SC.forEach((s,i)=>{if(!i)return;const tr=s.tr||'cut';
+    if(tr==='whip')add(s.t0,'swoosh-014-383768',-8,{peak:true,at:s.t0+.12});
+    else if(tr==='zoom')add(s.t0,'simple-whoosh-02-433006',-10,{peak:true,at:s.t0+.12});
+    else if(tr==='pen'){PEN(s.t0,.28,-8);add(s.t0,'woosh-230554',-11,{peak:true,at:s.t0+.12});}
+    else if(tr==='fadeup')add(s.t0,'simple-whoosh-382724',-14,{peak:true,at:s.t0+.15});
+    else add(s.t0,'flipcard',-14);});
+  // 1: the strike on "no code"; a riser into "malware", the hit and the tag
+  PEN(at('l01','code')+.15,.3,-9);
+  const mw=at('l01','malware');add(mw-.6,'shine-6-268910',-12,{reverse:true,len:.6});add(mw-.02,'whoosh-end-384629',-4,{peak:true,len:2,fade:1});add(mw-.1,'swoosh-06-351021',-14,{peak:true,at:mw+.15});add(mw+.35,'sharp-pop',-10);
+  // 2: the listing lands; the ring
+  add(S('l02')+.3,'typing',-18,{len:.5,fade:.1});PEN(at('l02','downloads'),.55,-8);
+  // 3: the two question marks
+  PEN(at('l03','nobody')+.1,.3,-12);PEN(at('l03','nobody')+1,.3,-12);add(at('l03','nobody')+.1,'subtle-pop',-12);add(at('l03','nobody')+1,'subtle-pop',-12);
+  // 4: the sheet, the agent card, the packet, "obeys"
+  add(S('l04')+.1,'pop-402324',-12);add(at('l04','agent')-.1,'pop-402324',-10);add(at('l04','reads'),'data',-19,{len:.6,fade:.2});add(at('l04','does')-.05,'sharp-pop',-10);PEN(at('l04','says')+.1,.35,-9);
+  // 5: the browser card, the drop into Downloads, the strikes
+  add(S('l05'),'pop-402324',-12);add(at('l05','website')+.1,'swoosh-010-352856',-14,{peak:true,at:at('l05','website')+.5});add(at('l05','website')+.6,'subtle-pop',-9);PEN(at('l05','downloads')+.05,.5,-9);
+  add(at('l05','click')-.25,'mouse-click',-10);PEN(at('l05','click')+.1,.22,-7);add(at('l05','permission')-.35,'uipop',-12);PEN(at('l05','permission')+.2,.25,-7);add(at('l05','permission')+.25,'erreur',-16);
+  // 6: three nodes, the packet, the ring
+  [S('l06')+.05,at('l06','folder'),at('l06','agent')].forEach(x=>add(x-.1,'pop-402324',-11));add(at('l06','plant'),'data',-19,{len:1.4,fade:.4});PEN(at('l06','trusts')+.05,.5,-8);
+  // 7: the article slides in; the pen; chips
+  add(S('l07')+.05,'flipcard',-11);PEN(at('l07','caught'),.5,-10);add(at('l07','codex')-.2,'subtle-pop',-12);add(at('l07','sealed')-.2,'subtle-pop',-12);
+  // 8: the scroll (paper), the counter
+  add(S('l08'),'flipcard',-13);add(at('l08','thirteen')-.1,'sharp-pop',-10);for(let i=0;i<6;i++)add(at('l08','thirteen')-.1+i*.1,'tick',-20);
+  // 9: pans; the pen on the config path and function-color; chips
+  add(at('l09','config')-.6,'swoosh-06-351021',-17,{peak:true,at:at('l09','config')-.3});PEN(at('l09','config')+.1,.4,-9);
+  add(at('l09','npm')-.7,'swoosh-06-351021',-17,{peak:true,at:at('l09','npm')-.4});PEN(at('l09','npm')+.05,.55,-8);add(at('l09','server')-.1,'subtle-pop',-12);add(at('l09','npm')-.1,'pop-402324',-11);
+  // 10: the tag swings; "known malware"; the ring + the error
+  add(S('l10')+.05,'swoosh-snap',-13);add(at('l10','malware')-.15,'sharp-pop',-9);PEN(at('l10','malware')+.25,.55,-8);add(at('l10','malware')+.35,'erreur',-15);
+  // 11: the counter, a tick per square, the ring, the underline
+  {const n=at('l11','ninety');for(let i=0;i<9;i++)add(n-.5+i*.07,'soft-pop',-15);add(n+.1,'sharp-pop',-9);PEN(n+.15,.55,-8);PEN(n+.6,.4,-11);}
+  // 12: lines draw; the cursor leaves; the dots light
+  add(S('l12')+.05,'pop-402324',-12);add(at('l12','machinewide')+.1,'data',-19,{len:.7,fade:.2});add(at('l12','leave'),'swoosh-010-352856',-16,{peak:true,at:at('l12','leave')+.3});
+  for(let i=0;i<4;i++)add(at('l12','poison')+i*.1,'soft-pop',-11);add(at('l12','poison')+.1,'erreur',-17);
+  // 13: exhibit B: the tag
+  add(at('l13','own')-.1,'swoosh-snap',-13);add(at('l13','own')+.3,'subtle-pop',-11);
+  // 14: the card, the X on the normal route, the reroute and the packet, the clipping
+  add(S('l14')+.05,'pop-402324',-12);PEN(at('l14','traffic')+.25,.25,-8);add(at('l14','traffic')-.05,'uipop',-10);add(at('l14','traffic')+.3,'data',-18,{len:.7,fade:.2});add(at('l14','server')-.3,'flipcard',-13);PEN(at('l14','server')+.1,.45,-10);
+  // 15: the counter, the squares, the token tag, the ring
+  {const hf=at('l15','half');for(let i=0;i<5;i++)add(hf-.35+i*.07,'soft-pop',-15);add(hf+.1,'sharp-pop',-9);PEN(hf+.5,.4,-11);}
+  add(at('l15','token')-.5,'pop-402324',-10);PEN(at('l15','token')+.15,.5,-8);add(at('l15','token')+.2,'erreur',-16);
+  // 16: the catch: silence, then the pen and the hit
+  add(at('l16','catch')+.03,'whoosh-end-384629',-2,{peak:true,len:2.2,fade:1});PEN(at('l16','catch')+.05,.6,-4);
+  // 17: rows type in, the strikes, the ring
+  [at('l17','patch')-.1,at('l17','patch')+.1,at('l17','exactly')-.1].forEach(x=>add(x,'tick',-12));PEN(at('l17','patch')+.3,.4,-8);PEN(at('l17','built')+.1,.4,-8);add(at('l17','built')+.2,'accept',-16);
+  // 18: rows, the underline, the ring, the note
+  [S('l18')+.05,at('l18','sells')-.05,at('l18','numbers')-.05].forEach(x=>add(x,'tick',-12));PEN(at('l18','sells')+.25,.4,-9);PEN(at('l18','own')+.1,.4,-8);
+  // 19: the two lines; the ticks
+  add(at('l19','never')-.1,'subtle-pop',-11);add(at('l19','read')-.1,'subtle-pop',-11);PEN(at('l19','never')+.6,.25,-7);PEN(at('l19','read')+.6,.25,-7);add(at('l19','read')+.7,'accept',-15);
+  // 20: the strike on .md, .exe lands, the underline
+  PEN(at('l20','markdown')+.15,.3,-6);add(at('l20','executable')-.05,'sharp-pop',-7);PEN(at('l20','executable')+.4,.4,-9);add(at('l20','executable'),'glint',-15,{len:1.2,fade:.7});
+  // 21: yes / no pop; the comment line
+  add(at('l21','yes')-.08,'pop-402324',-8);add(at('l21','no')-.08,'pop-402324',-8);add(at('l21','no')+.2,'notify',-14);
+  CTE.cues(T_ID).forEach(c=>q.push(c));
+  return q;}
+window.SFX=cues();
+// music: nightfall at 120 BPM (1.2x), as a story. Its drop under the hook and the case; the drop again under the
+// Codex and Claude results; cut dead before the catch; the breakdown under the finding and the advice; the last drop
+// under the payoff and the ident.
+window.BED='nightfall120';
+window.MUSIC=()=>[
+  {t0:0,t1:S('l07'),offset:16,fadein:.02,fadeout:.05},
+  {t0:S('l07'),t1:S('l16')-.45,offset:22,fadein:.01,fadeout:.04},
+  {t0:S('l17'),t1:S('l20')-.02,offset:48,fadein:.5,fadeout:.1},
+  {t0:S('l20'),t1:T_ID+4,offset:80,fadein:.05,fadeout:3}].filter(g=>isFinite(g.t0)&&isFinite(g.t1));
+window.SHEPARD=()=>[];
+window.CUTS=SC.map(s=>s.t0);
+window.ready=Promise.all([document.fonts.load('500 60px Jost'),document.fonts.load('40px "Courier Prime"'),document.fonts.load('700 40px "Courier Prime"'),document.fonts.load('600 60px Geist'),document.fonts.load('600 40px Caveat'),document.fonts.load('40px Serif'),document.fonts.load('italic 40px Serif'),document.fonts.load('40px Mono')]).then(()=>document.fonts.ready);
+</script></body></html>
