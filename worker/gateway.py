@@ -3017,6 +3017,18 @@ def _ytdlp():
     return yt_dlp
 
 
+def _js_runtimes():
+    """yt-dlp needs a JavaScript runtime to read YouTube's player (formats go missing without one): deno is its default,
+    node (which Colab has) has to be named. Only the runtimes this yt-dlp knows and this machine has; None leaves its default."""
+    try:
+        from yt_dlp.globals import supported_js_runtimes
+        known = supported_js_runtimes.value
+    except Exception:  # noqa: BLE001  an older yt-dlp: its own default
+        return None
+    found = {n: {"path": shutil.which(n)} for n in ("deno", "node", "bun") if n in known and shutil.which(n)}
+    return found or None
+
+
 def _impersonate_target(yt_dlp):
     """Chrome's TLS fingerprint (curl_cffi) for sites that refuse plain Python clients; None when it isn't available."""
     try:
@@ -3168,6 +3180,7 @@ def run_fetch(job):
     os.makedirs(jdir, exist_ok=True)
     job["stage"] = "preparing"
     yt_dlp = _ytdlp()
+    JS_RUNTIMES = _js_runtimes()
     job["stage"] = "downloading"
     up = _Uploader(job, ft["puts"])
 
@@ -3200,6 +3213,8 @@ def run_fetch(job):
             o.update({"sleep_interval_requests": 0.75, "sleep_interval": 1, "max_sleep_interval": 3})
         if cpath:
             o["cookiefile"] = cpath
+        if JS_RUNTIMES:
+            o["js_runtimes"] = JS_RUNTIMES
         if impersonate is not None:
             o["impersonate"] = impersonate
         if referer:
@@ -3313,6 +3328,9 @@ def run_fetch(job):
         up.sweep(jdir)
         return bool(up.futs)
 
+    if "youtu" in ft["url"]:  # in the log, so a refused sign-in can be told from a missing one (never the values)
+        yt = bool(cpath) and bool(re.search(r"^(#HttpOnly_)?\.?(www\.)?youtube\.com\t.*\t(SAPISID|__Secure-3PSID|LOGIN_INFO)\t", ft["cookies"], re.M))
+        log(f"job {job['id']} YouTube: {'signed-in cookies' if yt else 'no YouTube sign-in'}; js runtimes {list(JS_RUNTIMES or {}) or 'none'}")
     info, errors = {}, []
     _pace(ft["url"])
     target = _impersonate_target(yt_dlp)

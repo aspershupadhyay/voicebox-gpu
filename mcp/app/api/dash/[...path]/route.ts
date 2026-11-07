@@ -362,7 +362,7 @@ export async function POST(req: Request, ctx: Ctx) {
       const dl = await import("@/lib/downloads");
       const actor = { name: (await currentUser())?.name ?? "someone" };
       try {
-        if (b === "cookies") return Response.json(await dl.setCookies(typeof body.text === "string" ? body.text : null));
+        if (b === "cookies") return Response.json(await dl.setCookies(typeof body.text === "string" ? body.text : null, typeof body.site === "string" ? body.site.slice(0, 100) : null));
         if (b && ID.test(b) && c === "retry") return Response.json({ download: await dl.retryDownload(b, actor, (f) => after(f)) });
         if (!b) {
           const urls = (Array.isArray(body.urls) ? body.urls : [body.url]).map(String).flatMap((u: string) => u.split(/\s+/)).filter((u: string) => /^https?:\/\//i.test(u));
