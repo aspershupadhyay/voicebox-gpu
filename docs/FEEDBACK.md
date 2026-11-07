@@ -6,6 +6,16 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"I've already uploaded the cookies but it's not giving me access"** (2026-11-07, YouTube downloads; "our local
+  downloader works, why not ours"): yt-dlp on a home connection passes, but the cloud downloader (Colab, Cerebrium) is
+  on datacenter addresses YouTube bot-checks, so it needs a signed-in YouTube export. Sign-ins was one cookies.txt
+  for every site and each paste replaced it, so saving Instagram's wiped YouTube's (an extension exports one site at a
+  time). Now a paste replaces only the sites it has cookies for; the panel shows each signed-in site (expired, or a
+  YouTube export with no sign-in in it, shows amber and is refused on paste) with its own Remove; a bot check with a
+  YouTube sign-in saved says how to export one YouTube won't sign out (a private window, then close it); the worker
+  gives yt-dlp a JavaScript runtime (node on Colab) for YouTube's player and logs whether a YouTube sign-in came with
+  the job. Getting past the bot check by disguise (rotating clients, faked tokens) stays not built.
+
 - **Video feedback moved** (2026-11-05, the owner: "move all the learning to a specific git project… so we won't
   conflict"): every note on videos, Reels, covers and posting now lives in aspershupadhyay/content-creation
   `docs/FEEDBACK.md`, with the video-director skill, `docs/REELS.md`, `docs/BRAND.md`, the brand ident and every video kit.

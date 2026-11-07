@@ -254,12 +254,59 @@ async function cookies() {
   const r = await getObj(COOKIES);
   return r ? (await r.text()).slice(0, 200_000) : "";
 }
-export async function cookieState() { return { set: !!(await headObj(COOKIES)) }; }
-export async function setCookies(text: string | null) {
-  if (!text?.trim()) { await putObj(COOKIES, "", "text/plain"); return { set: false }; }
-  if (!/^#?\s*(Netscape )?HTTP Cookie File|\t(TRUE|FALSE)\t/m.test(text)) throw new DlError("paste a cookies.txt export (Netscape format)");
-  await putObj(COOKIES, text.slice(0, 200_000), "text/plain");
-  return { set: true };
+
+// Sign-ins are one cookies.txt for every site, but a browser extension exports one site at a time: so a paste
+// replaces only the sites it has cookies for and keeps the rest (pasting YouTube's used to wipe Instagram's).
+type Cookie = { line: string; site: string; name: string; expires: number };
+const SITE_OF: [RegExp, string][] = [[/(^|\.)(youtube\.com|youtu\.be|google\.com|googlevideo\.com)$/, "youtube.com"], [/(^|\.)(instagram\.com|cdninstagram\.com)$/, "instagram.com"],
+  [/(^|\.)(facebook\.com|fbcdn\.net)$/, "facebook.com"], [/(^|\.)(x\.com|twitter\.com)$/, "x.com"], [/(^|\.)(threads\.net|threads\.com)$/, "threads.net"]];
+function siteFor(domain: string) {
+  const h = domain.replace(/^#HttpOnly_/i, "").replace(/^\./, "").toLowerCase();
+  return SITE_OF.find(([re]) => re.test(h))?.[1] ?? h.split(".").slice(-2).join(".");
+}
+function parseCookies(text: string): Cookie[] {
+  const out: Cookie[] = [];
+  for (const line of text.replace(/\r/g, "").split("\n")) {
+    if (!line.trim() || (line.startsWith("#") && !/^#HttpOnly_/i.test(line))) continue;
+    const f = line.split("\t");
+    if (f.length < 7) continue;
+    out.push({ line, site: siteFor(f[0]), name: f[5], expires: Number(f[4]) || 0 });
+  }
+  return out;
+}
+// YouTube only counts as signed in with Google's session cookies; an export from a tab that wasn't signed in has none
+const YT_AUTH = ["SAPISID", "__Secure-3PSID", "__Secure-1PSID", "SID", "LOGIN_INFO"];
+const ytSignedIn = (cs: Cookie[]) => cs.some((c) => c.site === "youtube.com" && YT_AUTH.includes(c.name));
+
+export async function cookieState() {
+  const cs = parseCookies(await cookies());
+  const now = Date.now() / 1000;
+  const sites = [...new Set(cs.map((c) => c.site))].sort().map((site) => {
+    const mine = cs.filter((c) => c.site === site);
+    const live = mine.filter((c) => !c.expires || c.expires > now);
+    return { site, cookies: mine.length, expired: !live.length, signed_in: site === "youtube.com" ? ytSignedIn(live) : true };
+  });
+  return { set: cs.length > 0, sites };
+}
+/** Merge a paste into the sign-ins (its sites replace theirs, the others stay); null or empty with `site` removes that
+ *  one site, without `site` removes them all. */
+export async function setCookies(text: string | null, site?: string | null) {
+  const have = parseCookies(await cookies());
+  let keep: Cookie[];
+  if (!text?.trim()) {
+    keep = site ? have.filter((c) => c.site !== site) : [];
+  } else {
+    if (!/^#?\s*(Netscape )?HTTP Cookie File|\t(TRUE|FALSE)\t/m.test(text)) throw new DlError("paste a cookies.txt export (Netscape format)");
+    const add = parseCookies(text);
+    if (!add.length) throw new DlError("no cookies in that paste: export cookies.txt from the site's tab while you're signed in");
+    const sites = new Set(add.map((c) => c.site));
+    if (sites.has("youtube.com") && !ytSignedIn(add)) throw new DlError("those YouTube cookies have no sign-in in them: sign in to YouTube in that browser first, then export again");
+    keep = [...have.filter((c) => !sites.has(c.site)), ...add];
+  }
+  const body = keep.length ? `# Netscape HTTP Cookie File\n${keep.map((c) => c.line).join("\n")}\n` : "";
+  if (body.length > 200_000) throw new DlError("that's too many cookies: export only the site you need (the extension's “current site”)");
+  await putObj(COOKIES, body, "text/plain");
+  return cookieState();
 }
 
 /** Start downloads for one or more links. Each returns at once; the copying runs after the response (`later`). */
@@ -494,7 +541,8 @@ function passes(raw: string) {
 async function fail(d: Dl, raw: string) {
   const cur = (await listDownloads()).find((x) => x.id === d.id) ?? d;
   const n = cur.auto_retries ?? 0;
-  const why = plain(raw, siteOf(cur), cur.server_error);
+  const yt = cur.source === "youtube" && (await cookieState()).sites.some((x) => x.site === "youtube.com" && x.signed_in && !x.expired);
+  const why = plain(raw, siteOf(cur), cur.server_error, yt);
   if (passes(raw) && n < RETRY_AFTER_MIN.length) {
     const mins = RETRY_AFTER_MIN[n];
     await patch(d.id, { status: "waiting", job: null, pct: 0, error: null, retry_at: Date.now() + mins * 60_000, auto_retries: n + 1,
@@ -509,9 +557,10 @@ const SIGN_IN = "add your sign-in cookies (Download → Sign-ins), then Retry";
 
 /** What went wrong, in words a person can act on: who refused (the site, Colab, storage), the HTTP code and what it
  *  means, and what to do. serverWhy: what the server got before the worker tried, when that says more. */
-export function plain(raw: string, site = "The site", serverWhy?: string | null) {
+export function plain(raw: string, site = "The site", serverWhy?: string | null, ytCookies = false) {
   const m = raw.replace(/\x1b\[[0-9;]*m/g, "").replace(/^ERROR:\s*/, "").replace(/^\[[^\]]+\]\s*[\w-]*:?\s*/, "").trim();
   const was = serverWhy && serverWhy !== raw ? ` (the server's own try: ${serverWhy})` : "";
+  if (/confirm you.?re not a bot|sign in to confirm/i.test(m) && ytCookies) return "YouTube didn't accept the saved YouTube sign-in (\"sign in to confirm you're not a bot\"). YouTube signs a browser's cookies out when that browser keeps using them, so export them this way: open a private window, sign in to YouTube, open youtube.com/robots.txt in that tab, export cookies.txt, close the private window without signing out, then paste it in Download → Sign-ins and Retry.";
   if (/confirm you.?re not a bot|sign in to confirm/i.test(m)) return `YouTube wants a signed-in account for this one ("sign in to confirm you're not a bot"): ${SIGN_IN}.`;
   if (/login required|rate-limit reached|requested content is not available|empty media response|log ?in to|logged.?in/i.test(m)) return `${site} wants a signed-in account for this one: ${SIGN_IN}.`;
   if (/private (video|account|post)|is private/i.test(m)) return `That ${site} post is private: only an account that can see it can download it. If yours can, ${SIGN_IN}.`;

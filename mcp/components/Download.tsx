@@ -21,7 +21,8 @@ type Source = "instagram" | "youtube" | "tiktok" | "x" | "pinterest" | "cosmos" 
 type Item = { media: string; name: string; kind: string; size: number; preview: string | null };
 type Dl = { id: string; url: string; source: Source; status: "fetching" | "waiting" | "worker" | "saving" | "done" | "error"; via: string | null; title: string | null; author: string | null;
   thumb: string | null; folder: string | null; by: string; at: number; items: Item[]; error: string | null; pct: number | null; stage: string | null; carousel?: string | null; note?: string | null };
-type Res = { list: Dl[]; cookies: { set: boolean }; worker: boolean };
+type Site = { site: string; cookies: number; expired: boolean; signed_in: boolean };
+type Res = { list: Dl[]; cookies: { set: boolean; sites?: Site[] }; worker: boolean };
 type Folder = { id: string; name: string; parent: string | null; system?: boolean };
 
 const SRC: Record<Source, { name: string; Icon: Icon; worker?: boolean }> = {
@@ -98,28 +99,33 @@ function Row({ d, folderName, onRetry, onForget }: { d: Dl; folderName: string; 
   );
 }
 
-function SignIns({ set, onSaved }: { set: boolean; onSaved: () => void }) {
+function SignIns({ sites, onSaved }: { sites: Site[]; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const { toast } = useDialog();
-  const save = async (value: string | null) => {
+  const save = async (value: string | null, site?: string) => {
     setBusy(true);
-    try { await api("downloads/cookies", { body: { text: value } }); setText(""); setOpen(false); onSaved(); toast(value ? "Sign-ins saved" : "Sign-ins removed", "ok"); }
-    catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
+    try {
+      const r = await api<{ sites: Site[] }>("downloads/cookies", { body: { text: value, site: site ?? null } });
+      setText(""); onSaved();
+      toast(value ? `Signed in: ${r.sites.map((x) => x.site).join(", ")}` : site ? `${site} removed` : "Sign-ins removed", "ok");
+    } catch (e) { toast((e as Error).message, "bad"); } finally { setBusy(false); }
   };
+  const bad = (x: Site) => x.expired || !x.signed_in;
   return (
     <section className="dl-signin">
       <button type="button" className="dl-si-head" onClick={() => setOpen(!open)} aria-expanded={open}>
-        <Key size={16} weight="duotone" aria-hidden /><b>Sign-ins</b><span className={`pill ${set ? "ok" : ""}`}>{set ? "Added" : "None"}</span>
+        <Key size={16} weight="duotone" aria-hidden /><b>Sign-ins</b>
+        {sites.length ? sites.map((x) => <span key={x.site} className={`pill ${bad(x) ? "warn" : "ok"}`}>{x.site}{x.expired ? " · expired" : !x.signed_in ? " · not signed in" : ""}</span>) : <span className="pill">None</span>}
         <span className="tiny dim grow">For YouTube's bot check and Instagram posts that need you logged in</span>
       </button>
       {open && (
         <div className="dl-si-body">
-          <p className="small dim">Export your cookies from a browser where you're signed in (an extension such as “Get cookies.txt LOCALLY”) and paste the file here. It's kept privately in your storage, only ever sent to your own Colab worker, and never shown again.</p>
+          <p className="small dim">Export cookies.txt from a browser tab where you're signed in (an extension such as “Get cookies.txt LOCALLY”) and paste it here, one site at a time: each site you paste replaces only that site's sign-in, the others stay. For YouTube, sign in inside a private window, export from that tab, then close the window (a browser that keeps using the cookies gets them signed out). Kept privately in your storage, only sent to your own downloader, never shown again.</p>
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} placeholder="# Netscape HTTP Cookie File…" aria-label="cookies.txt" spellCheck={false} />
-          <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
-            {set && <button type="button" className="ghost sm" onClick={() => save(null)} disabled={busy}>Remove</button>}
+          <div className="row" style={{ gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            {sites.map((x) => <button key={x.site} type="button" className="ghost sm" onClick={() => save(null, x.site)} disabled={busy} aria-label={`Remove the ${x.site} sign-in`}>Remove {x.site}</button>)}
             <button type="button" className="sm" onClick={() => save(text)} disabled={busy || !text.trim()}>Save sign-ins</button>
           </div>
         </div>
@@ -240,7 +246,7 @@ export default function Download() {
         )}
       </section>
 
-      <SignIns set={!!data?.cookies.set} onSaved={load} />
+      <SignIns sites={data?.cookies.sites ?? []} onSaved={load} />
     </div>
   );
 }
