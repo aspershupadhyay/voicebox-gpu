@@ -49,7 +49,14 @@ export type Automation = {
   posts: DmTarget[];
   /** studio post id → its Instagram media id, filled in once it's live */
   resolved: Record<string, string>;
-  triggers: { comments: boolean; dms: boolean; story_replies: boolean; mentions: boolean };
+  /** link: someone opened the automation's ig.me link (or tapped its conversation starter) */
+  triggers: { comments: boolean; dms: boolean; story_replies: boolean; mentions: boolean; link: boolean };
+  /** the ig.me link's ref: https://ig.me/m/<handle>?ref=<ref> */
+  ref: string;
+  /** tags the person gets when this runs (the inbox filters by them) */
+  tags: string[];
+  /** a second message some hours later, only inside Instagram's 24-hour window (they wrote back or tapped) */
+  follow_up: { on: boolean; hours: number; message: string; button: DmButton | null };
   match: DmMatch;
   keywords: string[];
   /** a comment with any of these is ignored ("stop", "spam") */
@@ -86,6 +93,12 @@ export type DmSettings = {
   report: { on: boolean; day: number; last: number };
   sync: { on: boolean; url: string; leads: boolean; dms: boolean };
   ai: { persona: string; per_person_day: number };
+  /** saved replies for the inbox */
+  snippets: { id: string; name: string; text: string }[];
+  /** conversation starters: up to 4 questions shown when someone opens a new chat, each running an automation */
+  starters: { on: boolean; items: { question: string; automation: string }[]; pushed: number };
+  /** how long the bot stays quiet for a person after someone answers them by hand (minutes) */
+  takeover_min: number;
 };
 
 export const LIMITS = {
@@ -109,6 +122,7 @@ const EMPTY: DmSettings = {
   report: { on: true, day: 1, last: 0 },
   sync: { on: false, url: "", leads: true, dms: false },
   ai: { persona: "", per_person_day: 5 },
+  snippets: [], starters: { on: false, items: [], pushed: 0 }, takeover_min: 60,
 };
 
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
@@ -133,6 +147,10 @@ const button = (v: unknown, keepEmpty: boolean): DmButton | null => {
   const b = v as Partial<DmButton>, url = cleanUrl(b.url);
   return url || (keepEmpty && typeof b.label === "string") ? { label: str(b.label, LIMITS.button_label) || "Open", url } : null;
 };
+/** an ig.me ref: letters, digits, - _ = (Instagram's rule), kept short */
+export const refOf = (v: unknown) => (typeof v === "string" ? v.trim().replace(/[^A-Za-z0-9_=-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) : "");
+/** tags: lower case, short, no commas */
+export const tagsOf = (v: unknown) => [...new Set(words(v, 10, 30).map((t) => t.toLowerCase().replace(/[^\p{L}\p{N} _-]+/gu, "").trim()).filter(Boolean))];
 const handles = (v: unknown) => words(v, LIMITS.blocklist, 40).map((h) => h.replace(/^@/, "").toLowerCase()).filter((h) => /^[a-z0-9._]{1,30}$/.test(h));
 
 /** An automation as given (the dashboard, the MCP, an older saved shape), made safe and complete. */
@@ -149,6 +167,7 @@ export function cleanAutomation(g: Record<string, unknown> | undefined, cur?: Au
   const ab = (r.ab ?? {}) as Partial<Automation["ab"]>;
   const co = (r.collect ?? {}) as Partial<Automation["collect"]>;
   const ai = (r.ai ?? {}) as Partial<Automation["ai"]>;
+  const fu = (r.follow_up ?? {}) as Partial<Automation["follow_up"]>;
   const match: DmMatch = ["word", "exact", "fuzzy", "any"].includes(String(r.match)) ? (r.match as DmMatch) : base?.match ?? "word";
   const btn = r.button !== undefined ? button(r.button, true) : base?.button ?? null;
   const choices = (r.choices !== undefined ? (Array.isArray(r.choices) ? r.choices : []) : base?.choices ?? []).slice(0, LIMITS.buttons).map((c) => {
@@ -170,6 +189,14 @@ export function cleanAutomation(g: Record<string, unknown> | undefined, cur?: Au
       dms: bool(tr.dms, typeof r.dms === "boolean" ? r.dms : base?.triggers.dms ?? false),
       story_replies: bool(tr.story_replies, typeof r.dms === "boolean" ? r.dms : base?.triggers.story_replies ?? false),
       mentions: bool(tr.mentions, base?.triggers.mentions ?? false),
+      link: bool(tr.link, base?.triggers.link ?? false),
+    },
+    ref: refOf(r.ref) || base?.ref || refOf(kw[0] ?? "") || rid(),
+    tags: r.tags !== undefined ? tagsOf(r.tags) : base?.tags ?? [],
+    follow_up: {
+      on: bool(fu.on, base?.follow_up.on ?? false), hours: int(fu.hours ?? base?.follow_up.hours, 4, 1, 22),
+      message: fu.message !== undefined ? str(fu.message, LIMITS.button_message) : base?.follow_up.message ?? "",
+      button: fu.button !== undefined ? button(fu.button, true) : base?.follow_up.button ?? null,
     },
     match, keywords: kw,
     exclude: words(r.exclude ?? base?.exclude, LIMITS.keywords, LIMITS.keyword),
@@ -210,7 +237,9 @@ export function problems(a: Automation) {
   const out: string[] = [];
   if (!a.message) out.push("Write the DM.");
   if (a.match !== "any" && !a.keywords.length && (a.triggers.comments || a.triggers.dms || a.triggers.story_replies)) out.push("Add a keyword, or set it to answer anything.");
-  if (!a.triggers.comments && !a.triggers.dms && !a.triggers.story_replies && !a.triggers.mentions) out.push("Pick at least one trigger.");
+  if (!a.triggers.comments && !a.triggers.dms && !a.triggers.story_replies && !a.triggers.mentions && !a.triggers.link) out.push("Pick at least one trigger.");
+  if (a.follow_up.on && !a.follow_up.message) out.push("Write the follow-up, or switch it off.");
+  if (a.follow_up.button && !a.follow_up.button.url) out.push("Add the follow-up button's link, or remove it.");
   if (a.triggers.comments && a.where === "some" && !a.media.length && !a.posts.length) out.push("Choose the posts, or set it to every post.");
   if (a.button && !a.button.url) out.push("Add the button's link, or remove the button.");
   if ((a.button || a.choices.length) && a.message.length > LIMITS.button_message) out.push(`With buttons the DM can be up to ${LIMITS.button_message} characters.`);
@@ -239,6 +268,23 @@ function cleanDefaults(g: Partial<DmDefaults> | undefined, cur: DmDefaults): DmD
   };
 }
 
+function cleanSnippets(v: unknown) {
+  return (Array.isArray(v) ? v : []).slice(0, 50).flatMap((x) => {
+    const o = (x ?? {}) as { id?: unknown; name?: unknown; text?: unknown };
+    const text = str(o.text, LIMITS.message);
+    return text ? [{ id: typeof o.id === "string" && ID.test(o.id) ? o.id : rid(), name: str(o.name, 40) || text.slice(0, 24), text }] : [];
+  });
+}
+function cleanStarters(v: unknown, pushed: number): DmSettings["starters"] {
+  const o = (v ?? {}) as { on?: unknown; items?: unknown };
+  const items = (Array.isArray(o.items) ? o.items : []).slice(0, 4).flatMap((x) => {
+    const q = (x ?? {}) as { question?: unknown; automation?: unknown };
+    const question = str(q.question, 80), automation = typeof q.automation === "string" && ID.test(q.automation) ? q.automation : "";
+    return question && automation ? [{ question, automation }] : [];
+  });
+  return { on: bool(o.on, false), items, pushed };
+}
+
 type Raw = Partial<DmSettings> & { rules?: Record<string, unknown>[] };
 async function read() {
   const { value, etag } = await getJsonTagged<Raw>(SETTINGS).catch(() => ({ value: null, etag: null }));
@@ -257,6 +303,9 @@ async function read() {
     report: { on: bool(rp.on, true), day: int(rp.day, 1, 0, 6), last: Number(rp.last) || 0 },
     sync: { on: !!sy.on, url: cleanUrl(sy.url).startsWith("https://") ? cleanUrl(sy.url) : "", leads: bool(sy.leads, true), dms: bool(sy.dms, false) },
     ai: { persona: str(ai.persona, LIMITS.persona), per_person_day: int(ai.per_person_day, 5, 1, 50) },
+    snippets: cleanSnippets(v.snippets),
+    starters: cleanStarters(v.starters, Number((v.starters as { pushed?: number } | undefined)?.pushed) || 0),
+    takeover_min: int(v.takeover_min, 60, 5, 7 * 24 * 60),
   };
   return { s, etag };
 }
@@ -273,7 +322,7 @@ export async function mutate<T>(fn: (s: DmSettings) => T): Promise<{ s: DmSettin
   throw new Error("Someone else is saving Auto-DM right now. Try again.");
 }
 
-type General = { on?: unknown; paused?: unknown; defaults?: unknown; safety?: unknown; moderation?: unknown; auto_attach?: unknown; report?: unknown; sync?: unknown; ai?: unknown; block?: unknown; unblock?: unknown };
+type General = { on?: unknown; paused?: unknown; defaults?: unknown; safety?: unknown; moderation?: unknown; auto_attach?: unknown; report?: unknown; sync?: unknown; ai?: unknown; block?: unknown; unblock?: unknown; snippets?: unknown; starters?: unknown; takeover_min?: unknown };
 /** The settings that aren't one automation: switches, defaults, safety, comment rules, auto-attach, report, sync, AI. */
 export async function setGeneral(g: General, by: string) {
   return (await mutate((s) => {
@@ -299,6 +348,9 @@ export async function setGeneral(g: General, by: string) {
     }
     const ai = o<DmSettings["ai"]>(g.ai);
     if (ai) s.ai = { persona: ai.persona !== undefined ? str(ai.persona, LIMITS.persona) : s.ai.persona, per_person_day: int(ai.per_person_day ?? s.ai.per_person_day, s.ai.per_person_day, 1, 50) };
+    if (g.snippets !== undefined) s.snippets = cleanSnippets(g.snippets);
+    if (g.starters !== undefined) s.starters = cleanStarters(g.starters, s.starters.pushed);
+    if (g.takeover_min !== undefined) s.takeover_min = int(g.takeover_min, s.takeover_min, 5, 7 * 24 * 60);
     s.updated = Date.now(); s.by = by;
   })).s;
 }
@@ -385,25 +437,31 @@ export type Btn = { type: "web_url"; url: string; title: string } | { type: "pos
 export type Msg = { text: string; buttons?: Btn[] };
 
 /** One message. Answers Instagram's id for the person in messages (what later messages go to). */
-export async function send(token: string, account: string, recipient: Record<string, string>, m: Msg): Promise<string | null> {
-  const post = async (message: unknown) => {
+export async function send(token: string, account: string, recipient: Record<string, string>, m: Msg, by = "bot"): Promise<string | null> {
+  const post = async (message: unknown, shown: string) => {
     const r = await fetch(`${GRAPH}/${account}/messages`, {
       method: "POST", cache: "no-store", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ recipient, message }),
     });
-    const j = (await r.json().catch(() => ({}))) as { recipient_id?: string; error?: { message?: string; code?: number; error_subcode?: number } };
+    const j = (await r.json().catch(() => ({}))) as { recipient_id?: string; message_id?: string; error?: { message?: string; code?: number; error_subcode?: number } };
     if (!r.ok || j.error) throw Object.assign(new Error(dmError(j.error)), { code: j.error?.code ?? 0 });
-    return typeof j.recipient_id === "string" ? j.recipient_id : null;
+    const rid = typeof j.recipient_id === "string" ? j.recipient_id : null;
+    // into the inbox (Instagram's echo of it carries the same id, so it's kept once)
+    const psid = recipient.id ?? rid;
+    if (psid) await DB.logMessage({ account, psid, dir: "out", text: shown, mid: j.message_id ?? null, by }).catch(() => null);
+    return rid;
   };
+  const shown = (t: string, b: Btn[]) => [t, ...b.map((x) => `▸ ${x.title}`)].join("\n");
   const btns = (m.buttons ?? []).slice(0, LIMITS.buttons);
-  if (!btns.length) return post({ text: m.text.slice(0, LIMITS.message) });
+  if (!btns.length) return post({ text: m.text.slice(0, LIMITS.message) }, m.text);
   try {
-    return await post({ attachment: { type: "template", payload: { template_type: "button", text: m.text.slice(0, LIMITS.button_message), buttons: btns } } });
+    return await post({ attachment: { type: "template", payload: { template_type: "button", text: m.text.slice(0, LIMITS.button_message), buttons: btns } } }, shown(m.text, btns));
   } catch (e) {
     const code = (e as { code?: number }).code;
     if (code === 10 || code === 190 || code === 200 || btns.some((b) => b.type === "postback")) throw e;
     // buttons Instagram won't take: the links go in the text instead
-    return post({ text: [m.text, ...btns.map((b) => `${b.title}: ${(b as { url: string }).url}`)].join("\n\n").slice(0, LIMITS.message) });
+    const t = [m.text, ...btns.map((b) => `${b.title}: ${(b as { url: string }).url}`)].join("\n\n").slice(0, LIMITS.message);
+    return post({ text: t }, t);
   }
 }
 
@@ -530,7 +588,11 @@ async function handle(ev: Ev, s: DmSettings) {
   if (!ev.text && ev.kind !== "mention") return;
   const hit = pick(s, ev);
   if (!hit) return;
-  const a = hit.automation;
+  await go(ev, hit.automation, s);
+}
+
+/** Run one automation for one comment, message, link or starter: claimed once, the safety limits, then the flow. */
+async function go(ev: Ev, a: Automation, s: DmSettings) {
   const psid = ev.kind === "comment" ? null : ev.from.id;
   const id = await DB.claim({ account: ev.account, kind: ev.kind, ref: ev.ref, automation: a.id, automation_name: a.name, media: ev.media ?? null, from_id: ev.from.id, from_name: ev.from.username ?? null, text: ev.text, psid });
   if (!id) return; // Instagram sent it twice
@@ -561,7 +623,44 @@ export async function run(id: number, a: Automation, s: DmSettings, e: { account
       .then(() => { out.replied = true; }).catch((err) => { out.note = `Public answer not posted: ${(err as Error).message}`; });
   }
   await DB.finish(id, out);
+  await afterRun(id, a, acc.id, f.psid, e.username, out.status);
   await (await import("./autodm-more")).synced("dm", { account: acc, username: e.username, automation: a.name, text: out.reply ?? "" }).catch(() => null);
+}
+
+/** After a flow step: the person's name and tags in the inbox, and the follow-up once the DM itself went out. */
+async function afterRun(id: number, a: Automation, account: string, psid: string | null, username: string | null | undefined, status: DB.DmStatus | undefined) {
+  if (!psid) return;
+  if (username) await DB.setProfile(account, psid, { username }).catch(() => null);
+  if (a.tags.length && (status === "sent" || status === "gated")) await DB.tagPerson(account, psid, a.tags, username).catch(() => null);
+  if (status === "sent" && a.follow_up.on && a.follow_up.message) {
+    const at = Date.now() + a.follow_up.hours * 3600e3;
+    await DB.setFollowUp(id, { follow_at: new Date(at) }).catch(() => null);
+    await (await import("./autodm-more")).markFollowUp(at);
+  }
+}
+
+/** Follow-ups that are due (the minute timer): sent only inside Instagram's 24-hour window, else skipped and noted. */
+export async function followUps() {
+  const s = await getSettings();
+  if (!s.on || !dmFlag()) return 0;
+  const due = await DB.dueFollowUps(20);
+  let n = 0;
+  for (const e of due) {
+    const a = s.automations.find((x) => x.id === e.automation);
+    const skip = (note: string, st = "skipped") => DB.setFollowUp(e.id, { followed_up: st, note });
+    if (!a || !a.follow_up.on || !a.follow_up.message) { await skip("Follow-up switched off"); continue; }
+    if (!e.psid || !e.last_in || Date.now() - Date.parse(e.last_in) > 23.5 * 3600e3) { await skip("No follow-up: they hadn't written back in the last 24 hours (Instagram's rule)"); continue; }
+    if (s.paused.includes(e.account) || (await DB.botOff(e.account, e.psid))) { await skip("No follow-up: the bot is paused for them"); continue; }
+    try {
+      const { acc, token } = await tokenFor(e.account);
+      const vars = varsOf(acc, e.from_name ?? e.username);
+      const b = a.follow_up.button?.url ? [{ type: "web_url" as const, title: a.follow_up.button.label, url: a.follow_up.button.url }] : [];
+      await send(token, acc.id, { id: e.psid }, { text: fill(a.follow_up.message, vars), buttons: b });
+      await DB.setFollowUp(e.id, { followed_up: "sent", note: "Follow-up sent" });
+      n++;
+    } catch (err) { await skip(`Follow-up failed: ${(err as Error).message}`, "failed"); }
+  }
+  return n;
 }
 
 /** A row's flow, picked up again after a tap or a reply (the window is open: they wrote to us). */
@@ -590,6 +689,7 @@ async function onFollowTap(account: string, from: string, payload: string, s: Dm
     } else {
       const out = await afterFollow(r.f, ok);
       await DB.finish(e.id, { ...out, note: ok === null ? "Instagram didn't say whether they follow: sent anyway" : null });
+      await afterRun(e.id, r.a, account, from, e.from_name, out.status);
     }
   } catch (err) {
     await DB.finish(e.id, { status: "failed", error: (err as Error).message });
@@ -623,12 +723,14 @@ async function onEmail(account: string, from: string, text: string, s: DmSetting
   const r = await resume(e, s, from);
   if (!r) return false;
   await DB.addLead({ account, from_id: e.from_id ?? from, from_name: e.from_name, email, automation: e.automation, automation_name: e.automation_name, event: e.id });
+  await DB.tagPerson(account, from, ["email"], e.from_name).catch(() => null);
   await (await import("./autodm-more")).synced("lead", { account: r.acc, username: e.from_name, automation: r.a.name, email }).catch(() => null);
   const thanks = fill(r.a.collect.thanks || s.defaults.thanks_email, r.f.vars);
   try {
     if (e.status === "gated") {
       const out = await main(r.f, e.following, thanks);
       await DB.finish(e.id, { ...out, note: `Email: ${email}` });
+      await afterRun(e.id, r.a, account, from, e.from_name, out.status);
     } else {
       await step(r.f, { text: thanks });
       await DB.finish(e.id, { awaiting: null, psid: from, note: `Email: ${email}` });
@@ -639,15 +741,17 @@ async function onEmail(account: string, from: string, text: string, s: DmSetting
   return true;
 }
 
+type Referral = { ref?: string; source?: string; type?: string };
 type Hook = {
   object?: string;
   entry?: {
     id?: string; time?: number;
     changes?: { field?: string; value?: { id?: string; text?: string; parent_id?: string; from?: { id?: string; username?: string }; media?: { id?: string } } }[];
     messaging?: {
-      sender?: { id?: string }; recipient?: { id?: string };
-      message?: { mid?: string; text?: string; is_echo?: boolean; is_deleted?: boolean; reply_to?: { story?: { id?: string } }; attachments?: { type?: string; payload?: { url?: string } }[] };
-      postback?: { mid?: string; title?: string; payload?: string };
+      sender?: { id?: string }; recipient?: { id?: string }; timestamp?: number;
+      message?: { mid?: string; text?: string; is_echo?: boolean; is_deleted?: boolean; reply_to?: { story?: { id?: string } }; attachments?: { type?: string; payload?: { url?: string } }[]; referral?: Referral };
+      postback?: { mid?: string; title?: string; payload?: string; referral?: Referral };
+      referral?: Referral;
     }[];
   }[];
 };
@@ -660,6 +764,8 @@ export async function onWebhook(body: Hook) {
   let s = await getSettings();
   let evs: Ev[] = [];
   const taps: { account: string; from: string; payload: string }[] = [];
+  const logs: Parameters<typeof DB.logMessage>[0][] = [];
+  const links: { account: string; from: string; ref: string; at: number }[] = [];
   for (const e of body.entry) {
     const account = String(e.id ?? "");
     if (!IGID.test(account)) continue;
@@ -669,14 +775,31 @@ export async function onWebhook(body: Hook) {
         evs.push({ kind: "comment", account, ref: v.id, media: v.media?.id ?? null, parent: v.parent_id ?? null, from: { id: v.from.id, username: v.from.username }, text: v.text });
     }
     for (const m of e.messaging ?? []) {
-      if (!m.sender?.id || m.sender.id === account) continue;
-      if (m.postback?.payload) { taps.push({ account, from: m.sender.id, payload: m.postback.payload }); continue; }
       const msg = m.message;
-      if (!msg || msg.is_echo || msg.is_deleted || !msg.mid) continue;
-      if (msg.attachments?.some((x) => x.type === "story_mention")) { evs.push({ kind: "mention", account, ref: msg.mid, from: { id: m.sender.id }, text: typeof msg.text === "string" ? msg.text : "" }); continue; }
+      // what we sent, or someone answered in the Instagram app: into the inbox once (ours carry the same id)
+      if (msg?.is_echo) { const to = m.recipient?.id; if (to && to !== account && msg.mid) logs.push({ account, psid: to, dir: "out", text: describe(msg), mid: msg.mid, by: "Instagram app" }); continue; }
+      if (!m.sender?.id || m.sender.id === account) continue;
+      const from = m.sender.id;
+      const ref = m.referral?.ref ?? m.postback?.referral?.ref ?? msg?.referral?.ref;
+      if (ref && refOf(ref)) links.push({ account, from, ref: refOf(ref), at: m.timestamp ?? Date.now() });
+      if (m.postback?.payload) {
+        logs.push({ account, psid: from, dir: "in", text: `Tapped “${(m.postback.title ?? "a button").slice(0, 80)}”`, mid: m.postback.mid ?? null, kind: "tap" });
+        taps.push({ account, from, payload: m.postback.payload }); continue;
+      }
+      if (!msg) { if (ref) logs.push({ account, psid: from, dir: "in", text: `Opened your link (${refOf(ref)})`, mid: `ref:${from}:${m.timestamp ?? ""}`, kind: "link" }); continue; }
+      if (msg.is_deleted || !msg.mid) continue;
+      const mention = !!msg.attachments?.some((x) => x.type === "story_mention");
+      logs.push({ account, psid: from, dir: "in", text: describe(msg), mid: msg.mid, kind: mention ? "mention" : msg.reply_to?.story ? "story" : "dm" });
+      if (mention) { evs.push({ kind: "mention", account, ref: msg.mid, from: { id: m.sender.id }, text: typeof msg.text === "string" ? msg.text : "" }); continue; }
       if (typeof msg.text !== "string") continue;
       evs.push({ kind: msg.reply_to?.story ? "story" : "dm", account, ref: msg.mid, from: { id: m.sender.id }, text: msg.text });
     }
+  }
+  // the inbox keeps every message, Auto-DM on or off; new people get their name looked up
+  let looked = 0;
+  for (const l of logs.slice(0, 100)) {
+    const r = await DB.logMessage(l).catch((e) => { console.error("autodm inbox", (e as Error).message); return null; });
+    if (r?.needsName && l.dir === "in" && looked++ < 5) await lookUp(l.account, l.psid).catch(() => null);
   }
   const more = await import("./autodm-more");
   // comment rules run even with Auto-DM off, and a comment they hide or delete gets nothing else
@@ -686,6 +809,22 @@ export async function onWebhook(body: Hook) {
   }
   if (!s.on || !dmFlag()) return { handled: 0, off: true };
   if (evs.some((e) => e.kind === "comment")) s = await resolvePosts(s);
+  // someone took these conversations over in the inbox: the bot stays quiet for them until it's handed back
+  const quiet = new Set<string>();
+  for (const k of new Set(evs.filter((e) => e.kind !== "comment").map((e) => `${e.account}|${e.from.id}`))) {
+    const [acc, who] = k.split("|");
+    if (await DB.botOff(acc, who).catch(() => false)) quiet.add(k);
+  }
+  // an ig.me link opened: its automation answers (and the same person's message in this delivery doesn't run another)
+  const ran = new Set<string>();
+  for (const l of links.slice(0, 20)) {
+    if (s.paused.includes(l.account) || quiet.has(`${l.account}|${l.from}`)) continue;
+    const a = s.automations.find((x) => x.on && x.triggers.link && x.ref === l.ref && !problems(x).length && (!x.accounts.length || x.accounts.includes(l.account)));
+    if (!a) continue;
+    ran.add(`${l.account}|${l.from}`);
+    await go({ kind: "dm", account: l.account, ref: `link:${l.from}:${l.at}`, from: { id: l.from }, text: `ref=${l.ref}` }, a, s).catch((e) => console.error("autodm link", (e as Error).message));
+  }
+  evs = evs.filter((e) => e.kind === "comment" || (!quiet.has(`${e.account}|${e.from.id}`) && !ran.has(`${e.account}|${e.from.id}`)));
   for (const ev of evs.slice(0, 50)) {
     try {
       // an email someone was asked for, then the automations, then an AI answer to a follow-up question
@@ -696,21 +835,96 @@ export async function onWebhook(body: Hook) {
   }
   for (const t of taps.slice(0, 50)) {
     if (s.paused.includes(t.account)) continue;
+    if (t.payload.startsWith("vbib:")) {
+      // a conversation starter tapped (unless its link already ran an automation)
+      const k = `${t.account}|${t.from}`;
+      if (ran.has(k) || quiet.has(k)) continue;
+      const a = s.automations.find((x) => x.id === t.payload.slice(5) && x.on && !problems(x).length && (!x.accounts.length || x.accounts.includes(t.account)));
+      if (a) await go({ kind: "dm", account: t.account, ref: `starter:${t.from}:${Date.now()}`, from: { id: t.from }, text: "starter" }, a, s).catch((e) => console.error("autodm starter", (e as Error).message));
+      continue;
+    }
     const on = t.payload.startsWith("vbdc:") ? onChoiceTap : onFollowTap;
     await on(t.account, t.from, t.payload, s).catch((e) => console.error("autodm tap", (e as Error).message));
   }
   return { handled: evs.length + taps.length };
 }
 
+/** A message as the inbox shows it: its words, or what it was (a photo, a story mention, a shared reel). */
+function describe(m: { text?: string; attachments?: { type?: string }[]; reply_to?: { story?: unknown } }) {
+  const kinds: Record<string, string> = { story_mention: "Mentioned you in their story", image: "Photo", video: "Video", audio: "Voice message", share: "Shared a post", ig_reel: "Shared a reel", reel: "Shared a reel", file: "File", animated_image: "GIF" };
+  const att = (m.attachments ?? []).map((a) => `[${kinds[a.type ?? ""] ?? "Attachment"}]`).join(" ");
+  return [m.reply_to?.story ? "↩ Replied to your story:" : "", typeof m.text === "string" ? m.text : "", att].filter(Boolean).join(" ").trim() || "[Message]";
+}
+
+/** A new person's name and picture, from Instagram (it answers for people who've messaged the account). */
+async function lookUp(account: string, psid: string) {
+  const { token } = await tokenFor(account);
+  const r = await fetch(`${GRAPH}/${psid}?fields=username,name,profile_pic&access_token=${encodeURIComponent(token)}`, { cache: "no-store" });
+  const j = (await r.json().catch(() => ({}))) as { username?: string; name?: string; profile_pic?: string };
+  if (j.username || j.name) await DB.setProfile(account, psid, { username: j.username ?? null, name: j.name ?? null, avatar: j.profile_pic ?? null });
+}
+
+// ── the inbox (the dashboard and the MCP)
+
+/** Answer someone by hand from the inbox: inside Instagram's 24-hour window, and the bot steps back for them a while. */
+export async function reply(account: string, psid: string, text: string, by: string) {
+  if (!IGID.test(account) || !IGID.test(psid)) throw new Error("Pick a conversation");
+  const t = text.trim().slice(0, LIMITS.message);
+  if (!t) throw new Error("Write the message");
+  const p = await DB.person(account, psid);
+  if (!p) throw new Error("No conversation with that person yet");
+  if (!p.last_in || Date.now() - Date.parse(p.last_in) > 24 * 3600e3) throw new Error("Instagram only lets you reply within 24 hours of their last message. They need to write again first.");
+  const { token } = await tokenFor(account);
+  await send(token, account, { id: psid }, { text: t }, by.slice(0, 60));
+  const s = await getSettings();
+  const until = new Date(Date.now() + s.takeover_min * 6e4);
+  const cur = p.bot_off_until ? Date.parse(p.bot_off_until) : 0;
+  return DB.patchPerson(account, psid, { read: true, bot_off_until: cur > until.getTime() ? p.bot_off_until : until.toISOString() });
+}
+
+/** Tags, notes, done or open, the bot paused or handed back, read. */
+export async function updatePerson(account: string, psid: string, g: { tags?: unknown; notes?: unknown; state?: unknown; bot?: unknown; read?: unknown }) {
+  if (!IGID.test(account) || !IGID.test(psid)) throw new Error("Pick a conversation");
+  const bot = g.bot === "on" ? null : g.bot === "off" ? new Date(Date.now() + 365 * 864e5).toISOString() : typeof g.bot === "number" && g.bot > 0 ? new Date(Date.now() + Math.min(g.bot, 7 * 1440) * 6e4).toISOString() : undefined;
+  return DB.patchPerson(account, psid, {
+    tags: g.tags !== undefined ? tagsOf(g.tags) : undefined,
+    notes: g.notes !== undefined ? str(g.notes, LIMITS.notes) || null : undefined,
+    state: g.state === "done" || g.state === "open" ? g.state : undefined,
+    bot_off_until: bot, read: g.read === true,
+  });
+}
+
+/** The conversation starters, pushed to every Instagram account (Instagram shows them when someone opens a new chat). */
+export async function pushStarters() {
+  const s = await getSettings();
+  const items = s.starters.on ? s.starters.items.filter((i) => s.automations.some((a) => a.id === i.automation)) : [];
+  const accounts = (await listAccounts()).filter((a) => a.network === "instagram");
+  const out: { handle: string | null; ok: boolean; error?: string }[] = [];
+  for (const acc of accounts) {
+    try {
+      const { token } = await tokenFor(acc.id);
+      const r = items.length
+        ? await fetch(`${GRAPH}/me/messenger_profile`, { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ platform: "instagram", ice_breakers: [{ locale: "default", call_to_actions: items.map((i) => ({ question: i.question, payload: `vbib:${i.automation}` })) }] }) })
+        : await fetch(`${GRAPH}/me/messenger_profile?platform=instagram`, { method: "DELETE", cache: "no-store", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ fields: ["ice_breakers"] }) });
+      const j = (await r.json().catch(() => ({}))) as { error?: { message?: string } };
+      if (!r.ok || j.error) throw new Error(j.error?.message ?? `HTTP ${r.status}`);
+      out.push({ handle: acc.handle, ok: true });
+    } catch (e) { out.push({ handle: acc.handle, ok: false, error: (e as Error).message }); }
+  }
+  if (out.some((o) => o.ok)) await mutate((x) => { x.starters.pushed = Date.now(); });
+  return out;
+}
+
 // ── what the dashboard and the MCP read
 
 /** The setup checklist: the switch, the secrets, each account's permission and subscription. */
 export async function status() {
-  const accounts = (await listAccounts()).filter((a) => a.network === "instagram");
-  const { getJson } = await import("../store");
-  const last = await getJson<{ at: number }>("workspace/publish/autodm/last-event.json").catch(() => null);
-  const { secretsStatus } = await import("../auto/secrets");
-  const keys = await secretsStatus().catch(() => null);
+  const [{ getJson }, { secretsStatus }] = await Promise.all([import("../store"), import("../auto/secrets")]);
+  const [all, last, keys] = await Promise.all([
+    listAccounts(), getJson<{ at: number }>("workspace/publish/autodm/last-event.json").catch(() => null), secretsStatus().catch(() => null),
+  ]);
+  const accounts = all.filter((a) => a.network === "instagram");
   return {
     flag: dmFlag(), app_secret: !!process.env.INSTAGRAM_APP_SECRET, verify_token: !!process.env.INSTAGRAM_WEBHOOK_TOKEN,
     last_event: last?.at ?? null,
@@ -736,7 +950,7 @@ export async function subscribe(id?: string) {
   for (const a of all) {
     try {
       const { token } = await tokenFor(a.id);
-      await IG.subscribeApp(token, dmFlag() ? ["comments", "messages", "messaging_postbacks"] : ["comments"]);
+      await IG.subscribeApp(token, dmFlag() ? ["comments", "messages", "messaging_postbacks", "messaging_referral"] : ["comments"]);
       await patchAccount(a.id, { dm_subscribed: Date.now() });
       out.push({ id: a.id, handle: a.handle, ok: true });
     } catch (e) {

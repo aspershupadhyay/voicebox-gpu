@@ -17,11 +17,13 @@ export const ago = (t: number | string | null | undefined) => {
 };
 export const handleOf = (a?: Acct) => (a ? `@${a.handle ?? a.name}` : "");
 export const compact = (n: number) => Intl.NumberFormat(undefined, { notation: "compact" }).format(n);
+/** The ig.me link that starts an automation, for one account. */
+export const linkOf = (handle: string | null | undefined, ref: string) => `https://ig.me/m/${handle ?? "you"}?ref=${encodeURIComponent(ref)}`;
 export const rate = (n: number, d: number) => (d ? `${Math.round((n / d) * 100)}%` : "–");
 
 /** What starts an automation and what it answers, in a few words: "Comments · CATCH (typos ok) · 2 posts". */
 export function summary(a: Automation, accounts: Acct[]) {
-  const on = [a.triggers.comments && "Comments", a.triggers.dms && "DMs", a.triggers.story_replies && "Story replies", a.triggers.mentions && "Story mentions"].filter(Boolean).join(", ") || "Nothing yet";
+  const on = [a.triggers.comments && "Comments", a.triggers.dms && "DMs", a.triggers.story_replies && "Story replies", a.triggers.mentions && "Story mentions", a.triggers.link && "ig.me link"].filter(Boolean).join(", ") || "Nothing yet";
   const kw = a.match === "any" ? "anything" : a.keywords.length ? `${a.keywords.slice(0, 2).map((k) => k.toUpperCase()).join(" / ")}${a.keywords.length > 2 ? ` +${a.keywords.length - 2}` : ""}${a.match === "fuzzy" ? " (typos ok)" : ""}` : "";
   const where = !a.triggers.comments ? "" : a.where === "all" ? "every post" : `${a.media.length + a.posts.length} post${a.media.length + a.posts.length === 1 ? "" : "s"}`;
   const who = a.accounts.length && accounts.length > 1 ? a.accounts.map((id) => handleOf(accounts.find((x) => x.id === id)) || "an account").join(", ") : "";
@@ -36,6 +38,8 @@ export function features(a: Automation) {
     a.choices.length > 0 && `${a.choices.length} choices`,
     a.ab.on && a.ab.message && (a.ab.winner ? `A/B: ${a.ab.winner.toUpperCase()} won` : "A/B"),
     a.ai.on && "AI",
+    a.follow_up?.on && "Follow-up",
+    a.tags?.length > 0 && `#${a.tags[0]}${a.tags.length > 1 ? ` +${a.tags.length - 1}` : ""}`,
     a.made_from && "Auto",
   ].filter(Boolean) as string[];
 }
@@ -86,3 +90,15 @@ export function Seg<T extends string>({ value, set, options, label }: { value: T
     </div>
   );
 }
+
+/** Ready-made starting points for a new automation. */
+export const TEMPLATES: { id: string; name: string; about: string; make: (d: Overview["defaults"]) => Partial<Automation> }[] = [
+  { id: "keyword", name: "Comment a keyword, get a link", about: "\"Comment CATCH and I'll DM you the link.\"", make: (d) => ({ name: "Comment CATCH", match: "fuzzy", keywords: ["CATCH"], triggers: { comments: true, dms: true, story_replies: true, mentions: false, link: false }, public_replies: d.public_replies, message: "Hey {username}! Here's the link you asked for 👇", button: { label: "Open the link", url: "" } }) },
+  { id: "choices", name: "Let them choose", about: "\"The prompt or the tutorial?\" Each button answers with its own reply.", make: (d) => ({ name: "Prompt or tutorial", match: "fuzzy", keywords: ["CATCH"], triggers: { comments: true, dms: true, story_replies: true, mentions: false, link: false }, public_replies: d.public_replies, message: "Hey {username}! What do you want?", choices: [{ id: "c1", label: "The prompt", reply: "Here's the prompt 👇", button: { label: "Open the prompt", url: "" } }, { id: "c2", label: "The tutorial", reply: "Here's the tutorial 👇", button: { label: "Watch it", url: "" } }] }) },
+  { id: "email", name: "Collect emails", about: "The link, then \"want the next one by email?\" Emails land in People.", make: (d) => ({ name: "Link + newsletter", match: "fuzzy", keywords: ["GUIDE"], triggers: { comments: true, dms: true, story_replies: true, mentions: false, link: false }, public_replies: d.public_replies, message: "Here's the guide, {username} 👇", button: { label: "Open the guide", url: "" }, collect: { on: true, when: "after", ask: d.ask_email, thanks: d.thanks_email } }) },
+  { id: "followers", name: "Followers only", about: "They follow first. Non-followers get a \"follow, then tap\" button.", make: (d) => ({ name: "Followers get the link", match: "fuzzy", keywords: ["LINK"], triggers: { comments: true, dms: true, story_replies: true, mentions: false, link: false }, public_replies: d.public_replies, message: "Thanks for following, {username}! Here it is 👇", button: { label: "Open the link", url: "" }, follow_gate: { on: true, message: d.gate_message, button: d.gate_button, not_following: d.not_following } }) },
+  { id: "mention", name: "Thank story mentions", about: "Anyone who mentions you in their story gets a thank-you.", make: () => ({ name: "Thanks for the mention", match: "any", keywords: [], triggers: { comments: false, dms: false, story_replies: false, mentions: true, link: false }, message: "Thanks for the mention, {username}! 🙏 Means a lot." }) },
+  { id: "any", name: "Anyone who comments", about: "Every comment on the chosen posts, whatever it says.", make: (d) => ({ name: "Every comment", match: "any", keywords: [], where: "some", triggers: { comments: true, dms: false, story_replies: false, mentions: false, link: false }, public_replies: d.public_replies, message: "Thanks for the comment, {username}! 🙌" }) },
+  { id: "link", name: "Link in bio or a QR code", about: "Anyone who opens your ig.me link gets the DM: bio, YouTube, posters.", make: (d) => ({ name: "From my link", match: "any", keywords: [], triggers: { comments: false, dms: false, story_replies: false, mentions: false, link: true }, message: "Hey {username}! Here's what you came for 👇", button: { label: "Open the link", url: "" }, tags: ["from-link"] }) },
+  { id: "blank", name: "Start from scratch", about: "An empty flow.", make: () => ({ name: "New automation" }) },
+];

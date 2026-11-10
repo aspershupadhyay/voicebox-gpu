@@ -48,10 +48,13 @@ require.cache[sdk] = { id: sdk, filename: sdk, loaded: true, exports: { default:
 // Instagram's send API and the sync address
 let following: boolean | null = true;
 const sends: { to: any; message: any }[] = [];
+let outN = 0;
 const synced: any[] = [];
 (globalThis as any).fetch = async (url: string, init?: any) => {
   const u = String(url);
-  if (u.startsWith("https://graph.instagram.com") && u.includes("/messages")) { const b = JSON.parse(init.body); sends.push({ to: b.recipient, message: b.message }); return new Response(JSON.stringify({ recipient_id: b.recipient.id ?? "PSID1", message_id: "m" })); }
+  if (u.startsWith("https://graph.instagram.com") && u.includes("/messages")) { const b = JSON.parse(init.body); sends.push({ to: b.recipient, message: b.message }); return new Response(JSON.stringify({ recipient_id: b.recipient.id ?? "PSID1", message_id: `out${++outN}` })); }
+  if (u.startsWith("https://graph.instagram.com") && u.includes("fields=username")) return new Response(JSON.stringify({ username: "named_fan", name: "Named Fan", profile_pic: "https://pic.test/a.jpg" }));
+  if (u.startsWith("https://graph.instagram.com") && u.includes("/me/messenger_profile")) { calls.push({ kind: "starters", body: init?.body ?? null, method: init?.method }); return new Response(JSON.stringify({ result: "success" })); }
   if (u.includes("is_user_follow_business")) return new Response(JSON.stringify(following === null ? {} : { is_user_follow_business: following }));
   if (u.startsWith("https://api.anthropic.com/v1/messages")) {
     const req = JSON.parse(init.body); req.__beta = (init.headers instanceof Headers ? init.headers.get("anthropic-beta") : new Headers(init.headers).get("anthropic-beta")); aiReqs.push(req);
@@ -293,6 +296,86 @@ const tap = (payload: string, from = "PSID1") => ({ object: "instagram", entry: 
     await Core.setGeneral({ on: false }, "t");
     await Core.onWebhook(comment("scam", "m3", "x"));
     ok(calls.filter((c) => c.kind === "hide").length === 2, "rules work even with Auto-DM switched off");
+  }
+
+  section("11. Inbox, takeover, ig.me links, starters, tags, follow-ups");
+  {
+    await Core.setGeneral({ on: true, takeover_min: 60 }, "test");
+    await reset(); await pg.query("delete from autodm_messages"); await pg.query("delete from autodm_people");
+    const a = await only({ triggers: { comments: true, dms: true }, tags: ["GPU Guide", "lead"], follow_up: { on: true, hours: 2, message: "Did it help, {username}?" } });
+    await Core.onWebhook(dm("catch", "7007"));
+    let msgs = await q("select dir, by, text from autodm_messages where psid = '7007' order by id");
+    ok(msgs.length === 2 && msgs[0].dir === "in" && msgs[1].dir === "out" && msgs[1].by === "bot", "the DM and the bot's answer are both in the inbox");
+    let [p] = await q("select * from autodm_people where psid = '7007'");
+    ok(p && p.username === "named_fan" && p.avatar, "a new person's name and picture are looked up");
+    ok(p.unread === 1 && p.state === "open", "their message counts as unread; the bot's answer doesn't clear it");
+    ok(JSON.stringify(p.tags.sort()) === '["gpu guide","lead"]', "the automation's tags land on the person");
+    // Instagram echoes what we sent: same id, kept once
+    const echo = { object: "instagram", entry: [{ id: ACC.id, messaging: [{ sender: { id: ACC.id }, recipient: { id: "7007" }, message: { mid: `out${outN}`, text: "Here's the prompt 🎬", is_echo: true } }] }] };
+    await Core.onWebhook(echo);
+    ok((await q("select count(*)::int n from autodm_messages where psid = '7007'"))[0].n === 2, "the echo of our own message isn't kept twice");
+    // a reply typed in the Instagram app shows up too
+    await Core.onWebhook({ object: "instagram", entry: [{ id: ACC.id, messaging: [{ sender: { id: ACC.id }, recipient: { id: "7007" }, message: { mid: "app1", text: "typed on my phone", is_echo: true } }] }] });
+    msgs = await q("select by from autodm_messages where mid = 'app1'");
+    ok(msgs[0]?.by === "Instagram app", "a reply from the Instagram app is in the inbox");
+    // the follow-up is scheduled, and the marker wakes the sweep only when due
+    let [ev] = await q("select follow_at, followed_up from autodm_events where automation = $1", [a.id]);
+    ok(ev.follow_at && !ev.followed_up && store.has("workspace/publish/autodm/follow-ups.json"), "a follow-up is scheduled with its marker");
+    await pg.query("update autodm_events set follow_at = now() - interval '1 minute'");
+    store.set("workspace/publish/autodm/follow-ups.json", JSON.stringify({ next: Date.now() - 1000 }));
+    const before = sends.length;
+    await More.sweep();
+    ok(sends.length === before + 1 && textOf(last().message) === "Did it help, named_fan?", "the follow-up goes out inside the 24-hour window");
+    ok(!store.has("workspace/publish/autodm/follow-ups.json"), "nothing else due: the marker is gone");
+    // a commenter who never wrote back: skipped
+    await reset();
+    await Core.onWebhook(comment("catch", "c99", "quiet_one"));
+    await pg.query("update autodm_events set follow_at = now() - interval '1 minute'");
+    store.set("workspace/publish/autodm/follow-ups.json", JSON.stringify({ next: Date.now() - 1000 }));
+    await More.sweep();
+    [ev] = await q("select followed_up, note from autodm_events where from_id = 'c99'");
+    ok(ev.followed_up === "skipped" && /24 hours/.test(ev.note) && sends.length === 1, "no follow-up to someone outside the window (noted)");
+    // answering by hand pauses the bot for that person
+    await reset();
+    const r = await Core.reply(ACC.id, "7007", "Hi, it's me", "Harsh");
+    ok(textOf(last().message) === "Hi, it's me" && r.unread === 0 && Date.parse(r.bot_off_until) > Date.now() + 50 * 6e4, "a hand reply is sent, read, and the bot steps back an hour");
+    msgs = await q("select by from autodm_messages where text = 'Hi, it''s me'");
+    ok(msgs[0]?.by === "Harsh", "it's in the inbox under the person who wrote it");
+    await Core.onWebhook(dm("catch", "7007"));
+    ok(sends.length === 1, "while paused, a keyword from them doesn't run the bot");
+    ok((await q("select unread from autodm_people where psid = '7007'"))[0].unread === 1, "their message still lands in the inbox");
+    await Core.updatePerson(ACC.id, "7007", { bot: "on", state: "done", notes: "VIP" });
+    await Core.onWebhook(dm("catch again", "7007"));
+    ok(sends.length >= 2 || (await q("select count(*)::int n from autodm_events where psid = '7007' and status = 'skipped'"))[0].n > 0, "handed back: the bot answers them again (or its limits say why not)");
+    p = (await q("select state from autodm_people where psid = '7007'"))[0];
+    ok(p.state === "open", "a new message reopens a done conversation");
+    let threw = "";
+    await pg.query("update autodm_people set last_in = now() - interval '30 hours' where psid = '7007'");
+    await Core.reply(ACC.id, "7007", "late", "Harsh").catch((e: Error) => { threw = e.message; });
+    ok(/24 hours/.test(threw), "no hand reply past Instagram's 24 hours");
+    // inbox lists and filters
+    const ib = await DB.inbox({ view: "all" });
+    ok(ib.people.some((x: any) => x.psid === "7007") && typeof ib.counts.open === "number", "the inbox lists conversations with counts");
+    const byTag = (await DB.inbox({ tag: "lead", view: "all" })).people, byName = (await DB.inbox({ q: "named", view: "all" })).people;
+    ok(byTag.some((x: any) => x.psid === "7007") && byTag.every((x: any) => x.tags.includes("lead")) && byName.every((x: any) => /named/.test(x.username ?? "")) && byName.length > 0, "filter by tag and search by name");
+    const th = await DB.thread(ACC.id, "7007");
+    ok(th.messages.length >= 5 && th.messages[0].id < th.messages[th.messages.length - 1].id && th.person, "a thread is oldest first, with the person");
+    // ig.me link (a person already chatting: messaging_referral)
+    await reset();
+    const L = await only({ triggers: { comments: false, dms: false, story_replies: false, mentions: false, link: true }, match: "any", keywords: [], ref: "Bio Link!", message: "From your link 👋" });
+    ok(L.ref === "Bio-Link" && L.on, `the ref is cleaned (${L.ref}) and it can go live with only the link trigger`);
+    await Core.onWebhook({ object: "instagram", entry: [{ id: ACC.id, messaging: [{ sender: { id: "7008" }, recipient: { id: ACC.id }, timestamp: 1, referral: { ref: "Bio-Link", source: "SHORTLINK", type: "OPEN_THREAD" } }] }] });
+    ok(textOf(last()?.message) === "From your link 👋", "opening the ig.me link runs its automation");
+    // a first chat: the starter's postback carries the ref; the link runs, not also the starter
+    await Core.onWebhook({ object: "instagram", entry: [{ id: ACC.id, messaging: [{ sender: { id: "7009" }, recipient: { id: ACC.id }, timestamp: 2, postback: { mid: "pbx", title: "Get the guide", payload: `vbib:${L.id}`, referral: { ref: "Bio-Link" } } }] }] });
+    ok(sends.filter((x) => x.to.id === "7009").length === 1, "a starter tap with the link's ref runs it once");
+    await Core.onWebhook({ object: "instagram", entry: [{ id: ACC.id, messaging: [{ sender: { id: "7010" }, recipient: { id: ACC.id }, timestamp: 3, postback: { mid: "pby", title: "Get the guide", payload: `vbib:${L.id}` } }] }] });
+    ok(sends.filter((x) => x.to.id === "7010").length === 1, "a plain starter tap runs its automation");
+    // publishing starters
+    await Core.setGeneral({ starters: { on: true, items: [{ question: "Send me the guide", automation: L.id }, { question: "", automation: L.id }] } }, "test");
+    const res = await Core.pushStarters();
+    const sc = calls.find((c) => c.kind === "starters");
+    ok(res[0].ok && sc && JSON.parse(sc.body).ice_breakers[0].call_to_actions.length === 1 && JSON.parse(sc.body).ice_breakers[0].call_to_actions[0].payload === `vbib:${L.id}`, "starters are published (empty ones dropped)");
   }
 
   section("Totals and contacts SQL");

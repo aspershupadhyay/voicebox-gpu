@@ -4,15 +4,15 @@
 // The DM (link button counted through a short link, choices, an A/B version) → [Email after] → Public answer →
 // [AI follow-ups] → Limits. Optional steps come in with "+ Add a step". The phone on the right plays the flow, and its
 // comment box tries any comment against this draft as you type (lib/publish/dmmatch.ts, the webhook's own matcher).
-import { ArrowLeft, Brain, ChatCircle, Check, Copy, DotsThree, EnvelopeSimple, Flask, GitBranch, Image as ImageIc, Lightning, Link as LinkIc, MagnifyingGlass, PaperPlaneTilt, Plus, Scales, ShieldCheck, Sliders, Trash, UserCheck, X } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowLeft, Brain, DownloadSimple, QrCode, Tag, ChatCircle, Check, Copy, DotsThree, EnvelopeSimple, Flask, GitBranch, Image as ImageIc, Lightning, Link as LinkIc, MagnifyingGlass, PaperPlaneTilt, Plus, Scales, ShieldCheck, Sliders, Trash, UserCheck, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { matchText } from "@/lib/publish/dmmatch";
 import { api } from "../api";
 import { useDialog } from "../Dialog";
 import { Select, useDismiss } from "../pop";
 import { Field, PopMenu, Toggle } from "../ui";
-import { TEMPLATES } from "./AutoDm";
-import { Chips, Seg, handleOf, rate, type Acct, type Automation, type Overview } from "./shared";
+import { TEMPLATES } from "./shared";
+import { Chips, Seg, handleOf, linkOf, rate, type Acct, type Automation, type Overview } from "./shared";
 
 type Media = { id: string; caption: string; kind: string; thumb: string | null; url: string | null; at: string | null; comments: number | null };
 type Studio = { id: string; title: string; space: string; state: string; account: string | null; media: string | null; url: string | null };
@@ -20,7 +20,7 @@ type Choice = Automation["choices"][number];
 
 const blank = (): Automation => ({
   id: "", name: "New automation", on: false, created: 0, updated: 0, by: null, accounts: [], where: "all", media: [], posts: [], resolved: {},
-  triggers: { comments: true, dms: false, story_replies: false, mentions: false }, match: "fuzzy", keywords: [], exclude: [], typos: 0, top_level_only: false,
+  triggers: { comments: true, dms: false, story_replies: false, mentions: false, link: false }, ref: "", tags: [], follow_up: { on: false, hours: 4, message: "", button: null }, match: "fuzzy", keywords: [], exclude: [], typos: 0, top_level_only: false,
   message: "", button: null, track: true, ab: { on: false, message: "", button_label: "", min: 50, winner: null, decided: null }, choices: [],
   public_replies: [], follow_gate: { on: false, message: "", button: "", not_following: "" }, collect: { on: false, when: "after", ask: "", thanks: "" },
   ai: { on: false, notes: "" }, once_per_person: true, made_from: null,
@@ -33,7 +33,9 @@ function missing(a: Automation) {
   const out: string[] = [];
   if (!a.message.trim()) out.push("Write the DM");
   if (a.match !== "any" && !a.keywords.length && words(a)) out.push("Add a keyword (or answer anything)");
-  if (!words(a) && !a.triggers.mentions) out.push("Pick what starts it");
+  if (!words(a) && !a.triggers.mentions && !a.triggers.link) out.push("Pick what starts it");
+  if (a.follow_up.on && !a.follow_up.message.trim()) out.push("Write the follow-up");
+  if (a.follow_up.button && !a.follow_up.button.url) out.push("Add the follow-up button's link");
   if (a.where === "some" && a.triggers.comments && !a.media.length && !a.posts.length) out.push("Choose the posts");
   if (a.button && !a.button.url) out.push("Add the button's link");
   if ((a.button || a.choices.length) && a.message.length > 640) out.push("With buttons the DM is up to 640 characters");
@@ -151,9 +153,9 @@ function Phone({ a, d }: { a: Automation; d: Overview }) {
   const [v, setV] = useState<"a" | "b">("a");
   const [chose, setChose] = useState<number | null>(null);
   const fill = (t: string) => t.replace(/\{handle\}/g, handle).replace(/\{username\}/g, "alex").replace(/\{title\}/g, a.name);
-  const kind = a.triggers.comments ? "comment" : a.triggers.dms ? "DM" : a.triggers.story_replies ? "story reply" : "mention";
-  const hit = text.trim() ? (a.triggers.mentions && !words(a) ? "*" : matchText(a, text)) : null;
-  const sample = text.trim() || (a.triggers.mentions && !words(a) ? "mentioned you in their story" : a.match === "any" ? "This is fire 🔥" : a.keywords[0] ?? "KEYWORD");
+  const kind = a.triggers.comments ? "comment" : a.triggers.dms ? "DM" : a.triggers.story_replies ? "story reply" : a.triggers.mentions ? "mention" : "link";
+  const hit = text.trim() ? ((a.triggers.mentions || a.triggers.link) && !words(a) ? "*" : matchText(a, text)) : null;
+  const sample = text.trim() || (kind === "link" ? "opened your link" : a.triggers.mentions && !words(a) ? "mentioned you in their story" : a.match === "any" ? "This is fire 🔥" : a.keywords[0] ?? "KEYWORD");
   const showFlow = !text.trim() || !!hit;
   const isB = v === "b" && a.ab.on && !!a.ab.message;
   const msg = isB ? a.ab.message : a.message;
@@ -167,7 +169,7 @@ function Phone({ a, d }: { a: Automation; d: Overview }) {
         {a.ab.on && a.ab.message && <span className="dm-phone-ab"><Seg label="Version" value={v} set={setV} options={[["a", "A"], ["b", "B"]]} /></span>}</div>
       <div className="dm-phone-body">
         <div className="dm-thread">
-          <span className="tiny faint">{kind === "mention" ? "Story mention" : kind === "comment" ? "Comment" : kind === "DM" ? "DM" : "Story reply"}</span>
+          <span className="tiny faint">{kind === "mention" ? "Story mention" : kind === "comment" ? "Comment" : kind === "DM" ? "DM" : kind === "link" ? "Opened your ig.me link" : "Story reply"}</span>
           <div className="dm-cmt"><b>alex</b> {sample}</div>
           {showFlow && a.triggers.comments && a.public_replies[0] && kind === "comment" && <div className="dm-cmt reply"><b>{handle}</b> {fill(a.public_replies[0])}</div>}
         </div>
@@ -200,6 +202,41 @@ function Phone({ a, d }: { a: Automation; d: Overview }) {
         <input aria-label="Try a comment" placeholder={`Try a ${kind === "mention" ? "comment" : kind}…`} value={text} onChange={(e) => setText(e.target.value)} />
         {text.trim() && <span className={`pill ${hit ? "ok" : ""}`} role="status">{hit ? (hit === "*" ? "Fires" : `Fires · ${hit}`) : "No"}</span>}
       </label>
+    </div>
+  );
+}
+
+/** The ig.me link (one per account) with copy, a QR code to download, and the ref it carries. */
+function LinkCard({ a, accounts, set }: { a: Automation; accounts: Acct[]; set: (p: Partial<Automation>) => void }) {
+  const { toast } = useDialog();
+  const list = accounts.filter((x) => !a.accounts.length || a.accounts.includes(x.id));
+  const [pick, setPick] = useState(list[0]?.id ?? "");
+  const acc = list.find((x) => x.id === pick) ?? list[0];
+  const url = linkOf(acc?.handle, a.ref || "link");
+  const [qr, setQr] = useState("");
+  useEffect(() => {
+    let live = true;
+    import("qrcode").then((Q) => Q.toDataURL(url, { margin: 1, width: 480, color: { dark: "#000000", light: "#ffffff" } })).then((d) => live && setQr(d)).catch(() => setQr(""));
+    return () => { live = false; };
+  }, [url]);
+  const copy = () => navigator.clipboard.writeText(url).then(() => toast("Link copied", "ok")).catch(() => toast("Couldn't copy", "bad"));
+  return (
+    <div className="dm-sub dm-linkcard">
+      <div className="dm-sub-h"><QrCode size={14} /><b>Your link</b><span className="tiny dim">bio, YouTube, posters, other posts</span></div>
+      <div className="dm-link-row">
+        {qr ? <img className="dm-qr" src={qr} alt={`QR code for ${url}`} width={112} height={112} /> : <span className="dm-qr skel" aria-hidden />}
+        <div className="dm-link-main">
+          {list.length > 1 && <Select size="sm" label="Account" value={acc?.id ?? ""} onChange={setPick} options={list.map((x) => [x.id, handleOf(x)] as [string, string])} />}
+          <code className="dm-link ellipsis" title={url}>{url}</code>
+          <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+            <button className="ghost xs" onClick={copy}><Copy size={13} />Copy</button>
+            {qr && <a className="btn ghost xs" href={qr} download={`qr-${a.ref || "link"}.png`}><DownloadSimple size={13} />QR code</a>}
+            <button className="ghost xs" onClick={() => set({ ref: Math.random().toString(36).slice(2, 8) })} title="A new ref: the old link stops starting this"><ArrowClockwise size={13} />New link</button>
+          </div>
+          <Field label="Ref" hint="Letters, digits, - _ =. Changing it changes the link."><input value={a.ref} maxLength={40} onChange={(e) => set({ ref: e.target.value.replace(/[^A-Za-z0-9_=-]/g, "") })} /></Field>
+        </div>
+      </div>
+      <p className="tiny dim" style={{ margin: 0 }}>Someone who already chats with you gets the DM straight away. For a first chat, Instagram passes the link on when they tap a conversation starter: set them up in Settings → Starters.</p>
     </div>
   );
 }
@@ -241,6 +278,7 @@ export default function Editor({ id, template, d, reload, close, opened }: { id:
   const [picker, setPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(found ? "" : "dm");
+  const [tagging, setTagging] = useState(false);
   const set = (p: Partial<Automation>) => setA((x) => ({ ...x, ...p }));
   const dirty = JSON.stringify(a) !== saved;
   const todo = missing(a);
@@ -278,10 +316,12 @@ export default function Editor({ id, template, d, reload, close, opened }: { id:
     !co.on && { k: "email", label: "Ask for email", icon: <EnvelopeSimple size={14} />, go: () => { set({ collect: { ...co, on: true } }); setOpen("email"); } },
     buttons < 3 && !a.choices.length && { k: "choices", label: "Choices", icon: <GitBranch size={14} />, go: () => { set({ choices: [{ id: rid(), label: "", reply: "", button: null }] }); setOpen("dm"); } },
     !ab.on && { k: "ab", label: "A/B test", icon: <Scales size={14} />, go: () => { set({ ab: { ...ab, on: true } }); setOpen("dm"); } },
+    !a.follow_up.on && { k: "followup", label: "Follow-up", icon: <ArrowClockwise size={14} />, go: () => { set({ follow_up: { ...a.follow_up, on: true } }); setOpen("followup"); } },
+    !a.tags.length && !tagging && { k: "tags", label: "Tag them", icon: <Tag size={14} />, go: () => { setTagging(true); setOpen("tags"); } },
     !a.ai.on && { k: "ai", label: "AI follow-ups", icon: <Brain size={14} />, go: () => { set({ ai: { ...a.ai, on: true } }); setOpen("ai"); } },
   ].filter(Boolean) as { k: string; label: string; icon: React.ReactNode; go: () => void }[];
 
-  const trig = [a.triggers.comments && "Comments", a.triggers.dms && "DMs", a.triggers.story_replies && "Story replies", a.triggers.mentions && "Mentions"].filter(Boolean).join(", ") || "Nothing yet";
+  const trig = [a.triggers.comments && "Comments", a.triggers.dms && "DMs", a.triggers.story_replies && "Story replies", a.triggers.mentions && "Mentions", a.triggers.link && "Link"].filter(Boolean).join(", ") || "Nothing yet";
   const emailNode = co.on && (
     <Node id="email" open={open} setOpen={setOpen} icon={<EnvelopeSimple size={14} />} title={co.when === "before" ? "Email first" : "Ask for email"} onRemove={() => set({ collect: { ...co, on: false } })}
       sum={co.when === "before" ? "The DM waits for their email" : "After the DM: they reply with it"}>
@@ -315,13 +355,14 @@ export default function Editor({ id, template, d, reload, close, opened }: { id:
 
       <div className="dm-edit-cols">
         <div className="dm-flow">
-          <Node id="when" open={open} setOpen={setOpen} icon={<Lightning size={14} weight="fill" />} title="When" tone={!words(a) && !a.triggers.mentions ? "warn" : undefined}
+          <Node id="when" open={open} setOpen={setOpen} icon={<Lightning size={14} weight="fill" />} title="When" tone={!words(a) && !a.triggers.mentions && !a.triggers.link ? "warn" : undefined}
             sum={`${trig}${a.triggers.comments ? ` · ${a.where === "all" ? "every post" : `${a.media.length + a.posts.length} post${a.media.length + a.posts.length === 1 ? "" : "s"}`}` : ""}${a.accounts.length && accounts.length > 1 ? ` · ${a.accounts.length} account${a.accounts.length > 1 ? "s" : ""}` : ""}`}>
             <div className="dm-pills" role="group" aria-label="What starts it">
-              {([["comments", "Comment"], ["dms", "DM"], ["story_replies", "Story reply"], ["mentions", "Story mention"]] as const).map(([k, l]) => (
+              {([["comments", "Comment"], ["dms", "DM"], ["story_replies", "Story reply"], ["mentions", "Story mention"], ["link", "ig.me link / QR"]] as const).map(([k, l]) => (
                 <button key={k} type="button" className={`dm-pill ${a.triggers[k] ? "on" : ""}`} aria-pressed={a.triggers[k]} onClick={() => set({ triggers: { ...a.triggers, [k]: !a.triggers[k] } })}>{a.triggers[k] && <Check size={12} weight="bold" />}{l}</button>
               ))}
             </div>
+            {a.triggers.link && <LinkCard a={a} accounts={accounts} set={set} />}
             {accounts.length > 1 && (
               <Field label="Accounts">
                 <div className="dm-pills" role="group">
@@ -442,6 +483,30 @@ export default function Editor({ id, template, d, reload, close, opened }: { id:
                   onBlur={() => set({ public_replies: a.public_replies.map((x) => x.trim()).filter(Boolean) })} />
               </Field>
               {d.defaults.public_replies.length > 0 && <button className="ghost xs" onClick={() => set({ public_replies: d.defaults.public_replies })}>Use the defaults</button>}
+            </Node>
+          )}
+
+          {a.follow_up.on && (
+            <Node id="followup" open={open} setOpen={setOpen} icon={<ArrowClockwise size={14} />} title="Follow-up" tone={!a.follow_up.message.trim() ? "warn" : undefined}
+              onRemove={() => set({ follow_up: { ...a.follow_up, on: false } })} sum={`${a.follow_up.hours} h later${a.follow_up.message ? ` · ${a.follow_up.message.slice(0, 40)}` : ""}`}>
+              <p className="tiny dim" style={{ margin: 0 }}>A second message some hours after the DM: &ldquo;Did it help?&rdquo;, the next link, a nudge. Instagram only allows it to people who wrote back or tapped a button in the last 24 hours; anyone else is skipped (the log says so).</p>
+              <Field label="After"><Select size="sm" label="Hours after the DM" value={a.follow_up.hours} onChange={(v) => set({ follow_up: { ...a.follow_up, hours: v } })} options={[1, 2, 4, 8, 12, 20].map((h) => [h, `${h} hour${h > 1 ? "s" : ""}`] as [number, string])} /></Field>
+              <Field label="Message" hint="{username} theirs, {handle} yours"><textarea className="doc short" value={a.follow_up.message} placeholder="Did you get a chance to try it, {username}? 👀" onChange={(e) => set({ follow_up: { ...a.follow_up, message: e.target.value } })} /></Field>
+              {a.follow_up.button ? (
+                <div className="dm-grid">
+                  <Field label="Button text"><input value={a.follow_up.button.label} maxLength={20} onChange={(e) => set({ follow_up: { ...a.follow_up, button: { label: e.target.value, url: a.follow_up.button?.url ?? "" } } })} /></Field>
+                  <Field label="Link"><div className="row" style={{ gap: 6 }}><input type="url" value={a.follow_up.button.url} placeholder="https://" onChange={(e) => set({ follow_up: { ...a.follow_up, button: { label: a.follow_up.button?.label ?? "", url: e.target.value } } })} style={{ flex: 1, minWidth: 0 }} />
+                    <button type="button" className="icon-btn" aria-label="Remove the follow-up button" onClick={() => set({ follow_up: { ...a.follow_up, button: null } })}><X size={13} /></button></div></Field>
+                </div>
+              ) : <button className="ghost xs" onClick={() => set({ follow_up: { ...a.follow_up, button: { label: "Open", url: "" } } })}><Plus size={13} />Link button</button>}
+            </Node>
+          )}
+
+          {(a.tags.length > 0 || tagging) && (
+            <Node id="tags" open={open} setOpen={setOpen} icon={<Tag size={14} />} title="Tag them" sum={a.tags.length ? a.tags.map((t) => `#${t}`).join(" ") : "Add a tag"}
+              onRemove={() => { set({ tags: [] }); setTagging(false); }}>
+              <p className="tiny dim" style={{ margin: 0 }}>Everyone this runs for gets these tags. Filter the Inbox by them; an email someone sends adds #email.</p>
+              <Field label="Tags" hint="Enter after each"><Chips label="Tags" value={a.tags} set={(v) => set({ tags: v.map((t) => t.toLowerCase().replace(/,/g, "").slice(0, 30)) })} placeholder="gpu-guide, lead, geopolitics" /></Field>
             </Node>
           )}
 

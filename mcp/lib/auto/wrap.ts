@@ -24,8 +24,9 @@ export const GATES: Record<string, (a: Args) => Gate | Promise<Gate>> = {
   // messages to the public in the account's name: switching Auto-DM on or changing what it sends asks first
   // anything that sends, changes what's sent, touches public comments or sends data out asks first; reading, testing,
   // blocking someone and making the report don't
-  auto_dm: (a) => (a.action === "save" || (a.action === "switch" && a.on === true) || (a.action === "comment_act" && a.mod_action !== "dismiss")
-    || (a.action === "settings" && (a.on === true || ["defaults", "safety", "unblock", "moderation", "auto_attach", "sync", "ai"].some((k) => a[k] !== undefined))) ? "publishing_rules" : null),
+  // (a reply by hand from the inbox and publishing the conversation starters are messages in the account's name too)
+  auto_dm: (a) => (a.action === "save" || a.action === "reply" || a.action === "push_starters" || (a.action === "switch" && a.on === true) || (a.action === "comment_act" && a.mod_action !== "dismiss")
+    || (a.action === "settings" && (a.on === true || ["defaults", "safety", "unblock", "moderation", "auto_attach", "sync", "ai", "starters"].some((k) => a[k] !== undefined))) ? "publishing_rules" : null),
   // deleting never asks (the owner's call, 2026-11-10: "you don't need to ask any permission"): to the trash, for good,
   // emptying the trash. Before that (2026-10-31) only what was gone for good asked.
   workflow: async (a) => {

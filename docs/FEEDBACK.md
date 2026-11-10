@@ -6,6 +6,15 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Build the Auto-DM suite completely, organise it, and make it fast: the tab takes forever to load, it must feel
+  instant"** (2026-11-10): the tab paints at once from the last copy and refreshes behind it; each tab is its own
+  chunk, warmed while the page is idle; the database setup is one version check instead of a dozen statements per cold
+  start. New, to stand in for ManyChat: an **Inbox** tab (live chat with every conversation, answer by hand, saved
+  replies, the bot steps back for that person, pause/hand back, tags, notes, done), **ig.me links with a QR code** as a
+  trigger, **conversation starters**, **follow-ups** inside Instagram's 24-hour window, and **tags** an automation
+  gives. No Claude key for now: AI replies stay optional, bring-your-own-key, and nothing else depends on them (the
+  owner plans an app later).
+
 - **"Stop the Kaggle benchmark, it's not useful in our suite"** (2026-11-10): removed (`kaggle_benchmark` and
   lib/kagglebench.ts). Writing runs on Sonnet 5.5 / Opus 5.5 through the owner's Claude plan; real results in
   analytics are the test. Kaggle stays as a free GPU. Free GPUs still work side by side: with Colab and Kaggle both

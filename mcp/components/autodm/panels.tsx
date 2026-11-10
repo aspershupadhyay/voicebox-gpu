@@ -5,7 +5,7 @@
 // striped bars, the best automations, A/B tests, and the full log.
 import { ArrowsClockwise, ChatCircle, CheckCircle, DownloadSimple, EnvelopeSimple, Eye, EyeSlash, Flag, Hourglass, MagnifyingGlass, PaperPlaneTilt, PencilSimple, Plus, Prohibit, ShieldCheck, Sparkle, Trash, Trophy, XCircle } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { api, peek } from "../api";
 import { useDialog } from "../Dialog";
 import { Select } from "../pop";
 import { Empty, Field } from "../ui";
@@ -79,6 +79,7 @@ export function CommentsTab({ d, reload }: { d: Overview; reload: () => void }) 
   const [rows, setRows] = useState<Ev[] | null>(null);
   const load = useCallback(() => {
     const p = new URLSearchParams(Object.entries({ status, q: dq }).filter(([, v]) => v));
+    const c = peek<{ events: Ev[] }>(`publish/autodm/comments?${p}`); if (c) setRows(c.events);
     api<{ events: Ev[] }>(`publish/autodm/comments?${p}`).then((r) => setRows(r.events)).catch((e) => { setRows([]); toast((e as Error).message, "bad"); });
   }, [status, dq, toast]);
   useEffect(() => { load(); }, [load]);
@@ -168,6 +169,8 @@ export function PeopleTab({ d, reload }: { d: Overview; reload: () => void }) {
   const blocked = useMemo(() => new Set(d.settings.safety.blocklist), [d.settings.safety.blocklist]);
   useEffect(() => {
     const p = new URLSearchParams(Object.entries({ q: dq, account }).filter(([, v]) => v));
+    const c = peek<{ contacts?: Contact[]; leads?: Lead[] }>(`publish/autodm/${view === "all" ? "contacts" : "leads"}?${p}`);
+    if (c?.contacts && view === "all") setPeople(c.contacts); else if (c?.leads) setLeads(c.leads);
     if (view === "all") api<{ contacts: Contact[] }>(`publish/autodm/contacts?${p}`).then((r) => setPeople(r.contacts)).catch((e) => { setPeople([]); toast((e as Error).message, "bad"); });
     else api<{ leads: Lead[] }>(`publish/autodm/leads?${p}`).then((r) => setLeads(r.leads)).catch((e) => { setLeads([]); toast((e as Error).message, "bad"); });
   }, [view, dq, account, toast]);
@@ -281,6 +284,7 @@ function Log({ d }: { d: Overview }) {
   const dq = useDebounced(q);
   const load = useCallback(async (before?: number) => {
     const p = new URLSearchParams(Object.entries({ q: dq, kind, status, automation, before: before ? String(before) : "" }).filter(([, v]) => v));
+    const c = before ? undefined : peek<{ events: Ev[] }>(`publish/autodm/activity?${p}`); if (c) setRows(c.events);
     await api<{ events: Ev[] }>(`publish/autodm/activity?${p}`).then((r) => { setRows((x) => (before ? [...(x ?? []), ...r.events] : r.events)); setMore(r.events.length === 50); }).catch(() => setRows([]));
   }, [dq, kind, status, automation]);
   useEffect(() => { load(); }, [load]);
@@ -329,7 +333,7 @@ export function InsightsTab({ d }: { d: Overview; reload: () => void }) {
   const [days, setDays] = useState<"7" | "30" | "90">("30");
   const [x, setX] = useState<Insights | null>(null);
   const [busy, setBusy] = useState(false);
-  const load = useCallback(() => api<Insights>(`publish/autodm/insights?days=${days}`).then(setX).catch((e) => toast((e as Error).message, "bad")), [days, toast]);
+  const load = useCallback(() => { const c = peek<Insights>(`publish/autodm/insights?days=${days}`); if (c) setX(c); return api<Insights>(`publish/autodm/insights?days=${days}`).then(setX).catch((e) => toast((e as Error).message, "bad")); }, [days, toast]);
   useEffect(() => { if (view === "numbers") load(); }, [load, view]);
   const make = async () => { setBusy(true); await api("publish/autodm/report", { body: {} }).then(() => { toast("Report made and sent to your notifications", "ok"); load(); }).catch((e) => toast((e as Error).message, "bad")); setBusy(false); };
   const best = x?.top[0]?.sent ?? 1;

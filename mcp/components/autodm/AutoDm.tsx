@@ -4,21 +4,32 @@
 // flag comments, and their review list), People (everyone who triggered one, and the emails collected), Insights (the
 // numbers, the weekly report, A/B tests and the log) and Settings (sections down the side). The engine is
 // lib/publish/autodm.ts and autodm-more.ts.
-import { ChatCircleDots, ChatsCircle, ChartBar, Gear, Lightning, Plus, ShieldCheck, UsersThree, Warning, MagnifyingGlass, CaretRight, Image as ImageIc, Sparkle, X, Check, ArrowRight } from "@phosphor-icons/react";
+import { ChatCircleDots, ChatsCircle, ChatTeardropText, ChartBar, Gear, Lightning, Plus, ShieldCheck, UsersThree, Warning, MagnifyingGlass, CaretRight, Image as ImageIc, Sparkle, X, Check, ArrowRight } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../api";
+import { api, useSeed } from "../api";
 import { useDialog } from "../Dialog";
 import { useDismiss, Select } from "../pop";
 import { Empty, Notice, PageHeader } from "../ui";
-import Editor from "./Editor";
-import { CommentsTab, InsightsTab, PeopleTab } from "./panels";
-import { DmSettingsTab } from "./settings";
-import { compact, features, rate, summary, type Automation, type Overview } from "./shared";
+// each tab is its own chunk: the list paints first, the rest loads behind it (and is fetched ahead while you look)
+const Loading = () => <div className="skel" style={{ height: 320 }} />;
+const loadEditor = () => import("./Editor");
+const loadPanels = () => import("./panels");
+const loadSettings = () => import("./settings");
+const loadInbox = () => import("./Inbox");
+const Editor = dynamic(loadEditor, { loading: Loading });
+const InboxTab = dynamic(loadInbox, { loading: Loading });
+const CommentsTab = dynamic(() => loadPanels().then((m) => m.CommentsTab), { loading: Loading });
+const PeopleTab = dynamic(() => loadPanels().then((m) => m.PeopleTab), { loading: Loading });
+const InsightsTab = dynamic(() => loadPanels().then((m) => m.InsightsTab), { loading: Loading });
+const DmSettingsTab = dynamic(() => loadSettings().then((m) => m.DmSettingsTab), { loading: Loading });
+import { TEMPLATES, compact, features, rate, summary, type Automation, type Overview } from "./shared";
 
 const TABS = [
   { id: "automations", name: "Automations", icon: Lightning },
+  { id: "inbox", name: "Inbox", icon: ChatTeardropText },
   { id: "comments", name: "Comments", icon: ShieldCheck },
   { id: "people", name: "People", icon: UsersThree },
   { id: "insights", name: "Insights", icon: ChartBar },
@@ -43,17 +54,6 @@ function Nav({ tab, go }: { tab: Tab; go: (t: Tab) => void }) {
     </nav>
   );
 }
-
-/** Ready-made starting points for a new automation. */
-export const TEMPLATES: { id: string; name: string; about: string; make: (d: Overview["defaults"]) => Partial<Automation> }[] = [
-  { id: "keyword", name: "Comment a keyword, get a link", about: "\"Comment CATCH and I'll DM you the link.\"", make: (d) => ({ name: "Comment CATCH", match: "fuzzy", keywords: ["CATCH"], triggers: { comments: true, dms: true, story_replies: true, mentions: false }, public_replies: d.public_replies, message: "Hey {username}! Here's the link you asked for 👇", button: { label: "Open the link", url: "" } }) },
-  { id: "choices", name: "Let them choose", about: "\"The prompt or the tutorial?\" Each button answers with its own reply.", make: (d) => ({ name: "Prompt or tutorial", match: "fuzzy", keywords: ["CATCH"], triggers: { comments: true, dms: true, story_replies: true, mentions: false }, public_replies: d.public_replies, message: "Hey {username}! What do you want?", choices: [{ id: "c1", label: "The prompt", reply: "Here's the prompt 👇", button: { label: "Open the prompt", url: "" } }, { id: "c2", label: "The tutorial", reply: "Here's the tutorial 👇", button: { label: "Watch it", url: "" } }] }) },
-  { id: "email", name: "Collect emails", about: "The link, then \"want the next one by email?\" Emails land in People.", make: (d) => ({ name: "Link + newsletter", match: "fuzzy", keywords: ["GUIDE"], triggers: { comments: true, dms: true, story_replies: true, mentions: false }, public_replies: d.public_replies, message: "Here's the guide, {username} 👇", button: { label: "Open the guide", url: "" }, collect: { on: true, when: "after", ask: d.ask_email, thanks: d.thanks_email } }) },
-  { id: "followers", name: "Followers only", about: "They follow first. Non-followers get a \"follow, then tap\" button.", make: (d) => ({ name: "Followers get the link", match: "fuzzy", keywords: ["LINK"], triggers: { comments: true, dms: true, story_replies: true, mentions: false }, public_replies: d.public_replies, message: "Thanks for following, {username}! Here it is 👇", button: { label: "Open the link", url: "" }, follow_gate: { on: true, message: d.gate_message, button: d.gate_button, not_following: d.not_following } }) },
-  { id: "mention", name: "Thank story mentions", about: "Anyone who mentions you in their story gets a thank-you.", make: () => ({ name: "Thanks for the mention", match: "any", keywords: [], triggers: { comments: false, dms: false, story_replies: false, mentions: true }, message: "Thanks for the mention, {username}! 🙏 Means a lot." }) },
-  { id: "any", name: "Anyone who comments", about: "Every comment on the chosen posts, whatever it says.", make: (d) => ({ name: "Every comment", match: "any", keywords: [], where: "some", triggers: { comments: true, dms: false, story_replies: false, mentions: false }, public_replies: d.public_replies, message: "Thanks for the comment, {username}! 🙌" }) },
-  { id: "blank", name: "Start from scratch", about: "An empty flow.", make: () => ({ name: "New automation" }) },
-];
 
 function NewMenu({ onPick, onScan, onClose }: { onPick: (id: string) => void; onScan: () => void; onClose: () => void }) {
   const box = useRef<HTMLDivElement>(null);
@@ -243,7 +243,15 @@ export default function AutoDm() {
   const [picking, setPicking] = useState(false);
   const [scan, setScan] = useState(false);
   const load = useCallback(() => api<Overview>("publish/autodm").then((x) => { setD(x); setErr(""); }).catch((e) => setErr((e as Error).message)), []);
-  useEffect(() => { load(); }, [load]);
+  // paint at once from the last copy, then the fresh one; warm the other tabs' code while the page is idle
+  // (a copy saved before the inbox existed lacks its settings: wait for the fresh one)
+  useSeed<Overview>("publish/autodm", (x) => { if (x?.settings?.snippets) setD(x); });
+  useEffect(() => {
+    load();
+    const warm = () => { loadInbox(); loadPanels(); loadSettings(); loadEditor(); };
+    const w = window as Window & { requestIdleCallback?: (f: () => void) => number };
+    if (w.requestIdleCallback) w.requestIdleCallback(warm); else setTimeout(warm, 800);
+  }, [load]);
 
   const ready = !!d && d.status.flag && d.status.accounts.some((a) => a.messages === true && a.subscribed);
   const state = !d ? null : !d.settings.on ? ["Off", ""] : !ready ? ["Setup needed", "warn"] : ["Live", "ok"];
@@ -278,6 +286,7 @@ export default function AutoDm() {
             <List d={d} reload={load} open={(id) => router.replace(`/auto-dm?tab=automations&edit=${id}`, { scroll: false })} create={() => setPicking(true)} />
           </>
         )}
+        {tab === "inbox" && <InboxTab d={d} />}
         {tab === "comments" && <CommentsTab d={d} reload={load} />}
         {tab === "people" && <PeopleTab d={d} reload={load} />}
         {tab === "insights" && <InsightsTab d={d} reload={load} />}
