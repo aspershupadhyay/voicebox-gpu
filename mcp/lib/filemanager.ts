@@ -150,8 +150,26 @@ export async function restore(keys: string[]) {
   return restoreItems(keys);
 }
 
-/** Empty the trash: everything in it, for good. */
-export async function emptyTrash(actor: Actor) {
+/** What emptying the trash would delete for good: every file in it, including files inside trashed folders. */
+export async function trashPlan() {
+  const t = await getTree();
+  const plan = forgetPlan(t, Object.keys(t.trash));
+  const { items } = await catalog();
+  const binned = await catalog({ trash: true });
+  const by = new Map([...items, ...binned.items].map((i) => [i.id, i]));
+  const files = plan.files.map((k) => by.get(k)).filter((i): i is FileItem => !!i);
+  return { files: files.length, folders: plan.folders.size, mb: +(files.reduce((n, i) => n + (i.bytes ?? 0), 0) / 1e6).toFixed(1),
+    sample: files.slice(0, 25).map((i) => ({ id: i.id, name: i.name, folder: i.folder_path })) };
+}
+
+/** Empty the trash: everything in it, for good. With `expect`, only when the trash holds exactly that many files
+ *  (what the person was shown), so a trash that filled up in between is never emptied blind (2026-11-10: 179 live
+ *  files went that way). */
+export async function emptyTrash(actor: Actor, expect?: number) {
+  if (expect !== undefined) {
+    const plan = await trashPlan();
+    if (plan.files !== expect) throw new FilesError(`the trash holds ${plan.files} files (${plan.mb} MB), not ${expect}: nothing was deleted. Show the user what's in it first`, 409);
+  }
   const t = await getTree();
   return deleteForever(Object.keys(t.trash), actor);
 }

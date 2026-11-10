@@ -216,10 +216,11 @@ export async function GET(req: Request, ctx: Ctx) {
       // the Files page: the folder tree (with video posters), the generated items as files, the sidebar's favourites
       const fm = await import("@/lib/filemanager");
       if (!b) {
-        let t = await fm.treeForBrowser();
+        const t = await fm.treeForBrowser();
         const { expired, emptyFolders, tidyFolders } = await import("@/lib/files");
-        // folders left empty are tidied into the trash before the page draws them (lib/filetree.ts emptyFolders)
-        if (emptyFolders(t).length && (await tidyFolders().catch(() => [])).length) t = await fm.treeForBrowser();
+        // tidying empty folders into the trash is switched off until 2026-11-10's loss of 179 files is understood:
+        // nothing may put things in the trash by itself until then (docs/FEEDBACK.md)
+        void emptyFolders; void tidyFolders;
         if (expired(t).length) after(() => fm.purgeTrash().catch(() => null));
         return Response.json(t);
       }
