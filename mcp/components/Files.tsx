@@ -11,7 +11,7 @@
 import {
   ArrowClockwise, ArrowCounterClockwise, ArrowSquareOut, ArrowsDownUp, CaretRight, Check, CheckSquare, ClosedCaptioning, Copy, DownloadSimple, FolderOpen,
   FolderPlus, FolderSimple, LinkSimple, ShareNetwork, ListBullets, MagnifyingGlass, PencilSimple, Scissors, SquaresFour, StackMinus, StackPlus, Star, Trash, TrashSimple,
-  UploadSimple, UsersThree, X, Cards, RocketLaunch, PaperPlaneTilt, InstagramLogo, YoutubeLogo,
+  UploadSimple, UsersThree, X, Cards, HardDrives, RocketLaunch, PaperPlaneTilt, InstagramLogo, YoutubeLogo,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -151,6 +151,7 @@ export default function Files() {
   const [date, setDate] = useState<(typeof DATES)[number][0]>("any");
   const [by, setBy] = useState("anyone");
   const [starOnly, setStarOnly] = useState(false);
+  const [big, setBig] = useState(false); // what's taking space: every file, the largest first
   const [color, setColor] = useState<(typeof COLORS)[number][0]>("any");
   const [smart, setSmart] = useState<Map<string, number> | null>(null); // photos that fit the search's meaning (components/smartsearch.ts)
   const [sharing, setSharing] = useState<{ kind: "carousel" | "folder"; ref: string; name: string } | null>(null);
@@ -334,7 +335,7 @@ export default function Files() {
     return r;
   }, [ql, qWords, looks, smart]);
   const filtered = type !== "all" || source !== "any" || date !== "any" || by !== "anyone" || color !== "any";
-  const global = !trashView && (!!ql || starOnly || (filtered && !cwdId));
+  const global = !trashView && (!!ql || starOnly || big || (filtered && !cwdId));
   const atRoot = !trashView && !global && !cwdId;
   const match = useCallback((i: Item) => {
     const since = date === "any" ? 0 : date === "1" ? new Date().setHours(0, 0, 0, 0) : Date.now() - Number(date) * 864e5;
@@ -345,7 +346,7 @@ export default function Files() {
   const cmp = useMemo(() => ({
     new: (a: Item, b: Item) => b.at - a.at, old: (a: Item, b: Item) => a.at - b.at,
     name: (a: Item, b: Item) => a.name.localeCompare(b.name, undefined, { numeric: true }), size: (a: Item, b: Item) => (b.size ?? b.seconds ?? 0) - (a.size ?? a.seconds ?? 0),
-  })[sort], [sort]);
+  })[big ? "size" : sort], [sort, big]);
   const trashFiles = useMemo(() => allItems.filter((i) => t.trash[i.key]).sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0)), [allItems, t.trash]);
   const shownFiles = useMemo(() => {
     if (trashView) return trashFiles;
@@ -413,7 +414,7 @@ export default function Files() {
 
   // ── actions
   const go = (id: string | null) => router.push(id ? `/files?folder=${id}` : "/files", { scroll: false });
-  const toTrashView = () => { setQ(""); setStarOnly(false); router.push("/files?view=trash", { scroll: false }); };
+  const toTrashView = () => { setQ(""); setStarOnly(false); setBig(false); router.push("/files?view=trash", { scroll: false }); };
   const nameOf = (k: string) => (k.startsWith("f:") ? folderById.get(k.slice(2))?.name : k.startsWith("c:") ? stacks.get(k)?.g.name : byKey.get(k)?.name) ?? k;
   const within = (id: string, ancestor: string) => inside(t, id, ancestor);
   const isSys = (k: string) => k.startsWith("f:") && !!folderById.get(k.slice(2))?.system;
@@ -424,7 +425,7 @@ export default function Files() {
     let n = name;
     for (let i = 2; taken.has(n.toLowerCase()); i++) n = `${name} ${i}`;
     const f: Folder = { id, name: n, color: (["lavender", "sky", "peach", "mint", "rose", "sand"] as const)[t.folders.length % 6], parent, created: Date.now(), by: me?.user?.name ?? null };
-    write(() => { edit((x) => ({ ...x, folders: [...x.folders, f] })); if (rename) { setRenaming(`f:${id}`); setQ(""); setStarOnly(false); } },
+    write(() => { edit((x) => ({ ...x, folders: [...x.folders, f] })); if (rename) { setRenaming(`f:${id}`); setQ(""); setStarOnly(false); setBig(false); } },
       () => api<Folder>("files/folders", { body: { id, name: n, parent, color: f.color } }))
       .then((r) => { if (!r) edit((x) => ({ ...x, folders: x.folders.filter((y) => y.id !== id) })); });
     return id;
@@ -670,7 +671,7 @@ export default function Files() {
   function open(key: string) {
     if (key.startsWith("u:")) return;
     if (key.startsWith("c:")) { if (!trashView) setStage({ id: key.slice(2) }); return; }
-    if (key.startsWith("f:")) { if (trashView) return; setQ(""); setStarOnly(false); go(key.slice(2)); return; }
+    if (key.startsWith("f:")) { if (trashView) return; setQ(""); setStarOnly(false); setBig(false); go(key.slice(2)); return; }
     if (trashView) return;
     setDetail(key);
   }
@@ -948,7 +949,7 @@ export default function Files() {
         { label: "Copy link", icon: <Copy size={16} />, kbd: isMac() ? "⌘C" : "Ctrl+C", run: () => copyLinks(keys) },
         ...(it.post ? [{ label: "Open its post", icon: <ArrowSquareOut size={16} />, run: () => router.push(`/posts?post=${it.post}`) }] : []),
         ...(it.j && (!it.j.kind || it.j.kind === "tts") && !it.j.subs ? [{ label: "Add subtitles", icon: <ClosedCaptioning size={16} />, run: () => subtitle(it.j!) }] : []),
-        ...(it.folder !== cwdId ? [{ label: "Show in folder", icon: <FolderOpen size={16} />, run: () => { setQ(""); setStarOnly(false); go(it.folder); } }] : []),
+        ...(it.folder !== cwdId ? [{ label: "Show in folder", icon: <FolderOpen size={16} />, run: () => { setQ(""); setStarOnly(false); setBig(false); go(it.folder); } }] : []),
         "-",
         { label: "Move to the trash", icon: <TrashSimple size={16} />, danger: true, kbd: "Del", run: () => remove(keys) },
       ],
@@ -1026,7 +1027,7 @@ export default function Files() {
       onDragOver={(e) => { if (!trashView && e.dataTransfer.types.includes("Files") && !e.dataTransfer.types.includes(DT)) { e.preventDefault(); setOsDrag(true); const n = [...e.dataTransfer.items].filter((x) => x.kind === "file").length; if (n !== dragN) setDragN(n); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) { setOsDrag(false); setOver(null); } }}
       onDrop={(e) => { if (!trashView && e.dataTransfer.files.length && !e.dataTransfer.types.includes(DT)) { e.preventDefault(); setOsDrag(false); sendFiles([...e.dataTransfer.files]); } }}>
-      <PageHeader title={trashView ? "Trash" : "Files"} sub={trashView ? "Deleted things wait here for 30 days, then they're gone for good." : <>Every upload and everything the GPU made, sorted by kind. Drop, paste or drag files anywhere.{store && <> <span className="mono" style={{ color: store.used > store.cap * 0.85 ? "var(--warn)" : undefined }}>{(store.used / 1e9).toFixed(1)} of {(store.cap / 1e9).toFixed(1)} GB</span> used.</>}</>}
+      <PageHeader title={trashView ? "Trash" : "Files"} sub={trashView ? "Deleted things wait here for 30 days, then they're gone for good." : <>Every upload and everything the GPU made, sorted by kind. Drop, paste or drag files anywhere.{store && <> <button type="button" className="linkish u mono" title="See what's taking space" style={{ color: store.used > store.cap * 0.85 ? "var(--warn)" : undefined }} onClick={() => setBig(true)}>{(store.used / 1e9).toFixed(1)} of {(store.cap / 1e9).toFixed(1)} GB</button> used.</>}</>}
         actions={trashView ? <>
           <button className="ghost" onClick={() => go(null)}><FolderSimple size={15} weight="duotone" />Back to files</button>
           <button className="danger" onClick={emptyTrash} disabled={!trashCount}><TrashSimple size={15} weight="bold" />Empty trash</button>
@@ -1059,6 +1060,7 @@ export default function Files() {
             <FilterPill label="Added by" value={by} options={BY} onChange={setBy} />
             <FilterPill label="Colour" value={color} options={COLORS} onChange={setColor} />
             <button type="button" className={`fpill ${starOnly ? "on" : ""}`} aria-pressed={starOnly} onClick={() => setStarOnly((s) => !s)}><Star size={13} weight={starOnly ? "fill" : "regular"} />Starred</button>
+            <button type="button" className={`fpill ${big ? "on" : ""}`} aria-pressed={big} title="Every file, the largest first" onClick={() => setBig((b) => !b)}><HardDrives size={13} weight={big ? "fill" : "regular"} />Biggest</button>
             {filtered && <button type="button" className="fpill quiet" onClick={() => { setType("all"); setSource("any"); setDate("any"); setBy("anyone"); setColor("any"); }}>Clear</button>}
           </div>
           <div className="fm-tools">
@@ -1075,14 +1077,14 @@ export default function Files() {
       )}
 
       <nav className="fm-path" aria-label="Folder path">
-        <button type="button" className={`fm-crumb ${over === "root" ? "over" : ""}`} aria-current={atRoot ? "page" : undefined} onClick={() => { setQ(""); setStarOnly(false); go(null); }} {...dropOn(null)}>All files</button>
+        <button type="button" className={`fm-crumb ${over === "root" ? "over" : ""}`} aria-current={atRoot ? "page" : undefined} onClick={() => { setQ(""); setStarOnly(false); setBig(false); go(null); }} {...dropOn(null)}>All files</button>
         {!global && !trashView && path.map((f) => (
           <span key={f.id} className="row" style={{ gap: 4, flexWrap: "nowrap", minWidth: 0 }}>
             <CaretRight size={12} className="dim" aria-hidden />
             <button type="button" className={`fm-crumb ${over === f.id ? "over" : ""}`} aria-current={f.id === cwdId ? "page" : undefined} onClick={() => go(f.id)} {...dropOn(f.id)}>{f.name}</button>
           </span>
         ))}
-        {global && <><CaretRight size={12} className="dim" aria-hidden /><span className="fm-crumb static">{ql ? `Results for “${q.trim()}”` : starOnly ? "Starred" : "Filtered"}</span></>}
+        {global && <><CaretRight size={12} className="dim" aria-hidden /><span className="fm-crumb static">{ql ? `Results for “${q.trim()}”` : starOnly ? "Starred" : big ? "Biggest files" : "Filtered"}</span></>}
         {trashView && <><CaretRight size={12} className="dim" aria-hidden /><span className="fm-crumb static">Trash</span></>}
         <span className="fm-usage tiny dim mono">{items.length} files · {(totalBytes / 1e9).toFixed(2)} GB</span>
         {!trashView && <button type="button" className="fm-trash-btn" onClick={toTrashView} aria-label={`Trash, ${trashCount} item${trashCount === 1 ? "" : "s"}`}><Trash size={15} weight="duotone" />Trash{trashCount > 0 && <span className="fm-count sm">{trashCount}</span>}</button>}
@@ -1168,7 +1170,7 @@ export default function Files() {
                 <div className="empty"><Trash size={26} weight="duotone" /><b>{shownFolders.length ? "No loose files in the trash" : "The trash is empty"}</b><span>Anything you delete waits here for 30 days.</span></div>
               ) : global || filtered ? (
                 <div className="empty"><MagnifyingGlass size={22} /><b>Nothing matches</b><span>Try another word or filter.</span>
-                  <button className="ghost sm" onClick={() => { setQ(""); setStarOnly(false); setType("all"); setSource("any"); setDate("any"); setBy("anyone"); setColor("any"); }}>Clear search and filters</button></div>
+                  <button className="ghost sm" onClick={() => { setQ(""); setStarOnly(false); setBig(false); setType("all"); setSource("any"); setDate("any"); setBy("anyone"); setColor("any"); }}>Clear search and filters</button></div>
               ) : (
                 <button type="button" className={`drop fm-drop ${over === (cwdId ?? "root") ? "over" : ""}`} onClick={() => (wsOn ? setUpOpen(true) : needWs())} {...dropOn(cwdId)}>
                   <span className="d-ic"><UploadSimple size={22} weight="duotone" /></span>

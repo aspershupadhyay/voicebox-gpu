@@ -123,7 +123,9 @@ export const backupUrl = (m: Media) => (m.r2_key ? presign(m.r2_key, "GET", 6 * 
 /** Delete a workspace file: its bytes in R2 and its row. */
 export async function deleteMediaRow(id: string, actor: { id?: string; name: string }) {
   const m = await getMedia(id);
-  if (m.r2_key) await delObjs([m.r2_key]);
+  // a file two rows point at (a download saved twice at once) keeps its bytes until the last row goes
+  const shared = m.r2_key ? await listOf<Media>("media", { method: "equal", attribute: "r2_key", values: [m.r2_key] }, { method: "limit", values: [2] }).then((l) => l.some((x) => x.$id !== id)).catch(() => true) : false;
+  if (m.r2_key && !shared) await delObjs([m.r2_key]);
   await remove("media", id);
   await logActivity({ post_id: m.post_id, verb: "deleted", text: m.name }, actor);
   return m;

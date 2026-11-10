@@ -7,13 +7,15 @@ import { FOLDER_COLORS, type FolderColor, type MediaKind } from "./workspace";
 
 export { FOLDER_COLORS, type FolderColor };
 export type Folder = { id: string; name: string; color: FolderColor; parent: string | null; created: number; by: string | null; system?: MediaKind };
-export type Trashed = { at: number; by: string | null };
+/** `auto`: an empty folder tidied away by itself (it comes back with a file restored into it). */
+export type Trashed = { at: number; by: string | null; auto?: boolean };
 export type FileTree = { folders: Folder[]; place: Record<string, string>; starred: string[]; trash: Record<string, Trashed>; posters: Record<string, number> };
 
 export const ITEM_RE = /^[mg]:[A-Za-z0-9._-]{1,64}$/;
 export const FOLDER_RE = /^[a-z0-9]{6,16}$/;
 export const ROOT = "/";
 export const TRASH_DAYS = 30;
+export const TIDY_DAYS = 3;
 
 /** The category folders, in the order they show. Their ids are fixed so every copy of the tree agrees. */
 export const SYSTEM: { id: string; kind: MediaKind; name: string; color: FolderColor }[] = [
@@ -89,6 +91,22 @@ export function subtree(t: FileTree, id: string) {
     for (const f of t.folders) if (f.parent && out.has(f.parent) && !out.has(f.id)) { out.add(f.id); grew = true; }
   }
   return out;
+}
+
+/** True when no live file sits anywhere inside the folder (things in the trash don't count). It goes by where files
+ *  were put, so a leftover entry can only keep a folder, never empty one that still holds something. */
+export function holdsNothing(t: FileTree, id: string) {
+  const ids = subtree(t, id);
+  return !Object.entries(t.place).some(([k, f]) => ids.has(f) && !isTrashed(t, k));
+}
+
+/** Folders to tidy away: your own (never a category), out of the trash, with nothing live inside, and nothing in
+ *  them made in the last TIDY_DAYS (a folder set up for work about to start is left alone). Only the topmost: an
+ *  empty folder goes with the empty folders inside it. */
+export function emptyFolders(t: FileTree, now = Date.now()) {
+  const empty = new Set(t.folders.filter((f) => !f.system && !folderTrashed(t, f.id) && holdsNothing(t, f.id)
+    && ![...subtree(t, f.id)].some((id) => now - (t.folders.find((x) => x.id === id)?.created ?? 0) < TIDY_DAYS * 864e5)).map((f) => f.id));
+  return t.folders.filter((f) => empty.has(f.id) && !(f.parent && empty.has(f.parent)));
 }
 
 export const newFolderId = () => Array.from(crypto.getRandomValues(new Uint8Array(10)), (b) => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");

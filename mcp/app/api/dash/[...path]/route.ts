@@ -206,8 +206,10 @@ export async function GET(req: Request, ctx: Ctx) {
       // the Files page: the folder tree (with video posters), the generated items as files, the sidebar's favourites
       const fm = await import("@/lib/filemanager");
       if (!b) {
-        const t = await fm.treeForBrowser();
-        const { expired } = await import("@/lib/files");
+        let t = await fm.treeForBrowser();
+        const { expired, emptyFolders, tidyFolders } = await import("@/lib/files");
+        // folders left empty are tidied into the trash before the page draws them (lib/filetree.ts emptyFolders)
+        if (emptyFolders(t).length && (await tidyFolders().catch(() => [])).length) t = await fm.treeForBrowser();
         if (expired(t).length) after(() => fm.purgeTrash().catch(() => null));
         return Response.json(t);
       }
@@ -366,7 +368,7 @@ export async function POST(req: Request, ctx: Ctx) {
         if (b && ID.test(b) && c === "retry") return Response.json({ download: await dl.retryDownload(b, actor, (f) => after(f)) });
         if (!b) {
           const urls = (Array.isArray(body.urls) ? body.urls : [body.url]).map(String).flatMap((u: string) => u.split(/\s+/)).filter((u: string) => /^https?:\/\//i.test(u));
-          return Response.json({ list: await dl.startDownloads(urls, { folder: body.folder ? String(body.folder) : null, name: body.name ? String(body.name) : null, post: body.post && ID.test(String(body.post)) ? String(body.post) : null }, actor, (f) => after(f)) });
+          return Response.json({ list: await dl.startDownloads(urls, { folder: body.folder ? String(body.folder) : null, name: body.name ? String(body.name) : null, post: body.post && ID.test(String(body.post)) ? String(body.post) : null, again: body.again === true }, actor, (f) => after(f)) });
         }
       } catch (e) {
         if (e instanceof dl.DlError) return Response.json({ error: e.message }, { status: e.status });
