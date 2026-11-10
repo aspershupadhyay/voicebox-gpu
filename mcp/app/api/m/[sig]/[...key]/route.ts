@@ -2,8 +2,9 @@
 // Public by design: the token is an HMAC of the key, kept only in team-only rows, so
 // <img>/<video> and the worker can load it without a session. It only serves workspace/media/; nothing else in the
 // bucket. Answers with a redirect to a presigned R2 link (bytes never pass through here) that the browser and the CDN
-// keep for an hour; a photo's resized copy is made once, the first time it's asked for.
-import { presign } from "@/lib/store";
+// keep for an hour; a photo's resized copy is made once, the first time it's asked for. A file on Backblaze is streamed
+// through here instead (a Range passes through, so video seeks): B2 charges for what leaves it, except to Cloudflare.
+import { b2Get, b2Key, b2On, presign, presignR2 } from "@/lib/store";
 import { resizable, sigOk, thumb, type ThumbFormat } from "@/lib/r2files";
 
 export const dynamic = "force-dynamic";
@@ -23,9 +24,21 @@ export async function GET(req: Request, ctx: Ctx) {
       const t = await thumb(key, Number(q.get("width")) || 1280, out);
       // just made: send it now; next time it's a redirect like everything else
       if (t.bytes) return new Response(t.bytes as BodyInit, { headers: { "Content-Type": t.type, "Cache-Control": KEEP } });
-      return new Response(null, { status: 302, headers: { Location: await presign(t.key, "GET", 6 * 3600, undefined, true), "Cache-Control": KEEP } });
-    }
+      if (t.key !== key) return new Response(null, { status: 302, headers: { Location: await presign(t.key, "GET", 6 * 3600, undefined, true), "Cache-Control": KEEP } });
+    } // not resized (no sharp on Workers): served as it is, below
     const name = mode === "download" ? key.split("/").pop() : undefined;
+    if (b2On() && b2Key(key)) {
+      const range = req.headers.get("range");
+      const r = await b2Get(key, range ? { headers: { Range: range } } : {});
+      if (r) {
+        const h = new Headers({ "Cache-Control": KEEP, "Accept-Ranges": "bytes" });
+        for (const k of ["content-type", "content-length", "content-range", "etag", "last-modified"]) { const v = r.headers.get(k); if (v) h.set(k, v); }
+        if (name) h.set("Content-Disposition", `attachment; filename="${name.replace(/[^A-Za-z0-9._-]/g, "_")}"`);
+        return new Response(r.body, { status: r.status, headers: h });
+      }
+      // not moved to B2 yet: R2 still has it
+      return new Response(null, { status: 302, headers: { Location: await presignR2(key, "GET", 6 * 3600, name, true), "Cache-Control": KEEP } });
+    }
     const to = await presign(key, "GET", 6 * 3600, name, true);
     return new Response(null, { status: 302, headers: { Location: to, "Cache-Control": KEEP } });
   } catch (e) {

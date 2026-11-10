@@ -12,7 +12,11 @@ export async function usage() {
   const meters: Meter[] = [];
   const r2 = await storageUse().catch(() => null);
   const top = r2 ? Object.entries(r2.parts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k} ${(v / GB).toFixed(1)} GB`).join(", ") : "";
-  meters.push(meter({ id: "r2", name: "Files and voices (Cloudflare R2)", used: r2?.bytes ?? null, limit: 10 * GB, unit: "bytes",
+  if (r2?.b2) {
+    meters.push(meter({ id: "r2", name: "Voices, models and caches (Cloudflare R2)", used: r2.r2, limit: 10 * GB, unit: "bytes", note: "The trained voices, datasets and GPU caches." }));
+    meters.push(meter({ id: "b2", name: "Files and audio (Backblaze B2)", used: r2.b2, limit: 10 * GB, unit: "bytes",
+      note: `Free up to 10 GB, then about $6 per TB a month. A deleted file's last version is kept 30 days. Biggest: ${top}.` }));
+  } else meters.push(meter({ id: "r2", name: "Files and voices (Cloudflare R2)", used: r2?.bytes ?? null, limit: 10 * GB, unit: "bytes",
     note: r2 ? `New uploads stop at ${(r2.cap / GB).toFixed(1)} GB. Biggest: ${top}.` : "Couldn't count the bucket right now." }));
 
   const { hasDb, sql } = await import("./db");

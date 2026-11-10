@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Keep the models and the heavy work on R2, move the files and audio work to Backblaze"** (2026-11-10): Files
+  (`workspace/media/`, posters, photo thumbnails), downloads in progress, finished voice jobs (`library/`), publish
+  cards and temporary uploads live in the Backblaze B2 bucket `voicebox-files`; models, datasets, GPU caches and the
+  small state files stay on R2 (`B2_PREFIXES`, `lib/store.ts`). B2 keeps a deleted file's last version 30 days (bucket
+  lifecycle rule), so a delete there can be undone. Files are streamed to the browser through `/api/m` (B2 charges
+  nothing for what goes to Cloudflare). The Worker holds a key for that one bucket only, never the master key.
 - **Incident, 2026-11-10 15:24 UTC: 179 live files deleted for good by an agent.** Claude ran `storage clean` with
   `empty_trash: true` to clear 20 empty project records without looking at the trash first; it held about 185 live
   files (everything uploaded after the Nov 2 SFX batch except Passwords.docx), and their rows and R2 bytes went. How
