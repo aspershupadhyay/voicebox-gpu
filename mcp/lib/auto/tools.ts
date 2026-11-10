@@ -180,22 +180,18 @@ export function registerAutoTools(server: ToolServer) {
       title: "Storage: what fills the bucket, and clearing what nothing needs",
       description: [
         "action report (default): how full the storage bucket (R2) is against its budget, what fills it by part, the biggest files, what's in the trash, and what a clean-up would remove right now.",
-        "clean: deletes for good what nothing needs: the motion tools' cache, older compile caches, finished downloads' staging, temporary uploads, bytes, posters and thumbnails of deleted files, the call log past 31 days (caches are left while a GPU is working). With empty_trash: true the trash is emptied for good first. It also runs by itself every night.",
-        "Deleting is for good and never asks; files you or the user keep in Files are never touched by clean. Run it after a project's finish, or when report says the bucket is near its budget.",
-        "Example: {\"action\":\"clean\",\"empty_trash\":true}.",
+        "clean: deletes for good what nothing needs: the motion tools' cache, older compile caches, finished downloads' staging, temporary uploads, bytes, posters and thumbnails of deleted files, the call log past 31 days (caches are left while a GPU is working). It never touches Files or the trash (emptying the trash is empty_trash, shown to the user first). It also runs by itself every night.",
+        "Run it after a project's finish, or when report says the bucket is near its budget.",
+        "Example: {\"action\":\"clean\"}.",
       ].join(" "),
       inputSchema: z.object({
         action: z.enum(["report", "clean"]).optional(),
-        empty_trash: z.boolean().optional().describe("clean: empty the trash for good first"),
       }),
     },
-    async ({ action = "report", empty_trash }, ctx) => {
+    async ({ action = "report" }) => {
       try {
         const jan = await import("../janitor");
-        if (action === "clean") {
-          const trash = empty_trash ? await import("../filemanager").then(async (f) => { const r = await f.emptyTrash({ name: await modelName(ctx as Ctx) }); return { deleted: r.deleted.length, folders: r.folders, failed: r.failed }; }) : undefined;
-          return text({ ...(trash ? { trash } : {}), ...(await jan.cleanStorage()) });
-        }
+        if (action === "clean") return text(await jan.cleanStorage());
         const [{ storageUse }, fm, waste] = await Promise.all([import("../r2files"), import("../filemanager"), jan.findWaste()]);
         const [use, all, binned] = await Promise.all([storageUse(true), fm.catalog(), fm.catalog({ trash: true })]);
         const gb = (n: number) => +(n / 1e9).toFixed(2);

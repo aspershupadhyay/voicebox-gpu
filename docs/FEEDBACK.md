@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **Incident, 2026-11-10 15:24 UTC: 179 live files deleted for good by an agent.** Claude ran `storage clean` with
+  `empty_trash: true` to clear 20 empty project records without looking at the trash first; it held about 185 live
+  files (everything uploaded after the Nov 2 SFX batch except Passwords.docx), and their rows and R2 bytes went. How
+  they got into the trash isn't known yet (the trash isn't logged). Since then: emptying the trash from the MCP is two
+  steps (see what's in it, show the user, then `expect` that count), `storage clean` never touches Files or the trash,
+  and the automatic tidy of empty folders is off until the cause is found. Rule: never empty a trash you haven't shown.
 - **"Downloads still has stale ones; give the list its own box to scroll, the page shouldn't move a cm; Recents in Files
   are confusing, a deleted one still shows: do something creative"** (2026-11-10): a download that stopped moving
   (reading the link or saving for 15 minutes, on the worker for 3 hours) ends as an error you can Retry or clear, and

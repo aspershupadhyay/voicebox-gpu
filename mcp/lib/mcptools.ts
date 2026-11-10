@@ -1455,10 +1455,14 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     "empty_trash",
     {
       title: "Empty the trash",
-      description: "Delete everything in the trash for good: rows, bytes in storage (R2) and posters. Can't be undone. Only when the user explicitly asks (storage action=clean with empty_trash also clears the caches).",
-      inputSchema: z.object({}),
+      description: "Delete everything in the trash for good: rows, bytes in storage (R2) and posters. Can't be undone. Two steps: call it without expect to see what's in the trash (files, size, names, including files inside trashed folders) and show the user; only when they say yes, call it again with expect: that file count. A trash that changed in between isn't emptied.",
+      inputSchema: z.object({ expect: z.number().int().min(0).optional().describe("the number of files the user agreed to delete for good, from the first call") }),
     },
-    async () => files(async () => (await import("@/lib/filemanager")).emptyTrash(CLAUDE)),
+    async ({ expect }) => files(async () => {
+      const fm = await import("@/lib/filemanager");
+      if (expect === undefined) return { would_delete: await fm.trashPlan(), next: "Show the user this list. Only if they say yes, call empty_trash again with expect set to that file count." };
+      return fm.emptyTrash(CLAUDE, expect);
+    }),
   );
 
   server.registerTool(
