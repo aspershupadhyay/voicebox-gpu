@@ -194,7 +194,14 @@ export async function shouldStop(startedAt: number, c: Cloud = "modal") {
 export function order(s: GpuState, kind?: string): Backend[] {
   const first = s.prefs.prefer;
   const all = ALL.filter((b) => b !== "kaggle" || s.kaggle.configured);
-  const list: Backend[] = s.prefs.fallback ? [first, ...all.filter((b) => b !== first)] : [first];
+  let list: Backend[] = s.prefs.fallback ? [first, ...all.filter((b) => b !== first)] : [first];
+  // two free GPUs on at once (Colab and Kaggle): a new job goes to the less busy one, so a batch runs side by side
+  // instead of queueing on the first. Only GPUs already on are reordered; nothing is started for it.
+  if (kind && s.prefs.fallback) {
+    const load = (b: Backend) => { const r = b === "colab" ? s.colab.rec : b === "kaggle" ? s.kaggle.rec : null; return (r?.queue ?? 0) + (r?.running ?? 0); };
+    const on = list.filter((b) => (b === "colab" && s.colab.online) || (b === "kaggle" && s.kaggle.online));
+    if (on.length > 1) list = [...[...on].sort((x, y) => load(x) - load(y)), ...list.filter((b) => !on.includes(b))];
+  }
   return kind && HEAVY.has(kind) && !s.prefs.modal_heavy ? list.filter((b) => !isCloud(b)) : list;
 }
 

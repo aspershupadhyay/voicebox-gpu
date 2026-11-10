@@ -12,7 +12,7 @@ import { getJson, getJsonTagged, putJson, putJsonIf } from "./store";
 import { loadWorker, STALE_MS, type WorkerRecord } from "./registry";
 import type { GpuPrefs, KaggleState } from "./gpus";
 
-const API = "https://api.kaggle.com/v1/kernels.KernelsApiService";
+const API = "https://api.kaggle.com/v1";
 const SLUG = "voicebox-gpu-worker";
 const START = "voicebox/kaggle-start.json";
 const USAGE = "voicebox/kaggle-usage.json";
@@ -33,8 +33,11 @@ function auth() {
   return `Basic ${Buffer.from(`${user()}:${(process.env.KAGGLE_KEY ?? "").trim()}`).toString("base64")}`;
 }
 
-async function kaggle<T>(method: string, body: unknown): Promise<T> {
-  const r = await fetch(`${API}/${method}`, {
+const kaggle = <T>(method: string, body: unknown) => kaggleCall<T>("kernels.KernelsApiService", method, body);
+
+/** One call to Kaggle's API (the same one the kaggle CLI uses): POST api.kaggle.com/v1/<service>/<method>. */
+export async function kaggleCall<T>(service: string, method: string, body: unknown): Promise<T> {
+  const r = await fetch(`${API}/${service}/${method}`, {
     method: "POST", headers: { Authorization: auth(), "Content-Type": "application/json", "User-Agent": "voicebox-studio" },
     body: JSON.stringify(body), signal: AbortSignal.timeout(30_000), cache: "no-store",
   });

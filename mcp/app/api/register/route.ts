@@ -63,6 +63,7 @@ export async function POST(req: Request) {
     engines: b.engines,
     loaded: b.loaded,
     queue: Number(b.queue ?? 0),
+    running: Number(b.running ?? 0), // how busy it is: a new job goes to the less busy free GPU (lib/gpus.ts order)
     started_at: Number(b.started_at ?? 0),
     last_seen: Date.now(),
   });
