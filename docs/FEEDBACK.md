@@ -6,12 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
-- **"Set up the Kaggle benchmark; can we combine the power of all the GPUs?"** (2026-11-10): `kaggle_benchmark`
-  (MCP, analytics toolset) pushes a private Kaggle Benchmark, `which-hook-wins`, built from our own analytics: pairs
-  of real posts (same account and format, one did 2× better against the usual), the model sees only the two opening
-  lines and picks the winner; Kaggle's free model credits pay for runs, and the accuracy says which model to trust
-  with hooks and titles. GPUs from different providers can't be pooled into one (no fast link between them), but they
-  can work side by side: with Colab and Kaggle both on, a new job goes to the less busy one.
+- **"Stop the Kaggle benchmark, it's not useful in our suite"** (2026-11-10): removed (`kaggle_benchmark` and
+  lib/kagglebench.ts). Writing runs on Sonnet 5.5 / Opus 5.5 through the owner's Claude plan; real results in
+  analytics are the test. Kaggle stays as a free GPU. Free GPUs still work side by side: with Colab and Kaggle both
+  on, a new job goes to the less busy one.
 - **"Connect Kaggle too, and optimise the free resources"** (2026-11-10): Kaggle is a fourth GPU (about 30 free
   hours a week on a T4). The app starts a private Kaggle notebook through Kaggle's API when work needs a GPU and Colab
   is off, it runs the same worker, and it stops itself after 15 idle minutes, when Stop is pressed, past the week's

@@ -211,35 +211,6 @@ export function registerAutoTools(server: ToolServer) {
   );
 
   server.registerTool(
-    "kaggle_benchmark",
-    {
-      title: "Kaggle Benchmark: which AI model judges our hooks best",
-      description: [
-        "A private Kaggle Benchmark built from our own analytics: pairs of real posts (same account and format, one did at least 2× better against the usual); a model sees only the two opening lines and picks the winner. Accuracy says which model to trust with hooks, titles and captions (50% is a coin flip). Kaggle's free model credits pay for the runs.",
-        "action status (default): the task's state and every model's score, best first. push: build the pairs from the last 90 days and push them as a new version (Kaggle checks it in a few minutes; max: pairs, default 60). models: the models Kaggle can run it on. run: run it on models (their slugs from models).",
-        "Example: {\"action\":\"push\"} … {\"action\":\"run\",\"models\":[\"gemini-3.5-flash\",\"claude-haiku-4-5\"]} … {\"action\":\"status\"}.",
-      ].join(" "),
-      inputSchema: z.object({
-        action: z.enum(["status", "push", "models", "run"]).optional(),
-        models: z.array(z.string().max(120)).max(20).optional().describe("run: model slugs from action models"),
-        max: z.number().int().min(10).max(200).optional().describe("push: how many pairs (default 60)"),
-      }),
-    },
-    async ({ action = "status", models, max }) => {
-      try {
-        const kb = await import("../kagglebench");
-        if (action === "push") return text(await kb.pushBenchmark(max));
-        if (action === "models") return text({ models: await kb.benchmarkModels() });
-        if (action === "run") {
-          if (!models?.length) throw new Error("run needs models: their slugs from action models");
-          return text(await kb.runBenchmark(models));
-        }
-        return text(await kb.benchmarkStatus());
-      } catch (e) { return fail(e); }
-    },
-  );
-
-  server.registerTool(
     "project",
     {
       title: "Projects: your own space for one piece of work, cleaned up at the end",
