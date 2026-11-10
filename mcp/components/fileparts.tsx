@@ -424,3 +424,41 @@ export function Snack({ text, action, onAction, onClose }: { text: string; actio
     </div>
   );
 }
+
+/** Files root, "Jump back in": the last week's files in one row that scrolls sideways, split by day, each saying where
+ *  it lives (click to go there). It never refills with older files: a file you delete or hide just leaves, so what's
+ *  there is only what you really touched lately. Hiding (×) only takes it off this row; the file stays where it is. */
+export function RecentRail({ items, where, onOpen, onMenu, onWhere, onHide }: {
+  items: Item[]; where: (it: Item) => string;
+  onOpen: (it: Item, e: React.MouseEvent) => void; onMenu: (it: Item, at: Anchor) => void; onWhere: (it: Item) => void; onHide: (it: Item) => void;
+}) {
+  const day = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const today = day(Date.now());
+  const label = (t: number) => (day(t) === today ? "Today" : day(t) === today - 864e5 ? "Yesterday" : new Date(t).toLocaleDateString(undefined, { weekday: "long" }));
+  let last = "";
+  return (
+    <div className="rr" role="list" aria-label="Files from the last week">
+      {items.map((it) => {
+        const l = label(it.at);
+        const head = l !== last;
+        last = l;
+        return (
+          <div key={it.key} className="rr-cell" role="listitem">
+            {head ? <span className="rr-day">{l}</span> : <span className="rr-day" aria-hidden />}
+            <div className="rr-tile" onClick={(e) => onOpen(it, e)} onContextMenu={(e) => { e.preventDefault(); onMenu(it, { x: e.clientX, y: e.clientY, w: 0, h: 0, align: "start" }); }}>
+              <Hit label={`Open ${it.name}, ${it.type}`} />
+              <Cover it={it} />
+              <button type="button" className="rr-hide" aria-label={`Hide ${it.name} from Jump back in (the file stays)`} title="Hide from here (the file stays)"
+                onClick={(e) => { e.stopPropagation(); onHide(it); }}><X size={12} weight="bold" /></button>
+              <div className="rr-body">
+                <span className="rr-name" title={it.name}>{it.name}</span>
+                <button type="button" className="rr-where" title={`Open ${where(it)}`} onClick={(e) => { e.stopPropagation(); onWhere(it); }}>
+                  <FolderIc size={12} weight="duotone" aria-hidden /><span>{where(it)}</span></button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

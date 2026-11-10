@@ -6,6 +6,15 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Downloads still has stale ones; give the list its own box to scroll, the page shouldn't move a cm; Recents in Files
+  are confusing, a deleted one still shows: do something creative"** (2026-11-10): a download that stopped moving
+  (reading the link or saving for 15 minutes, on the worker for 3 hours) ends as an error you can Retry or clear, and
+  every row has × (a running one is stopped). The history scrolls inside its own box (`.dl-list.scroll`), so the
+  page never grows or jumps. Files' Recent grid became **Jump back in**: one row that scrolls sideways, only the last
+  week, split by day, each tile saying where the file lives (click to go there), × hides it from the row (the file
+  stays). It never refills with older files, so a deleted one just leaves. The folder tree's writes are now
+  conditional (ETag, read again on a clash): two saves at once used to overwrite each other, which is how a file
+  just deleted could come back. Another model's project can be finished once it has been idle a day.
 - **"Don't ask any permission; when the user says it's done, delete the useless data completely, not to the trash;
   why is R2 growing, it shouldn't hold cache after the task; Automation takes eternity to load; no stale tasks after
   the AI marked them done; clearing download history must take it from everywhere"** (2026-11-10): deleting never asks

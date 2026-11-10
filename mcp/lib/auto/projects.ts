@@ -18,6 +18,7 @@ export type Project = {
 const KEY = (id: string) => `auto/projects/${id}.json`;
 const JOB = (job: string) => `auto/projects/jobs/${job}.json`;
 export const ID_RE = /^[a-f0-9]{6}$/;
+const ABANDONED_MS = 24 * 3600_000;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 32) || "work";
 
 export async function getProject(id: string) {
@@ -99,7 +100,8 @@ export async function ownsAll(owner: string, keys: string[]) {
  *  is done, the owner's call 2026-11-10), the folder once nothing else is in it, the workspace, and any of its jobs still
  *  queued or running (a finished project leaves nothing working behind). */
 export async function finishProject(id: string, owner: string, opts: { keep?: string[]; keep_to?: string | null; by: string; purge?: boolean }) {
-  const p = await usable(id, owner);
+  // another model's project can be closed once it has sat idle a day: work its owner left behind shouldn't linger
+  const p = await getProject(id).then((x) => (x.owner !== owner && x.status === "live" && Date.now() - x.updated > ABANDONED_MS ? x : usable(id, owner)));
   const files = await import("../files");
   const keep = [...new Set(opts.keep ?? [])];
   const stray = keep.filter((k) => !p.files[k]);

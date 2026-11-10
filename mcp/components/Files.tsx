@@ -24,7 +24,7 @@ import { api, fileUrl as libFileUrl } from "./api";
 import { Query, signOut, useLive, useMe } from "./aw";
 import { useDialog } from "./Dialog";
 import {
-  ContextMenu, DT, FileCard, FileRow, FilterPill, FolderCard, FolderRow, MoveDialog, NewFolderCard, Snack, UploadPanel,
+  ContextMenu, DT, FileCard, FileRow, FilterPill, FolderCard, FolderRow, MoveDialog, NewFolderCard, RecentRail, Snack, UploadPanel,
   type Anchor, type Item, type JobSum, type MenuEntry, type UpRow,
 } from "./fileparts";
 import { CarouselCard, CarouselRow, CarouselStage, CarouselStrip, countOf, isStack, type Checks, type Stack, type Stats } from "./Carousel";
@@ -51,7 +51,9 @@ const SORTS: [Sort, string][] = [["new", "Newest first"], ["old", "Oldest first"
 const EMPTY: Tree = normalize(null);
 const CACHE = "vb-files-v2";
 const CACHE_MS = 5 * 3600_000; // its links stay good for at least 6 h (lib/store.ts signs in 3-hour windows)
-const RECENT = 12;
+const RECENT = 16; // Jump back in: at most this many, from the last RECENT_DAYS
+const RECENT_DAYS = 7;
+const HIDDEN = "vb-recent-hidden"; // files taken off Jump back in, in this browser (key -> when)
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const changed = () => window.dispatchEvent(new Event("vb-files-changed")); // the sidebar's favourites follow
 
@@ -354,8 +356,13 @@ export default function Files() {
     const list = items.filter((i) => (global || i.folder === cwdId) && match(i));
     return ql ? list.sort((a, b) => relevance(b) - relevance(a) || cmp(a, b)) : list.sort(cmp); // a search shows the best fits first
   }, [trashView, trashFiles, atRoot, items, global, cwdId, match, cmp, ql, relevance]);
-  // carousels have their own row at the top, so Recent keeps to loose files
-  const recent = useMemo(() => (atRoot && !filtered ? [...items].filter((i) => !stackOf.has(i.key)).sort((a, b) => b.at - a.at).slice(0, RECENT) : []), [atRoot, filtered, items, stackOf]);
+  // Jump back in: loose files (carousels have their own row) from the last week, newest first. It never reaches back
+  // for older files to fill up, so deleting or hiding one just takes it away
+  const [hidden, setHidden] = useState<Record<string, number>>({});
+  useEffect(() => { try { const h = JSON.parse(localStorage.getItem(HIDDEN) ?? "{}") as Record<string, number>; setHidden(Object.fromEntries(Object.entries(h).filter(([, at]) => Date.now() - at < RECENT_DAYS * 864e5))); } catch { /* private window */ } }, []);
+  const hideRecent = (key: string) => setHidden((h) => { const n = { ...h, [key]: Date.now() }; try { localStorage.setItem(HIDDEN, JSON.stringify(n)); } catch { /* private window */ } return n; });
+  const recent = useMemo(() => (atRoot && !filtered ? items.filter((i) => !stackOf.has(i.key) && !hidden[i.key] && !i.key.startsWith("u:") && Date.now() - i.at < RECENT_DAYS * 864e5)
+    .sort((a, b) => b.at - a.at).slice(0, RECENT) : []), [atRoot, filtered, items, stackOf, hidden]);
   const shownEntries = useMemo(() => (trashView ? shownFiles : collapse(shownFiles)), [trashView, shownFiles, collapse]);
   const shownFolders = useMemo(() => {
     if (trashView) return t.folders.filter((f) => t.trash[`f:${f.id}`]);
@@ -1158,8 +1165,9 @@ export default function Files() {
 
           {recent.length > 0 && (
             <section className="fm-sec" aria-labelledby="fm-recent">
-              <div className="fm-sec-h"><h2 id="fm-recent">Recent <span className="fm-count">{recent.length}</span></h2></div>
-              {grid(recent, "r:")}
+              <div className="fm-sec-h"><h2 id="fm-recent">Jump back in <span className="fm-count">{recent.length}</span></h2><span className="tiny dim">The last week, and where each one lives</span></div>
+              <RecentRail items={recent} where={(it) => pathName(it.folder)} onOpen={(it, e) => events(it.key).onOpen(e)} onMenu={(it, at) => openMenu(it.key, at)}
+                onWhere={(it) => { setQ(""); setStarOnly(false); setBig(false); go(it.folder); }} onHide={(it) => hideRecent(it.key)} />
             </section>
           )}
 
