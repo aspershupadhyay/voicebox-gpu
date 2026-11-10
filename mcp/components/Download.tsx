@@ -93,7 +93,7 @@ function Row({ d, folderName, onRetry, onForget }: { d: Dl; folderName: string; 
         {d.status === "done" && <Link href={href} className="btn ghost sm"><ArrowSquareOut size={14} />Open</Link>}
         {d.status === "error" && <button type="button" className="ghost sm" onClick={onRetry}><ArrowClockwise size={14} />Retry</button>}
         <a className="icon-btn sm" href={d.url} target="_blank" rel="noreferrer noopener" aria-label="Open the original" title="Open the original"><LinkSimple size={15} /></a>
-        {!on && <button type="button" className="icon-btn sm" onClick={onForget} aria-label="Remove from the list (the files stay)" title="Remove from the list (the files stay)"><X size={15} /></button>}
+        <button type="button" className="icon-btn sm" onClick={onForget} aria-label={on ? "Stop it and remove it" : "Remove from the list (the files stay)"} title={on ? "Stop it and remove it" : "Remove from the list (the files stay)"}><X size={15} /></button>
       </span>
     </li>
   );
@@ -236,7 +236,7 @@ export default function Download() {
         {!data ? (
           <ul className="dl-list">{[0, 1, 2].map((i) => <li key={i} className="dl-row skel"><span className="dl-thumb" /><span className="dl-main"><span className="dl-sk" /><span className="dl-sk s" /></span></li>)}</ul>
         ) : list.length ? (
-          <ul className="dl-list">
+          <ul className="dl-list scroll" tabIndex={0} aria-label="Download history">
             {list.map((d) => (
               <Row key={d.id} d={d} folderName={folderName(d.folder, d.source)}
                 onRetry={() => api(`downloads/${d.id}/retry`, { body: {} }).then(load).catch((e) => toast((e as Error).message, "bad"))}

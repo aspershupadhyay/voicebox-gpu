@@ -3,7 +3,7 @@
 // generated takes, subtitles, images and videos in the R2 library (`g:<library id>`); folders are `f:<folder id>`.
 // Writes read the latest copy first and change one thing, so two people filing different things never overwrite each
 // other. The rules (category folders, trash, where a file shows) are in lib/filetree.ts, shared with the browser.
-import { getJson, putJson } from "./store";
+import { getJson, getJsonTagged, putJson, putJsonIf } from "./store";
 import type { MediaKind } from "./workspace";
 import {
   emptyFolders, FOLDER_COLORS, FOLDER_RE, holdsNothing, ITEM_RE, folderFor, normalize, pathOf, ROOT, subtree, TRASH_DAYS, within, newFolderId, type FileTree, type Folder, type FolderColor,
@@ -22,7 +22,32 @@ export class FilesError extends Error {
 async function load(): Promise<FileTree> {
   return normalize(await getJson<Partial<FileTree>>(KEY).catch(() => null));
 }
-const save = (t: FileTree) => putJson(KEY, t);
+
+// Writes are conditional: a change is saved only onto the copy it read (its ETag), else it reads again and changes
+// again. Two saves at once (two people, the page and a model, a delete and the tidy-up) used to overwrite each other,
+// and a file just deleted came back.
+const tags = new WeakMap<FileTree, string | null>();
+class Clash extends Error {}
+async function loadW(): Promise<FileTree> {
+  const { value, etag } = await getJsonTagged<Partial<FileTree>>(KEY);
+  const t = normalize(value);
+  tags.set(t, etag);
+  return t;
+}
+async function save(t: FileTree) {
+  if (!tags.has(t)) return putJson(KEY, t);
+  if (!(await putJsonIf(KEY, t, tags.get(t) ?? null))) throw new Clash();
+}
+function retried<A extends unknown[], R>(f: (...a: A) => Promise<R>) {
+  return async (...a: A): Promise<R> => {
+    for (let i = 0; ; i++) {
+      try { return await f(...a); } catch (e) {
+        if (!(e instanceof Clash) || i >= 7) throw e instanceof Clash ? new FilesError("Files is busy: try again", 409) : e;
+        await new Promise((r) => setTimeout(r, 40 + Math.random() * 120 * (i + 1)));
+      }
+    }
+  };
+}
 
 export const getTree = load;
 
@@ -49,8 +74,8 @@ function unique(t: FileTree, parent: string | null, name: string, except?: strin
 }
 
 /** Make a folder. The browser picks the id itself (so the folder shows the moment you click), else one is made here. */
-export async function createFolder(input: { id?: unknown; name?: unknown; parent?: unknown; color?: unknown }, by: string | null) {
-  const t = await load();
+async function createFolder_(input: { id?: unknown; name?: unknown; parent?: unknown; color?: unknown }, by: string | null) {
+  const t = await loadW();
   if (t.folders.length >= MAX_FOLDERS) throw new FilesError(`up to ${MAX_FOLDERS} folders`);
   const id = input.id == null ? newFolderId() : String(input.id);
   if (!FOLDER_RE.test(id) || id.startsWith("sys")) throw new FilesError("bad folder id");
@@ -66,11 +91,12 @@ export async function createFolder(input: { id?: unknown; name?: unknown; parent
   await save(t);
   return f;
 }
+export const createFolder = retried(createFolder_);
 
 /** Rename, recolour or move a folder (into another folder, or to the top with parent null). Category folders can be
  *  renamed and recoloured but stay at the top. */
-export async function updateFolder(id: string, patch: { name?: unknown; color?: unknown; parent?: unknown }) {
-  const t = await load();
+async function updateFolder_(id: string, patch: { name?: unknown; color?: unknown; parent?: unknown }) {
+  const t = await loadW();
   const f = folderOf(t, id)!;
   if (patch.parent !== undefined) {
     const parent = patch.parent ? String(patch.parent) : null;
@@ -84,10 +110,11 @@ export async function updateFolder(id: string, patch: { name?: unknown; color?: 
   await save(t);
   return f;
 }
+export const updateFolder = retried(updateFolder_);
 
 /** Move files (m:/g:) and folders (f:) into a folder, or to the top level with folder null. */
-export async function moveItems(keys: string[], folder: string | null) {
-  const t = await load();
+async function moveItems_(keys: string[], folder: string | null) {
+  const t = await loadW();
   folderOf(t, folder);
   let files = 0, folders = 0;
   for (const k of keys) {
@@ -106,16 +133,18 @@ export async function moveItems(keys: string[], folder: string | null) {
   await save(t);
   return { files, folders, folder };
 }
+export const moveItems = retried(moveItems_);
 
 /** Back to its kind's folder (Videos, Images, ...): forget where a file was put. */
-export async function autoFile(keys: string[]) {
-  const t = await load();
+async function autoFile_(keys: string[]) {
+  const t = await loadW();
   for (const k of keys) delete t.place[k];
   await save(t);
 }
+export const autoFile = retried(autoFile_);
 
-export async function starItems(keys: string[], on: boolean) {
-  const t = await load();
+async function starItems_(keys: string[], on: boolean) {
+  const t = await loadW();
   const s = new Set(t.starred);
   for (const k of keys) {
     if (!ITEM_RE.test(k) && !FKEY.test(k)) throw new FilesError(`not a file or folder: ${k}`);
@@ -125,11 +154,12 @@ export async function starItems(keys: string[], on: boolean) {
   await save(t);
   return t.starred;
 }
+export const starItems = retried(starItems_);
 
 // ── the trash: deleting puts things here for 30 days; restore puts them back where they were
 
-export async function trashItems(keys: string[], by: string | null) {
-  const t = await load();
+async function trashItems_(keys: string[], by: string | null) {
+  const t = await loadW();
   const at = Date.now();
   for (const k of keys) {
     if (FKEY.test(k)) {
@@ -142,9 +172,10 @@ export async function trashItems(keys: string[], by: string | null) {
   await save(t);
   return { trashed: keys.length };
 }
+export const trashItems = retried(trashItems_);
 
-export async function restoreItems(keys: string[]) {
-  const t = await load();
+async function restoreItems_(keys: string[]) {
+  const t = await loadW();
   let restored = 0;
   for (const k of keys) {
     if (!t.trash[k]) continue;
@@ -174,11 +205,12 @@ export async function restoreItems(keys: string[]) {
   await save(t);
   return { restored };
 }
+export const restoreItems = retried(restoreItems_);
 
 /** Tidy up: folders with nothing in them (rules in lib/filetree.ts emptyFolders) go to the trash, marked so a file
  *  restored into one brings it back. Answers the ones it moved. */
-export async function tidyFolders(by = "Tidy") {
-  const t = await load();
+async function tidyFolders_(by = "Tidy") {
+  const t = await loadW();
   const empty = emptyFolders(t);
   if (!empty.length) return [];
   const at = Date.now();
@@ -187,6 +219,7 @@ export async function tidyFolders(by = "Tidy") {
   await save(t);
   return out;
 }
+export const tidyFolders = retried(tidyFolders_);
 
 /** What deleting for good involves: the trashed folders (with their folders inside) and every file in them. */
 export function forgetPlan(t: FileTree, keys: string[]) {
@@ -198,8 +231,8 @@ export function forgetPlan(t: FileTree, keys: string[]) {
 }
 
 /** Drop files that were deleted for good (place, star, trash) and folders removed with them. */
-export async function forget(files: string[], folders: Iterable<string> = []) {
-  const t = await load();
+async function forget_(files: string[], folders: Iterable<string> = []) {
+  const t = await loadW();
   const gone = new Set(folders);
   for (const k of files) { delete t.place[k]; delete t.trash[k]; delete t.posters[k]; }
   for (const id of gone) delete t.trash[`f:${id}`];
@@ -209,15 +242,17 @@ export async function forget(files: string[], folders: Iterable<string> = []) {
   t.starred = t.starred.filter((k) => !dead.has(k));
   await save(t);
 }
+export const forget = retried(forget_);
 
 /** Trash entries past their 30 days. */
 export const expired = (t: FileTree, now = Date.now()) => Object.entries(t.trash).filter(([, v]) => now - v.at > TRASH_DAYS * 864e5).map(([k]) => k);
 
-export async function markPoster(key: string) {
-  const t = await load();
+async function markPoster_(key: string) {
+  const t = await loadW();
   t.posters[key] = Date.now();
   await save(t);
 }
+export const markPoster = retried(markPoster_);
 
 /** A folder by id, or by its name path ("Thumbnails/October"), case-insensitive. null for the top level. */
 export function findFolder(t: FileTree, ref: string | null | undefined) {

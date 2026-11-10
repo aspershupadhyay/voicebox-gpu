@@ -377,7 +377,10 @@ async function dropStaging(ids: string[]) {
 
 /** Off the list, with everything it left in storage (the files it saved stay in Files). */
 export async function forgetDownload(id: string) {
-  const gone = await change((list) => { const i = list.findIndex((x) => x.id === id); if (i >= 0) list.splice(i, 1); return i >= 0; });
+  const d = await change((list) => { const i = list.findIndex((x) => x.id === id); return i >= 0 ? list.splice(i, 1)[0] : null; });
+  const gone = !!d;
+  // one still running is stopped where it runs
+  if (d?.job && ACTIVE.has(d.status)) await import("./worker").then((w) => w.call(`/jobs/${d.job}/cancel`, { body: {}, timeoutMs: 5000 })).catch(() => null);
   await dropStaging([id]);
   return gone;
 }
@@ -529,6 +532,16 @@ export const anyLive = async () => (await listDownloads()).some((d) => ["fetchin
 
 /** Bring running downloads up to date (the page and the MCP tool call this when they look, and every worker heartbeat). */
 export async function refresh(later: (f: () => Promise<unknown>) => void, actor: Actor) {
+  // one that stopped moving long ago (the request reading it was cut off, the worker went away for good) ends as an
+  // error you can Retry or clear, instead of "Reading the link" for days
+  const old = (d: Dl) => {
+    const idle = Date.now() - d.updated;
+    if (d.status === "fetching" || d.status === "saving") return idle > 15 * 60_000;
+    if (d.status === "worker") return idle > 3 * 3600_000;
+    if (d.status === "waiting") return !d.retry_at && idle > 3 * 3600_000;
+    return false;
+  };
+  if ((await listDownloads()).some(old)) await change((l) => { for (const d of l) if (old(d)) Object.assign(d, { status: "error", error: "It stopped part way and never finished: Retry, or clear it", stage: null, pct: null, updated: Date.now() }); });
   const list = await listDownloads();
   const live = list.filter((d) => d.status === "worker" || d.status === "waiting" || (d.status === "saving" && Date.now() - (d.saving_at ?? 0) > 120_000));
   if (!live.length) return list;

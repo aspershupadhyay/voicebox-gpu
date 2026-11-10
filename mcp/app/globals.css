@@ -3612,6 +3612,8 @@ html.cur-custom :is(input:not([type="range"]):not([type="checkbox"]):not([type="
 .dl-list-wrap { display: flex; flex-direction: column; gap: 8px; }
 .dl-list-head { display: flex; align-items: baseline; gap: 10px; padding: 4px 2px; }
 .dl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+/* the history scrolls in its own box, so the page never grows or jumps as rows come and go */
+.dl-list.scroll { max-height: min(58vh, 560px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .dl-row { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-top: 1px solid var(--line); background: var(--bg); animation: dl-in .35s var(--ease) backwards; transition: background .15s; }
 .dl-row:first-child { border-top: 0; }
 .dl-row:hover { background: var(--surface); }
@@ -3909,3 +3911,20 @@ button.dm-btn:hover { opacity: 1; border-color: var(--line3); } button.dm-btn.on
   .dm-edit-bar > .row { width: 100%; justify-content: flex-end; }
   .dm-ev { flex-wrap: wrap; } .dm-ev .dm-ev-tags { width: 100%; justify-content: flex-start; padding-left: 30px; }
 }
+
+/* Files → Jump back in (components/fileparts.tsx RecentRail): one row that scrolls sideways, split by day */
+.rr { display: flex; gap: 12px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding: 2px 2px 10px; margin: 0 -2px; scrollbar-width: thin; }
+.rr-cell { flex: 0 0 188px; min-width: 0; display: flex; flex-direction: column; gap: 6px; scroll-snap-align: start; animation: up-rise .3s var(--ease) backwards; }
+.rr-day { height: 16px; font: 500 11.5px/16px var(--sans); color: var(--dim); letter-spacing: .01em; }
+.rr-tile { position: relative; display: flex; flex-direction: column; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); overflow: hidden; cursor: var(--cur-pointer, pointer); transition: border-color .15s; }
+.rr-tile:hover { border-color: var(--line3); }
+.rr-tile .fc-cover { height: 96px; }
+.rr-body { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px 9px; min-width: 0; }
+.rr-name { font-size: 13px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rr-where { position: relative; z-index: 2; display: inline-flex; align-items: center; gap: 5px; height: auto; padding: 0; border: 0; background: none; box-shadow: none; color: var(--dim); font: 400 12px/1.4 var(--sans); min-width: 0; max-width: 100%; justify-content: flex-start; }
+.rr-where span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rr-where:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; opacity: 1; }
+.rr-hide { position: absolute; top: 6px; right: 6px; z-index: 3; width: 24px; height: 24px; padding: 0; display: grid; place-items: center; border-radius: 7px; border: 0; background: rgb(0 0 0 / .65); color: #fff; opacity: 0; transition: opacity .15s; }
+.rr-tile:hover .rr-hide, .rr-hide:focus-visible { opacity: 1; }
+@media (hover: none) { .rr-hide { opacity: 1; } }
+@media (max-width: 520px) { .rr-cell { flex-basis: 156px; } }
