@@ -6,10 +6,10 @@
 import { getJson, putJson } from "./store";
 import type { MediaKind } from "./workspace";
 import {
-  FOLDER_COLORS, FOLDER_RE, ITEM_RE, folderFor, normalize, pathOf, ROOT, subtree, TRASH_DAYS, within, newFolderId, type FileTree, type Folder, type FolderColor,
+  emptyFolders, FOLDER_COLORS, FOLDER_RE, holdsNothing, ITEM_RE, folderFor, normalize, pathOf, ROOT, subtree, TRASH_DAYS, within, newFolderId, type FileTree, type Folder, type FolderColor,
 } from "./filetree";
 
-export { FOLDER_COLORS, FOLDER_RE, ITEM_RE, pathOf, type FileTree, type Folder, type FolderColor };
+export { emptyFolders, FOLDER_COLORS, FOLDER_RE, holdsNothing, ITEM_RE, pathOf, type FileTree, type Folder, type FolderColor };
 
 const KEY = "workspace/files.json";
 const MAX_FOLDERS = 500;
@@ -150,6 +150,20 @@ export async function restoreItems(keys: string[]) {
     if (!t.trash[k]) continue;
     delete t.trash[k];
     restored++;
+    if (ITEM_RE.test(k)) {
+      // a file whose folder is in the trash too: a folder tidied away as empty comes back with it; one someone
+      // deleted stays there, and the file shows in its kind's folder (it used to stay hidden, and went with the folder)
+      const chain: Folder[] = [];
+      for (let cur: string | null = t.place[k] ?? null, n = 0; cur && cur !== ROOT && n < 64; n++) {
+        const f = t.folders.find((x) => x.id === cur);
+        if (!f) break;
+        chain.push(f);
+        cur = f.parent;
+      }
+      const gone = chain.filter((f) => t.trash[`f:${f.id}`]);
+      if (gone.some((f) => !t.trash[`f:${f.id}`].auto)) delete t.place[k];
+      else for (const f of gone) delete t.trash[`f:${f.id}`];
+    }
     if (FKEY.test(k)) {
       // a folder comes back under its old parent, or at the top if that's gone or still in the trash
       const f = t.folders.find((x) => x.id === k.slice(2));
@@ -159,6 +173,19 @@ export async function restoreItems(keys: string[]) {
   }
   await save(t);
   return { restored };
+}
+
+/** Tidy up: folders with nothing in them (rules in lib/filetree.ts emptyFolders) go to the trash, marked so a file
+ *  restored into one brings it back. Answers the ones it moved. */
+export async function tidyFolders(by = "Tidy") {
+  const t = await load();
+  const empty = emptyFolders(t);
+  if (!empty.length) return [];
+  const at = Date.now();
+  const out = empty.map((f) => ({ id: f.id, path: pathOf(t, f.id) }));
+  for (const f of empty) t.trash[`f:${f.id}`] = { at, by, auto: true };
+  await save(t);
+  return out;
 }
 
 /** What deleting for good involves: the trashed folders (with their folders inside) and every file in them. */

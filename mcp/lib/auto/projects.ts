@@ -112,7 +112,8 @@ export async function finishProject(id: string, owner: string, opts: { keep?: st
   const after = await files.getTree();
   const others = Object.entries(after.place).filter(([k, f]) => f === p.folder && !after.trash[k] && !p.files[k]).length
     + after.folders.filter((f) => f.parent === p.folder && !after.trash[`f:${f.id}`]).length;
-  const folderGone = !others && !after.trash[`f:${p.folder}`];
+  // gone too when all that's left in it is empty folders (a download's "Instagram" with its file already removed)
+  const folderGone = !after.trash[`f:${p.folder}`] && (!others || files.holdsNothing(after, p.folder));
   if (folderGone) await files.trashItems([`f:${p.folder}`], opts.by);
   let workspace = "removed";
   try {

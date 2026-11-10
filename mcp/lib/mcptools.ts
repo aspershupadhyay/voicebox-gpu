@@ -1190,21 +1190,22 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     "download",
     {
       title: "Download from a link (Instagram, YouTube, TikTok, X, Pinterest, Cosmos, any page)",
-      description: "Download the photo(s) or video behind a link into Files, in a folder (made if it's a new name; default \"Downloads\"), each site in its own folder inside it (Downloads/Instagram, Downloads/YouTube…). Works for Instagram posts, reels and carousels, YouTube videos and Shorts, TikTok, X, Facebook, Threads, Reddit, Vimeo (through the GPU worker's yt-dlp: with the worker off it starts a Colab CPU runtime by itself (the cheap GPU if Colab won't give one) and stops it once the downloads are in; a page no extractor knows is searched for any video or m3u8 link; the first one takes about a minute longer, so with wait it may come back waiting: check downloads), and X, Pinterest pins (video or the original-size image), Cosmos and any page's own photo or video, or a direct file link (straight from the server, no worker). Files are named \"@handle on Instagram - title\" so post_package can credit the creator. Pass several links in urls (up to 20). wait (default true) waits up to ~50 s and returns the files (m:<id>, ready for auto_post, publish_post, add to a carousel); otherwise check later with downloads. A post that needs a sign-in (YouTube's bot check, some Instagram posts) asks for sign-in cookies, which the user adds on the Download page.",
+      description: "Download the photo(s) or video behind a link into Files, in a folder (made if it's a new name; default \"Downloads\"), each site in its own folder inside it (Downloads/Instagram, Downloads/YouTube…). Works for Instagram posts, reels and carousels, YouTube videos and Shorts, TikTok, X, Facebook, Threads, Reddit, Vimeo (through the GPU worker's yt-dlp: with the worker off it starts a Colab CPU runtime by itself (the cheap GPU if Colab won't give one) and stops it once the downloads are in; a page no extractor knows is searched for any video or m3u8 link; the first one takes about a minute longer, so with wait it may come back waiting: check downloads), and X, Pinterest pins (video or the original-size image), Cosmos and any page's own photo or video, or a direct file link (straight from the server, no worker). Files are named \"@handle on Instagram - title\" so post_package can credit the creator. Pass several links in urls (up to 20). wait (default true) waits up to ~50 s and returns the files (m:<id>, ready for auto_post, publish_post, add to a carousel); otherwise check later with downloads. A post that needs a sign-in (YouTube's bot check, some Instagram posts) asks for sign-in cookies, which the user adds on the Download page. A link whose files are already in Files isn't fetched twice: you get those files back with a note (again: true downloads it anyway).",
       inputSchema: z.object({
         url: z.string().url().optional(), urls: z.array(z.string().url()).max(20).optional(),
         folder: z.string().max(200).optional().describe("a folder id or name path (\"Downloads/Case 025\"); made if new; default Downloads"),
         name: z.string().max(150).optional().describe("a file name to use instead (one link only)"), post_id: POST_ID.optional(),
         wait: z.boolean().optional().describe("default true: wait up to ~50 s for the files to land"),
+        again: z.boolean().optional().describe("download it even though the same link's files are already in Files"),
       }),
     },
-    async ({ url, urls, folder, name, post_id, wait }) => ws(async () => {
+    async ({ url, urls, folder, name, post_id, wait, again }) => ws(async () => {
       const dl = await import("@/lib/downloads");
       const { after } = await import("next/server");
       const later = (f: () => Promise<unknown>) => { const p = f().catch(() => null); after(() => p); }; // starts now, kept alive after the reply
       const list = [...(urls ?? []), ...(url ? [url] : [])];
       if (!list.length) throw new Error("give url or urls");
-      const made = await dl.startDownloads(list, { folder, name, post: post_id ?? null }, CLAUDE, later);
+      const made = await dl.startDownloads(list, { folder, name, post: post_id ?? null, again }, CLAUDE, later);
       const ids = new Set(made.map((d) => d.id));
       const until = Date.now() + 50_000;
       let rows = made;
@@ -1314,15 +1315,15 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     {
       title: "List files and folders",
       description:
-        "The dashboard's Files page, a Drive-like file manager over uploads (shared workspace) and generated items (voiceovers, subtitles, images, videos). The top level holds five category folders that file everything by kind on their own (Videos, Images, Audio, Docs & scripts, Other) beside your own folders. Without `folder` it shows the top level; `everywhere` searches every folder; `trash` lists the trash. Each file has an id (m:… upload, g:… generated) for move_files, rename_file, star_files, get_file and delete_files; a file in a carousel (a post's photos stacked as one) has its carousel id (see the carousels tool).",
+        "The dashboard's Files page, a Drive-like file manager over uploads (shared workspace) and generated items (voiceovers, subtitles, images, videos). The top level holds five category folders that file everything by kind on their own (Videos, Images, Audio, Docs & scripts, Other) beside your own folders. Without `folder` it shows the top level; `everywhere` searches every folder; `trash` lists the trash; sort \"size\" with everywhere puts the biggest files first (what's taking space), and the top level answers `storage`: how full the bucket is against its budget and what fills it. Each file has an id (m:… upload, g:… generated) for move_files, rename_file, star_files, get_file and delete_files; a file in a carousel (a post's photos stacked as one) has its carousel id (see the carousels tool).",
       inputSchema: z.object({
         folder: FOLDER_REF.optional(), everywhere: z.boolean().optional().describe("list files from every folder (default: only this folder; on when search is set)"),
         search: z.string().max(200).optional(), kind: z.enum(["image", "video", "audio", "doc", "other"]).optional(),
         source: z.enum(["upload", "generated"]).optional(), starred: z.boolean().optional(), trash: z.boolean().optional().describe("list what's in the trash instead"),
-        limit: z.number().int().min(1).max(500).optional(),
+        limit: z.number().int().min(1).max(500).optional(), sort: z.enum(["new", "size"]).optional().describe("new (default): newest first; size: biggest first"),
       }),
     },
-    async ({ folder, everywhere, search, kind, source, starred, trash, limit }) => files(async () => {
+    async ({ folder, everywhere, search, kind, source, starred, trash, limit, sort }) => files(async () => {
       const { catalog } = await import("@/lib/filemanager");
       const fs = await import("@/lib/files");
       const { tree, items, note } = await catalog({ trash });
@@ -1338,11 +1339,15 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       const q = search?.toLowerCase();
       const shown = items.filter((i) => (all || i.folder === id) && (!kind || i.kind === kind) && (!source || i.source === source) && (starred === undefined || i.starred === starred) &&
         (!q || `${i.name} ${i.type} ${i.folder_path}`.toLowerCase().includes(q)));
+      if (sort === "size") shown.sort((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0));
+      const gb = (n: number) => +(n / 1e9).toFixed(2);
+      const use = here || all ? null : await import("@/lib/r2files").then((r) => r.storageUse()).catch(() => null);
       return {
         folder: here ? { id: here.id, name: here.name, path: fs.pathOf(tree, here.id), color: here.color, parent: here.parent, category: here.system ?? null } : null,
         folders: live.filter((f) => (all && q ? f.name.toLowerCase().includes(q) : f.parent === id))
           .map((f) => ({ id: f.id, name: f.name, path: fs.pathOf(tree, f.id), color: f.color, items: inside(f.id), category: f.system ?? null, starred: tree.starred.includes(`f:${f.id}`) })),
         files: shown.slice(0, limit ?? 100), total: shown.length, note,
+        storage: use ? { used_gb: gb(use.bytes), budget_gb: gb(use.cap), by_part_gb: Object.fromEntries(Object.entries(use.parts).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => [k, gb(v)])), note: "Files in the trash still count until it's emptied." } : undefined,
       };
     }),
   );

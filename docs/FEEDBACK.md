@@ -6,6 +6,15 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"It's time to manage the storage, it's all too cluttered"** (2026-11-10): cleaned by hand first, on the owner's
+  word (22 empty folders, the 11 wallpaper zips, old cuts of a video, exact duplicates; the loose screenshots filed),
+  then made to stay tidy: a folder of your own with nothing live in it and nothing made in it for 3 days goes to the
+  trash when the Files page is opened (`emptyFolders` in lib/filetree.ts; category folders never; a file restored
+  into one brings it back), a finished project's folder goes even when only empty folders are left in it, a link
+  whose files are already in Files isn't downloaded twice (the earlier download is answered with a note; `again`
+  forces it), and Files has **Biggest** (every file, largest first; the "x of y GB" in the header opens it;
+  `list_files` takes sort size and answers `storage`). Deleting a file two rows share keeps the bytes until the last
+  row goes. Keep it that way: nothing new may leave empty folders or twin copies behind.
 - **"I've already uploaded the cookies but it's not giving me access"** (2026-11-07, YouTube downloads; "our local
   downloader works, why not ours"): yt-dlp on a home connection passes, but the cloud downloader (Colab, Cerebrium) is
   on datacenter addresses YouTube bot-checks, so it needs a signed-in YouTube export. Sign-ins was one cookies.txt

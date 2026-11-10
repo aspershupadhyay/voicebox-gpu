@@ -309,11 +309,47 @@ export async function setCookies(text: string | null, site?: string | null) {
   return cookieState();
 }
 
-/** Start downloads for one or more links. Each returns at once; the copying runs after the response (`later`). */
-export async function startDownloads(urls: string[], o: { folder?: string | null; name?: string | null; post?: string | null }, actor: Actor, later: (f: () => Promise<unknown>) => void) {
-  const clean = [...new Set(urls.map((u) => u.trim()).filter(Boolean))].slice(0, 20);
-  if (!clean.length) throw new DlError("give a link to download");
-  for (const u of clean) await checkUrl(u);
+/** A link without what doesn't change the post behind it (share and tracking tags, www, the hash, a last slash). */
+export function sameLink(raw: string) {
+  try {
+    const u = new URL(raw.trim());
+    for (const k of [...u.searchParams.keys()]) if (/^(utm_\w+|igsh|igshid|img_index|si|s|feature|fbclid|ref|ref_src|ref_url)$/i.test(k)) u.searchParams.delete(k);
+    u.searchParams.sort();
+    return `${u.hostname.toLowerCase().replace(/^(www|m|mobile)\./, "")}${u.pathname.replace(/\/+$/, "")}${u.search}`;
+  } catch { return raw.trim(); }
+}
+
+/** Downloads of these links that are already in Files, whole: finished, every file still there and out of the trash. */
+async function alreadySaved(urls: string[]) {
+  const want = new Set(urls.map(sameLink));
+  const done = (await listDownloads()).filter((d) => d.status === "done" && d.items.length && want.has(sameLink(d.url)));
+  if (!done.length) return new Map<string, Dl>();
+  const [{ getTree }, { isTrashed }, { getMedia }] = await Promise.all([import("./files"), import("./filetree"), import("./data")]);
+  const t = await getTree();
+  const out = new Map<string, Dl>();
+  for (const d of done) {
+    if (out.has(sameLink(d.url))) continue; // the newest one (the list is newest first)
+    const there = await Promise.all(d.items.map((x) => !isTrashed(t, `m:${x.media}`) && getMedia(x.media).then(() => true).catch(() => false)));
+    if (there.every(Boolean)) out.set(sameLink(d.url), d);
+  }
+  return out;
+}
+
+/** Start downloads for one or more links. Each returns at once; the copying runs after the response (`later`). A link
+ *  whose files are already in Files isn't fetched a second time (its earlier download is answered, with a note)
+ *  unless `again` asks for it. */
+export async function startDownloads(urls: string[], o: { folder?: string | null; name?: string | null; post?: string | null; again?: boolean }, actor: Actor, later: (f: () => Promise<unknown>) => void) {
+  const asked = [...new Set(urls.map((u) => u.trim()).filter(Boolean))].slice(0, 20);
+  if (!asked.length) throw new DlError("give a link to download");
+  for (const u of asked) await checkUrl(u);
+  const saved = o.again ? new Map<string, Dl>() : await alreadySaved(asked).catch(() => new Map<string, Dl>());
+  const had: Dl[] = [];
+  for (const d of new Set(asked.map((u) => saved.get(sameLink(u))).filter((d): d is Dl => !!d))) {
+    const where = d.folder ? await import("./files").then(async (f) => f.pathOf(await f.getTree(), d.folder)).catch(() => "") : "";
+    had.push((await patch(d.id, { note: `Already in Files${where ? ` (${where})` : ""}: not downloaded again.` })) ?? d);
+  }
+  const clean = asked.filter((u) => !saved.has(sameLink(u)));
+  if (!clean.length) return had;
   const folders = new Map<Source, string | null>();
   for (const src of new Set(clean.map(sourceOf))) folders.set(src, await folderFor(o.folder, src, actor.name)); // one at a time: no twin folders
   const now = Date.now();
@@ -323,7 +359,7 @@ export async function startDownloads(urls: string[], o: { folder?: string | null
   }));
   await change((list) => { list.unshift(...made); });
   for (const d of made) later(() => run(d, actor));
-  return made;
+  return [...made, ...had];
 }
 
 export async function retryDownload(id: string, actor: Actor, later: (f: () => Promise<unknown>) => void) {
