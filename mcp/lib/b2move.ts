@@ -1,11 +1,13 @@
 // Moving what belongs on Backblaze (B2_PREFIXES in lib/store.ts) out of R2, once, when B2 is switched on: each file is
 // copied, checked (same size on B2), and only then, with finish, R2's copy is deleted. Safe to run again: a file
 // already on B2 at the same size is skipped. Runs from the storage tool (action move_to_b2).
-import { B2_PREFIXES, b2On, b2Ready, delR2, getR2, headB2, listR2, putB2, typeOf } from "./store";
+import { B2_PREFIXES, b2Check, b2On, b2Ready, delR2, getR2, headB2, listR2, putB2, typeOf } from "./store";
 
 export async function moveToB2({ finish = false, budgetMs = 25_000 } = {}) {
   if (!b2Ready()) throw new Error("Backblaze isn't set up on the Worker yet (B2_KEY_ID, B2_APP_KEY, B2_BUCKET, B2_ENDPOINT).");
   if (finish && !b2On()) throw new Error("Switch B2 on first (B2_FILES=on): until then new files still land in R2.");
+  const check = await b2Check();
+  if (!check.ok) return { moved: 0, error: "Backblaze turned the Worker's key down: nothing was copied or deleted.", check };
   const until = Date.now() + budgetMs;
   const all = (await Promise.all(B2_PREFIXES.map(listR2))).flat();
   let copied = 0, bytes = 0, already = 0;
