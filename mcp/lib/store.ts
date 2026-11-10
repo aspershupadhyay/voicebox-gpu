@@ -73,9 +73,21 @@ const B2_BASE = () => `${process.env.B2_ENDPOINT!.trim().replace(/\/$/, "").repl
 const b2url = (key: string) => `${B2_BASE()}/${enc(key)}`;
 
 /** B2 alone: the object (a Range header passes through), or null. */
-export async function b2Get(key: string, init: RequestInit = {}) {
+export async function b2Get(key: string, init: RequestInit = {}): Promise<Response | null> {
   const r = await b2().fetch(b2url(key), { cache: "no-store", ...init });
   if (r.status === 404) return null;
+  // B2 answers a HEAD for a file that isn't there with a bare 403 (a HEAD has no body to say why): ask with a one-byte
+  // GET instead, which says NoSuchKey (not there: null) or gives the size (Content-Range), or the real reason
+  if (r.status === 403 && init.method === "HEAD") {
+    const g = await b2().fetch(b2url(key), { cache: "no-store", headers: { Range: "bytes=0-0" } });
+    if (g.status === 404) return null;
+    const body = g.ok ? "" : await g.text();
+    if (/NoSuchKey|not\s*found|does not exist/i.test(body)) return null;
+    if (!g.ok) throw new Error(`B2 HEAD ${key}: ${g.status} ${(body.match(/<Code>([^<]*)<\/Code>/)?.[1] ?? "")} ${(body.match(/<Message>([^<]*)<\/Message>/)?.[1] ?? body.slice(0, 160))}`.trim());
+    await g.body?.cancel().catch(() => null);
+    const size = Number(/\/(\d+)$/.exec(g.headers.get("content-range") ?? "")?.[1] ?? g.headers.get("content-length") ?? 0);
+    return new Response(null, { status: 200, headers: { "content-length": String(size), "content-type": g.headers.get("content-type") ?? "" } });
+  }
   if (!r.ok) throw new Error(`B2 ${init.method ?? "GET"} ${key}: ${r.status}`);
   return r;
 }

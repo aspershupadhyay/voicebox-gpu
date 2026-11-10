@@ -96,7 +96,7 @@ export type DmSettings = {
   /** saved replies for the inbox */
   snippets: { id: string; name: string; text: string }[];
   /** conversation starters: up to 4 questions shown when someone opens a new chat, each running an automation */
-  starters: { on: boolean; items: { question: string; automation: string }[]; pushed: number };
+  starters: { on: boolean; items: { question: string; automation: string; account?: string }[]; pushed: number };
   /** how long the bot stays quiet for a person after someone answers them by hand (minutes) */
   takeover_min: number;
 };
@@ -277,10 +277,12 @@ function cleanSnippets(v: unknown) {
 }
 function cleanStarters(v: unknown, pushed: number): DmSettings["starters"] {
   const o = (v ?? {}) as { on?: unknown; items?: unknown };
-  const items = (Array.isArray(o.items) ? o.items : []).slice(0, 4).flatMap((x) => {
-    const q = (x ?? {}) as { question?: unknown; automation?: unknown };
+  // up to 4 per account (an item with no account shows on every account)
+  const items = (Array.isArray(o.items) ? o.items : []).slice(0, 12).flatMap((x) => {
+    const q = (x ?? {}) as { question?: unknown; automation?: unknown; account?: unknown };
     const question = str(q.question, 80), automation = typeof q.automation === "string" && ID.test(q.automation) ? q.automation : "";
-    return question && automation ? [{ question, automation }] : [];
+    const account = typeof q.account === "string" && IGID.test(q.account) ? q.account : undefined;
+    return question && automation ? [{ question, automation, ...(account ? { account } : {}) }] : [];
   });
   return { on: bool(o.on, false), items, pushed };
 }
@@ -903,9 +905,10 @@ export async function pushStarters() {
   for (const acc of accounts) {
     try {
       const { token } = await tokenFor(acc.id);
-      const r = items.length
+      const mine = items.filter((i) => !i.account || i.account === acc.id).slice(0, 4);
+      const r = mine.length
         ? await fetch(`${GRAPH}/me/messenger_profile`, { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ platform: "instagram", ice_breakers: [{ locale: "default", call_to_actions: items.map((i) => ({ question: i.question, payload: `vbib:${i.automation}` })) }] }) })
+          body: JSON.stringify({ platform: "instagram", ice_breakers: [{ locale: "default", call_to_actions: mine.map((i) => ({ question: i.question, payload: `vbib:${i.automation}` })) }] }) })
         : await fetch(`${GRAPH}/me/messenger_profile?platform=instagram`, { method: "DELETE", cache: "no-store", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ fields: ["ice_breakers"] }) });
       const j = (await r.json().catch(() => ({}))) as { error?: { message?: string } };
       if (!r.ok || j.error) throw new Error(j.error?.message ?? `HTTP ${r.status}`);
