@@ -21,12 +21,9 @@ export const GATES: Record<string, (a: Args) => Gate | Promise<Gate>> = {
   // publishing now no longer asks first (the owner's call, 2026-11-01: "remove the post approval, I don't want that").
   // Scheduled publishing never asked; the publishing rules and schedules that publish still do.
   automation_rules: (a) => (a.set && Object.keys(a.set as object).length ? "publishing_rules" : null),
-  // messages to the public in the account's name: switching Auto-DM on or changing what it sends asks first
-  // anything that sends, changes what's sent, touches public comments or sends data out asks first; reading, testing,
-  // blocking someone and making the report don't
-  // (a reply by hand from the inbox and publishing the conversation starters are messages in the account's name too)
-  auto_dm: (a) => (a.action === "save" || a.action === "reply" || a.action === "push_starters" || (a.action === "switch" && a.on === true) || (a.action === "comment_act" && a.mod_action !== "dismiss")
-    || (a.action === "settings" && (a.on === true || ["defaults", "safety", "unblock", "moderation", "auto_attach", "sync", "ai", "starters"].some((k) => a[k] !== undefined))) ? "publishing_rules" : null),
+  // Auto-DM no longer asks first (the owner's call, 2026-11-10: "why is it asking me again, fix it so we won't have to
+  // go there again and again"): saving, switching on, replies from the inbox and starters go straight through, and
+  // every change is still in the call log.
   // deleting never asks (the owner's call, 2026-11-10: "you don't need to ask any permission"): to the trash, for good,
   // emptying the trash. Before that (2026-10-31) only what was gone for good asked.
   workflow: async (a) => {

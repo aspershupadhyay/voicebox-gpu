@@ -181,18 +181,19 @@ export function registerAutoTools(server: ToolServer) {
       description: [
         "action report (default): how full the storage bucket (R2) is against its budget, what fills it by part, the biggest files, what's in the trash, and what a clean-up would remove right now.",
         "clean: deletes for good what nothing needs: the motion tools' cache, older compile caches, finished downloads' staging, temporary uploads, bytes, posters and thumbnails of deleted files, the call log past 31 days (caches are left while a GPU is working). It never touches Files or the trash (emptying the trash is empty_trash, shown to the user first). It also runs by itself every night.",
-        "move_to_b2: files and audio live on Backblaze B2, models and caches on R2; this copies what's still in R2 to B2 and checks each copy (run again until left is 0), and with finish: true deletes R2's checked copies.",
+        "move_to_b2: files and audio live on Backblaze B2, models and caches on R2; this copies what's still in R2 to B2 and checks each copy (run again until left is 0), and with finish: true deletes R2's checked copies. move_to_r2: brings back to R2 the state files and thumbnails the first B2 version put on B2 (each B2 read is a capped, paid transaction), then deletes them from B2.",
         "Run it after a project's finish, or when report says the bucket is near its budget.",
         "Example: {\"action\":\"clean\"}.",
       ].join(" "),
       inputSchema: z.object({
-        action: z.enum(["report", "clean", "move_to_b2"]).optional(),
+        action: z.enum(["report", "clean", "move_to_b2", "move_to_r2"]).optional(),
         finish: z.boolean().optional().describe("move_to_b2: also delete R2's copies once they're checked on B2"),
       }),
     },
     async ({ action = "report", finish }) => {
       try {
         if (action === "move_to_b2") return text(await (await import("../b2move")).moveToB2({ finish }));
+        if (action === "move_to_r2") return text(await (await import("../b2move")).moveToR2());
         const jan = await import("../janitor");
         if (action === "clean") return text(await jan.cleanStorage());
         const [{ storageUse }, fm, waste] = await Promise.all([import("../r2files"), import("../filemanager"), jan.findWaste()]);

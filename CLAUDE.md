@@ -58,7 +58,9 @@ many agents at once), in order. A new tool goes in
 
 Done moving (2026-10-31, `docs/MIGRATION.md`): the app on a Cloudflare Worker, files in R2 (the Worker reads it through its
 `BUCKET` binding, `lib/store.ts`), except Files and audio (uploads, downloads, finished voice jobs), which live in Backblaze B2 (bucket
-`voicebox-files`, `B2_*` secrets on the Worker, switched on by `B2_FILES=on`; `B2_PREFIXES` in `lib/store.ts`), posts, comments, activity, file rows and accounts in Postgres on Neon (`lib/db.ts`,
+`voicebox-files`, `B2_*` secrets on the Worker, switched on by `B2_FILES=on`; `B2_PREFIXES` in `lib/store.ts`). Never
+put state that's read often on B2 (no `.json`, no publish state, no thumbnail cache): every B2 read is a capped, paid
+transaction, and that once took the whole app down (FEEDBACK.md, 2026-11-10), posts, comments, activity, file rows and accounts in Postgres on Neon (`lib/db.ts`,
 `lib/data.ts`, `lib/users.ts`), backups in Neon storage, deploys from GitHub. The GPU is Colab, Kaggle, Modal or Cerebrium (`docs/MODAL.md`: same worker, `lib/gpus.ts` picks one and
 falls back down the list, free ones first; every call goes through `lib/worker.ts`). Kaggle (`lib/kaggle.ts`) is started by the app
 through Kaggle's API when work needs a GPU and stops itself when idle (`KAGGLE_USERNAME`, `KAGGLE_API_TOKEN` on the Worker). Appwrite and Vercel are not used by any

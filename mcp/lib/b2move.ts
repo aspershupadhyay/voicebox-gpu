@@ -31,3 +31,31 @@ export async function moveToB2({ finish = false, budgetMs = 25_000 } = {}) {
     next: left ? "Run it again: the time ran out." : failed.length ? "Some failed: run it again." : finish ? "Done: R2 holds no files that belong on B2." : "Every file is on B2. Run again with finish: true to delete R2's copies.",
   };
 }
+
+/** Bring back to R2 what the first B2 version put on B2 but belongs on R2 (state .json files, the publish folder,
+ *  thumbnails): copied, checked, then deleted from B2. Safe to run again. Runs from the storage tool (move_to_r2). */
+export async function moveToR2({ budgetMs = 25_000 } = {}) {
+  const S = await import("./store");
+  if (!S.b2Ready()) throw new Error("Backblaze isn't set up on the Worker.");
+  const until = Date.now() + budgetMs;
+  const all = (await Promise.all(S.LEGACY_B2.map((p) => S.listB2(p)))).flat().filter((o) => S.legacyKey(o.key));
+  let moved = 0, bytes = 0;
+  const done: string[] = [], failed: { key: string; error: string }[] = [];
+  for (const o of all) {
+    if (Date.now() > until) break;
+    try {
+      if ((await S.headR2(o.key)) !== o.size) {
+        const src = await S.b2Get(o.key);
+        if (!src) { done.push(o.key); continue; }
+        await S.putObj(o.key, new Uint8Array(await src.arrayBuffer()), src.headers.get("content-type") || S.typeOf(o.key));
+        if ((await S.headR2(o.key)) !== o.size) throw new Error("size differs after the copy");
+        moved++; bytes += o.size;
+      }
+      done.push(o.key);
+    } catch (e) { failed.push({ key: o.key, error: (e as Error).message }); }
+  }
+  if (done.length) await S.delB2(done);
+  const left = all.length - done.length - failed.length;
+  return { on_b2: all.length, moved_to_r2: moved, mb: +(bytes / 1e6).toFixed(2), deleted_from_b2: done.length, failed, left,
+    next: left ? "Run it again: the time ran out." : failed.length ? "Some failed (Backblaze's daily cap?): run it again later." : "Done: B2 holds only files people open." };
+}
