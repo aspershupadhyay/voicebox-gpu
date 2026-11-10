@@ -368,7 +368,36 @@ export async function retryDownload(id: string, actor: Actor, later: (f: () => P
   later(() => run(d, actor));
   return d;
 }
-export const forgetDownload = (id: string) => change((list) => { const i = list.findIndex((x) => x.id === id); if (i >= 0) list.splice(i, 1); return i >= 0; });
+/** What a download leaves in storage besides its files: the Colab downloader's slots and info.json. */
+async function dropStaging(ids: string[]) {
+  const { delObjs, listObjs } = await import("./store");
+  const keys = (await Promise.all(ids.map((id) => listObjs(`workspace/downloads/${id}/`).catch(() => [])))).flat().map((o) => o.key);
+  if (keys.length) await delObjs(keys).catch(() => null);
+}
+
+/** Off the list, with everything it left in storage (the files it saved stay in Files). */
+export async function forgetDownload(id: string) {
+  const gone = await change((list) => { const i = list.findIndex((x) => x.id === id); if (i >= 0) list.splice(i, 1); return i >= 0; });
+  await dropStaging([id]);
+  return gone;
+}
+
+const ACTIVE = new Set<Dl["status"]>(["fetching", "waiting", "worker", "saving"]);
+/** Clear the history: every download that isn't running (all: running ones too, cancelled where they are), with what
+ *  each left in storage. The files they saved stay in Files. */
+export async function clearDownloads(all = false) {
+  const gone = await change((list) => {
+    const out = list.filter((d) => all || !ACTIVE.has(d.status));
+    list.splice(0, list.length, ...list.filter((d) => !out.includes(d)));
+    return out;
+  });
+  if (all) {
+    const { call } = await import("./worker");
+    await Promise.all(gone.filter((d) => d.job && ACTIVE.has(d.status)).map((d) => call(`/jobs/${d.job}/cancel`, { body: {} }).catch(() => null)));
+  }
+  await dropStaging(gone.map((d) => d.id));
+  return { cleared: gone.length };
+}
 
 /** The server route, else the worker's. Never throws: a failure is written on the row. */
 async function run(d: Dl, actor: Actor) {
@@ -441,6 +470,7 @@ async function finish(id: string, items: DlItem[], actor: Actor) {
     carousel = await (await import("./carousels")).createCarousel({ name, items: keys, post: d?.post ?? null }, actor.name).then((c) => c.id).catch(() => null);
   }
   await patch(id, { status: "done", items, pct: 1, stage: null, error: null, saving_at: undefined, carousel });
+  await dropStaging([id]); // the worker's slots were moved into Files; its info.json is all that's left
   // workflows listening for downloads (lib/auto/flows.ts) start
   await import("./auto/flows").then((f) => f.emit("download.done", { download: id, url: d?.url ?? "", source: d?.source ?? "", files: keys, folder: d?.folder ?? null, carousel, post: d?.post ?? null }));
 }

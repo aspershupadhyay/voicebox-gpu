@@ -7,7 +7,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { useDialog } from "./Dialog";
-import { forgetTracked, isLive, isTracked, pageFor, trackJob, updateTracked, useTracked, type Tracked } from "./jobs";
+import { forgetSettled, forgetTracked, isLive, isTracked, pageFor, STALE_MS, trackJob, updateTracked, useTracked, type Tracked } from "./jobs";
 import { watching } from "./watching";
 
 type Polled = { id: string; status: string; error?: string; label?: string; kind?: string; progress?: { fraction?: number; stage?: string; detail?: string };
@@ -40,14 +40,16 @@ export default function JobTray() {
         try {
           const j = await api<Polled>(`jobs/${t.id}`);
           if (stop) return;
-          const p = { status: j.status, fraction: j.progress?.fraction, stage: j.progress?.stage, detail: j.progress?.detail, error: j.error };
+          const p = { status: j.status, fraction: j.progress?.fraction, stage: j.progress?.stage, detail: j.progress?.detail, error: j.error, seen: Date.now() };
           const finished = j.status === "error" || j.status === "cancelled" || (j.status === "done" && (stored(j) || (tries.current[t.id] = (tries.current[t.id] ?? 0) + 1) > 4));
           updateTracked(t.id, finished ? { ...p, settled: Date.now() } : p);
           if (finished && j.status === "done") toast(`${t.label}: done`, "ok");
           if (finished && j.status === "error") toast(`${t.label}: ${j.error ?? "failed"}`, "bad");
         } catch (e) {
-          // the worker restarted (job gone) or is offline: keep it while offline, drop a job the worker no longer knows
+          // the worker restarted (job gone): it's lost. The GPU is off: it waits a while (a restart, a tunnel coming
+          // back), then it's lost too: a job queued on a GPU that went off went with it
           if (/404|not found/i.test((e as Error).message)) updateTracked(t.id, { status: "lost", settled: Date.now(), error: "the worker restarted" });
+          else if (Date.now() - (t.seen ?? t.at) > STALE_MS) updateTracked(t.id, { status: "lost", settled: Date.now(), error: "the GPU went off before it finished" });
         }
       }
     };
@@ -57,13 +59,26 @@ export default function JobTray() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live.map((t) => t.id).join(",")]);
 
+  // like every popup: Escape and a click outside close it
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const down = (e: PointerEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    window.addEventListener("keydown", key);
+    window.addEventListener("pointerdown", down);
+    return () => { window.removeEventListener("keydown", key); window.removeEventListener("pointerdown", down); };
+  }, [open]);
+
   if (!list.length) return null;
   const pct = (t: Tracked) => Math.round((t.fraction ?? 0) * 100);
   return (
-    <div className={`jobtray ${open ? "open" : ""}`}>
+    <div ref={box} className={`jobtray ${open ? "open" : ""}`}>
       {open && (
         <div className="jt-panel">
-          <div className="row between"><b className="small">Your jobs</b><button className="icon-btn" onClick={() => setOpen(false)} aria-label="Close"><X size={14} /></button></div>
+          <div className="row between"><b className="small">Your jobs</b><span className="row" style={{ gap: 4 }}>
+            {list.some((t) => !isLive(t)) && <button className="quiet xs" onClick={() => forgetSettled()}>Clear finished</button>}
+            <button className="icon-btn" onClick={() => setOpen(false)} aria-label="Close"><X size={14} /></button></span></div>
           {list.map((t) => (
             <div key={t.id} className="jt-row">
               {isLive(t) ? <CircleNotch size={15} className="spin" /> : t.status === "done" ? <CheckCircle size={15} weight="fill" color="var(--ok)" /> : <WarningCircle size={15} weight="fill" color="var(--danger)" />}
@@ -75,7 +90,7 @@ export default function JobTray() {
                 {isLive(t) && t.status === "running" && <div className="bar thin live" style={{ marginTop: 4 }}><i style={{ width: `${pct(t)}%` }} /></div>}
               </div>
               {isLive(t)
-                ? <button className="quiet xs" onClick={() => api(`jobs/${t.id}/cancel`, { body: {} }).catch(() => {})}>Cancel</button>
+                ? <button className="quiet xs" onClick={() => { api(`jobs/${t.id}/cancel`, { body: {} }).catch(() => null).finally(() => updateTracked(t.id, { status: "cancelled", settled: Date.now(), error: "cancelled" })); }}>Cancel</button>
                 : <button className="icon-btn" title="Clear" onClick={() => forgetTracked(t.id)}><X size={12} /></button>}
             </div>
           ))}

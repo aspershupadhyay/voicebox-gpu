@@ -140,6 +140,9 @@ export async function deleteForever(keys: string[], actor: Actor) {
   const folders = failed.length ? [] : [...plan.folders]; // folders only go once everything in them did (they stay in the trash)
   await forget(deleted, folders);
   if (deleted.length) await forgetInCarousels(deleted).catch(() => null);
+  // an uploaded video's poster frame goes with it (photo thumbnails go with the nightly clean-up, lib/janitor.ts)
+  const posters = deleted.filter((k) => k.startsWith("m:")).map((k) => `workspace/posters/${k.replace(":", "_")}.jpg`);
+  if (posters.length) await (await import("./store")).delObjs(posters).catch(() => null);
   return { trashed: 0, deleted, folders: folders.length, failed };
 }
 

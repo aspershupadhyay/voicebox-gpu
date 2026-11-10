@@ -8,7 +8,7 @@ a wrong call means the description needs work.
 """
 import json, os, sys, urllib.request
 
-AUTO = {"approvals", "control", "run", "playbook", "repo", "edit_video", "inspect_media", "browse", "video_template", "repurpose", "workflow", "agents", "audit", "memory", "find_tools", "call_tool"}
+AUTO = {"approvals", "control", "run", "playbook", "repo", "edit_video", "inspect_media", "browse", "video_template", "repurpose", "workflow", "agents", "audit", "memory", "find_tools", "call_tool", "storage"}
 
 
 def tools(url, token):

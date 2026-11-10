@@ -56,8 +56,8 @@ owner"), fixing what that turns up, and the owner's next ideas. Read `CLAUDE.md`
 
 ## Safety (decided; phase 1)
 
-- **Approvals** (owner clicks on the dashboard, Settings → Automation): deleting files for good (moving to the trash and deleting posts don't ask: the trash keeps 30 days, the nightly dump 14),
-  merging a PR, pushing to a protected branch, spending past the day's units cap, adding a repo to the allow-list,
+- **Approvals** (owner clicks on the dashboard, Settings → Automation): (deleting never asks, to the trash or for good: the owner's call,
+  2026-11-10; `project finish` with `purge` and `storage clean` delete for good) merging a PR, pushing to a protected branch, spending past the day's units cap, adding a repo to the allow-list,
   changing a schedule that publishes. A model asks with `approvals request` and waits on the job. Publishing now
   stopped asking on 2026-11-01 (the owner's call): a model publishes only when the user asked.
 - **Units cap**: a daily limit (setting), checked before every runtime start and every job; above it the job waits

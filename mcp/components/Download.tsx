@@ -230,7 +230,9 @@ export default function Download() {
       </ul>
 
       <section className="dl-list-wrap" aria-label="Downloads">
-        <div className="dl-list-head"><b>Recent</b><span className="tiny dim">{list.length ? `${list.filter((d) => d.status === "done").length} in Files${busy ? ` · ${list.filter(active).length} working` : ""}` : ""}</span></div>
+        <div className="dl-list-head"><b>Recent</b><span className="tiny dim" style={{ flex: 1 }}>{list.length ? `${list.filter((d) => d.status === "done").length} in Files${busy ? ` · ${list.filter(active).length} working` : ""}` : ""}</span>
+          {list.some((d) => !active(d)) && <button type="button" className="quiet xs" title="Takes every finished download off this list, with what it left in storage. The files stay in Files."
+            onClick={() => { setData((x) => (x ? { ...x, list: x.list.filter(active) } : x)); api("downloads", { method: "DELETE" }).then(() => toast("History cleared", "ok")).catch((e) => { toast((e as Error).message, "bad"); load(); }); }}>Clear history</button>}</div>
         {!data ? (
           <ul className="dl-list">{[0, 1, 2].map((i) => <li key={i} className="dl-row skel"><span className="dl-thumb" /><span className="dl-main"><span className="dl-sk" /><span className="dl-sk s" /></span></li>)}</ul>
         ) : list.length ? (
