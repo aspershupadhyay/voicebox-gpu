@@ -9,7 +9,9 @@ import { authFor, CLOUD_NAME, CLOUDS, gpuState, isCloud, jobBackend, order, rece
  *  GPU's own heartbeat instead. */
 const POLLED = /^\/(health|metrics|jobs)(\?|$)/;
 
-export class WorkerOffline extends Error {}
+export class WorkerOffline extends Error {
+  constructor(msg: string, public code?: string) { super(msg); }
+}
 /** The worker is registered (it heartbeats) but a request to it didn't get through: a tunnel that's seconds old and
  *  doesn't resolve yet, a tunnel reconnecting, a worker restarting. `neverArrived`: the request certainly didn't reach
  *  it, so the other GPU can take it. */
@@ -48,6 +50,14 @@ function target(s: GpuState, b: Backend, method: string, isJob: boolean, path = 
     if (!s.colab.rec) throw new WorkerOffline("Colab is off: no Colab worker has registered (start it in Settings → GPU & engines, or run the notebook).");
     if (!s.colab.online) throw new WorkerOffline(`Colab is off: last seen ${Math.round((Date.now() - s.colab.rec.last_seen) / 60000)} min ago (start it in Settings → GPU & engines).`);
     return s.colab.rec.url;
+  }
+  if (b === "kaggle") {
+    if (!s.kaggle.configured) throw new WorkerOffline("Kaggle isn't set up (Settings → GPU & engines → Kaggle).");
+    if (s.kaggle.online && s.kaggle.rec) return s.kaggle.rec.url;
+    if (isJob) throw new WorkerOffline("the Kaggle session that ran this job has ended; its results are in Files if it finished");
+    if (s.kaggle.starting_since) throw new WorkerOffline(`Kaggle is starting (${Math.max(1, Math.round((Date.now() - s.kaggle.starting_since) / 60000))} min so far; 3-6 min in all)`);
+    if (s.kaggle.over) throw new WorkerOffline(`Kaggle has used ${s.kaggle.used_h} of its ${s.kaggle.cap_h} h this week`);
+    throw new WorkerOffline("Kaggle is off", "kaggle-off");
   }
   const c = s[b], n = NAME[b];
   if (!c.configured) throw new WorkerOffline(`${n} isn't set up (Settings → GPU & engines → ${n}).`);
@@ -110,9 +120,9 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
     // every job on every GPU that's up; a cloud one only while it has work (busy at its last heartbeat, or a job sent
     // to it in the last 30 min), so the job list never keeps an idle one awake
     const busy = await Promise.all(CLOUDS.map(async (c) => s[c].awake && ((s[c].rec?.running ?? 0) > 0 || (s[c].rec?.queue ?? 0) > 0 || (await recentJob(c, 30 * 60_000)))));
-    const up = (["colab", ...CLOUDS] as Backend[]).filter((b) => (isCloud(b) ? busy[CLOUDS.indexOf(b)] : s.colab.online));
+    const up = (["colab", "kaggle", ...CLOUDS] as Backend[]).filter((b) => (isCloud(b) ? busy[CLOUDS.indexOf(b)] : b === "kaggle" ? s.kaggle.online : s.colab.online));
     if (!up.length) throw new WorkerOffline(offline(s));
-    const all = await Promise.allSettled(up.map((b) => callOn<{ jobs?: unknown[] }>(b, isCloud(b) ? s[b].url : s.colab.rec!.url, path, init, method)));
+    const all = await Promise.allSettled(up.map((b) => callOn<{ jobs?: unknown[] }>(b, isCloud(b) ? s[b].url : b === "kaggle" ? s.kaggle.rec!.url : s.colab.rec!.url, path, init, method)));
     const ok = all.filter((r): r is PromiseFulfilledResult<{ jobs?: unknown[] }> => r.status === "fulfilled").map((r) => r.value);
     if (!ok.length) throw (all[0] as PromiseRejectedResult).reason;
     return { ...ok[0], jobs: ok.flatMap((r) => r.jobs ?? []) } as T;
@@ -120,9 +130,22 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
   const kind = path === "/jobs" ? String((init.body as { kind?: unknown } | undefined)?.kind ?? "tts") : undefined;
   const tries = order(s, kind);
   const why: string[] = [];
+  let kaggleKicked = false;
   for (const b of tries) {
     let url: string;
-    try { url = target(s, b, method, false, path); } catch (e) { why.push((e as Error).message); continue; }
+    try { url = target(s, b, method, false, path); } catch (e) {
+      // new work and Kaggle is off: start it (3-6 min), and the job goes to the next GPU meanwhile, or waits to be sent
+      // again when there's none; later work lands on Kaggle once it's up
+      if (e instanceof WorkerOffline && e.code === "kaggle-off" && method === "POST" && !kaggleKicked) {
+        kaggleKicked = true;
+        const k = await import("./kaggle");
+        const started = await k.startKaggle((await import("./colab")).appOrigin(), "new work").then(() => "Kaggle is starting for it (3-6 min)", (x: Error) => `Kaggle couldn't start: ${x.message}`);
+        why.push(started);
+        continue;
+      }
+      why.push((e as Error).message);
+      continue;
+    }
     try {
       if (isCloud(b) && s.prefs[`${b}_stop_at`]) await setPrefs({ stop: false, cloud: b }); // new work: Stop no longer applies
       if (isCloud(b) && !s[b].awake) {
@@ -131,7 +154,7 @@ export async function call<T = unknown>(path: string, init: Init = {}) {
         await saveWorker({ ...(s[b].rec ?? {}), url, started_at: Date.now() / 1000, last_seen: Date.now() }, b).catch(() => {});
       }
       const out = await callOn<T>(b, url, path, init, method);
-      if (isCloud(b) && method === "POST") {
+      if ((isCloud(b) || b === "kaggle") && method === "POST") {
         const id = (out as { id?: unknown } | null)?.id;
         // the job exists either way: a failed note must not turn its start into an error
         if (typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id)) await rememberJob(b, id).catch((e) => console.error(`${b} job note`, e));
@@ -169,7 +192,7 @@ export async function testModal(budgetMs?: number, cloud: Cloud = "modal") {
 }
 
 function offline(s: GpuState) {
-  const parts = [s.colab.online ? null : "Colab is off", ...CLOUDS.filter((c) => s[c].configured).map((c) => `${NAME[c]} is ${s[c].over ? "past its monthly cap" : "asleep"}`)].filter(Boolean);
+  const parts = [s.colab.online ? null : "Colab is off", s.kaggle.configured && !s.kaggle.online ? (s.kaggle.starting_since ? "Kaggle is starting" : "Kaggle is off") : null, ...CLOUDS.filter((c) => s[c].configured).map((c) => `${NAME[c]} is ${s[c].over ? "past its monthly cap" : "asleep"}`)].filter(Boolean);
   return `No GPU is on (${parts.join(", ")}). Start Colab in Settings → GPU & engines, or send a job and a cloud GPU wakes for it.`;
 }
 

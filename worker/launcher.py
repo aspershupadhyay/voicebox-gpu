@@ -141,16 +141,28 @@ def register(register_url, secret, url):
     """Heartbeat. Returns the URL that answered: urllib won't follow a 307/308 on POST (e.g. an old Vercel domain
     that now redirects to the new one), so follow it here, keeping the Authorization header, and remember it."""
     h = health(secret)
-    body = json.dumps({"url": url, "version": C.VERSION, "gpu": h["gpu"], "engines": h["engines"],
-                       "loaded": h["loaded"], "queue": h["queue"], "started_at": time.time() - h["uptime_s"],
-                       "running": len(h.get("running") or []), "last_active": h.get("last_active")}).encode()
+    beat = {"url": url, "version": C.VERSION, "gpu": h["gpu"], "engines": h["engines"],
+            "loaded": h["loaded"], "queue": h["queue"], "started_at": time.time() - h["uptime_s"],
+            "running": len(h.get("running") or []), "last_active": h.get("last_active")}
+    if os.environ.get("VOICEBOX_BACKEND"):  # Kaggle: its own record in the studio, and it may be told to stop
+        beat["backend"] = os.environ["VOICEBOX_BACKEND"]
+    body = json.dumps(beat).encode()
     for _ in range(4):
         req = urllib.request.Request(register_url, data=body, method="POST",
                                      headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json",
                                               "User-Agent": f"voicebox-worker/{C.VERSION}"})
         try:
-            with urllib.request.urlopen(req, timeout=20):
-                return register_url
+            with urllib.request.urlopen(req, timeout=20) as r:
+                try:
+                    answer = json.loads(r.read() or b"{}")
+                except ValueError:
+                    answer = {}
+            if answer.get("stop"):
+                # Kaggle: idle, Stop pressed, or the week's hours used: end the session so no GPU time is wasted
+                log(f"the studio says stop ({answer.get('why', 'no reason given')}): shutting down")
+                clear_processes(("gateway.py", "engine_host.py", "cloudflared tunnel"))
+                os._exit(0)
+            return register_url
         except urllib.error.HTTPError as e:
             loc = e.headers.get("Location")
             if e.code not in (301, 302, 303, 307, 308) or not loc:

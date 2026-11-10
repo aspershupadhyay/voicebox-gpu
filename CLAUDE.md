@@ -59,8 +59,9 @@ many agents at once), in order. A new tool goes in
 Done moving (2026-10-31, `docs/MIGRATION.md`): the app on a Cloudflare Worker, files in R2 (the Worker reads it through its
 `BUCKET` binding, `lib/store.ts`), except Files and audio (uploads, downloads, finished voice jobs), which live in Backblaze B2 (bucket
 `voicebox-files`, `B2_*` secrets on the Worker, switched on by `B2_FILES=on`; `B2_PREFIXES` in `lib/store.ts`), posts, comments, activity, file rows and accounts in Postgres on Neon (`lib/db.ts`,
-`lib/data.ts`, `lib/users.ts`), backups in Neon storage, deploys from GitHub. The GPU is Colab, Modal or Cerebrium (`docs/MODAL.md`: same worker, `lib/gpus.ts` picks one and
-falls back down the list; every call goes through `lib/worker.ts`). Appwrite and Vercel are not used by any
+`lib/data.ts`, `lib/users.ts`), backups in Neon storage, deploys from GitHub. The GPU is Colab, Kaggle, Modal or Cerebrium (`docs/MODAL.md`: same worker, `lib/gpus.ts` picks one and
+falls back down the list, free ones first; every call goes through `lib/worker.ts`). Kaggle (`lib/kaggle.ts`) is started by the app
+through Kaggle's API when work needs a GPU and stops itself when idle (`KAGGLE_USERNAME`, `KAGGLE_API_TOKEN` on the Worker). Appwrite and Vercel are not used by any
 code. The trained voices in R2 (`models/`, `datasets/`) are never touched.
 
 ## Inference work
@@ -88,6 +89,8 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   (`lib/clouddeploy.ts`). The tokens are saved only by a signed-in person and never returned to the browser or a model.
   `/api/files/put/<ticket>` is public by design too: the ticket (HMAC-signed, one hour, one file, its size and type)
   is the claim; it takes one PUT of that file's bytes into its R2 key and reads or lists nothing.
+  `/api/kaggle/boot` is public by design too (lib/kaggle.ts): the Kaggle notebook's boot ticket (HMAC-signed, 30
+  minutes, one use, only the latest start's) is swapped once for the worker's secret; it reads or lists nothing else.
   An upload link `/u/<token>` (and `/api/u/<token>`, lib/auto/uplinks.ts) is public by design too: a signed, expiring
   claim that can only start and finish uploads into its one folder, up to its file cap; it reads and lists nothing.
   A Files upload is served by `/api/m/<token>/<key>` (lib/r2files.ts), public by design: the token is an HMAC of the

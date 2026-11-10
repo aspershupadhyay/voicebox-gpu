@@ -93,7 +93,7 @@ export const simClass = (x?: number | null) => (x == null ? "" : x >= 0.9 ? "ok"
 export type Status = {
   online: boolean; reason?: string; last_seen?: number; uptime_s?: number; queue?: number; running?: string[];
   /** The GPU that takes the next job, and a Modal one that's asleep until then (lib/gpus.ts). */
-  backend?: "colab" | "modal" | "cerebrium"; asleep?: boolean; gpus?: Gpus;
+  backend?: "colab" | "kaggle" | "modal" | "cerebrium"; asleep?: boolean; starting?: boolean; gpus?: Gpus;
   gpu?: { name: string; total_gb: number; used_gb: number }; vram_budget_gb?: number; version?: string;
   engines?: Record<string, string>; engine_errors?: Record<string, string>; rates?: Record<string, number>;
   ram?: { total_gb: number; used_gb: number }; disk?: { total_gb: number; free_gb: number; weights_gb: Record<string, number> };
@@ -101,9 +101,12 @@ export type Status = {
   fetch?: Record<string, Fetch>;
 };
 export type CloudGpu = { configured: boolean; awake: boolean; available: boolean; used_h: number; cap_h: number; over_cap: boolean; gpu: string | null; connected_at: number | null; url_from: "env" | "settings" | null };
+/** Kaggle (lib/kaggle.ts): started by the app for work, stops itself when idle. */
+export type KaggleGpu = { configured: boolean; on: boolean; online: boolean; starting: boolean; used_h_this_week: number; cap_h: number; over_cap: boolean; idle_stop_min: number; gpu: string | null };
 export type Gpus = {
-  prefer: "colab" | "modal" | "cerebrium"; fallback: boolean; modal_heavy: boolean;
+  prefer: "colab" | "kaggle" | "modal" | "cerebrium"; fallback: boolean; modal_heavy: boolean;
   colab: { online: boolean; last_seen: number | null; gpu: string | null };
+  kaggle: KaggleGpu;
   modal: CloudGpu; cerebrium: CloudGpu;
 };
 /** Live download / load progress of an engine that's warming up (worker measures its weights landing on disk). */

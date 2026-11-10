@@ -17,8 +17,8 @@ export type WorkerRecord = {
   last_seen: number;
 };
 
-export type Backend = "colab" | "modal" | "cerebrium";
-const KEYS: Record<Backend, string> = { colab: "voicebox/worker.json", modal: "voicebox/worker-modal.json", cerebrium: "voicebox/worker-cerebrium.json" };
+export type Backend = "colab" | "kaggle" | "modal" | "cerebrium";
+const KEYS: Record<Backend, string> = { colab: "voicebox/worker.json", kaggle: "voicebox/worker-kaggle.json", modal: "voicebox/worker-modal.json", cerebrium: "voicebox/worker-cerebrium.json" };
 export const STALE_MS = 4 * 60 * 1000; // heartbeat is every 60s
 
 const redisUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
