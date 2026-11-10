@@ -65,10 +65,11 @@ let b2client: AwsClient | null = null;
 function b2() {
   if (!b2Ready()) throw new Error("Backblaze is not configured (B2_KEY_ID / B2_APP_KEY / B2_BUCKET / B2_ENDPOINT).");
   const region = /s3\.([a-z0-9-]+)\.backblazeb2\.com/.exec(process.env.B2_ENDPOINT!)?.[1] ?? "us-east-005";
-  b2client ??= new AwsClient({ accessKeyId: process.env.B2_KEY_ID!, secretAccessKey: process.env.B2_APP_KEY!, service: "s3", region });
+  // trimmed: a key pasted into the dashboard often brings a space or a line break along
+  b2client ??= new AwsClient({ accessKeyId: process.env.B2_KEY_ID!.trim(), secretAccessKey: process.env.B2_APP_KEY!.trim(), service: "s3", region });
   return b2client;
 }
-const B2_BASE = () => `${process.env.B2_ENDPOINT!.replace(/\/$/, "").replace(/^(?!https?:)/, "https://")}/${process.env.B2_BUCKET}`;
+const B2_BASE = () => `${process.env.B2_ENDPOINT!.trim().replace(/\/$/, "").replace(/^(?!https?:)/, "https://")}/${process.env.B2_BUCKET!.trim()}`;
 const b2url = (key: string) => `${B2_BASE()}/${enc(key)}`;
 
 /** B2 alone: the object (a Range header passes through), or null. */
@@ -117,6 +118,15 @@ export async function listB2(prefix: string): Promise<StoredObj[]> {
   const out: StoredObj[] = [];
   await listXml(B2_BASE(), b2(), prefix, false, (x) => contents(x, out));
   return out;
+}
+/** Can the Worker reach B2 with its key? What Backblaze answers (never the key itself). */
+export async function b2Check() {
+  const id = (process.env.B2_KEY_ID ?? "").trim();
+  const shape = { key_id_length: id.length, key_id_start: id.slice(0, 6), app_key_length: (process.env.B2_APP_KEY ?? "").trim().length,
+    bucket: process.env.B2_BUCKET?.trim(), endpoint: process.env.B2_ENDPOINT?.trim(), spaces_trimmed: id !== process.env.B2_KEY_ID || (process.env.B2_APP_KEY ?? "") !== (process.env.B2_APP_KEY ?? "").trim() };
+  const r = await b2().fetch(`${B2_BASE()}?list-type=2&max-keys=1`, { cache: "no-store" });
+  const body = r.ok ? "" : await r.text();
+  return { ok: r.ok, status: r.status, ...(body ? { b2_says: (body.match(/<Code>([^<]*)<\/Code>/)?.[1] ?? "") + ": " + (body.match(/<Message>([^<]*)<\/Message>/)?.[1] ?? body.slice(0, 200)) } : {}), ...shape };
 }
 /** B2 only: one object's size, or null. */
 export async function headB2(key: string) {
@@ -322,7 +332,7 @@ export async function delR2(keys: string[]) {
 export async function copyObj(from: string, to: string) {
   if (onB2(to)) {
     if (onB2(from)) {
-      const signed = await b2().sign(b2url(to), { method: "PUT", headers: { "x-amz-copy-source": `/${process.env.B2_BUCKET}/${enc(from)}`, "X-Amz-Content-Sha256": "UNSIGNED-PAYLOAD" } });
+      const signed = await b2().sign(b2url(to), { method: "PUT", headers: { "x-amz-copy-source": `/${process.env.B2_BUCKET!.trim()}/${enc(from)}`, "X-Amz-Content-Sha256": "UNSIGNED-PAYLOAD" } });
       const r = await fetch(signed.url, { method: "PUT", headers: signed.headers });
       if (r.ok) return;
       if (r.status !== 404) throw new Error(`B2 COPY ${from} → ${to}: ${r.status} ${(await r.text()).slice(0, 200)}`);
