@@ -57,7 +57,8 @@ many agents at once), in order. A new tool goes in
 ## Where things run
 
 Done moving (2026-10-31, `docs/MIGRATION.md`): the app on a Cloudflare Worker, files in R2 (the Worker reads it through its
-`BUCKET` binding, `lib/store.ts`), posts, comments, activity, file rows and accounts in Postgres on Neon (`lib/db.ts`,
+`BUCKET` binding, `lib/store.ts`), except Files and audio (uploads, downloads, finished voice jobs), which live in Backblaze B2 (bucket
+`voicebox-files`, `B2_*` secrets on the Worker, switched on by `B2_FILES=on`; `B2_PREFIXES` in `lib/store.ts`), posts, comments, activity, file rows and accounts in Postgres on Neon (`lib/db.ts`,
 `lib/data.ts`, `lib/users.ts`), backups in Neon storage, deploys from GitHub. The GPU is Colab, Modal or Cerebrium (`docs/MODAL.md`: same worker, `lib/gpus.ts` picks one and
 falls back down the list; every call goes through `lib/worker.ts`). Appwrite and Vercel are not used by any
 code. The trained voices in R2 (`models/`, `datasets/`) are never touched.

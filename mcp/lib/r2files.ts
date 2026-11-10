@@ -3,7 +3,7 @@
 // the row (a secret kept in team-only rows that lets <img>/<video> work without a session). Photos get resized copies
 // made once and kept under cache/thumbs/ (a bucket rule drops them after 30 days; they're made again on the next look).
 import { createHash, createHmac } from "node:crypto";
-import { copyObj, delObjs, getObj, headObj, listObjs, presign, putObj } from "./store";
+import { b2On, copyObj, delObjs, getObj, headObj, listB2, listR2, presign, putObj } from "./store";
 import { safeEqual } from "./worker";
 
 
@@ -62,19 +62,21 @@ export async function thumbUrl(key: string, width: number, format: ThumbFormat, 
 // ── the storage budget: R2's free tier is 10 GB, so new files stop at 90 % of it (STORAGE_CAP_GB, Settings → Usage)
 
 const CAP = Number(process.env.STORAGE_CAP_GB || 9) * 1e9;
-let seen: { at: number; bytes: number; parts: Record<string, number> } | null = null;
+let seen: { at: number; bytes: number; r2: number; b2: number; parts: Record<string, number> } | null = null;
 
-/** What the bucket holds, by top-level part (cache, models, workspace…), counted at most every 5 minutes. */
+/** What the buckets hold, by top-level part (cache, models, workspace…), counted at most every 5 minutes: r2 and b2
+ *  are each bucket's share (b2 is 0 until Backblaze is on; lib/store.ts). */
 export async function storageUse(fresh = false) {
   if (!fresh && seen && Date.now() - seen.at < 5 * 60_000) return { ...seen, cap: CAP };
   const parts: Record<string, number> = {};
-  let bytes = 0;
-  for (const o of await listObjs("")) {
+  const [inR2, inB2] = await Promise.all([listR2(""), b2On() ? listB2("") : Promise.resolve([])]);
+  const sum = (l: { size: number }[]) => l.reduce((n, o) => n + o.size, 0);
+  for (const o of [...inR2, ...inB2]) {
     const p = o.key.startsWith("workspace/") || o.key.startsWith("cache/") ? o.key.split("/").slice(0, 2).join("/") : o.key.split("/")[0];
     parts[p] = (parts[p] ?? 0) + o.size;
-    bytes += o.size;
   }
-  seen = { at: Date.now(), bytes, parts };
+  const r2 = sum(inR2), b2 = sum(inB2);
+  seen = { at: Date.now(), bytes: r2 + b2, r2, b2, parts };
   return { ...seen, cap: CAP };
 }
 

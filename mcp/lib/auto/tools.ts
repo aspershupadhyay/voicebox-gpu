@@ -181,22 +181,25 @@ export function registerAutoTools(server: ToolServer) {
       description: [
         "action report (default): how full the storage bucket (R2) is against its budget, what fills it by part, the biggest files, what's in the trash, and what a clean-up would remove right now.",
         "clean: deletes for good what nothing needs: the motion tools' cache, older compile caches, finished downloads' staging, temporary uploads, bytes, posters and thumbnails of deleted files, the call log past 31 days (caches are left while a GPU is working). It never touches Files or the trash (emptying the trash is empty_trash, shown to the user first). It also runs by itself every night.",
+        "move_to_b2: files and audio live on Backblaze B2, models and caches on R2; this copies what's still in R2 to B2 and checks each copy (run again until left is 0), and with finish: true deletes R2's checked copies.",
         "Run it after a project's finish, or when report says the bucket is near its budget.",
         "Example: {\"action\":\"clean\"}.",
       ].join(" "),
       inputSchema: z.object({
-        action: z.enum(["report", "clean"]).optional(),
+        action: z.enum(["report", "clean", "move_to_b2"]).optional(),
+        finish: z.boolean().optional().describe("move_to_b2: also delete R2's copies once they're checked on B2"),
       }),
     },
-    async ({ action = "report" }) => {
+    async ({ action = "report", finish }) => {
       try {
+        if (action === "move_to_b2") return text(await (await import("../b2move")).moveToB2({ finish }));
         const jan = await import("../janitor");
         if (action === "clean") return text(await jan.cleanStorage());
         const [{ storageUse }, fm, waste] = await Promise.all([import("../r2files"), import("../filemanager"), jan.findWaste()]);
         const [use, all, binned] = await Promise.all([storageUse(true), fm.catalog(), fm.catalog({ trash: true })]);
         const gb = (n: number) => +(n / 1e9).toFixed(2);
         return text({
-          used_gb: gb(use.bytes), budget_gb: gb(use.cap),
+          used_gb: gb(use.bytes), budget_gb: gb(use.cap), ...(use.b2 ? { r2_gb: gb(use.r2), b2_gb: gb(use.b2) } : {}),
           by_part_gb: Object.fromEntries(Object.entries(use.parts).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, gb(v)])),
           biggest_files: all.items.filter((i) => i.bytes).sort((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0)).slice(0, 12).map((i) => ({ id: i.id, name: i.name, mb: +((i.bytes ?? 0) / 1e6).toFixed(1), folder: i.folder_path })),
           trash: { files: binned.items.length, mb: +(binned.items.reduce((n, i) => n + (i.bytes ?? 0), 0) / 1e6).toFixed(1) },
