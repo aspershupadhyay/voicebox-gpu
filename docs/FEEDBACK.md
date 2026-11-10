@@ -6,6 +6,19 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Don't ask any permission; when the user says it's done, delete the useless data completely, not to the trash;
+  why is R2 growing, it shouldn't hold cache after the task; Automation takes eternity to load; no stale tasks after
+  the AI marked them done; clearing download history must take it from everywhere"** (2026-11-10): deleting never asks
+  any more (to the trash, for good, emptying the trash; the `delete` approval is gone). `project finish` takes `purge`:
+  once the user says it's done, what isn't kept is deleted for good (row, bytes in R2, poster), the folder too, its
+  jobs still queued are cancelled, then the caches are cleared. `storage` (MCP) reports what fills the bucket and
+  `clean` deletes what nothing needs (lib/janitor.ts: the motion tools' cache, older compile caches, download staging,
+  temporary uploads, bytes, posters and thumbnails whose file is gone, logs past 31 days); it also runs every night.
+  The compile cache keeps its newest version per GPU: without it every runtime compiles again on paid GPU time. The
+  Automation page reads everything at once (it read 8 days of log one hour-file at a time, twice). The job tray drops
+  a job nobody could reach for 20 minutes, Cancel always clears it, and it has Clear finished (it kept "waiting for
+  the GPU" forever while the GPU was off). Download: Clear history, and forgetting one removes what it left in
+  storage; the files it saved stay in Files.
 - **"It's time to manage the storage, it's all too cluttered"** (2026-11-10): cleaned by hand first, on the owner's
   word (22 empty folders, the 11 wallpaper zips, old cuts of a video, exact duplicates; the loose screenshots filed),
   then made to stay tidy: a folder of your own with nothing live in it and nothing made in it for 3 days goes to the

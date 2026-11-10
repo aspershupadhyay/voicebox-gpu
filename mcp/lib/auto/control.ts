@@ -23,7 +23,6 @@ export async function mutate<T>(key: string, empty: T, fn: (cur: T) => T | Promi
 
 /** What waits for the owner's click (Settings → Automation). Each can be switched off there. */
 export const ASK_FIRST = {
-  delete: "Deleting files for good (not to the trash)",
   publishing_rules: "Changing the publishing rules or a schedule that publishes",
   over_cap: "Spending past the day's units cap",
   merge_pr: "Merging a pull request",
@@ -195,19 +194,19 @@ export async function logCall(e: LogEntry) {
 export async function readLog(opts: { limit?: number; model?: string; tool?: string; since?: number; days?: number } = {}) {
   const limit = Math.min(opts.limit ?? 50, 1000);
   const days = Math.min(opts.days ?? 2, 31);
-  const keys: string[] = [];
-  for (let i = 0; i < days; i++) keys.push(...(await listObjs(`auto/log/${day(Date.now() - i * 86_400_000)}/`).catch(() => [])).map((o) => o.key));
-  keys.sort().reverse();
+  // every day listed at once, then the hour files read eight at a time, newest first (one at a time took the Automation
+  // page ten seconds and more: it reads eight days for the scorecards)
+  const lists = await Promise.all(Array.from({ length: days }, (_, i) => listObjs(`auto/log/${day(Date.now() - i * 86_400_000)}/`).catch(() => [])));
+  const keys = lists.flat().map((o) => o.key).sort().reverse();
   const out: LogEntry[] = [];
-  for (const k of keys) {
-    const b = await getJson<{ list: LogEntry[] }>(k).catch(() => null);
-    for (const e of [...(b?.list ?? [])].reverse()) {
+  for (let i = 0; i < keys.length && out.length < limit; i += 8) {
+    const files = await Promise.all(keys.slice(i, i + 8).map((k) => getJson<{ list: LogEntry[] }>(k).catch(() => null)));
+    for (const b of files) for (const e of [...(b?.list ?? [])].reverse()) {
       if (opts.since && e.t < opts.since) continue;
       if (opts.model && e.model !== opts.model) continue;
       if (opts.tool && e.tool !== opts.tool) continue;
       out.push(e);
     }
-    if (out.length >= limit) break;
   }
   return out.slice(0, limit);
 }

@@ -85,15 +85,25 @@ export async function GET(req: Request, ctx: Ctx) {
       // Settings → Automation: the switches, today's units, the approvals inbox and the call log (lib/auto/control.ts)
       const ac = await import("@/lib/auto/control");
       const q = new URL(req.url).searchParams;
-      const [control, units, approvals, log] = await Promise.all([ac.getControl(), ac.unitsToday(), ac.listApprovals(),
-        ac.readLog({ limit: 150, model: q.get("model") || undefined, days: 2 })]);
-      return Response.json({ control, units, approvals: approvals.slice(0, 60), log, ask_first: ac.ASK_FIRST,
-        keys: await (await import("@/lib/auto/secrets")).secretsStatus(), platform: (await import("@/lib/auto/repo")).PLATFORM,
-        flows: await import("@/lib/auto/flows").then(async (f) => ({ list: await f.listFlows(), runs: (await f.listRuns()).slice(0, 15) })),
-        lessons: (await (await import("@/lib/auto/memory")).lessons()).slice(0, 60),
-        cards: (await import("@/lib/auto/agents")).scorecards(await ac.readLog({ limit: 1000, since: Date.now() - 7 * 86_400_000, days: 8 })).slice(0, 12),
-        key_usage: await ac.keyUsage().catch(() => ({})),
-        projects: await import("@/lib/auto/projects").then(async (p) => (await p.listProjects().catch(() => [])).slice(0, 30).map(p.summary)) });
+      // everything at once: one read of the week's log serves both the log and the scorecards, and Colab's balance
+      // (Google's API, seconds when it's slow) gets two seconds before the page goes without it
+      const model = q.get("model") || undefined;
+      const [control, units, approvals, week, keys, platform, flows, lessons, key_usage, projects] = await Promise.all([
+        ac.getControl(),
+        Promise.race([ac.unitsToday(), new Promise<null>((r) => setTimeout(() => r(null), 2000))]).catch(() => null),
+        ac.listApprovals(),
+        ac.readLog({ limit: 1000, since: Date.now() - 7 * 86_400_000, days: 8 }),
+        import("@/lib/auto/secrets").then((s) => s.secretsStatus()),
+        import("@/lib/auto/repo").then((r) => r.PLATFORM),
+        import("@/lib/auto/flows").then(async (f) => { const [list, runs] = await Promise.all([f.listFlows(), f.listRuns()]); return { list, runs: runs.slice(0, 15) }; }),
+        import("@/lib/auto/memory").then(async (m) => (await m.lessons()).slice(0, 60)),
+        ac.keyUsage().catch(() => ({})),
+        import("@/lib/auto/projects").then(async (p) => (await p.listProjects().catch(() => [])).slice(0, 30).map(p.summary)),
+      ]);
+      const since = Date.now() - 2 * 86_400_000;
+      const log = week.filter((e) => e.t >= since && (!model || e.model === model)).slice(0, 150);
+      return Response.json({ control, units: units ?? { spent: null, balance: null, day: new Date().toISOString().slice(0, 10) }, approvals: approvals.slice(0, 60), log,
+        ask_first: ac.ASK_FIRST, keys, platform, flows, lessons, cards: (await import("@/lib/auto/agents")).scorecards(week).slice(0, 12), key_usage, projects });
     }
     if (a === "live" && b === "pins") {
       // Grow's sidebar: the rivals you pinned, with the name and picture YouTube gave
@@ -811,7 +821,8 @@ export async function DELETE(req: Request, ctx: Ctx) {
   if (g.deny) return g.deny;
   const [a, b] = g.path;
   if (a === "publish") return (await import("@/lib/publish/api")).publishDelete(g.path.slice(1)).catch((e) => err(e));
-  if (a === "downloads" && b && ID.test(b)) return Response.json({ ok: await (await import("@/lib/downloads")).forgetDownload(b) }); // off the list; the files stay
+  if (a === "downloads" && !b) return Response.json(await (await import("@/lib/downloads")).clearDownloads(new URL(req.url).searchParams.has("all"))); // the history; the files stay
+  if (a === "downloads" && b && ID.test(b)) return Response.json({ ok: await (await import("@/lib/downloads")).forgetDownload(b) }); // off the list, with its leftovers; the files stay
   if (a === "datasets" && b && VOICE_RE.test(b) && ID.test(String(g.path[2] ?? ""))) {
     await deleteDatasetPart(b, String(g.path[2]));
     return Response.json({ ok: true });

@@ -8,14 +8,23 @@ import { useEffect, useRef, useState } from "react";
 export type Tracked = {
   id: string; kind: string; label: string; path: string; at: number;
   status: string; fraction?: number; stage?: string; detail?: string; settled?: number; error?: string;
+  /** when it last moved, or was last heard of */
+  seen?: number;
 };
 
 const KEY = "vb-jobs";
 const KEEP_MS = 30 * 60_000; // finished jobs stay in the tray this long
+/** A job that hasn't moved this long while nobody could reach it is dead (the GPU went off, its queue with it): it
+ *  leaves the tray instead of spinning there for days. */
+export const STALE_MS = 20 * 60_000;
+const DEAD_MS = 6 * 3600_000; // a job still "running" this long after it started is gone, whatever the GPU says
 const subs = new Set<() => void>();
 
 function read(): Tracked[] {
-  try { return JSON.parse(localStorage.getItem(KEY) || "[]") as Tracked[]; } catch { return []; }
+  let list: Tracked[];
+  try { list = JSON.parse(localStorage.getItem(KEY) || "[]") as Tracked[]; } catch { return []; }
+  const now = Date.now();
+  return list.map((x) => (!x.settled && now - x.at > DEAD_MS ? { ...x, status: "lost", settled: now - KEEP_MS, error: "stopped: it never finished" } : x));
 }
 function write(list: Tracked[]) {
   try { localStorage.setItem(KEY, JSON.stringify(list.slice(0, 30))); } catch { /* private mode: the tray just forgets */ }
@@ -40,6 +49,11 @@ export function updateTracked(id: string, patch: Partial<Tracked>) {
 
 export function forgetTracked(id: string) {
   write(read().filter((x) => x.id !== id));
+}
+
+/** Clear the tray of everything that isn't running (or all of it). */
+export function forgetSettled(all = false) {
+  write(all ? [] : read().filter((x) => !x.settled));
 }
 
 export const isLive = (t: Tracked) => !t.settled;

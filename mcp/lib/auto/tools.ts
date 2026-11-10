@@ -175,14 +175,51 @@ export function registerAutoTools(server: ToolServer) {
   );
 
   server.registerTool(
+    "storage",
+    {
+      title: "Storage: what fills the bucket, and clearing what nothing needs",
+      description: [
+        "action report (default): how full the storage bucket (R2) is against its budget, what fills it by part, the biggest files, what's in the trash, and what a clean-up would remove right now.",
+        "clean: deletes for good what nothing needs: the motion tools' cache, older compile caches, finished downloads' staging, temporary uploads, bytes, posters and thumbnails of deleted files, the call log past 31 days (caches are left while a GPU is working). With empty_trash: true the trash is emptied for good first. It also runs by itself every night.",
+        "Deleting is for good and never asks; files you or the user keep in Files are never touched by clean. Run it after a project's finish, or when report says the bucket is near its budget.",
+        "Example: {\"action\":\"clean\",\"empty_trash\":true}.",
+      ].join(" "),
+      inputSchema: z.object({
+        action: z.enum(["report", "clean"]).optional(),
+        empty_trash: z.boolean().optional().describe("clean: empty the trash for good first"),
+      }),
+    },
+    async ({ action = "report", empty_trash }, ctx) => {
+      try {
+        const jan = await import("../janitor");
+        if (action === "clean") {
+          const trash = empty_trash ? await import("../filemanager").then(async (f) => { const r = await f.emptyTrash({ name: await modelName(ctx as Ctx) }); return { deleted: r.deleted.length, folders: r.folders, failed: r.failed }; }) : undefined;
+          return text({ ...(trash ? { trash } : {}), ...(await jan.cleanStorage()) });
+        }
+        const [{ storageUse }, fm, waste] = await Promise.all([import("../r2files"), import("../filemanager"), jan.findWaste()]);
+        const [use, all, binned] = await Promise.all([storageUse(true), fm.catalog(), fm.catalog({ trash: true })]);
+        const gb = (n: number) => +(n / 1e9).toFixed(2);
+        return text({
+          used_gb: gb(use.bytes), budget_gb: gb(use.cap),
+          by_part_gb: Object.fromEntries(Object.entries(use.parts).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, gb(v)])),
+          biggest_files: all.items.filter((i) => i.bytes).sort((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0)).slice(0, 12).map((i) => ({ id: i.id, name: i.name, mb: +((i.bytes ?? 0) / 1e6).toFixed(1), folder: i.folder_path })),
+          trash: { files: binned.items.length, mb: +(binned.items.reduce((n, i) => n + (i.bytes ?? 0), 0) / 1e6).toFixed(1) },
+          clean_would_remove: waste.found.map((f) => ({ what: f.what, files: f.keys.length, mb: +(f.bytes / 1e6).toFixed(1) })),
+          ...(waste.gpu_busy ? { note: "A GPU is working: its caches are left until it stops." } : {}),
+        });
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
     "project",
     {
       title: "Projects: your own space for one piece of work, cleaned up at the end",
       description: [
         "Start one before making files: you get a Files folder (Projects/<name>-<id>), a sandbox workspace (p-<id>) and a branch name for repo work. Pass project: \"<id>\" to run, edit_video, video_template, repurpose, voice_lines, imagine, save_file, upload_media, add_media and the rest: what they make lands in the folder and is yours.",
-        "Your project's files you may delete (delete_files, to the trash) without asking; anything else still waits for the owner.",
-        "action number (series, e.g. case; at_least to start past numbers already used): the next number from the server's counter, never handed out twice, so two sessions don't both make case-027; start with series instead of name names it <series>-<number> (its branch agent/<model>/<series>-<number>). start (name); status (id: its files, jobs, folder); list (your live projects; all: everyone's); finish (id, keep: the file ids to keep, keep_to: a folder path, default each file's kind folder such as Videos): everything else, the folder and the workspace are cleaned up.",
-        "Example: {\"action\":\"start\",\"name\":\"case 028\"} … {\"action\":\"finish\",\"id\":\"3fa9c1\",\"keep\":[\"m:6721…\"]}.",
+        "Deleting never waits for an approval.",
+        "action number (series, e.g. case; at_least to start past numbers already used): the next number from the server's counter, never handed out twice, so two sessions don't both make case-027; start with series instead of name names it <series>-<number> (its branch agent/<model>/<series>-<number>). start (name); status (id: its files, jobs, folder); list (your live projects; all: everyone's); finish (id, keep: the file ids to keep, keep_to: a folder path, default each file's kind folder such as Videos): everything else, the folder, the workspace and its jobs still running are cleaned up; the rest goes to the trash, or with purge: true for good (files, rows and their bytes in storage). Once the user says the work is done, finish with purge: true.",
+        "Example: {\"action\":\"start\",\"name\":\"case 028\"} … {\"action\":\"finish\",\"id\":\"3fa9c1\",\"keep\":[\"m:6721…\"],\"purge\":true}.",
       ].join(" "),
       inputSchema: z.object({
         action: z.enum(["start", "status", "list", "finish", "number"]),
@@ -190,9 +227,10 @@ export function registerAutoTools(server: ToolServer) {
         series: z.string().regex(/^[a-z][a-z0-9-]{1,30}$/).optional().describe("number / start: a numbered series such as case"), at_least: z.number().int().min(1).max(100_000).optional(),
         keep: z.array(z.string().max(80)).max(100).optional().describe("finish: file ids to keep"), keep_to: z.string().max(200).optional(),
         all: z.boolean().optional().describe("list: everyone's live projects, not just yours"),
+        purge: z.boolean().optional().describe("finish: delete what isn't kept for good instead of to the trash (once the user says it's done)"),
       }),
     },
-    async ({ action, name, id, keep, keep_to, all, series, at_least }, ctx) => {
+    async ({ action, name, id, keep, keep_to, all, series, at_least, purge }, ctx) => {
       try {
         const pr = await import("./projects");
         const me = await modelName(ctx as Ctx);
@@ -214,7 +252,9 @@ export function registerAutoTools(server: ToolServer) {
           return text({ ...pr.summary(p), created: iso(p.created), updated: iso(p.updated), files: Object.entries(p.files).slice(-60).map(([f, o]) => `${f} (${o.tool})`), jobs: p.jobs.slice(-20), ...(p.finished ? { finished: { ...p.finished, at: iso(p.finished.at) } } : {}) });
         }
         const { fileKey } = await import("./ids");
-        return text(await pr.finishProject(id, me, { keep: (keep ?? []).map(fileKey), keep_to: keep_to ?? null, by: me }));
+        const out = await pr.finishProject(id, me, { keep: (keep ?? []).map(fileKey), keep_to: keep_to ?? null, by: me, purge });
+        if (purge) await import("../janitor").then((j) => j.cleanStorage()).catch(() => null); // and the caches the work left
+        return text(out);
       } catch (e) { return fail(e); }
     },
   );

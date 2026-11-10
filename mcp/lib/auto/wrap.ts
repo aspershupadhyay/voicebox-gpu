@@ -26,9 +26,8 @@ export const GATES: Record<string, (a: Args) => Gate | Promise<Gate>> = {
   // blocking someone and making the report don't
   auto_dm: (a) => (a.action === "save" || (a.action === "switch" && a.on === true) || (a.action === "comment_act" && a.mod_action !== "dismiss")
     || (a.action === "settings" && (a.on === true || ["defaults", "safety", "unblock", "moderation", "auto_attach", "sync", "ai"].some((k) => a[k] !== undefined))) ? "publishing_rules" : null),
-  // the owner's call (2026-10-31): nothing that can be brought back asks first. The trash keeps files and folders 30
-  // days (restore_files) and a deleted post is in the nightly database dump (14 days); only what's gone for good asks.
-  delete_files: (a) => (a.forever ? "delete" : null), delete_media: () => "delete", empty_trash: () => "delete",
+  // deleting never asks (the owner's call, 2026-11-10: "you don't need to ask any permission"): to the trash, for good,
+  // emptying the trash. Before that (2026-10-31) only what was gone for good asked.
   workflow: async (a) => {
     // a schedule or a trigger on steps that publish: the owner says yes once, when it's saved or switched on
     if (a.action !== "save" && a.action !== "enable") return null;

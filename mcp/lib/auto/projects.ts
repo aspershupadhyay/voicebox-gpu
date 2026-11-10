@@ -95,8 +95,10 @@ export async function ownsAll(owner: string, keys: string[]) {
   return keys.every((k) => owned.has(k));
 }
 
-/** Done: keep the deliverables, trash the rest (30 days), the folder once nothing else is in it, and the workspace. */
-export async function finishProject(id: string, owner: string, opts: { keep?: string[]; keep_to?: string | null; by: string }) {
+/** Done: keep the deliverables, the rest goes (to the trash, or for good with `purge`: once the user has said the work
+ *  is done, the owner's call 2026-11-10), the folder once nothing else is in it, the workspace, and any of its jobs still
+ *  queued or running (a finished project leaves nothing working behind). */
+export async function finishProject(id: string, owner: string, opts: { keep?: string[]; keep_to?: string | null; by: string; purge?: boolean }) {
   const p = await usable(id, owner);
   const files = await import("../files");
   const keep = [...new Set(opts.keep ?? [])];
@@ -108,13 +110,27 @@ export async function finishProject(id: string, owner: string, opts: { keep?: st
     if (opts.keep_to) await files.moveItems(keep, (await (await import("./bench")).ensureFolder(opts.keep_to, { name: opts.by }))!);
     else await files.autoFile(keep); // back to its kind's folder: Videos, Images, Audio…
   }
-  if (removed.length) await files.trashItems(removed, opts.by);
+  // its jobs still queued or running are cancelled: the work is over (a GPU that's off has dropped them anyway)
+  const { call } = await import("../worker");
+  await Promise.all(p.jobs.slice(-40).map((j) => call(`/jobs/${j}/cancel`, { body: {}, timeoutMs: 5000 }).catch(() => null)));
+  const fm = opts.purge ? await import("../filemanager") : null;
+  let failed: { id: string; error: string }[] = [];
+  if (removed.length) {
+    if (fm) failed = (await fm.deleteForever(removed, { name: opts.by })).failed;
+    else await files.trashItems(removed, opts.by);
+  }
+  // with purge, what it had in the trash from before goes for good too
+  const binned = fm ? Object.keys(p.files).filter((k) => !keep.includes(k) && t.trash[k]) : [];
+  if (fm && binned.length) failed = [...failed, ...(await fm.deleteForever(binned, { name: opts.by })).failed];
   const after = await files.getTree();
   const others = Object.entries(after.place).filter(([k, f]) => f === p.folder && !after.trash[k] && !p.files[k]).length
     + after.folders.filter((f) => f.parent === p.folder && !after.trash[`f:${f.id}`]).length;
   // gone too when all that's left in it is empty folders (a download's "Instagram" with its file already removed)
-  const folderGone = !after.trash[`f:${p.folder}`] && (!others || files.holdsNothing(after, p.folder));
-  if (folderGone) await files.trashItems([`f:${p.folder}`], opts.by);
+  const folderGone = (fm || !after.trash[`f:${p.folder}`]) && after.folders.some((f) => f.id === p.folder) && (!others || files.holdsNothing(after, p.folder));
+  if (folderGone) {
+    if (fm) await fm.deleteForever([`f:${p.folder}`], { name: opts.by });
+    else await files.trashItems([`f:${p.folder}`], opts.by);
+  }
   let workspace = "removed";
   try {
     const b = await import("./bench");
@@ -124,7 +140,9 @@ export async function finishProject(id: string, owner: string, opts: { keep?: st
   } catch (e) { workspace = `not removed now (${(e as Error).message.slice(0, 80)}); it goes when the runtime stops`; }
   const done = await change(id, (x) => { x.status = "finished"; x.finished = { at: Date.now(), by: opts.by, kept: keep, removed }; });
   return { project: id, status: done.status, kept: keep.map((k) => ({ file: k, to: opts.keep_to ?? "its kind's folder" })), removed: removed.length, removed_files: removed.slice(0, 40),
-    folder: folderGone ? "in the trash" : `kept: ${others} other thing${others === 1 ? "" : "s"} in it`, workspace, note: "Removed files are in the trash for 30 days (restore_files)." };
+    folder: folderGone ? (fm ? "deleted for good" : "in the trash") : `kept: ${others} other thing${others === 1 ? "" : "s"} in it`, workspace,
+    ...(failed.length ? { failed } : {}),
+    note: fm ? "Deleted for good: the files, their rows and their bytes in R2. Nothing is in the trash." : "Removed files are in the trash for 30 days (restore_files); finish with purge: true once the user says it's done to delete them for good." };
 }
 
 /** The owner's Stop on the dashboard: no more calls under it, its running jobs cancelled. Files stay. */
