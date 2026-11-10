@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Downloading a video gave `B2 HEAD … 403`, fix it"** (2026-11-10): Backblaze answers a HEAD for a file that isn't
+  there yet with a bare 403, so saving a download into Files (which checks the target first) failed. A 403 HEAD is now
+  asked again as a one-byte GET, which says "not there" (go on), gives the size, or the real reason.
+- **"Make the first automations and set up the starters for me; it must sound like me, human, professional and
+  creative, no AI slop"** (2026-11-10): starters can now be set per account (4 each), so each page shows its own.
+
 - **"Build the Auto-DM suite completely, organise it, and make it fast: the tab takes forever to load, it must feel
   instant"** (2026-11-10): the tab paints at once from the last copy and refreshes behind it; each tab is its own
   chunk, warmed while the page is idle; the database setup is one version check instead of a dozen statements per cold

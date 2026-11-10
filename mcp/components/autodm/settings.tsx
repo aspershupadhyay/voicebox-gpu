@@ -94,18 +94,19 @@ function Starters({ d, save }: Props) {
   };
   return (
     <>
-      <Head title="Conversation starters">Up to four questions Instagram shows when someone opens a new chat with you. A tap runs the automation you pick, and it&apos;s how an ig.me link reaches someone new.</Head>
+      <Head title="Conversation starters">Up to four questions per account that Instagram shows when someone opens a new chat with you. A tap runs the automation you pick, and it&apos;s how an ig.me link reaches someone new.</Head>
       <Toggle on={x.on} set={(v) => setX({ ...x, on: v })} title="Show starters" about="Off removes them from Instagram when you publish." />
       {x.on && (
         <div className="dm-snips" style={{ marginTop: 10 }}>
           {x.items.map((it, i) => (
             <div key={i} className="dm-snip starter">
               <input aria-label={`Starter ${i + 1} question`} value={it.question} maxLength={80} placeholder="Send me the free guide" onChange={(e) => setX({ ...x, items: x.items.map((y, j) => (j === i ? { ...y, question: e.target.value } : y)) })} />
+              {d.status.accounts.length > 1 && <Select size="sm" label={`Starter ${i + 1} account`} value={it.account ?? ""} onChange={(v) => setX({ ...x, items: x.items.map((y, j) => (j === i ? { ...y, account: v || undefined } : y)) })} options={[["", "Every account"], ...d.status.accounts.map((a) => [a.id, handleOf(a)] as [string, string])]} />}
               <Select size="sm" label={`Starter ${i + 1} runs`} value={it.automation} onChange={(v) => setX({ ...x, items: x.items.map((y, j) => (j === i ? { ...y, automation: v } : y)) })} options={[["", "Pick an automation"], ...opts]} />
               <button type="button" className="icon-btn" aria-label={`Remove starter ${i + 1}`} onClick={() => setX({ ...x, items: x.items.filter((_, j) => j !== i) })}><Trash size={14} /></button>
             </div>
           ))}
-          {x.items.length < 4 && <button className="ghost xs" disabled={!opts.length} title={opts.length ? undefined : "Make an automation first"} onClick={() => setX({ ...x, items: [...x.items, { question: "", automation: "" }] })}><Plus size={13} />Starter</button>}
+          {x.items.length < 4 * Math.max(1, d.status.accounts.length) && <button className="ghost xs" disabled={!opts.length} title={opts.length ? undefined : "Make an automation first"} onClick={() => setX({ ...x, items: [...x.items, { question: "", automation: "" }] })}><Plus size={13} />Starter</button>}
         </div>
       )}
       <div className="row" style={{ gap: 8, marginTop: 14, alignItems: "center" }}>
