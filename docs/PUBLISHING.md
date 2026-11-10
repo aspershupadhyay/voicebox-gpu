@@ -66,8 +66,10 @@ shape. Long-lived tokens last 60 days and the autopilot renews them from 20 days
 Our own ManyChat-style automations. The engine is `mcp/lib/publish/autodm.ts` (flows, sending, the webhook) and
 `autodm-more.ts` (comment rules, AI replies, the held queue, sync, the weekly report, auto-attach, A/B); matching is
 `dmmatch.ts`; history is Postgres (`dmstore.ts`, `db/003_autodm.sql`, `db/004_autodm_more.sql`); the webhook is
-`mcp/app/api/ig/webhook`; link clicks go through `mcp/app/l/[token]`; the page is `mcp/components/autodm/`. Five tabs
-(`?tab=`), each doing one job:
+`mcp/app/api/ig/webhook`; link clicks go through `mcp/app/l/[token]`; the page is `mcp/components/autodm/`. Six tabs
+(`?tab=`), each doing one job. Every tab is its own code chunk and paints at once from the last copy kept in this
+browser, then swaps in the fresh numbers; the other tabs' code loads while the page is idle. The tables are set up by a
+one-row version check (`autodm_meta`), not a dozen statements on every cold start.
 
 - **Automations**: one quiet line of 30-day numbers (live, sent, opened, emails, people), then the list, built for
   hundreds. Search by name, keyword or post; filter live/off and by account; sort by recent, most sent, best open rate
@@ -76,8 +78,11 @@ Our own ManyChat-style automations. The engine is `mcp/lib/publish/autodm.ts` (f
   collect emails, followers only, thank story mentions, any comment, blank) or **Find them in my captions** (recent
   posts whose caption says "comment WORD" with nothing answering it; tick them and each becomes an automation).
   The editor (`?edit=<id>`) is a **flow**: steps down a line, one open at a time, each with a one-line summary:
-  - **When**: comments, DMs, story replies and/or **story mentions**; every account or chosen ones; every post or
-    chosen posts (from the Instagram grid or studio posts, which count once live).
+  - **When**: comments, DMs, story replies, **story mentions** and/or **an ig.me link**; every account or chosen ones;
+    every post or chosen posts (from the Instagram grid or studio posts, which count once live). The link trigger shows
+    the automation's `https://ig.me/m/<handle>?ref=<ref>` per account with Copy and a **QR code** (PNG): put it in a
+    bio, a YouTube description or on a poster. Someone already chatting gets the DM straight away
+    (`messaging_referral`); for a first chat Instagram passes the ref when they tap a **conversation starter**.
   - **Match**: *typos ok* (fuzzy: "cathc", "CATCHHH", "c a t c h"; the first letter must match), *has the keyword*,
     *just the keyword*, or *anything*; words to ignore; top-level comments only.
   - **Followers only** (optional): "follow, then tap"; the tap is checked (`is_user_follow_business`).
@@ -88,9 +93,20 @@ Our own ManyChat-style automations. The engine is `mcp/lib/publish/autodm.ts` (f
     until one is clearly opened more, a 95% two-proportion test once both have the minimum sends, or the better one
     after ten times that; the winner then goes to everyone and you get a notification).
   - **Ask for email after** (optional): the DM ends asking for an email; replies with one are saved to People.
-  - **Public answer** (one at random), **AI follow-ups** (below) and **Limits** (once per person).
+  - **Public answer** (one at random), **Follow-up** (a second message 1–22 hours later, with an optional link; only
+    to people who wrote back or tapped within Instagram's 24 hours, everyone else is skipped and the log says why),
+    **Tag them** (tags the person gets; filter the Inbox by them; an email adds `#email`), **AI follow-ups** (below)
+    and **Limits** (once per person).
   - Beside it, a phone shows the whole flow as people get it (tap the choices, switch A/B) with a comment box that
     tries a comment against the draft. Nothing is sent from the editor.
+- **Inbox**: every Instagram conversation, live (it refreshes every few seconds while the tab is open): what people
+  wrote, what the bot and the AI sent, and what someone answered in the Instagram app (its echo). Views: open, unread,
+  bot paused, done, all; search people, messages and notes; filter by account and tag. Open one to **answer by hand**
+  (inside the 24-hour window; the window left is shown), drop in a **saved reply**, and the bot steps back for that
+  person for a while (Settings → Inbox), so it never talks over you; **pause** it for a day or until handed back. Tag,
+  note and mark done; the side shows which automations ran for them and whether they opened the link. On a phone an
+  open conversation takes the screen like the Instagram app. New people's names and pictures come from Instagram's
+  profile API. Every message is kept whether Auto-DM is on or off (`autodm_messages`, `autodm_people`).
 - **Comments**: **comment rules** run on every new comment before any automation: words (exact or with typos) and/or
   any link → **hide**, **delete** or **flag**. Rules read as sentences ("Hide comments with “promo”, “crypto” (typos
   too)"); presets for links and spam. Beside them the review list: flagged, hidden, deleted; show a hidden one again,
@@ -102,6 +118,9 @@ Our own ManyChat-style automations. The engine is `mcp/lib/publish/autodm.ts` (f
   DM, story reply, mention and AI answer, with why anything didn't go).
 - **Settings**, a section at a time down the side (`?section=`):
   - **General**: the master switch and a pause per account.
+  - **Inbox**: saved replies (`{username}`) and how long the bot steps back after a hand-written answer.
+  - **Starters**: up to four conversation starters (Instagram's ice breakers), each running an automation, and
+    *Publish to Instagram* (`/me/messenger_profile`), which also makes ig.me links work for first chats.
   - **Safety**: DMs an hour per account (default 150; Instagram allows about 200) and a day per person (default 5).
     Past the hourly limit DMs are **held** and sent in a later hour by the sweep (`/api/cron/sweep`), within
     Instagram's windows; blocked usernames.
@@ -109,7 +128,7 @@ Our own ManyChat-style automations. The engine is `mcp/lib/publish/autodm.ts` (f
     the chosen template (`{title}`, `{keyword}`; a link in the caption fills the button), live or off for you to check.
   - **AI replies**: when someone who got a DM writes back, Claude answers from the post's script and caption, the
     automation's notes and the persona here; anything it can't answer is handed to you (a notification), and it
-    answers at most N times a person a day. Needs a **Claude key** (Settings → Automation → Keys, kept encrypted like
+    answers at most N times a person a day. Optional, bring your own key: everything else works without it. Needs a **Claude key** (Settings → Automation → Keys, kept encrypted like
     the other tool keys; or `ANTHROPIC_API_KEY` on the Worker). Uses `claude-opus-5-5` with server-side fallbacks on.
   - **Sync & report**: an https address that gets each new email (and optionally each DM) as JSON: a Google Sheet
     (the how-to has a 6-line Apps Script `doPost`), Zapier, Make or a CRM; *Send a test* and *Send every email*. The
@@ -121,8 +140,8 @@ Our own ManyChat-style automations. The engine is `mcp/lib/publish/autodm.ts` (f
 Each comment and message is answered at most once (a unique row per account × kind × id), our own comments never
 trigger anything, and the follow button's payload is signed. The MCP tool is `auto_dm` (status, list, get, save,
 switch, delete, settings, test, activity, contacts, leads, insights, report, comments, comment_act, suggest,
-create_suggested, ai_test, sync_test, subscribe); saving, switching on, acting on a comment and changing the riskier
-settings ask first (`lib/auto/wrap.ts`). `cd mcp && npx tsx scripts/check-autodm.cts` runs 76 end-to-end checks of
+create_suggested, ai_test, sync_test, subscribe, inbox, thread, reply, person, push_starters); saving, switching on,
+acting on a comment, answering someone, publishing starters and changing the riskier settings ask first (`lib/auto/wrap.ts`). `cd mcp && npx tsx scripts/check-autodm.cts` runs 101 end-to-end checks of
 the engine against a real Postgres in WASM (`npm i --no-save @electric-sql/pglite` first); nothing leaves the machine.
 
 It sends nothing until all of these are done (the view shows each step):
@@ -134,7 +153,7 @@ It sends nothing until all of these are done (the view shows each step):
    permission the app doesn't have breaks Instagram sign-in.)
 2. **Webhook.** Pick a long random verify token and `npx wrangler secret put INSTAGRAM_WEBHOOK_TOKEN`. In the Meta app:
    Instagram → Webhooks → callback URL `https://voiceboxstudio.pages.dev/api/ig/webhook` (Copy on the view), the same
-   verify token, Verify and save, then subscribe to `comments`, `messages`, `messaging_postbacks` (button taps) and `mentions` (story mentions). Deliveries are checked against
+   verify token, Verify and save, then subscribe to `comments`, `messages`, `messaging_postbacks` (button taps), `messaging_referral` (ig.me links) and `mentions` (story mentions). Deliveries are checked against
    `X-Hub-Signature-256` with `INSTAGRAM_APP_SECRET` (or `META_APP_SECRET` if the webhook is on a parent Facebook app).
 3. **Reconnect** each account (Settings tab → Reconnect, or Posts → Autopilot) so it grants messages. Voicebox then
    subscribes it to the webhook by itself; *Subscribe* does it again by hand.

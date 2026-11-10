@@ -5,6 +5,8 @@
 import { sql } from "../db";
 
 let ready: Promise<void> | null = null;
+/** Bump when SCHEMA changes: a cold start then checks one row instead of running every statement (each one a round trip). */
+const VERSION = 3;
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS autodm_events (
     id bigserial PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
@@ -13,19 +15,40 @@ const SCHEMA = [
     error text, note text, UNIQUE (account, kind, ref))`,
   `ALTER TABLE autodm_events ADD COLUMN IF NOT EXISTS psid text, ADD COLUMN IF NOT EXISTS variant text,
     ADD COLUMN IF NOT EXISTS awaiting text, ADD COLUMN IF NOT EXISTS reply text, ADD COLUMN IF NOT EXISTS links text[],
-    ADD COLUMN IF NOT EXISTS clicks integer NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS clicked_at timestamptz`,
+    ADD COLUMN IF NOT EXISTS clicks integer NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS clicked_at timestamptz,
+    ADD COLUMN IF NOT EXISTS follow_at timestamptz, ADD COLUMN IF NOT EXISTS followed_up text`,
   "CREATE INDEX IF NOT EXISTS autodm_events_at ON autodm_events (at DESC)",
   "CREATE INDEX IF NOT EXISTS autodm_events_automation ON autodm_events (automation, at DESC)",
   "CREATE INDEX IF NOT EXISTS autodm_events_person ON autodm_events (account, from_id)",
   "CREATE INDEX IF NOT EXISTS autodm_events_psid ON autodm_events (account, psid, id DESC)",
   "CREATE INDEX IF NOT EXISTS autodm_events_waiting ON autodm_events (status) WHERE status IN ('held', 'gated')",
+  "CREATE INDEX IF NOT EXISTS autodm_events_follow ON autodm_events (follow_at) WHERE follow_at IS NOT NULL AND followed_up IS NULL",
   `CREATE TABLE IF NOT EXISTS autodm_leads (
     id bigserial PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(), account text NOT NULL, from_id text NOT NULL,
     from_name text, email text NOT NULL, automation text, automation_name text, event bigint, UNIQUE (account, from_id, email))`,
   "CREATE INDEX IF NOT EXISTS autodm_leads_at ON autodm_leads (at DESC)",
+  // the inbox: every message both ways, and one row per person (tags, notes, the bot paused for them, unread)
+  `CREATE TABLE IF NOT EXISTS autodm_messages (
+    id bigserial PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(), account text NOT NULL, psid text NOT NULL,
+    dir text NOT NULL, text text, mid text NOT NULL, by text, kind text, UNIQUE (account, mid))`,
+  "CREATE INDEX IF NOT EXISTS autodm_messages_thread ON autodm_messages (account, psid, id DESC)",
+  `CREATE TABLE IF NOT EXISTS autodm_people (
+    account text NOT NULL, psid text NOT NULL, username text, name text, avatar text, tags text[] NOT NULL DEFAULT '{}',
+    notes text, bot_off_until timestamptz, state text NOT NULL DEFAULT 'open', unread integer NOT NULL DEFAULT 0,
+    last_in timestamptz, last_out timestamptz, last_text text, last_dir text, updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (account, psid))`,
+  "CREATE INDEX IF NOT EXISTS autodm_people_recent ON autodm_people (updated_at DESC)",
+  "CREATE INDEX IF NOT EXISTS autodm_people_tags ON autodm_people USING gin (tags)",
+  "CREATE TABLE IF NOT EXISTS autodm_meta (v integer NOT NULL)",
 ];
 export function ensure() {
-  return (ready ??= (async () => { for (const q of SCHEMA) await sql().query(q, []); })().catch((e) => { ready = null; throw e; }));
+  return (ready ??= (async () => {
+    const v = await sql().query("select max(v) v from autodm_meta", []).then((r) => Number((r as { v: number | null }[])[0]?.v ?? 0)).catch(() => 0);
+    if (v >= VERSION) return;
+    for (const q of SCHEMA) await sql().query(q, []);
+    await sql().query("delete from autodm_meta", []);
+    await sql().query("insert into autodm_meta (v) values ($1)", [VERSION]);
+  })().catch((e) => { ready = null; throw e; }));
 }
 
 export type DmStatus = "pending" | "sent" | "gated" | "held" | "failed" | "skipped" | "hidden" | "deleted" | "flagged" | "dismissed";
@@ -258,4 +281,144 @@ export async function top(days = 7, limit = 5) {
   return rows<{ automation: string; name: string; sent: string; clicked: string }>(await sql().query(
     `select automation, max(automation_name) name, count(*) filter (where status = 'sent') sent, count(clicked_at) clicked from autodm_events
      where at > now() - make_interval(days => $1::int) and automation is not null and kind not in ('ai', 'mod') group by automation order by 3 desc limit ${limit}`, [days])).map((x) => ({ ...x, sent: +x.sent, clicked: +x.clicked }));
+}
+
+// ── the inbox: every message both ways, one row per person
+
+export type Person = {
+  account: string; psid: string; username: string | null; name: string | null; avatar: string | null; tags: string[]; notes: string | null;
+  bot_off_until: string | null; state: "open" | "done"; unread: number; last_in: string | null; last_out: string | null;
+  last_text: string | null; last_dir: "in" | "out" | null; updated_at: string;
+};
+export type Message = { id: number; at: string; account: string; psid: string; dir: "in" | "out"; text: string | null; mid: string; by: string | null; kind: string | null };
+
+/** One message in or out, kept once (Instagram echoes what we send: same id), and the person's row brought up to date.
+ *  Answers whether it was new and whether the person still needs their name looked up. */
+export async function logMessage(m: { account: string; psid: string; dir: "in" | "out"; text: string; mid?: string | null; by?: string | null; kind?: string | null; username?: string | null }) {
+  await ensure();
+  const mid = m.mid || `local:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const r = rows<{ username: string | null }>(await sql().query(
+    `with m as (insert into autodm_messages (account, psid, dir, text, mid, by, kind) values ($1, $2, $3, $4, $5, $6, $7)
+       on conflict (account, mid) do nothing returning at)
+     insert into autodm_people (account, psid, username, last_in, last_out, last_text, last_dir, unread, state, updated_at)
+     select $1, $2, $8, case when $3 = 'in' then m.at end, case when $3 = 'out' then m.at end, left($4, 300), $3, case when $3 = 'in' then 1 else 0 end, 'open', m.at from m
+     on conflict (account, psid) do update set
+       username = coalesce(autodm_people.username, excluded.username),
+       last_in = coalesce(excluded.last_in, autodm_people.last_in), last_out = coalesce(excluded.last_out, autodm_people.last_out),
+       last_text = excluded.last_text, last_dir = excluded.last_dir,
+       unread = case when excluded.last_dir = 'in' then autodm_people.unread + 1 when $6::text in ('bot', 'AI') then autodm_people.unread else 0 end,
+       state = case when excluded.last_dir = 'in' then 'open' else autodm_people.state end, updated_at = excluded.updated_at
+     returning username`,
+    [m.account, m.psid, m.dir, m.text.slice(0, 4000), mid.slice(0, 200), m.by ?? null, m.kind ?? null, m.username ?? null]));
+  return { fresh: r.length > 0, needsName: r.length > 0 && !r[0].username };
+}
+
+export async function setProfile(account: string, psid: string, p: { username?: string | null; name?: string | null; avatar?: string | null }) {
+  await ensure();
+  await sql().query(
+    `insert into autodm_people (account, psid, username, name, avatar) values ($1, $2, $3, $4, $5)
+     on conflict (account, psid) do update set username = coalesce(excluded.username, autodm_people.username),
+       name = coalesce(excluded.name, autodm_people.name), avatar = coalesce(excluded.avatar, autodm_people.avatar)`,
+    [account, psid, p.username ?? null, p.name ?? null, p.avatar ?? null]);
+}
+
+export type InboxView = "open" | "unread" | "done" | "paused" | "all";
+/** Conversations, the most recent first: a page of 50 (before = the last one's updated_at). */
+export async function inbox(f: { account?: string; view?: InboxView; q?: string; tag?: string; before?: string; limit?: number }) {
+  await ensure();
+  const where: string[] = ["last_dir is not null"], v: unknown[] = [];
+  const at = (x: unknown) => { v.push(x); return `$${v.length}`; };
+  if (f.account) where.push(`account = ${at(f.account)}`);
+  if (f.view === "open") where.push("state = 'open'");
+  if (f.view === "done") where.push("state = 'done'");
+  if (f.view === "unread") where.push("unread > 0");
+  if (f.view === "paused") where.push("bot_off_until > now()");
+  if (f.tag) where.push(`${at(f.tag)} = any(tags)`);
+  if (f.q) { const p = at(like(f.q)); where.push(`(username ilike ${p} or name ilike ${p} or last_text ilike ${p} or notes ilike ${p})`); }
+  if (f.before && !Number.isNaN(Date.parse(f.before))) where.push(`updated_at < ${at(f.before)}`);
+  const limit = Math.max(1, Math.min(200, f.limit ?? 50));
+  const [list, counts] = await Promise.all([
+    sql().query(`select * from autodm_people where ${where.join(" and ")} order by updated_at desc limit ${limit}`, v),
+    sql().query(`select count(*) filter (where state = 'open') open, count(*) filter (where unread > 0) unread, count(*) filter (where bot_off_until > now()) paused
+      from autodm_people where last_dir is not null${f.account ? " and account = $1" : ""}`, f.account ? [f.account] : []),
+  ]);
+  const c = rows<Record<string, string>>(counts)[0] ?? {};
+  return { people: rows<Person>(list), counts: { open: +(c.open ?? 0), unread: +(c.unread ?? 0), paused: +(c.paused ?? 0) } };
+}
+
+export async function person(account: string, psid: string) {
+  await ensure();
+  const [r] = rows<Person>(await sql().query("select * from autodm_people where account = $1 and psid = $2", [account, psid]));
+  return r ?? null;
+}
+
+/** One conversation, oldest first (before = an id, for older messages), with what automations did for this person. */
+export async function thread(account: string, psid: string, before?: number) {
+  await ensure();
+  const [msgs, p, evs] = await Promise.all([
+    sql().query(`select * from autodm_messages where account = $1 and psid = $2${before ? " and id < $3" : ""} order by id desc limit 100`, before ? [account, psid, before] : [account, psid]),
+    person(account, psid),
+    sql().query("select id, at, kind, automation_name, status, clicked_at, note from autodm_events where account = $1 and (psid = $2 or from_id = $2) and kind <> 'mod' order by id desc limit 20", [account, psid]),
+  ]);
+  return { messages: rows<Message>(msgs).reverse(), person: p, events: rows<Record<string, unknown>>(evs), more: rows(msgs).length === 100 };
+}
+
+export type PersonPatch = { tags?: string[]; notes?: string | null; state?: "open" | "done"; bot_off_until?: string | null; read?: boolean };
+export async function patchPerson(account: string, psid: string, p: PersonPatch) {
+  await ensure();
+  const set: string[] = [], v: unknown[] = [account, psid];
+  const at = (x: unknown) => { v.push(x); return `$${v.length}`; };
+  if (p.tags) set.push(`tags = ${at(p.tags)}::text[]`);
+  if (p.notes !== undefined) set.push(`notes = ${at(p.notes)}`);
+  if (p.state) set.push(`state = ${at(p.state)}`);
+  if (p.bot_off_until !== undefined) set.push(`bot_off_until = ${at(p.bot_off_until)}`);
+  if (p.read) set.push("unread = 0");
+  if (!set.length) return person(account, psid);
+  const [r] = rows<Person>(await sql().query(`update autodm_people set ${set.join(", ")} where account = $1 and psid = $2 returning *`, v));
+  return r ?? null;
+}
+
+/** Tags an automation gives the person it ran for (added to theirs, never removing any). */
+export async function tagPerson(account: string, psid: string, tags: string[], username?: string | null) {
+  if (!tags.length) return;
+  await ensure();
+  await sql().query(
+    `insert into autodm_people (account, psid, username, tags) values ($1, $2, $4, $3::text[])
+     on conflict (account, psid) do update set tags = array(select distinct unnest(autodm_people.tags || $3::text[])),
+       username = coalesce(autodm_people.username, excluded.username)`, [account, psid, tags, username ?? null]);
+}
+
+/** Is the bot paused for this person (someone took the conversation over)? */
+export async function botOff(account: string, psid: string) {
+  await ensure();
+  const [r] = rows<{ off: boolean }>(await sql().query("select bot_off_until > now() off from autodm_people where account = $1 and psid = $2", [account, psid]));
+  return r?.off === true;
+}
+
+/** Every tag in use, with how many people have it. */
+export async function allTags() {
+  await ensure();
+  return rows<{ tag: string; n: string }>(await sql().query("select t tag, count(*) n from autodm_people, unnest(tags) t group by t order by 2 desc, 1 limit 200", []))
+    .map((x) => ({ tag: x.tag, n: +x.n }));
+}
+
+/** Follow-ups that are due: the row, and when the person last wrote (Instagram's 24-hour window). */
+export async function dueFollowUps(limit = 20) {
+  await ensure();
+  return rows<DmEvent & { last_in: string | null; username: string | null }>(await sql().query(
+    `select e.*, p.last_in, p.username from autodm_events e left join autodm_people p on p.account = e.account and p.psid = e.psid
+     where e.follow_at <= now() and e.followed_up is null order by e.follow_at limit ${Math.max(1, Math.min(50, limit))}`, []));
+}
+export async function setFollowUp(id: number, p: { follow_at?: Date | null; followed_up?: string | null; note?: string }) {
+  const set: string[] = ["updated_at = now()"], v: unknown[] = [id];
+  if (p.follow_at !== undefined) { v.push(p.follow_at ? p.follow_at.toISOString() : null); set.push(`follow_at = $${v.length}`); }
+  if (p.followed_up !== undefined) { v.push(p.followed_up); set.push(`followed_up = $${v.length}`); }
+  if (p.note) { v.push(p.note); set.push(`note = coalesce(note || ' · ', '') || $${v.length}`); }
+  await sql().query(`update autodm_events set ${set.join(", ")} where id = $1`, v);
+}
+/** When the next follow-up is due (ms), or null. */
+export async function nextFollowUp() {
+  await ensure();
+  const [r] = rows<{ at: string | null }>(await sql().query("select min(follow_at) at from autodm_events where follow_at is not null and followed_up is null", []));
+  return r?.at ? Date.parse(r.at) : null;
 }

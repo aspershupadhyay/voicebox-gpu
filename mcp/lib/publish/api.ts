@@ -13,6 +13,8 @@
 //   POST   publish/autodm/subscribe { account? }        …/autodm/test { text, media?, kind?, account?, automation? }
 //   GET    publish/autodm/leads?account&q&automation   …/autodm/insights?days   …/autodm/suggest?account   …/autodm/comments?status&q
 //   POST   publish/autodm/comment { id, action: hide|unhide|delete|dismiss }   …/autodm/report (make it now)
+//   GET    publish/autodm/inbox?account&view&q&tag&before   …/autodm/thread/<account>/<psid>?before   …/autodm/tags
+//   POST   publish/autodm/reply { account, psid, text }   …/autodm/person { account, psid, tags?, notes?, state?, bot?, read? }   …/autodm/starters
 //   POST   publish/autodm/sync { what: test|all }   …/autodm/suggest { items }   …/autodm/ai { automation, question }
 import { captionFor } from "../captions";
 import { after } from "next/server";
@@ -44,6 +46,17 @@ export async function publishGet(path: string[], query?: URLSearchParams) {
     if (!c) return Response.json(await dm.overview());
     if (c === "media" && path[2] && ID.test(path[2])) return Response.json(await dm.recentMedia(path[2], q("after")));
     if (c === "posts") return Response.json({ posts: await dm.studioPosts() });
+    if (c === "inbox" || c === "thread" || c === "tags") {
+      const DB = await import("./dmstore");
+      if (c === "tags") return Response.json({ tags: await DB.allTags() });
+      if (c === "thread") {
+        const [acc, psid] = [path[2], path[3]];
+        if (!acc || !psid || !/^\d{3,40}$/.test(acc) || !/^\d{3,40}$/.test(psid)) return bad("not found", 404);
+        return Response.json(await DB.thread(acc, psid, Number(q("before")) || undefined));
+      }
+      const view = ["open", "unread", "done", "paused", "all"].includes(q("view") ?? "") ? q("view") as "open" : "all";
+      return Response.json(await DB.inbox({ account: q("account"), view, q: q("q"), tag: q("tag"), before: q("before") }));
+    }
     const kind = ["comment", "dm", "story", "mention", "ai"].includes(q("kind") ?? "") ? q("kind") : undefined;
     if (c === "activity") return Response.json({ events: await dm.activity({ automation: q("automation"), account: q("account"), status: q("status"), kind, q: q("q"), before: Number(q("before")) || undefined }) });
     if (c === "contacts") return Response.json({ contacts: await dm.contacts({ account: q("account"), q: q("q") }) });
@@ -89,6 +102,9 @@ export async function publishPost(path: string[], body: Record<string, unknown>)
       if (c === "delete") return Response.json({ deleted: await dm.removeAutomations(ids(body.ids)) });
       if (c === "switch") return Response.json({ changed: await dm.switchAutomations(ids(body.ids), body.on === true) });
       if (c === "order") return Response.json({ moved: await dm.reorder(ids(body.ids)) });
+      if (c === "reply") return Response.json({ person: await dm.reply(String(body.account ?? ""), String(body.psid ?? ""), String(body.text ?? ""), await who()) });
+      if (c === "person") return Response.json({ person: await dm.updatePerson(String(body.account ?? ""), String(body.psid ?? ""), body) });
+      if (c === "starters") return Response.json({ results: await dm.pushStarters() });
       if (c === "subscribe") return Response.json({ results: await dm.subscribe(typeof body.account === "string" && ID.test(body.account) ? body.account : undefined) });
       const more = await import("./autodm-more");
       if (c === "comment") {

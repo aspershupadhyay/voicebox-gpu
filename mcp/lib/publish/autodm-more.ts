@@ -12,6 +12,7 @@ import * as IG from "./instagram";
 import type { Plan } from "./shared";
 
 const DIR = "workspace/publish/autodm";
+const FOLLOW = `${DIR}/follow-ups.json`;
 const HELD = `${DIR}/held.json`, SYNC = `${DIR}/sync.json`, REPORT = `${DIR}/reports/latest.json`;
 const notify = async (title: string, body: string, tags: string) => (await import("../colab")).notify(title, body, tags).catch(() => false);
 
@@ -154,7 +155,7 @@ export async function answerWithAi(ev: Talk, s: DmSettings) {
     const r = await ask(systemPrompt(s, a, acc.handle ?? acc.name, context), turns(talk.filter((x) => x.id !== id), ev.text));
     if (!r.text) { await DB.finish(id, { status: "skipped", note: r.refused ? "The AI declined to answer this one" : "The AI had no answer" }); return null; }
     const h = handoff(r.text);
-    await Core.send(token, acc.id, { id: ev.from.id }, { text: h.text });
+    await Core.send(token, acc.id, { id: ev.from.id }, { text: h.text }, "AI");
     await DB.finish(id, { status: "sent", reply: h.text, note: h.handoff ? "Needs you: the AI handed this over" : "AI answer" });
     if (h.handoff) await notify("Auto-DM: a DM needs you", `@${last.from_name ?? "someone"}: ${ev.text.slice(0, 200)}`, "speech_balloon");
     return h.text;
@@ -184,6 +185,11 @@ export async function aiTest(automationId: string, question: string) {
 
 /** Something is held: the sweep looks (an R2 file, so the 10-minute sweep doesn't wake Postgres for nothing). */
 export const markHeld = () => putJson(HELD, { at: Date.now() }).catch(() => null);
+/** A follow-up was scheduled: the minute timer looks at the database from then on (FOLLOW holds the earliest). */
+export async function markFollowUp(at: number) {
+  const cur = await getJson<{ next: number }>(FOLLOW).catch(() => null);
+  if (!cur || at < cur.next) await putJson(FOLLOW, { next: at }).catch(() => null);
+}
 
 /** The 10-minute sweep: held DMs out when there's room, and the weekly report on its day. */
 export async function sweep() {
@@ -204,6 +210,13 @@ export async function sweep() {
       }
       if (!(await DB.held(1)).length) await delObjs([HELD]).catch(() => null);
     } else if (!s.on) await delObjs([HELD]).catch(() => null);
+  }
+  // follow-ups: only when the marker says one is due, so an idle studio doesn't wake the database every minute
+  const fu = await getJson<{ next: number }>(FOLLOW).catch(() => null);
+  if (fu && fu.next <= Date.now()) {
+    if (s.on && Core.dmFlag()) out.sent += await Core.followUps().catch((e) => { console.error("autodm follow-ups", (e as Error).message); return 0; });
+    const next = await DB.nextFollowUp().catch(() => null);
+    if (next) await putJson(FOLLOW, { next: Math.max(next, Date.now() + 60_000) }).catch(() => null); else await delObjs([FOLLOW]).catch(() => null);
   }
   if (reportDue(s.report, new Date())) { await weekly().catch((e) => console.error("autodm report", (e as Error).message)); out.report = true; }
   return out;

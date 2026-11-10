@@ -3,7 +3,7 @@
 // pauses), Safety (hourly and per-person limits, blocked usernames), Auto-attach (an automation for every new post),
 // AI replies (Claude answers follow-ups), Sync & report (a sheet or CRM, the weekly note), Defaults (the words new
 // automations start from) and Set up (the Meta checklist and a tester).
-import { ArrowsClockwise, CheckCircle, Circle, Copy, Flask, Gear, Lightning, Link as LinkIc, PaperPlaneTilt, ShieldCheck, Sparkle, TextAa, Wrench } from "@phosphor-icons/react";
+import { ChatTeardropText, ChatsCircle, Plus, Trash, ArrowsClockwise, CheckCircle, Circle, Copy, Flask, Gear, Lightning, Link as LinkIc, PaperPlaneTilt, ShieldCheck, Sparkle, TextAa, Wrench } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -15,6 +15,8 @@ import { Chips, Seg, ago, handleOf, type Overview } from "./shared";
 
 const SECTIONS = [
   { id: "general", name: "General", Ic: Gear },
+  { id: "inbox", name: "Inbox", Ic: ChatTeardropText },
+  { id: "starters", name: "Starters", Ic: ChatsCircle },
   { id: "safety", name: "Safety", Ic: ShieldCheck },
   { id: "attach", name: "Auto-attach", Ic: Lightning },
   { id: "ai", name: "AI replies", Ic: Sparkle },
@@ -43,6 +45,73 @@ function General({ d, save }: Props) {
         <Toggle key={a.id} on={!s.paused.includes(a.id)} set={(v) => save({ paused: v ? s.paused.filter((x) => x !== a.id) : [...s.paused, a.id] }, v ? `Answering on ${handleOf(a)}` : `Paused on ${handleOf(a)}`)}
           title={`Answer on ${handleOf(a)}`} about={a.error ?? "Off pauses this account only."} />
       ))}
+    </>
+  );
+}
+
+function InboxSet({ d, save }: Props) {
+  const cur = d.settings;
+  const [snips, setSnips] = useState(cur.snippets);
+  const [mins, setMins] = useState(cur.takeover_min);
+  const changed = JSON.stringify(snips) !== JSON.stringify(cur.snippets) || mins !== cur.takeover_min;
+  const edit = (i: number, p: Partial<(typeof snips)[number]>) => setSnips(snips.map((x, j) => (j === i ? { ...x, ...p } : x)));
+  return (
+    <>
+      <Head title="Inbox">Saved replies drop into a message with one tap. When you answer someone by hand, the bot steps back for them for a while, so it doesn&apos;t talk over you.</Head>
+      <Field label="The bot steps back for">
+        <Select size="sm" label="Takeover length" value={mins} onChange={setMins} options={[[15, "15 minutes"], [60, "1 hour"], [240, "4 hours"], [1440, "A day"], [10080, "A week"]]} />
+      </Field>
+      <div className="dm-snips" style={{ marginTop: 14 }}>
+        <span className="small"><b>Saved replies</b> <span className="dim">· {"{username}"} is theirs</span></span>
+        {snips.map((x, i) => (
+          <div key={x.id || i} className="dm-snip">
+            <input aria-label={`Saved reply ${i + 1} name`} value={x.name} maxLength={40} placeholder="Name" onChange={(e) => edit(i, { name: e.target.value })} />
+            <textarea className="doc short" aria-label={`Saved reply ${i + 1}`} value={x.text} placeholder="Thanks {username}! Here's…" onChange={(e) => edit(i, { text: e.target.value })} />
+            <button type="button" className="icon-btn" aria-label={`Remove saved reply ${i + 1}`} onClick={() => setSnips(snips.filter((_, j) => j !== i))}><Trash size={14} /></button>
+          </div>
+        ))}
+        {snips.length < 50 && <button className="ghost xs" onClick={() => setSnips([...snips, { id: "", name: "", text: "" }])}><Plus size={13} />Saved reply</button>}
+      </div>
+      <SaveBar changed={changed} onSave={() => save({ snippets: snips.filter((x) => x.text.trim()), takeover_min: mins }, "Inbox settings saved")} onUndo={() => { setSnips(cur.snippets); setMins(cur.takeover_min); }} />
+    </>
+  );
+}
+
+function Starters({ d, save }: Props) {
+  const { toast } = useDialog();
+  const cur = d.settings.starters;
+  const [x, setX] = useState(cur);
+  const [busy, setBusy] = useState(false);
+  const changed = JSON.stringify({ on: x.on, items: x.items }) !== JSON.stringify({ on: cur.on, items: cur.items });
+  const opts = d.settings.automations.map((a) => [a.id, `${a.name}${a.on ? "" : " (off)"}`] as [string, string]);
+  const push = async () => {
+    setBusy(true);
+    await save({ starters: { on: x.on, items: x.items.filter((i) => i.question.trim() && i.automation) } }, "Saved");
+    await api<{ results: { handle: string | null; ok: boolean; error?: string }[] }>("publish/autodm/starters", { body: {} })
+      .then((r) => { const bad = r.results.filter((y) => !y.ok); toast(bad.length ? `Not on @${bad[0].handle}: ${bad[0].error}` : x.on ? "Starters are live on Instagram" : "Starters removed from Instagram", bad.length ? "bad" : "ok"); })
+      .catch((e) => toast((e as Error).message, "bad"));
+    setBusy(false);
+  };
+  return (
+    <>
+      <Head title="Conversation starters">Up to four questions Instagram shows when someone opens a new chat with you. A tap runs the automation you pick, and it&apos;s how an ig.me link reaches someone new.</Head>
+      <Toggle on={x.on} set={(v) => setX({ ...x, on: v })} title="Show starters" about="Off removes them from Instagram when you publish." />
+      {x.on && (
+        <div className="dm-snips" style={{ marginTop: 10 }}>
+          {x.items.map((it, i) => (
+            <div key={i} className="dm-snip starter">
+              <input aria-label={`Starter ${i + 1} question`} value={it.question} maxLength={80} placeholder="Send me the free guide" onChange={(e) => setX({ ...x, items: x.items.map((y, j) => (j === i ? { ...y, question: e.target.value } : y)) })} />
+              <Select size="sm" label={`Starter ${i + 1} runs`} value={it.automation} onChange={(v) => setX({ ...x, items: x.items.map((y, j) => (j === i ? { ...y, automation: v } : y)) })} options={[["", "Pick an automation"], ...opts]} />
+              <button type="button" className="icon-btn" aria-label={`Remove starter ${i + 1}`} onClick={() => setX({ ...x, items: x.items.filter((_, j) => j !== i) })}><Trash size={14} /></button>
+            </div>
+          ))}
+          {x.items.length < 4 && <button className="ghost xs" disabled={!opts.length} title={opts.length ? undefined : "Make an automation first"} onClick={() => setX({ ...x, items: [...x.items, { question: "", automation: "" }] })}><Plus size={13} />Starter</button>}
+        </div>
+      )}
+      <div className="row" style={{ gap: 8, marginTop: 14, alignItems: "center" }}>
+        <button className="sm" disabled={busy || (!changed && !!cur.pushed)} onClick={push}>{busy ? "Publishing…" : "Publish to Instagram"}</button>
+        <span className="tiny dim">{cur.pushed ? `Last published ${ago(cur.pushed)}` : "Not published yet"}</span>
+      </div>
     </>
   );
 }
@@ -90,7 +159,7 @@ function Ai({ d, save }: Props) {
   const changed = JSON.stringify(x) !== JSON.stringify(cur);
   return (
     <>
-      <Head title="AI replies">When someone writes back after the DM, Claude answers from the post&apos;s script and your notes. Anything it can&apos;t answer comes to you. Turn it on per automation, in its flow.</Head>
+      <Head title="AI replies">Optional, with your own key. When someone writes back after the DM, Claude answers from the post&apos;s script and your notes, and anything it can&apos;t answer comes to you. Everything else in Auto-DM works without it. Turn it on per automation, in its flow.</Head>
       <div className={`dm-keyrow ${d.status.ai_key ? "ok" : "warn"}`}>
         {d.status.ai_key ? <CheckCircle size={18} weight="fill" className="ok-t" aria-hidden /> : <Circle size={18} className="warn-t" aria-hidden />}
         <span className="small" style={{ flex: 1 }}>{d.status.ai_key ? <>Claude key set{d.status.ai_key_last4 ? <> (…{d.status.ai_key_last4})</> : null}</> : "Add a Claude key to turn AI replies on"}</span>
@@ -284,6 +353,7 @@ export function DmSettingsTab({ d, reload }: { d: Overview; reload: () => void }
     ai: d.status.ai_key ? "ok" : undefined,
     attach: d.settings.auto_attach.on ? "ok" : undefined,
     sync: d.settings.sync.on ? "ok" : undefined,
+    starters: d.settings.starters.on && d.settings.starters.pushed ? "ok" : undefined,
   };
   return (
     <div className="dm-set">
@@ -296,6 +366,8 @@ export function DmSettingsTab({ d, reload }: { d: Overview; reload: () => void }
       </nav>
       <section className="card dm-set-body" key={sec}>
         {sec === "general" && <General d={d} save={save} />}
+        {sec === "inbox" && <InboxSet d={d} save={save} />}
+        {sec === "starters" && <Starters d={d} save={save} />}
         {sec === "safety" && <Safety d={d} save={save} />}
         {sec === "attach" && <Attach d={d} save={save} />}
         {sec === "ai" && <Ai d={d} save={save} />}
