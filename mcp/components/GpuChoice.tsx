@@ -1,11 +1,11 @@
 "use client";
-// The GPUs, simply. GpuOverview: Colab, Modal and Cerebrium side by side, each with its state and one button (start /
+// The GPUs, simply. GpuOverview: Colab, Kaggle, Modal and Cerebrium side by side, each with its state and one button (start /
 // stop, wake / stop), then which goes first and the fallback switch. CloudPanel: one cloud GPU's tab (Modal or
 // Cerebrium): set it up, its address and monthly cap, heavy jobs, wake and stop. Server side: lib/gpus.ts
 // (lib/worker.ts routes every call through it); the MCP's `gpu` tool, action backend, does the same.
 import { Lightning, Play, Power, Stop } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
-import { api, type CloudGpu, type Gpus } from "./api";
+import { api, type CloudGpu, type Gpus, type KaggleGpu } from "./api";
 import { useDialog } from "./Dialog";
 import { useStatus } from "./Shell";
 import { Field, Toggle } from "./ui";
@@ -13,7 +13,7 @@ import { Field, Toggle } from "./ui";
 type Cloud = "modal" | "cerebrium";
 type Answer = Gpus & { modal_url: string; cerebrium_url: string };
 type Colab = { connected: boolean; runtimes?: { endpoint: string; accelerator: string }[] | { error: string }; config?: { voice_gpu: string } };
-const NAME: Record<Cloud | "colab", string> = { colab: "Colab", modal: "Modal", cerebrium: "Cerebrium" };
+const NAME: Record<Cloud | "colab" | "kaggle", string> = { colab: "Colab", kaggle: "Kaggle", modal: "Modal", cerebrium: "Cerebrium" };
 const PLACEHOLDER: Record<Cloud, string> = { modal: "https://you--voicebox-worker-gateway.us-east.modal.run", cerebrium: "https://api.cerebrium.ai/v4/p-xxxxxxxx/voicebox-worker" };
 const SIGNUP: Record<Cloud, string> = { modal: "modal.com", cerebrium: "cerebrium.ai" };
 
@@ -77,6 +77,35 @@ function CloudCard({ cloud, m, serving, open, load, refresh, toast, setErr }: { 
   );
 }
 
+/** Kaggle: free, about 30 h a week. The app starts it when work needs a GPU and it stops itself when idle. */
+function KaggleCard({ k, serving, load, refresh, toast, setErr }: { k: KaggleGpu; serving: boolean; load: () => void; refresh: () => void;
+  toast: (m: string, t?: "ok" | "bad") => void; setErr: (e: string) => void }) {
+  const [busy, setBusy] = useState<"" | "start" | "stop">("");
+  const [label, tone] = !k.configured ? ["Not set up", ""] : k.online ? ["On", "ok"] : k.starting ? ["Starting", "warn"] : k.over_cap ? ["Week's hours used", "bad"] : ["Off", "blue"];
+  async function act(what: "start" | "stop") {
+    setErr(""); setBusy(what);
+    try {
+      const r = await api<{ started?: boolean; why?: string }>(`gpus/kaggle-${what}`, { body: {} });
+      toast(what === "stop" ? "Kaggle is stopping (within a minute)" : r.started ? "Kaggle is starting: on in 3-6 minutes" : r.why ?? "Kaggle is on", "ok");
+    } catch (e) { setErr((e as Error).message); }
+    setBusy(""); load(); refresh();
+  }
+  return (
+    <section className="card" aria-label="Kaggle">
+      <div className="row between" style={{ gap: 8 }}>
+        <h2 style={{ margin: 0 }}>Kaggle</h2>
+        <span className={`pill ${tone}`}>{label}</span>
+      </div>
+      <p className="dim small" style={{ margin: "6px 0 14px" }}>
+        {!k.configured ? "Free, about 30 h a week. Add its key on the Worker (KAGGLE_USERNAME, KAGGLE_API_TOKEN)."
+          : `${k.online ? `${gpuName(k.gpu) ?? "GPU"}${serving ? " · taking the work" : ""} · ` : "Starts for work · "}${k.used_h_this_week} of ${k.cap_h} h this week · stops after ${k.idle_stop_min} idle min`}</p>
+      {k.configured && (k.online || k.starting
+        ? <button className="ghost sm" disabled={!!busy || !k.online} onClick={() => act("stop")}><Stop size={13} weight="fill" /> {busy === "stop" ? "Stopping…" : k.starting ? "Starting…" : "Stop"}</button>
+        : <button className="sm" disabled={!!busy || k.over_cap} onClick={() => act("start")}><Play size={13} weight="fill" /> {busy === "start" ? "Starting…" : "Start"}</button>)}
+    </section>
+  );
+}
+
 export function GpuOverview({ open }: { open: (tab: "colab" | Cloud) => void }) {
   const { g, err, setErr, load, save, toast, refresh } = useGpus();
   const { confirm } = useDialog();
@@ -106,7 +135,7 @@ export function GpuOverview({ open }: { open: (tab: "colab" | Cloud) => void }) 
 
   const colabPill = g.colab.online ? ["On", "ok"] : runtimes.length ? ["Starting", "warn"] : ["Off", ""];
   const serving = status?.online && !status.asleep ? status.backend : null;
-  const choices: ("colab" | Cloud)[] = ["colab", "modal", "cerebrium"];
+  const choices: ("colab" | "kaggle" | Cloud)[] = ["colab", "kaggle", "modal", "cerebrium"];
 
   return (
     <>
@@ -122,6 +151,7 @@ export function GpuOverview({ open }: { open: (tab: "colab" | Cloud) => void }) 
             : colabOn ? <button className="ghost sm" disabled={cBusy || !runtimes.length} onClick={colabStop}><Stop size={13} weight="fill" /> Stop</button>
             : <button className="sm" disabled={cBusy} onClick={colabStart}><Play size={13} weight="fill" /> {cBusy ? "Starting…" : `Start${c.config?.voice_gpu ? ` · ${c.config.voice_gpu}` : ""}`}</button>}
         </section>
+        {g.kaggle && <KaggleCard k={g.kaggle} serving={serving === "kaggle"} load={load} refresh={refresh} toast={toast} setErr={setErr} />}
         {(["modal", "cerebrium"] as Cloud[]).map((k) => (
           <CloudCard key={k} cloud={k} m={g[k]} serving={serving === k} open={open} load={load} refresh={refresh} toast={toast} setErr={setErr} />
         ))}
@@ -132,14 +162,14 @@ export function GpuOverview({ open }: { open: (tab: "colab" | Cloud) => void }) 
           <div><b className="small">Goes first</b><div className="tiny dim">New jobs go to this GPU</div></div>
           <div className="seg" role="group" aria-label="GPU that goes first">
             {choices.map((k) => {
-              const off = k !== "colab" && !g[k].configured;
+              const off = k === "kaggle" ? !g.kaggle?.configured : k !== "colab" && !g[k].configured;
               return <button key={k} className={g.prefer === k ? "on" : ""} aria-pressed={g.prefer === k} disabled={off} title={off ? `Set up ${NAME[k]} first` : undefined}
                 onClick={() => save({ prefer: k }, `${NAME[k]} goes first`)}>{NAME[k]}</button>;
             })}
           </div>
         </div>
         <Toggle on={g.fallback} set={(v) => save({ fallback: v })} title={`Use the others when ${NAME[g.prefer]} is off`}
-          about="In order: Colab, Modal, Cerebrium. A job is never sent twice." />
+          about="In order: Colab, Kaggle, Modal, Cerebrium: the free ones first. A job is never sent twice." />
       </div>
       {err && <p className="err small">{err}</p>}
     </>

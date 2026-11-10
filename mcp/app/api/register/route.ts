@@ -1,4 +1,4 @@
-// Heartbeat from a GPU worker (Colab, or Modal with backend: "modal"): POST {url, version, gpu, engines, loaded, queue, started_at, running, last_active}.
+// Heartbeat from a GPU worker (Colab; Kaggle with backend: "kaggle"; Modal / Cerebrium with their backend): POST {url, version, gpu, engines, loaded, queue, started_at, running, last_active}.
 import { after } from "next/server";
 import { saveWorker } from "@/lib/registry";
 
@@ -36,6 +36,19 @@ export async function POST(req: Request) {
   const allowed = process.env.WORKER_URL_PATTERN ? new RegExp(process.env.WORKER_URL_PATTERN) : TUNNEL;
   if (!b || typeof b.url !== "string" || !allowed.test(b.url))
     return Response.json({ error: "url must be an https trycloudflare.com origin" }, { status: 400 });
+
+  if (b.backend === "kaggle") {
+    // the Kaggle notebook (lib/kaggle.ts): its own record and weekly hours; it stops itself when this answers stop
+    const rec = { url: b.url, version: String(b.version ?? ""), gpu: b.gpu, engines: b.engines, loaded: b.loaded, queue: Number(b.queue ?? 0),
+      running: Number(b.running ?? 0), started_at: Number(b.started_at ?? 0), last_seen: Date.now() };
+    const k = await import("@/lib/kaggle");
+    await k.countKaggle(rec.started_at || Date.now() / 1000);
+    const why = await k.kaggleShouldStop(rec, Number(b.last_active ?? 0));
+    if (why) { await saveWorker({ ...rec, last_seen: 0 }, "kaggle"); return Response.json({ ok: true, stop: true, why }); }
+    await saveWorker(rec, "kaggle");
+    await import("@/lib/downloads").then((d) => d.refresh((f) => after(f), { name: "Download" })).catch((e) => console.error("downloads", e));
+    return Response.json({ ok: true });
+  }
 
   // a worker on a runtime the app already stopped keeps heartbeating while Colab tears the machine down: it must not
   // look online (its tunnel is gone; a download sent to it waits on "Connecting" instead of a new runtime starting)

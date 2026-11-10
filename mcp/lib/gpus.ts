@@ -10,9 +10,10 @@ import { loadWorker, saveWorker, STALE_MS, type Backend, type WorkerRecord } fro
 export type { Backend };
 export type Cloud = "modal" | "cerebrium";
 export const CLOUDS: Cloud[] = ["modal", "cerebrium"];
-export const ALL: Backend[] = ["colab", "modal", "cerebrium"];
+/** In fallback order: the free ones first (Colab, then Kaggle), then the cloud GPUs that spend credit. */
+export const ALL: Backend[] = ["colab", "kaggle", "modal", "cerebrium"];
 export const isCloud = (b: string): b is Cloud => b === "modal" || b === "cerebrium";
-export const CLOUD_NAME: Record<Backend, string> = { colab: "Colab", modal: "Modal", cerebrium: "Cerebrium" };
+export const CLOUD_NAME: Record<Backend, string> = { colab: "Colab", kaggle: "Kaggle", modal: "Modal", cerebrium: "Cerebrium" };
 
 export type GpuPrefs = {
   /** The GPU new work goes to first. */
@@ -34,9 +35,16 @@ export type GpuPrefs = {
   cerebrium_cap_h: number;
   cerebrium_hello_at?: number;
   cerebrium_stop_at?: number;
+  /** Kaggle (lib/kaggle.ts): started by the app when work needs it. Off = never started from here. */
+  kaggle_on: boolean;
+  /** Hours of Kaggle GPU a week the app may use (Kaggle gives about 30): past it, no new start until Monday. */
+  kaggle_cap_h: number;
+  /** Idle minutes after which a running Kaggle stops itself, so the weekly hours aren't spent waiting. */
+  kaggle_idle_min: number;
+  kaggle_stop_at?: number;
 };
 
-export const DEFAULT_PREFS: GpuPrefs = { prefer: "colab", fallback: true, modal_url: "", modal_cap_h: 30, modal_heavy: false, cerebrium_url: "", cerebrium_cap_h: 15 };
+export const DEFAULT_PREFS: GpuPrefs = { prefer: "colab", fallback: true, modal_url: "", modal_cap_h: 30, modal_heavy: false, cerebrium_url: "", cerebrium_cap_h: 15, kaggle_on: true, kaggle_cap_h: 28, kaggle_idle_min: 15 };
 /** A Modal web address: <workspace>--<app>-<function>.modal.run, with a region when the app runs in one
  *  (…gateway.us-east.modal.run): what `modal deploy` prints. */
 export const MODAL_URL = /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)?\.modal\.run$/;
@@ -52,7 +60,9 @@ export const HEAVY = new Set(["train", "eagle", "video"]);
 
 const PREFS = "voicebox/gpu-prefs.json";
 const USAGE: Record<Cloud, string> = { modal: "voicebox/modal-usage.json", cerebrium: "voicebox/cerebrium-usage.json" };
-const JOBS: Record<Cloud, string> = { modal: "voicebox/modal-jobs.json", cerebrium: "voicebox/cerebrium-jobs.json" };
+/** The GPUs whose jobs are remembered by id (every other job id is Colab's). */
+export type Tracked = Cloud | "kaggle";
+const JOBS: Record<Tracked, string> = { modal: "voicebox/modal-jobs.json", cerebrium: "voicebox/cerebrium-jobs.json", kaggle: "voicebox/kaggle-jobs.json" };
 
 let prefsCache: { at: number; v: GpuPrefs } | null = null;
 export async function getPrefs(): Promise<GpuPrefs> {
@@ -68,6 +78,11 @@ export async function setPrefs(patch: Record<string, unknown>): Promise<GpuPrefs
   if (typeof patch.prefer === "string" && (ALL as string[]).includes(patch.prefer)) next.prefer = patch.prefer as Backend;
   if (typeof patch.fallback === "boolean") next.fallback = patch.fallback;
   if (typeof patch.modal_heavy === "boolean") next.modal_heavy = patch.modal_heavy;
+  if (typeof patch.kaggle_on === "boolean") next.kaggle_on = patch.kaggle_on;
+  if (typeof patch.kaggle_cap_h === "number" && isFinite(patch.kaggle_cap_h)) next.kaggle_cap_h = Math.max(0, Math.min(60, Math.round(patch.kaggle_cap_h)));
+  if (typeof patch.kaggle_idle_min === "number" && isFinite(patch.kaggle_idle_min)) next.kaggle_idle_min = Math.max(5, Math.min(240, Math.round(patch.kaggle_idle_min)));
+  if (patch.kaggle_stop === true) next.kaggle_stop_at = Date.now();
+  if (patch.kaggle_stop === false) delete next.kaggle_stop_at;
   for (const c of CLOUDS) {
     const cap = patch[`${c}_cap_h`];
     if (typeof cap === "number" && isFinite(cap)) next[`${c}_cap_h`] = Math.max(0, Math.min(500, Math.round(cap)));
@@ -114,15 +129,15 @@ export const countModal = (startedAt: number) => countCloud("modal", startedAt);
 
 // Which jobs each cloud GPU holds: every other job id is Colab's. Kept small: the last 300, a day each.
 type JobMap = Record<string, number>;
-const jobsCache: Partial<Record<Cloud, { at: number; v: JobMap }>> = {};
-async function jobMap(c: Cloud): Promise<JobMap> {
+const jobsCache: Partial<Record<Tracked, { at: number; v: JobMap }>> = {};
+async function jobMap(c: Tracked): Promise<JobMap> {
   const k = jobsCache[c];
   if (k && Date.now() - k.at < 3000) return k.v;
   const v = (await getJson<JobMap>(JOBS[c]).catch(() => null)) ?? {};
   jobsCache[c] = { at: Date.now(), v };
   return v;
 }
-export async function rememberJob(c: Cloud, id: string) {
+export async function rememberJob(c: Tracked, id: string) {
   const m = { ...(await getJson<JobMap>(JOBS[c]).catch(() => null)) ?? {} };
   m[id] = Date.now();
   const keep = Object.entries(m).filter(([, t]) => Date.now() - t < 86_400_000).sort((a, b) => b[1] - a[1]).slice(0, 300);
@@ -132,18 +147,20 @@ export async function rememberJob(c: Cloud, id: string) {
 }
 export const rememberModalJob = (id: string) => rememberJob("modal", id);
 /** Whether a cloud GPU took a job in the last `ms` (the job list asks it only then, or while its heartbeat says it's busy). */
-export async function recentJob(c: Cloud, ms: number) {
+export async function recentJob(c: Tracked, ms: number) {
   return Object.values(await jobMap(c)).some((t) => Date.now() - t < ms);
 }
 export async function jobBackend(id: string): Promise<Backend> {
-  for (const c of CLOUDS) if ((await jobMap(c))[id]) return c;
+  for (const c of [...CLOUDS, "kaggle"] as Tracked[]) if ((await jobMap(c))[id]) return c;
   return "colab";
 }
 
 export type CloudState = { url: string; rec: WorkerRecord | null; configured: boolean; awake: boolean; used_h: number; cap_h: number; over: boolean; available: boolean };
-export type GpuState = { prefs: GpuPrefs; colab: { rec: WorkerRecord | null; online: boolean } } & Record<Cloud, CloudState>;
+export type KaggleState = { rec: WorkerRecord | null; online: boolean; configured: boolean; used_h: number; cap_h: number; over: boolean; starting_since: number | null };
+export type GpuState = { prefs: GpuPrefs; colab: { rec: WorkerRecord | null; online: boolean }; kaggle: KaggleState } & Record<Cloud, CloudState>;
 
 export async function gpuState(): Promise<GpuState> {
+  const kag = import("./kaggle").then((k) => k.kaggleState());
   const [prefs, colab, ...rest] = await Promise.all([getPrefs(), loadWorker("colab").catch(() => null),
     ...CLOUDS.map((c) => loadWorker(c).catch(() => null)), ...CLOUDS.map((c) => cloudUsage(c))]);
   const p = prefs as GpuPrefs;
@@ -157,7 +174,7 @@ export async function gpuState(): Promise<GpuState> {
     return [c, { url, rec, configured: !!url, awake, used_h, cap_h, over, available: !!url && !over }];
   })) as Record<Cloud, CloudState>;
   const c = colab as WorkerRecord | null;
-  return { prefs: p, colab: { rec: c, online: !!c && Date.now() - c.last_seen < STALE_MS }, ...clouds };
+  return { prefs: p, colab: { rec: c, online: !!c && Date.now() - c.last_seen < STALE_MS }, kaggle: await kag.then((k) => k(p)), ...clouds };
 }
 
 /** Stop a cloud GPU now: its container shuts down at its next heartbeat (within a minute), and it shows asleep at once. */
@@ -176,7 +193,8 @@ export async function shouldStop(startedAt: number, c: Cloud = "modal") {
 /** The GPUs to try for new work, in order: the preferred one, then (with fallback) the rest as Colab, Modal, Cerebrium. */
 export function order(s: GpuState, kind?: string): Backend[] {
   const first = s.prefs.prefer;
-  const list: Backend[] = s.prefs.fallback ? [first, ...ALL.filter((b) => b !== first)] : [first];
+  const all = ALL.filter((b) => b !== "kaggle" || s.kaggle.configured);
+  const list: Backend[] = s.prefs.fallback ? [first, ...all.filter((b) => b !== first)] : [first];
   return kind && HEAVY.has(kind) && !s.prefs.modal_heavy ? list.filter((b) => !isCloud(b)) : list;
 }
 
@@ -188,6 +206,8 @@ export function describe(s: GpuState) {
   return {
     prefer: s.prefs.prefer, fallback: s.prefs.fallback, modal_heavy: s.prefs.modal_heavy,
     colab: { online: s.colab.online, last_seen: s.colab.rec?.last_seen ?? null, gpu: s.colab.rec?.gpu?.name ?? null },
+    kaggle: { configured: s.kaggle.configured, on: s.prefs.kaggle_on, online: s.kaggle.online, starting: !!s.kaggle.starting_since && !s.kaggle.online,
+      used_h_this_week: s.kaggle.used_h, cap_h: s.kaggle.cap_h, over_cap: s.kaggle.over, idle_stop_min: s.prefs.kaggle_idle_min, gpu: s.kaggle.rec?.gpu?.name ?? null },
     modal: cloud("modal"), cerebrium: cloud("cerebrium"),
   };
 }

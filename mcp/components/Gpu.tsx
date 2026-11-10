@@ -74,8 +74,10 @@ export default function Gpu({ embedded }: { embedded?: boolean }) {
   const active = jobs.filter((j) => ["queued", "running"].includes(j.status));
   const warm = Object.values(st?.engines ?? {}).filter((s) => s === "ready").length;
   const gpu = st?.gpu?.name?.replace("NVIDIA ", "");
-  const cloudName = st?.backend === "cerebrium" ? "Cerebrium" : "Modal";
-  const lead = !st ? "Checking on the GPU…" : st.asleep ? `Colab is off. ${cloudName} is asleep and wakes for the next job, in about a minute.`
+  const cloudName = st?.backend === "cerebrium" ? "Cerebrium" : st?.backend === "kaggle" ? "Kaggle" : "Modal";
+  const lead = !st ? "Checking on the GPU…"
+    : st.asleep && st.backend === "kaggle" ? (st.starting ? "Colab is off. Kaggle is starting: on in 3-6 minutes." : "Colab is off. Kaggle starts for the next job, in 3-6 minutes.")
+    : st.asleep ? `Colab is off. ${cloudName} is asleep and wakes for the next job, in about a minute.`
     : !st.online ? (st.reason === "heartbeat stale" ? "The Colab GPU stopped. Start it below." : "The GPU is off. Start it below; engines load on first use.")
     : `${gpu ?? "GPU"} is on${st.backend && st.backend !== "colab" ? ` (${cloudName})` : ""} with ${warm} engine${warm === 1 ? "" : "s"} warm.`;
 

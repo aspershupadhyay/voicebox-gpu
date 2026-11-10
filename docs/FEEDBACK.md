@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Connect Kaggle too, and optimise the free resources"** (2026-11-10): Kaggle is a fourth GPU (about 30 free
+  hours a week on a T4). The app starts a private Kaggle notebook through Kaggle's API when work needs a GPU and Colab
+  is off, it runs the same worker, and it stops itself after 15 idle minutes, when Stop is pressed, past the week's
+  cap (28 h by default) or before Kaggle's 12-hour limit, so the hours go to work, not waiting. Fallback order is the
+  free ones first: Colab, Kaggle, Modal, Cerebrium. Kaggle's $100/month and $10/day are AI model credits for Kaggle
+  Benchmarks only, not GPU time and not an API key, so they aren't wired into the app.
 - **"Keep the models and the heavy work on R2, move the files and audio work to Backblaze"** (2026-11-10): Files
   (`workspace/media/`, posters, photo thumbnails), downloads in progress, finished voice jobs (`library/`), publish
   cards and temporary uploads live in the Backblaze B2 bucket `voicebox-files`; models, datasets, GPU caches and the

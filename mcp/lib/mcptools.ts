@@ -109,11 +109,11 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
       const gpus = gp.describe(gs);
       // Colab off: a Modal GPU that's awake answers instead; one that's asleep still takes the next job (it wakes for it)
       const awakeCloud = gp.CLOUDS.find((c) => gs[c].awake);
-      const rec = gs.colab.online ? gs.colab.rec : awakeCloud ? gs[awakeCloud].rec : gs.colab.rec;
-      const sleeper = !gs.colab.online && !awakeCloud ? gp.order(gs).find((b) => gp.isCloud(b) && gs[b].available) : undefined;
-      if (sleeper) return text({ online: true, backend: sleeper, asleep: true, gpus, latest_worker_version: WORKER_VERSION, colab, hint: `Colab is off; the ${gp.CLOUD_NAME[sleeper]} GPU is asleep and wakes for the next job (about a minute).` });
+      const rec = gs.colab.online ? gs.colab.rec : gs.kaggle.online ? gs.kaggle.rec : awakeCloud ? gs[awakeCloud].rec : gs.colab.rec;
+      const sleeper = !gs.colab.online && !gs.kaggle.online && !awakeCloud ? gp.order(gs).find((b) => (gp.isCloud(b) && gs[b].available) || (b === "kaggle" && gs.kaggle.configured && !gs.kaggle.over)) : undefined;
+      if (sleeper) return text({ online: true, backend: sleeper, asleep: true, gpus, latest_worker_version: WORKER_VERSION, colab, hint: sleeper === "kaggle" ? (gs.kaggle.starting_since ? "Colab is off; Kaggle is starting (3-6 min)." : "Colab is off; Kaggle starts for the next job (3-6 min), or start it now: gpu action backend start_kaggle true.") : `Colab is off; the ${gp.CLOUD_NAME[sleeper]} GPU is asleep and wakes for the next job (about a minute).` });
       if (!rec) return text({ online: false, gpus, latest_worker_version: WORKER_VERSION, colab, hint: "No worker has registered: gpu action start, or run the Colab notebook (or set up Modal: gpu action backend)." });
-      if (!gs.colab.online && awakeCloud) {
+      if (!gs.colab.online && !gs.kaggle.online && awakeCloud) {
         // an awake cloud GPU: its heartbeat (a minute old at most), not a request that would keep it from sleeping;
         // a log is read only when asked for
         const log = want ? await call<{ text: string }>(`/logs/${want}?n=${lines ?? 80}`).then((r) => r.text.slice(-12000)).catch((e: Error) => e.message) : undefined;
@@ -377,10 +377,15 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
     "gpu",
     {
       title: "Control the Colab GPU",
-      description: "The GPU without opening Colab (Colab is connected on the Health page). Three GPUs can take work: Colab, and two cloud GPUs that sleep until a job wakes them, bill by the second and are capped per month: Modal and Cerebrium. backend: which goes first (prefer colab | modal | cerebrium), fallback (true: the other takes the job when the first is off or unreachable), modal_cap_h, modal_heavy (training / video on Modal too), modal_url (Modal's address), test_modal true (wake Modal, or the cloud named, and answer with its GPU), stop_modal true (shut it down now), cerebrium_url, cerebrium_cap_h; with none of those, shows the current choice. Modal is set up once from Settings → GPU & engines → Set up Modal (docs/MODAL.md); every job tool then uses whichever GPU the choice picks. Actions: status (default): compute units left, hourly burn, runtimes assigned, the current session, settings. start: assign a Colab GPU and launch the worker on it; it shows online in worker_status in about 2 min. Pick by purpose: voice (voiceovers, subtitles, clean-up: settings voice_gpu, an L4 by default, far cheaper and plenty for them) or heavy (training, RLHF polish, video: settings heavy_gpu, an A100); or name gpu (A100 / L4 / H100 / T4 / G4) outright; high_ram true/false overrides the setting. status shows rates: the units an hour Colab really charged per runtime kind. stop: release a runtime (endpoint, default the current session's; with nothing else known, the only runtime assigned) and billing stops at once. restart_worker: restart the worker process on the running GPU (keeps the runtime; force: true even while a job runs). update_worker: fetch the newest worker code and restart with it (worker 3.1.0+). selfcheck: run the worker's quick self-check (results in worker_status.selfcheck). train_draft: train an EAGLE draft for Orpheus (faster single-request decoding): voices sentences (default 6000) for its data, trains it, then benchmarks Orpheus plain vs with the draft; it's switched on only if it measured faster. Takes the whole GPU (~45-60 min on an L4); returns a job id for get_job. settings: change gpu (default for start without a purpose), voice_gpu, heavy_gpu, high_ram, idle_stop_min (0 = never; stops a GPU started from the app after that many idle minutes), remind_hours (0 = never), low_units (warn below), ntfy (on / off: phone push via the ntfy app). notify_test: send a test push.",
+      description: "The GPU without opening Colab (Colab is connected on the Health page). Four GPUs can take work: Colab; Kaggle (free, about 30 h a week: the app starts its notebook when work needs a GPU, 3-6 min, and it stops itself when idle); and two cloud GPUs that sleep until a job wakes them, bill by the second and are capped per month: Modal and Cerebrium. backend: which goes first (prefer colab | kaggle | modal | cerebrium), kaggle_on, kaggle_cap_h (hours a week), kaggle_idle_min, start_kaggle true, stop_kaggle true, fallback (true: the other takes the job when the first is off or unreachable), modal_cap_h, modal_heavy (training / video on Modal too), modal_url (Modal's address), test_modal true (wake Modal, or the cloud named, and answer with its GPU), stop_modal true (shut it down now), cerebrium_url, cerebrium_cap_h; with none of those, shows the current choice. Modal is set up once from Settings → GPU & engines → Set up Modal (docs/MODAL.md); every job tool then uses whichever GPU the choice picks. Actions: status (default): compute units left, hourly burn, runtimes assigned, the current session, settings. start: assign a Colab GPU and launch the worker on it; it shows online in worker_status in about 2 min. Pick by purpose: voice (voiceovers, subtitles, clean-up: settings voice_gpu, an L4 by default, far cheaper and plenty for them) or heavy (training, RLHF polish, video: settings heavy_gpu, an A100); or name gpu (A100 / L4 / H100 / T4 / G4) outright; high_ram true/false overrides the setting. status shows rates: the units an hour Colab really charged per runtime kind. stop: release a runtime (endpoint, default the current session's; with nothing else known, the only runtime assigned) and billing stops at once. restart_worker: restart the worker process on the running GPU (keeps the runtime; force: true even while a job runs). update_worker: fetch the newest worker code and restart with it (worker 3.1.0+). selfcheck: run the worker's quick self-check (results in worker_status.selfcheck). train_draft: train an EAGLE draft for Orpheus (faster single-request decoding): voices sentences (default 6000) for its data, trains it, then benchmarks Orpheus plain vs with the draft; it's switched on only if it measured faster. Takes the whole GPU (~45-60 min on an L4); returns a job id for get_job. settings: change gpu (default for start without a purpose), voice_gpu, heavy_gpu, high_ram, idle_stop_min (0 = never; stops a GPU started from the app after that many idle minutes), remind_hours (0 = never), low_units (warn below), ntfy (on / off: phone push via the ntfy app). notify_test: send a test push.",
       inputSchema: z.object({
         action: z.enum(["status", "start", "stop", "restart_worker", "update_worker", "selfcheck", "train_draft", "settings", "notify_test", "backend"]).optional(),
-        prefer: z.enum(["colab", "modal", "cerebrium"]).optional().describe("backend: the GPU new work goes to first"),
+        prefer: z.enum(["colab", "kaggle", "modal", "cerebrium"]).optional().describe("backend: the GPU new work goes to first"),
+        kaggle_on: z.boolean().optional().describe("backend: let the app start Kaggle when work needs a GPU (default true once its key is set)"),
+        kaggle_cap_h: z.number().min(0).max(60).optional().describe("backend: Kaggle GPU hours a week the app may use (default 28 of Kaggle's ~30)"),
+        kaggle_idle_min: z.number().min(5).max(240).optional().describe("backend: idle minutes before a running Kaggle stops itself (default 15)"),
+        start_kaggle: z.boolean().optional().describe("backend: start the Kaggle notebook now (3-6 min to come online)"),
+        stop_kaggle: z.boolean().optional().describe("backend: stop the running Kaggle notebook (within a minute)"),
         cloud: z.enum(["modal", "cerebrium"]).optional().describe("backend: which cloud GPU test_modal / stop_modal act on (default modal)"),
         cerebrium_url: z.string().max(200).optional().describe("backend: Cerebrium's address, https://api.cerebrium.ai/v4/p-<project>/voicebox-worker (the setup fills it in)"),
         cerebrium_cap_h: z.number().min(0).max(500).optional().describe("backend: hours of Cerebrium GPU a month (0 = Cerebrium off)"),
@@ -405,17 +410,24 @@ export function registerTools(server: ToolServer, who: Actor = { name: "Claude (
         ntfy: z.enum(["on", "off"]).optional(),
       }),
     },
-    async ({ action, gpu, purpose, high_ram, voice_gpu, heavy_gpu, endpoint, force, idle_stop_min, remind_hours, low_units, ntfy, sentences, epochs, prefer, fallback, modal_cap_h, modal_heavy, modal_url, test_modal, stop_modal, cloud, cerebrium_url, cerebrium_cap_h }) => {
+    async ({ action, gpu, purpose, high_ram, voice_gpu, heavy_gpu, endpoint, force, idle_stop_min, remind_hours, low_units, ntfy, sentences, epochs, prefer, fallback, modal_cap_h, modal_heavy, modal_url, test_modal, stop_modal, cloud, cerebrium_url, cerebrium_cap_h, kaggle_on, kaggle_cap_h, kaggle_idle_min, start_kaggle, stop_kaggle }) => {
       try {
         const colab = await import("@/lib/colab");
         if (action === "backend") {
           // Colab or Modal first, the other as the fallback (lib/gpus.ts); with no changes, just the current choice
           const gp = await import("@/lib/gpus");
-          const patch = Object.fromEntries(Object.entries({ prefer, fallback, modal_cap_h, modal_heavy, modal_url, cerebrium_url, cerebrium_cap_h }).filter(([, v]) => v !== undefined));
+          const patch = Object.fromEntries(Object.entries({ prefer, fallback, modal_cap_h, modal_heavy, modal_url, cerebrium_url, cerebrium_cap_h, kaggle_on, kaggle_cap_h, kaggle_idle_min }).filter(([, v]) => v !== undefined));
           if (Object.keys(patch).length) await gp.setPrefs(patch);
+          if (stop_kaggle) {
+            await gp.setPrefs({ kaggle_stop: true });
+            const { loadWorker, saveWorker } = await import("@/lib/registry");
+            const r = await loadWorker("kaggle").catch(() => null);
+            if (r) await saveWorker({ ...r, last_seen: 0 }, "kaggle");
+          }
+          const kaggleStart = start_kaggle ? await (await import("@/lib/kaggle")).startKaggle(colab.appOrigin(), "an agent").catch((e: Error) => ({ started: false, error: e.message })) : undefined;
           if (stop_modal) await gp.stopCloud(cloud ?? "modal");
           const test = test_modal ? await (await import("@/lib/worker")).testModal(45_000, cloud ?? "modal").catch((e: Error) => ({ ok: false, error: e.message })) : undefined;
-          return text({ ...gp.describe(await gp.gpuState()), ...(test ? { modal_test: test } : {}) });
+          return text({ ...gp.describe(await gp.gpuState()), ...(test ? { modal_test: test } : {}), ...(kaggleStart ? { kaggle_start: kaggleStart } : {}) });
         }
         if (action === "start") return text({ ...(await colab.start(colab.appOrigin(), gpu, { purpose, high_ram })), next: "The worker comes online in about 2 min: check worker_status." });
         if (action === "stop") {

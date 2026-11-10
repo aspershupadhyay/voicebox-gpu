@@ -130,8 +130,10 @@ export async function GET(req: Request, ctx: Ctx) {
       const g = await import("@/lib/gpus");
       const s = await g.gpuState();
       const gpus = g.describe(s);
-      const up = g.order(s).find((b) => (g.isCloud(b) ? s[b].awake : s.colab.online)) ?? g.order(s).find((b) => g.isCloud(b) && s[b].available);
-      const rec = s.colab.rec;
+      const up = g.order(s).find((b) => (g.isCloud(b) ? s[b].awake : b === "kaggle" ? s.kaggle.online : s.colab.online))
+        ?? g.order(s).find((b) => (g.isCloud(b) && s[b].available) || (b === "kaggle" && s.kaggle.configured && !s.kaggle.over));
+      const rec = up === "kaggle" && s.kaggle.online ? s.kaggle.rec : s.colab.rec;
+      if (up === "kaggle" && !s.kaggle.online) return Response.json({ online: true, backend: up, asleep: true, starting: !!s.kaggle.starting_since, engines: {}, queue: 0, gpus });
       if (!up) return Response.json({ online: false, reason: !rec ? "never registered" : "heartbeat stale", last_seen: rec?.last_seen, gpus });
       if (g.isCloud(up) && !s[up].awake) return Response.json({ online: true, backend: up, asleep: true, engines: {}, queue: 0, gpus });
       if (g.isCloud(up)) {
@@ -309,6 +311,20 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     let body = await req.json().catch(() => ({}));
     if (a === "publish") return await (await import("@/lib/publish/api")).publishPost(g.path.slice(1), body);
+    if (a === "gpus" && (b === "kaggle-start" || b === "kaggle-stop")) {
+      // Settings → GPU & engines → Kaggle: start the notebook now, or stop it (it ends itself at its next heartbeat)
+      const gp = await import("@/lib/gpus");
+      if (b === "kaggle-stop") {
+        await gp.setPrefs({ kaggle_stop: true });
+        const { loadWorker, saveWorker } = await import("@/lib/registry");
+        const rec = await loadWorker("kaggle").catch(() => null);
+        if (rec) await saveWorker({ ...rec, last_seen: 0 }, "kaggle");
+        return Response.json({ ok: true });
+      }
+      const by = (await currentUser())?.name ?? "dashboard";
+      const origin = (await import("@/lib/colab")).appOrigin(new URL(req.url).origin) || new URL(req.url).origin;
+      return Response.json(await (await import("@/lib/kaggle")).startKaggle(origin, by, body?.force === true));
+    }
     const cl = a === "gpus" ? b?.match(/^(modal|cerebrium)-(stop|test|setup|tokens|deploy)$/) : null;
     if (cl) {
       const cloud = cl[1] as "modal" | "cerebrium";
