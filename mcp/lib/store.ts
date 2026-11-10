@@ -51,9 +51,18 @@ const enc = (key: string) => key.split("/").map(encodeURIComponent).join("/");
 const url = (key: string) => `${ENDPOINT}/${enc(key)}`;
 
 // ── Backblaze B2 (S3 API)
-export const B2_PREFIXES = ["workspace/media/", "workspace/posters/", "workspace/downloads/", "workspace/publish/", "cache/thumbs/", "uploads/", "library/"];
+// Only files people open live on B2. Small state that's read all the time (accounts, publishing plans, Auto-DM, every
+// .json) and the thumbnail cache stay on R2: every B2 read is a paid "Class B" transaction under a daily cap, and the
+// first version (2026-11-10) put workspace/publish/ and cache/thumbs/ there, hit the free cap in hours and every read
+// came back 403 (accounts vanished, downloads failed).
+export const B2_PREFIXES = ["workspace/media/", "workspace/posters/", "workspace/downloads/", "workspace/publish/story/", "uploads/", "library/"];
 /** The key belongs on B2 (whether or not B2 is switched on yet). */
-export const b2Key = (key: string) => B2_PREFIXES.some((p) => key.startsWith(p));
+export const b2Key = (key: string) => !key.endsWith(".json") && B2_PREFIXES.some((p) => key.startsWith(p));
+/** Where that first version put things that belong on R2: read from B2 when R2 hasn't got them yet (copied over on
+ *  the read), until the storage tool's move_to_r2 has brought them all back. */
+export const LEGACY_B2 = ["workspace/publish/", "cache/thumbs/", "workspace/media/", "workspace/posters/", "workspace/downloads/", "uploads/", "library/"];
+export const legacyKey = (key: string) => b2Ready() && !b2Key(key) && LEGACY_B2.some((p) => key.startsWith(p));
+const legacyGone = new Set<string>(); // prefixes this instance found empty on B2: not listed there again
 /** B2's key and bucket are set (what moving files needs). */
 export const b2Ready = () => !!(process.env.B2_KEY_ID && process.env.B2_APP_KEY && process.env.B2_BUCKET && process.env.B2_ENDPOINT);
 /** New files go to B2. */
@@ -61,6 +70,7 @@ export const b2On = () => b2Ready() && process.env.B2_FILES === "on";
 const onB2 = (key: string) => b2On() && b2Key(key);
 /** A list under this prefix has to look at B2 too. */
 const b2Overlaps = (prefix: string) => b2On() && B2_PREFIXES.some((p) => p.startsWith(prefix) || prefix.startsWith(p));
+const legacyOverlaps = (prefix: string) => b2Ready() && !legacyGone.has(prefix) && ["workspace/publish/", "cache/thumbs/"].some((p) => p.startsWith(prefix) || prefix.startsWith(p));
 let b2client: AwsClient | null = null;
 function b2() {
   if (!b2Ready()) throw new Error("Backblaze is not configured (B2_KEY_ID / B2_APP_KEY / B2_BUCKET / B2_ENDPOINT).");
@@ -149,7 +159,18 @@ export async function headB2(key: string) {
 /** The object, or null when it doesn't exist. */
 export async function getObj(key: string): Promise<Response | null> {
   if (onB2(key)) { const r = await b2Get(key); if (r) return r; } // not moved yet: R2 still has it
-  return getR2(key);
+  const r = await getR2(key);
+  if (r || !legacyKey(key)) return r;
+  return fromLegacy(key);
+}
+/** A file the first B2 version put on B2 that belongs on R2: read it there once and keep it on R2 from now on. */
+async function fromLegacy(key: string): Promise<Response | null> {
+  const b = await b2Get(key).catch((e) => { console.error("b2 legacy", (e as Error).message); return null; });
+  if (!b) return null;
+  const type = b.headers.get("content-type") || typeOf(key);
+  const bytes = new Uint8Array(await b.arrayBuffer());
+  await putObj(key, bytes, type).catch(() => null);
+  return new Response(bytes, { headers: { "content-type": type, "content-length": String(bytes.length) } });
 }
 /** R2 alone. */
 export async function getR2(key: string): Promise<Response | null> {
@@ -172,7 +193,13 @@ export async function headObj(key: string): Promise<{ size: number; type: string
     if (r) return { size: Number(r.headers.get("content-length") ?? 0), type: r.headers.get("content-type") ?? "" };
   }
   const b = bound();
-  if (b) { const o = await b.head(key); return o ? { size: o.size, type: o.httpMetadata?.contentType ?? "" } : null; }
+  if (b) {
+    const o = await b.head(key);
+    if (o) return { size: o.size, type: o.httpMetadata?.contentType ?? "" };
+    if (!legacyKey(key)) return null;
+    const l = await b2Get(key, { method: "HEAD" }).catch(() => null);
+    return l ? { size: Number(l.headers.get("content-length") ?? 0), type: l.headers.get("content-type") ?? "" } : null;
+  }
   const r = await aws().fetch(url(key), { method: "HEAD", cache: "no-store" });
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`storage HEAD ${key}: ${r.status}`);
@@ -219,7 +246,9 @@ export const putJson = (key: string, value: unknown) => putObj(key, JSON.stringi
 /** A JSON object with its ETag, for a write that must not overwrite someone else's (putJsonIf). */
 export async function getJsonTagged<T>(key: string): Promise<{ value: T | null; etag: string | null }> {
   // uncompressed, or the tag comes back weak (W/"…", for the gzipped copy) and never matches on the write
-  const r = await aws().fetch(url(key), { cache: "no-store", headers: { "Accept-Encoding": "identity" } });
+  let r = await aws().fetch(url(key), { cache: "no-store", headers: { "Accept-Encoding": "identity" } });
+  // still on B2 from the first version: copy it to R2, then read it with R2's tag
+  if (r.status === 404 && legacyKey(key) && (await fromLegacy(key))) r = await aws().fetch(url(key), { cache: "no-store", headers: { "Accept-Encoding": "identity" } });
   if (r.status === 404) return { value: null, etag: null };
   if (!r.ok) throw new Error(`storage GET ${key}: ${r.status}`);
   const etag = r.headers.get("etag")?.replace(/^W\//, "") ?? null;
@@ -244,7 +273,13 @@ const unxml = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").repla
 
 /** Every object under a prefix (ListObjectsV2, paginated), from both buckets where the prefix reaches B2's part. */
 export async function listObjs(prefix: string): Promise<StoredObj[]> {
-  if (!b2Overlaps(prefix)) return listR2(prefix);
+  if (!b2Overlaps(prefix)) {
+    if (!legacyOverlaps(prefix)) return listR2(prefix);
+    const [r2, old] = await Promise.all([listR2(prefix), listB2(prefix).catch(() => [] as StoredObj[])]);
+    if (!old.length) legacyGone.add(prefix);
+    const seen = new Set(r2.map((o) => o.key));
+    return [...r2, ...old.filter((o) => !seen.has(o.key) && legacyKey(o.key))];
+  }
   const [r2, onb2] = await Promise.all([listR2(prefix), listB2(prefix)]);
   const seen = new Set(onb2.map((o) => o.key));
   return [...onb2, ...r2.filter((o) => !seen.has(o.key))];
@@ -318,15 +353,25 @@ async function listDirsR2(prefix: string): Promise<string[]> {
 }
 
 export async function delObjs(keys: string[]) {
-  const onb2 = keys.filter(onB2);
-  // on B2 a delete leaves the old version for 30 days (the bucket's lifecycle rule); R2's copy (not moved yet) goes too
-  for (let i = 0; i < onb2.length; i += 16) {
-    await Promise.all(onb2.slice(i, i + 16).map(async (k) => {
+  // a legacy copy goes too, or a deleted plan or account would come back from B2 on the next read
+  await delB2(keys.filter((k) => onB2(k) || legacyKey(k)));
+  return delR2(keys);
+}
+/** B2 alone (deletes are free there). A delete leaves the old version for 30 days (the bucket's lifecycle rule). */
+export async function delB2(keys: string[]) {
+  for (let i = 0; i < keys.length; i += 16) {
+    await Promise.all(keys.slice(i, i + 16).map(async (k) => {
       const r = await b2().fetch(b2url(k), { method: "DELETE" });
       if (!r.ok && r.status !== 404) throw new Error(`B2 DELETE ${k}: ${r.status}`);
     }));
   }
-  return delR2(keys);
+}
+/** R2 alone: one object's size, or null. */
+export async function headR2(key: string) {
+  const b = bound();
+  if (b) { const o = await b.head(key); return o ? o.size : null; }
+  const r = await aws().fetch(url(key), { method: "HEAD", cache: "no-store" });
+  return r.ok ? Number(r.headers.get("content-length") ?? 0) : null;
 }
 /** R2 alone. */
 export async function delR2(keys: string[]) {

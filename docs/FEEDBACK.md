@@ -6,6 +6,16 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Why is it asking me again? Fix it so we don't have to go there again and again"** (2026-11-10): Auto-DM no
+  longer waits for an approval in Settings → Automation (saving, switching on, inbox replies, starters).
+- **Incident, 2026-11-10 ~22:00 UTC: Backblaze's daily free read cap ran out and the app lost its Instagram
+  accounts.** The B2 move had put `workspace/publish/` (accounts, publishing plans, Auto-DM state, read every minute)
+  and `cache/thumbs/` (checked on every thumbnail) on B2, where each read is a "Class B" transaction with a daily cap.
+  Once it ran out every B2 read was a 403: accounts looked gone, Set up showed nothing, downloads failed. Now only
+  files people open live on B2 (no `.json`, no publish state except story cards, no thumbnails); what's still on B2
+  from before is read once and copied back to R2, and `storage move_to_r2` brings the rest back. Rule: hot state never
+  goes on a store that bills or caps per read.
+
 - **"Downloading a video gave `B2 HEAD … 403`, fix it"** (2026-11-10): Backblaze answers a HEAD for a file that isn't
   there yet with a bare 403, so saving a download into Files (which checks the target first) failed. A 403 HEAD is now
   asked again as a one-byte GET, which says "not there" (go on), gives the size, or the real reason.
