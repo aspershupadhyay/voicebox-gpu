@@ -6,6 +6,10 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"I commented LINK on the video and got nothing"** (2026-11-11): Instagram's delivery arrived but nothing said
+  why it went unanswered. Every delivery is now logged with its reason (Settings → Set up → Recent deliveries,
+  `auto_dm deliveries`): your own account's comments never trigger anything, so test from a second account.
+
 - **"Why is it asking me again? Fix it so we don't have to go there again and again"** (2026-11-10): Auto-DM no
   longer waits for an approval in Settings → Automation (saving, switching on, inbox replies, starters).
 - **Incident, 2026-11-10 ~22:00 UTC: Backblaze's daily free read cap ran out and the app lost its Instagram

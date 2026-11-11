@@ -140,7 +140,7 @@ one-row version check (`autodm_meta`), not a dozen statements on every cold star
 Each comment and message is answered at most once (a unique row per account × kind × id), our own comments never
 trigger anything, and the follow button's payload is signed. The MCP tool is `auto_dm` (status, list, get, save,
 switch, delete, settings, test, activity, contacts, leads, insights, report, comments, comment_act, suggest,
-create_suggested, ai_test, sync_test, subscribe, inbox, thread, reply, person, push_starters); nothing asks first any more (the owner's call, 2026-11-10); every call is in the call log. `cd mcp && npx tsx scripts/check-autodm.cts` runs 101 end-to-end checks of
+create_suggested, ai_test, sync_test, subscribe, inbox, thread, reply, person, push_starters); nothing asks first any more (the owner's call, 2026-11-10); every call is in the call log. `cd mcp && npx tsx scripts/check-autodm.cts` runs 104 end-to-end checks of
 the engine against a real Postgres in WASM (`npm i --no-save @electric-sql/pglite` first); nothing leaves the machine.
 
 It sends nothing until all of these are done (the view shows each step):

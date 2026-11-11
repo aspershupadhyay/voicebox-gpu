@@ -378,6 +378,19 @@ const tap = (payload: string, from = "PSID1") => ({ object: "instagram", entry: 
     ok(res[0].ok && sc && JSON.parse(sc.body).ice_breakers[0].call_to_actions.length === 1 && JSON.parse(sc.body).ice_breakers[0].call_to_actions[0].payload === `vbib:${L.id}`, "starters are published (empty ones dropped)");
   }
 
+  section("12. Deliveries log");
+  {
+    await reset();
+    await only({ keywords: ["CATCH"] });
+    await Core.onWebhook({ object: "instagram", entry: [{ id: ACC.id, changes: [{ field: "comments", value: { id: "own1", text: "catch", from: { id: ACC.id, username: "catchtheerror" }, media: { id: "900002" } } }] }] });
+    await Core.onWebhook(comment("hello there"));
+    await Core.onWebhook(comment("catch"));
+    const dl = await Core.deliveries();
+    ok(/own comments/.test(dl[2]?.items[0]?.why ?? ""), `your own comment says why: ${dl[2]?.items[0]?.why}`);
+    ok(/No keyword matched/.test(dl[1]?.items[0]?.why ?? ""), `no keyword says so: ${dl[1]?.items[0]?.why}`);
+    ok(/^Answered by/.test(dl[0]?.items[0]?.why ?? ""), `an answered one says which: ${dl[0]?.items[0]?.why}`);
+  }
+
   section("Totals and contacts SQL");
   {
     const t = await DB.totals(30), t2 = await DB.totals(7, 7);

@@ -4007,3 +4007,5 @@ button.dm-btn:hover { opacity: 1; border-color: var(--line3); } button.dm-btn.on
 .ib-filters { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
 .dm-snip.starter { grid-template-columns: minmax(0, 1fr) minmax(0, 170px) minmax(0, 220px) auto; }
 @media (max-width: 640px) { .dm-snip.starter { grid-template-columns: minmax(0, 1fr) auto; } .dm-snip.starter > :nth-child(2), .dm-snip.starter > :nth-child(3) { grid-column: 1 / -1; } }
+.dm-deliv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.dm-deliv-list li { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-top: 1px solid var(--line); min-width: 0; }
