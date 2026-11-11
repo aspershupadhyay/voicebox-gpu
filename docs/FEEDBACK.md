@@ -15,6 +15,9 @@ for. Read this before touching the dashboard. Newest first. When something here 
   files people open live on B2 (no `.json`, no publish state except story cards, no thumbnails); what's still on B2
   from before is read once and copied back to R2, and `storage move_to_r2` brings the rest back. Rule: hot state never
   goes on a store that bills or caps per read.
+  The first `move_to_r2` run (00:10 UTC, 2026-11-11) copied B2's older copies over newer R2 ones where both existed:
+  the Auto-DM settings went back to an old version (the new automations, saved replies and starters were rebuilt the
+  same minute; publishing plans and accounts were checked and unchanged). It now never overwrites a file R2 has.
 
 - **"Downloading a video gave `B2 HEAD … 403`, fix it"** (2026-11-10): Backblaze answers a HEAD for a file that isn't
   there yet with a bare 403, so saving a download into Files (which checks the target first) failed. A 403 HEAD is now

@@ -33,7 +33,8 @@ export async function moveToB2({ finish = false, budgetMs = 25_000 } = {}) {
 }
 
 /** Bring back to R2 what the first B2 version put on B2 but belongs on R2 (state .json files, the publish folder,
- *  thumbnails): copied, checked, then deleted from B2. Safe to run again. Runs from the storage tool (move_to_r2). */
+ *  thumbnails): copied when R2 hasn't got it, checked, then deleted from B2. Never overwrites R2 (2026-11-11: a run that
+ *  did put an old Auto-DM settings file over the live one). Safe to run again. Runs from the storage tool (move_to_r2). */
 export async function moveToR2({ budgetMs = 25_000 } = {}) {
   const S = await import("./store");
   if (!S.b2Ready()) throw new Error("Backblaze isn't set up on the Worker.");
@@ -44,7 +45,8 @@ export async function moveToR2({ budgetMs = 25_000 } = {}) {
   for (const o of all) {
     if (Date.now() > until) break;
     try {
-      if ((await S.headR2(o.key)) !== o.size) {
+      // R2 already has it: R2's copy is the live one (it may be newer), so B2's is only deleted, never copied over it
+      if ((await S.headR2(o.key)) === null) {
         const src = await S.b2Get(o.key);
         if (!src) { done.push(o.key); continue; }
         await S.putObj(o.key, new Uint8Array(await src.arrayBuffer()), src.headers.get("content-type") || S.typeOf(o.key));
