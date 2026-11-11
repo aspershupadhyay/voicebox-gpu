@@ -585,12 +585,28 @@ async function main(f: Flow, following: boolean | null, before?: string): Promis
 type Ev = Incoming & { ref: string; from: { id: string; username?: string | null } };
 const varsOf = (acc: { handle: string | null; name: string }, username: string | null | undefined) => ({ handle: acc.handle ?? acc.name, username: username ?? null });
 
-async function handle(ev: Ev, s: DmSettings) {
-  if (!ev.from?.id || ev.from.id === ev.account) return; // our own comments and replies never trigger anything
-  if (!ev.text && ev.kind !== "mention") return;
+async function handle(ev: Ev, s: DmSettings): Promise<string> {
+  if (!ev.from?.id) return "No sender in Instagram's message";
+  if (ev.from.id === ev.account) return "Written by this account itself: its own comments and replies never trigger anything (test from another account)";
+  if (!ev.text && ev.kind !== "mention") return "No text";
   const hit = pick(s, ev);
-  if (!hit) return;
+  if (!hit) return whyNot(s, ev);
   await go(ev, hit.automation, s);
+  return `Answered by "${hit.automation.name}" (keyword ${hit.keyword})`;
+}
+
+/** Why nothing answered: the closest reason, in words, for the deliveries log. */
+function whyNot(s: DmSettings, ev: Incoming) {
+  if (s.paused.includes(ev.account)) return "This account is paused (Settings → General)";
+  const trig = (a: Automation) => (ev.kind === "comment" ? a.triggers.comments : ev.kind === "dm" ? a.triggers.dms : ev.kind === "story" ? a.triggers.story_replies : a.triggers.mentions);
+  const live = s.automations.filter((a) => a.on && !problems(a).length && (!a.accounts.length || a.accounts.includes(ev.account)) && trig(a));
+  if (!live.length) return `No live automation answers ${ev.kind === "comment" ? "comments" : ev.kind === "dm" ? "DMs" : ev.kind === "story" ? "story replies" : "mentions"} on this account`;
+  if (ev.kind === "comment") {
+    const here = live.filter((a) => a.where === "all" || a.media.some((m) => m.id === ev.media) || Object.values(a.resolved).includes(ev.media ?? ""));
+    if (!here.length) return `No live automation is set for this post (media ${ev.media ?? "unknown"})`;
+    if (ev.parent && here.every((a) => a.top_level_only)) return "A reply under another comment (the automation takes top-level comments only)";
+  }
+  return `No keyword matched "${ev.text.slice(0, 60)}"`;
 }
 
 /** Run one automation for one comment, message, link or starter: claimed once, the safety limits, then the flow. */
@@ -760,6 +776,38 @@ type Hook = {
 
 /** Everything one webhook delivery holds: comments (comment rules first), messages, story replies, mentions and taps. */
 export async function onWebhook(body: Hook) {
+  const why = new Map<string, string>();
+  const out = await handleWebhook(body, why).catch((e) => ({ handled: 0, error: (e as Error).message }));
+  await recordDelivery(body, why, out).catch(() => null);
+  return out;
+}
+
+const DELIVERIES = "workspace/publish/autodm/deliveries.json";
+export type Delivery = { at: number; items: { account: string; kind: string; from: string | null; text: string; media: string | null; why: string }[]; raw: string };
+/** The last 30 deliveries from Instagram, each thing in it and why it was or wasn't answered (Set up → Recent
+ *  deliveries, auto_dm deliveries): the first place to look when "I commented and nothing came". */
+async function recordDelivery(body: Hook, why: Map<string, string>, out: { handled: number; off?: boolean; error?: string }) {
+  const items: Delivery["items"] = [];
+  for (const e of body.entry ?? []) {
+    const account = String(e.id ?? "");
+    for (const c of e.changes ?? []) {
+      const v = c.value;
+      items.push({ account, kind: c.field ?? "?", from: v?.from?.username ?? v?.from?.id ?? null, text: String(v?.text ?? "").slice(0, 120), media: v?.media?.id ?? null,
+        why: out.error ? `Error: ${out.error}` : out.off ? "Auto-DM is off, or messaging isn't switched on (INSTAGRAM_DM)" : why.get(v?.id ?? "") ?? (c.field === "comments" ? "Not answered (hidden by a comment rule, or missing fields)" : `Not handled (${c.field})`) });
+    }
+    for (const m of e.messaging ?? []) {
+      const kind = m.message?.is_echo ? "echo" : m.postback ? "tap" : m.referral ? "link" : m.message ? "dm" : "other";
+      items.push({ account, kind, from: m.sender?.id ?? null, text: String(m.message?.text ?? m.postback?.title ?? m.referral?.ref ?? "").slice(0, 120), media: null,
+        why: out.error ? `Error: ${out.error}` : kind === "echo" ? "Your own message (kept in the inbox)" : out.off ? "Auto-DM is off" : why.get(m.message?.mid ?? "") ?? (kind === "tap" ? "A button tap" : kind === "link" ? "An ig.me link opened" : "Kept in the inbox") });
+    }
+  }
+  const { getJson, putJson } = await import("../store");
+  const list = ((await getJson<Delivery[]>(DELIVERIES).catch(() => null)) ?? []).slice(0, 29);
+  await putJson(DELIVERIES, [{ at: Date.now(), items, raw: JSON.stringify(body).slice(0, 3000) }, ...list]);
+}
+export const deliveries = async () => ((await (await import("../store")).getJson<Delivery[]>(DELIVERIES).catch(() => null)) ?? []);
+
+async function handleWebhook(body: Hook, why: Map<string, string>): Promise<{ handled: number; off?: boolean; error?: string }> {
   if (body.object !== "instagram" || !Array.isArray(body.entry)) return { handled: 0 };
   const { putJson } = await import("../store");
   await putJson("workspace/publish/autodm/last-event.json", { at: Date.now(), entries: body.entry.length }).catch(() => null);
@@ -826,14 +874,15 @@ export async function onWebhook(body: Hook) {
     ran.add(`${l.account}|${l.from}`);
     await go({ kind: "dm", account: l.account, ref: `link:${l.from}:${l.at}`, from: { id: l.from }, text: `ref=${l.ref}` }, a, s).catch((e) => console.error("autodm link", (e as Error).message));
   }
+  for (const e of evs) if (e.kind !== "comment") { const k = `${e.account}|${e.from.id}`; if (quiet.has(k)) why.set(e.ref, "The bot is paused for this person (Inbox)"); else if (ran.has(k)) why.set(e.ref, "Answered by the ig.me link's automation"); }
   evs = evs.filter((e) => e.kind === "comment" || (!quiet.has(`${e.account}|${e.from.id}`) && !ran.has(`${e.account}|${e.from.id}`)));
   for (const ev of evs.slice(0, 50)) {
     try {
       // an email someone was asked for, then the automations, then an AI answer to a follow-up question
-      if (ev.kind === "dm" && !s.paused.includes(ev.account) && (await onEmail(ev.account, ev.from.id, ev.text, s))) continue;
-      if (ev.kind !== "comment" && ev.kind !== "mention" && !pick(s, ev) && !s.paused.includes(ev.account)) { await more.answerWithAi(ev, s); continue; }
-      await handle(ev, s);
-    } catch (e) { console.error("autodm", (e as Error).message); }
+      if (ev.kind === "dm" && !s.paused.includes(ev.account) && (await onEmail(ev.account, ev.from.id, ev.text, s))) { why.set(ev.ref, "An email they were asked for: saved"); continue; }
+      if (ev.kind !== "comment" && ev.kind !== "mention" && !pick(s, ev) && !s.paused.includes(ev.account)) { why.set(ev.ref, `${whyNot(s, ev)}; passed to AI replies if they're on`); await more.answerWithAi(ev, s); continue; }
+      why.set(ev.ref, await handle(ev, s));
+    } catch (e) { why.set(ev.ref, `Error: ${(e as Error).message}`); console.error("autodm", (e as Error).message); }
   }
   for (const t of taps.slice(0, 50)) {
     if (s.paused.includes(t.account)) continue;

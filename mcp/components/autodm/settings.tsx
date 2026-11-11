@@ -6,7 +6,7 @@
 import { ChatTeardropText, ChatsCircle, Plus, Trash, ArrowsClockwise, CheckCircle, Circle, Copy, Flask, Gear, Lightning, Link as LinkIc, PaperPlaneTilt, ShieldCheck, Sparkle, TextAa, Wrench } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useDialog } from "../Dialog";
 import { Select } from "../pop";
@@ -297,6 +297,32 @@ function Tester({ d }: { d: Overview }) {
   );
 }
 
+type Delivery = { at: number; items: { account: string; kind: string; from: string | null; text: string; media: string | null; why: string }[] };
+/** What Instagram sent lately and why each thing was or wasn't answered: where to look when a test got nothing. */
+function Deliveries({ d }: { d: Overview }) {
+  const [list, setList] = useState<Delivery[] | null>(null);
+  const load = () => api<{ deliveries: Delivery[] }>("publish/autodm/deliveries").then((r) => setList(r.deliveries)).catch(() => setList([]));
+  useEffect(() => { load(); }, []);
+  const who = (id: string) => handleOf(d.status.accounts.find((a) => a.id === id)) || id;
+  return (
+    <div className="dm-deliv">
+      <div className="row between"><b className="small">Recent deliveries from Instagram</b><button className="ghost xs" onClick={load}><ArrowsClockwise size={13} />Refresh</button></div>
+      <p className="tiny dim" style={{ margin: "2px 0 8px" }}>Every comment, message and tap Instagram sent, and what happened to it.</p>
+      {!list ? <div className="skel" style={{ height: 80 }} /> : !list.length ? <p className="small dim">Nothing yet. Comment on a post from another account, then refresh.</p> : (
+        <ul className="dm-deliv-list">
+          {list.slice(0, 15).flatMap((x) => x.items.map((it, i) => (
+            <li key={`${x.at}-${i}`}>
+              <span className="tiny faint">{ago(x.at)} · {who(it.account)} · {it.kind}{it.from ? ` · ${/^\d+$/.test(it.from) ? "someone" : `@${it.from}`}` : ""}</span>
+              {it.text && <span className="small ellipsis">&ldquo;{it.text}&rdquo;</span>}
+              <span className={`tiny ${/^Answered|kept|saved/i.test(it.why) ? "ok-t" : "warn-t"}`}>{it.why}</span>
+            </li>
+          )))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function Setup({ d, reload }: { d: Overview; reload: () => void }) {
   const { toast } = useDialog();
   const st = d.status;
@@ -316,7 +342,7 @@ function Setup({ d, reload }: { d: Overview; reload: () => void }) {
           {st.flag ? "On: Instagram sign-in asks for messages." : <>Add <code>instagram_business_manage_messages</code> to the Meta app (App Review → Advanced Access, for anyone who isn&apos;t a tester), then set <code>INSTAGRAM_DM=1</code> on the Worker.</>}
         </Step>
         <Step ok={st.verify_token && st.app_secret && !!st.last_event} title="Webhook in the Meta app">
-          <>Instagram → Webhooks: the callback URL below, verify token <code>INSTAGRAM_WEBHOOK_TOKEN</code>{st.verify_token ? " (set)" : " (not set yet)"}. Subscribe to <code>comments</code>, <code>messages</code>, <code>messaging_postbacks</code> and <code>mentions</code>.</>
+          <>Instagram → Webhooks: the callback URL below, verify token <code>INSTAGRAM_WEBHOOK_TOKEN</code>{st.verify_token ? " (set)" : " (not set yet)"}. Subscribe to <code>comments</code>, <code>messages</code>, <code>messaging_postbacks</code>, <code>messaging_referral</code> and <code>mentions</code>.</>
           <div className="row" style={{ gap: 6, marginTop: 6 }}><code className="ellipsis" style={{ flex: 1 }}>{hook}</code><button className="ghost xs" onClick={() => navigator.clipboard.writeText(hook).then(() => toast("Copied", "ok"))}><Copy size={12} />Copy</button></div>
           <span className="tiny faint" style={{ display: "block", marginTop: 4 }}>{st.last_event ? `Last heard from Instagram ${ago(st.last_event)}` : "Nothing heard from Instagram yet"}</span>
         </Step>
@@ -334,6 +360,8 @@ function Setup({ d, reload }: { d: Overview; reload: () => void }) {
         <Step ok={null} title="On each phone">Instagram → Settings → Messages and story replies → Message controls → Connected tools → Allow access to messages.</Step>
       </ol>
       <p className="tiny faint" style={{ margin: "10px 0 0" }}>Instagram&apos;s limits: one private reply per comment, within 7 days of it; after someone messages you or taps a button, 24 hours to answer.</p>
+      <div className="dm-set-split" />
+      <Deliveries d={d} />
       <div className="dm-set-split" />
       <Tester d={d} />
     </>

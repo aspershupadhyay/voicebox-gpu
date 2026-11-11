@@ -46,6 +46,7 @@ export async function publishGet(path: string[], query?: URLSearchParams) {
     if (!c) return Response.json(await dm.overview());
     if (c === "media" && path[2] && ID.test(path[2])) return Response.json(await dm.recentMedia(path[2], q("after")));
     if (c === "posts") return Response.json({ posts: await dm.studioPosts() });
+    if (c === "deliveries") return Response.json({ deliveries: (await dm.deliveries()).map((d) => ({ at: d.at, items: d.items })) });
     if (c === "inbox" || c === "thread" || c === "tags") {
       const DB = await import("./dmstore");
       if (c === "tags") return Response.json({ tags: await DB.allTags() });
