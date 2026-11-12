@@ -422,3 +422,15 @@ export async function nextFollowUp() {
   const [r] = rows<{ at: string | null }>(await sql().query("select min(follow_at) at from autodm_events where follow_at is not null and followed_up is null", []));
   return r?.at ? Date.parse(r.at) : null;
 }
+
+/** Everything kept about one person on one account: their messages, their row, the automations' rows, their emails. */
+export async function forgetPerson(account: string, psid: string) {
+  await ensure();
+  const q = (s: string, v: unknown[]) => sql().query(s, v);
+  await Promise.all([
+    q("delete from autodm_messages where account = $1 and psid = $2", [account, psid]),
+    q("delete from autodm_people where account = $1 and psid = $2", [account, psid]),
+    q("delete from autodm_events where account = $1 and (psid = $2 or from_id = $2)", [account, psid]),
+    q("delete from autodm_leads where account = $1 and from_id = $2", [account, psid]),
+  ]);
+}

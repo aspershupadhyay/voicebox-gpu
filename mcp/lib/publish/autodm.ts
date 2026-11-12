@@ -857,6 +857,15 @@ async function handleWebhook(body: Hook, why: Map<string, string>): Promise<{ ha
     const gone = await more.moderate(evs.filter((e) => e.kind === "comment").slice(0, 50), s).catch((e) => { console.error("autodm rules", (e as Error).message); return new Set<string>(); });
     evs = evs.filter((e) => !(e.kind === "comment" && gone.has(e.ref)));
   }
+  // "delete my data" and "stop" work for anyone, even with Auto-DM off or the bot paused for them (the promises on
+  // /data-deletion and /terms)
+  if (dmFlag()) {
+    const done = new Set<string>();
+    for (const ev of evs.filter((e) => e.kind === "dm").slice(0, 20)) {
+      if (await privacyCommand(ev).catch((e) => { console.error("autodm privacy", (e as Error).message); return false; })) { done.add(ev.ref); why.set(ev.ref, "A privacy request (delete my data / stop): done"); }
+    }
+    evs = evs.filter((e) => !done.has(e.ref));
+  }
   if (!s.on || !dmFlag()) return { handled: 0, off: true };
   if (evs.some((e) => e.kind === "comment")) s = await resolvePosts(s);
   // someone took these conversations over in the inbox: the bot stays quiet for them until it's handed back
@@ -898,6 +907,24 @@ async function handleWebhook(body: Hook, why: Map<string, string>): Promise<{ ha
     await on(t.account, t.from, t.payload, s).catch((e) => console.error("autodm tap", (e as Error).message));
   }
   return { handled: evs.length + taps.length };
+}
+
+/** "delete my data": everything about them goes (after the confirmation, so the confirmation doesn't stay behind).
+ *  "stop": the bot never writes to them again (the inbox still shows what they send). */
+async function privacyCommand(ev: Ev) {
+  const t = ev.text.trim().toLowerCase().replace(/[^a-z ]+/g, "").replace(/\s+/g, " ");
+  const del = /^(please )?(delete|remove|erase) (all )?my (data|info|information)( please)?$/.test(t);
+  const stop = /^(stop|unsubscribe|stop messaging me|stop all)$/.test(t);
+  if (!del && !stop) return false;
+  const { token } = await tokenFor(ev.account);
+  if (del) {
+    await send(token, ev.account, { id: ev.from.id }, { text: "Done. Everything we had about you (messages, tags, any email you sent us) has been deleted. 🗑️" }).catch(() => null);
+    await DB.forgetPerson(ev.account, ev.from.id);
+  } else {
+    await DB.patchPerson(ev.account, ev.from.id, { bot_off_until: new Date(Date.now() + 100 * 365 * 864e5).toISOString() });
+    await send(token, ev.account, { id: ev.from.id }, { text: "Got it, no more automatic messages from us. If you write to us, a real person will answer. 🙏" }, "bot").catch(() => null);
+  }
+  return true;
 }
 
 /** A message as the inbox shows it: its words, or what it was (a photo, a story mention, a shared reel). */

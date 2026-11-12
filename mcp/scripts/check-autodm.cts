@@ -391,6 +391,24 @@ const tap = (payload: string, from = "PSID1") => ({ object: "instagram", entry: 
     ok(/^Answered by/.test(dl[0]?.items[0]?.why ?? ""), `an answered one says which: ${dl[0]?.items[0]?.why}`);
   }
 
+  section("13. Privacy commands");
+  {
+    await reset();
+    await Core.onWebhook(dm("hi there", "8001"));
+    await Core.onWebhook(dm("Delete my data!", "8001"));
+    ok((await q("select count(*)::int n from autodm_messages where psid = '8001'"))[0].n === 0 && (await q("select count(*)::int n from autodm_people where psid = '8001'"))[0].n === 0, "\"delete my data\" removes their messages and row");
+    ok(/deleted/.test(textOf(last()?.message)), "and they get a confirmation");
+    await Core.setGeneral({ on: false }, "test");
+    await Core.onWebhook(dm("stop", "8002"));
+    ok(Date.parse((await q("select bot_off_until from autodm_people where psid = '8002'"))[0]?.bot_off_until) > Date.now() + 3e10, "\"stop\" pauses the bot for them for good, even with Auto-DM off");
+    await Core.setGeneral({ on: true }, "test");
+    await only({ triggers: { comments: true, dms: true }, keywords: ["CATCH"] });
+    const n = sends.length;
+    await Core.onWebhook(dm("catch", "8002"));
+    ok(sends.length === n, "after stop, a keyword doesn't run the bot");
+    await Core.onWebhook(comment("catch", "c500", "fan_after"));
+  }
+
   section("Totals and contacts SQL");
   {
     const t = await DB.totals(30), t2 = await DB.totals(7, 7);

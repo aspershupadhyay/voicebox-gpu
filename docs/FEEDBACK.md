@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Commented from another account, still nothing"** (2026-11-12): the deliveries log showed Instagram sends only
+  "seen" and reactions, never comments: the Meta app isn't published ("to receive webhooks, your app must be in
+  published state"). Publishing needs a privacy policy, terms and data deletion URL, so the app now has public
+  `/privacy`, `/terms` and `/data-deletion` pages. They promise two things the engine does: a DM saying "delete my
+  data" removes everything about that person and confirms; "stop" turns the bot off for them for good.
+
 - **"I commented LINK on the video and got nothing"** (2026-11-11): Instagram's delivery arrived but nothing said
   why it went unanswered. Every delivery is now logged with its reason (Settings → Set up → Recent deliveries,
   `auto_dm deliveries`): your own account's comments never trigger anything, so test from a second account.

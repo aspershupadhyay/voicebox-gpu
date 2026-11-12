@@ -93,6 +93,8 @@ on L4 and A100, measured before and after on a real GPU, same review scores). Ti
   is the claim; it takes one PUT of that file's bytes into its R2 key and reads or lists nothing.
   `/api/kaggle/boot` is public by design too (lib/kaggle.ts): the Kaggle notebook's boot ticket (HMAC-signed, 30
   minutes, one use, only the latest start's) is swapped once for the worker's secret; it reads or lists nothing else.
+  `/privacy`, `/terms` and `/data-deletion` are public by design: static text Meta requires to publish the Instagram
+  app; they read nothing.
   An upload link `/u/<token>` (and `/api/u/<token>`, lib/auto/uplinks.ts) is public by design too: a signed, expiring
   claim that can only start and finish uploads into its one folder, up to its file cap; it reads and lists nothing.
   A Files upload is served by `/api/m/<token>/<key>` (lib/r2files.ts), public by design: the token is an HMAC of the

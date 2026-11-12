@@ -4009,3 +4009,15 @@ button.dm-btn:hover { opacity: 1; border-color: var(--line3); } button.dm-btn.on
 @media (max-width: 640px) { .dm-snip.starter { grid-template-columns: minmax(0, 1fr) auto; } .dm-snip.starter > :nth-child(2), .dm-snip.starter > :nth-child(3) { grid-column: 1 / -1; } }
 .dm-deliv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .dm-deliv-list li { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-top: 1px solid var(--line); min-width: 0; }
+
+/* Public legal pages (/privacy, /terms, /data-deletion) */
+.legal { max-width: 720px; margin: 0 auto; padding: 40px 20px 80px; color: var(--ink2); font-size: 15px; line-height: 1.65; }
+.legal-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-bottom: 20px; margin-bottom: 28px; border-bottom: 1px solid var(--line); }
+.legal-nav b { color: var(--ink); font-weight: 600; }
+.legal-nav span { display: flex; gap: 16px; font-size: 13px; }
+.legal-nav a, .legal a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.legal h1 { color: var(--ink); font-size: 28px; margin: 0; }
+.legal-updated { color: var(--mute); font-size: 13px; margin: 6px 0 24px; }
+.legal h2 { color: var(--ink); font-size: 17px; margin: 28px 0 6px; }
+.legal p, .legal li { margin: 0 0 10px; }
+.legal ul, .legal ol { padding-left: 20px; margin: 0 0 10px; }
