@@ -6,6 +6,15 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"go ahead and add all of them which are no key ... give me more which requires no key using their sitemap.xml ...
+  make it more mature so we won't just need the content we can collect whatever the info need ... make it palantir"**
+  (2026-11-13, from content-creation): Radar's sweep now reads 17 more free, no-key source groups (`lib/radar-more.ts`,
+  RADAR.md §4b): Bluesky trends and search, Wikipedia's live edits, Lemmy, app and podcast charts, Polymarket and
+  Manifold, papers, Spaces, Product Hunt, npm and PyPI downloads, AI labs' and Big Tech's newsrooms plus Anthropic,
+  Mistral and Nvidia's sitemaps, status pages, GDELT, the Federal Register, the White House, the EU, GOV.UK, the UN,
+  the Pentagon, the WTO, SEC 8-Ks, central banks and regulators, world, business and tech news. Public sources only;
+  sitemaps only where robots.txt allows. The free-key sources are listed there as the next step.
+
 - **"Make our download download anything, and make it look exactly how a local system gets treated"** (2026-11-13):
   Elite Minds' Jensen video lost an hour to downloads that came back wrong: a Wikimedia sound (`File:Dull_thud.ogg`)
   came back as its PNG preview, SEC filings answered 403, a PDF had no route. `download` now takes any file (any

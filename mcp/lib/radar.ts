@@ -23,12 +23,16 @@ export const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}\s+#.'-]
 /* ───────────── what the sources bring back (lib/radar-sources.ts fills these) */
 
 export type SrcId = "yt_suggest" | "google_suggest" | "bing_suggest" | "ddg_suggest" | "youtube" | "youtube_api" | "news" | "hn" | "wiki" | "trends" | "yours"
-  | "mastodon" | "stack" | "lobsters" | "devto" | "hf" | "github" | "wiki_top" | "gnews_top";
+  | "mastodon" | "stack" | "lobsters" | "devto" | "hf" | "github" | "wiki_top" | "gnews_top"
+  | "bluesky" | "edits" | "apps" | "podcasts" | "markets" | "papers" | "spaces" | "packages" | "labs" | "status" | "gdelt" | "policy" | "filings" | "world" | "tech" | "lemmy" | "launches" | "money";
 export const SRC_NAME: Record<SrcId, string> = {
   yt_suggest: "YouTube autocomplete", google_suggest: "Google autocomplete", bing_suggest: "Bing autocomplete", ddg_suggest: "DuckDuckGo autocomplete",
   youtube: "YouTube search", youtube_api: "YouTube Data API", news: "Google News", hn: "Hacker News", wiki: "Wikipedia pageviews", trends: "Google Trends", yours: "Your analytics",
   mastodon: "Mastodon hashtags", stack: "Stack Overflow", lobsters: "Lobsters", devto: "DEV Community", hf: "Hugging Face trending", github: "GitHub new repos",
   wiki_top: "Wikipedia most read", gnews_top: "Google News: Technology",
+  bluesky: "Bluesky trends", edits: "Wikipedia live edits", apps: "App Store top free", podcasts: "Top podcasts", markets: "Polymarket and Manifold",
+  papers: "Papers (Hugging Face, arXiv)", spaces: "Hugging Face Spaces", packages: "npm and PyPI downloads", labs: "AI labs (feeds and sitemaps)",
+  status: "Status pages", gdelt: "GDELT world press", policy: "Federal Register, White House, EU", filings: "SEC EDGAR 8-Ks", world: "World news feeds", tech: "Tech news feeds", lemmy: "Lemmy front page", launches: "Product Hunt launches", money: "Central banks, regulators, business news",
 };
 export type SrcState = { id: SrcId; ok: boolean; ms: number; note?: string };
 
@@ -394,13 +398,16 @@ export function titleIdeas(r: Pick<Research, "q" | "questions" | "related" | "mo
 
 /* ───────────── the sweep: what's moving in your lane right now */
 
-export type SweepSrc = "trends" | "news" | "hn" | "rival" | "suggest" | "wiki" | "yt_chart" | "gnews" | "lobsters" | "devto" | "mastodon" | "hf" | "github";
+export type SweepSrc = "trends" | "news" | "hn" | "rival" | "suggest" | "wiki" | "yt_chart" | "gnews" | "lobsters" | "devto" | "mastodon" | "hf" | "github"
+  | "bluesky" | "edits" | "apps" | "podcasts" | "markets" | "papers" | "spaces" | "packages" | "labs" | "status" | "gdelt" | "policy" | "filings" | "world" | "tech" | "lemmy" | "launches" | "money";
 export type SweepSignal = { src: SweepSrc; title: string; url: string; at: number; /** how strong this one signal is, 0 to 1 */ w: number; metric: string; geo?: string };
 /** Where on the scope a topic sits (its angle): the kind of place most of its signals came from. */
 export type Sector = "search" | "news" | "builders" | "social" | "video";
 export const SECTOR_OF: Record<SweepSrc, Sector> = {
   trends: "search", suggest: "search", news: "news", gnews: "news", hn: "builders", lobsters: "builders", devto: "builders", github: "builders", hf: "builders",
   mastodon: "social", wiki: "social", yt_chart: "video", rival: "video",
+  papers: "builders", spaces: "builders", packages: "builders", labs: "news", status: "news", gdelt: "news", policy: "news", filings: "news", world: "news", tech: "news",
+  bluesky: "social", edits: "social", apps: "social", markets: "social", podcasts: "video", lemmy: "social", launches: "builders", money: "news",
 };
 export const SECTORS: { id: Sector; name: string }[] = [{ id: "search", name: "Search" }, { id: "news", name: "News" }, { id: "builders", name: "Builders" }, { id: "social", name: "Social" }, { id: "video", name: "Video" }];
 export type Blip = {
@@ -419,10 +426,12 @@ export type Sweep = { at: number; seeds: string[]; geos: string[]; blips: Blip[]
 export const SWEEP_NAME: Record<SweepSrc, string> = {
   trends: "Google Trends", news: "Google News", hn: "Hacker News", rival: "A rival's outlier", suggest: "Autocomplete", wiki: "Wikipedia most read", yt_chart: "YouTube trending",
   gnews: "Google News: Tech", lobsters: "Lobsters", devto: "DEV Community", mastodon: "Mastodon trending", hf: "Hugging Face", github: "GitHub",
+  bluesky: "Bluesky", edits: "Wikipedia live edits", apps: "App Store", podcasts: "Podcast charts", markets: "Prediction markets", papers: "Papers", spaces: "HF Spaces",
+  packages: "Package downloads", labs: "AI labs", status: "Status pages", gdelt: "GDELT", policy: "Government", filings: "SEC filings", world: "World news", tech: "Tech news", lemmy: "Lemmy", launches: "Product Hunt", money: "Money",
 };
 
 /** Headline words that say nothing about the topic. */
-const NOISE = new Set("each other more most now after over says said could would should get gets got new first top best using use uses used make makes made launch launches launched announces announced report reports study finds found here why how what know things thing way ways people today week year years day days time back still also amid via vs plus inside latest update updates news live video watch full official business pro plus free max mini team enterprise tool tools app apps model models company users user world one two three call calls review reviews dev devs deal deals star stars show shows open source data year's best-of guide january february march april may june july august september october november december monday tuesday wednesday thursday friday saturday sunday tonight tomorrow yesterday".split(" "));
+const NOISE = new Set("each other more most now after over says said could would should get gets got new first top best using use uses used make makes made launch launches launched announces announced report reports study finds found here why how what know things thing way ways people today week year years day days time back still also amid via vs plus inside latest update updates news live video watch full official business pro plus free max mini team enterprise tool tools app apps model models company users user world one two three call calls review reviews dev devs deal deals star stars show shows open source data year's best-of guide united states state global digital next support search national international department federal register act rule rules notice program programs service services system systems market markets inc corp corporation group holdings ltd llc president government agency office administration approval plan plans final proposed amendment amendments standards management general public executive director change changes agreement results disclosure material filing downloads edits events pro beta official edition series episode podcast daily face auto january february march april may june july august september october november december monday tuesday wednesday thursday friday saturday sunday tonight tomorrow yesterday".split(" "));
 /** Words that are names: capitalised mid-sentence in a headline that isn't Title Case, or shaped like one (OpenAI,
  *  GPT-6, iPhone). One word alone is only a topic if it's a name; "tasks" or "month" isn't. */
 function namesOf(titles: string[]) {
@@ -532,6 +541,11 @@ export const strength = {
   trends: (t: string) => logPart(trafficOf(t), 2, 6), hn: (pts: number) => logPart(pts, 1.3, 3.2), rival: (x: number) => clamp((x - 1) / 4, 0, 1), news: () => 0.35, suggest: () => 0.3,
   lobsters: (pts: number) => logPart(pts, 1, 2.5), devto: (r: number) => logPart(r, 1, 3), mastodon: (uses: number) => logPart(uses, 1.3, 3.5), hf: (likes: number) => logPart(likes, 1.5, 4),
   github: (stars: number) => logPart(stars, 1.7, 4), wiki: (views: number) => logPart(views, 4.3, 6.3),
+  /** lib/radar-more.ts: Bluesky posts on a trend, edits to one article in Wikipedia's last ~1,000, a chart rank (0 = #1), dollars
+   *  bet in 24 h, a paper's upvotes, this week's downloads over the usual */
+  bluesky: (posts: number) => logPart(posts, 2.3, 4.7), edits: (n: number) => logPart(n, 0.45, 1.5), rank: (i: number) => 0.25 + 0.5 * Math.max(0, 1 - i / 25),
+  markets: (usd: number) => logPart(usd, 4, 7), papers: (up: number) => logPart(up, 0.8, 2.5), growth: (ratio: number) => clamp((ratio - 1) / 1, 0, 1),
+  likes: (n: number) => logPart(n, 1.5, 3.7), lemmy: (score: number) => logPart(score, 1.5, 3.3),
 };
 
 /* ───────────── the track record */
