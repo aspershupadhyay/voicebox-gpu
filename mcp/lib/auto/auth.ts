@@ -21,12 +21,18 @@ export async function verifyMcp(_req: Request, token?: string): Promise<AuthInfo
 /** The same keys, also read from `X-VoiceBox-Key` (a script's backup path when a connector relay is down): a sandbox
  *  proxy can inject that header while `Authorization` carries an upload key for the Files routes on the same host.
  *  It's the same check as the bearer token, only another place to carry it. */
-export const withKeyHeader = (h: (req: Request) => Response | Promise<Response>) => (req: Request) => {
+export const withKeyHeader = (h: (req: Request) => Response | Promise<Response>) => async (req: Request) => {
   // a proxy may store the key with a "Bearer " in front; the key itself is what counts
   const k = req.headers.get("x-voicebox-key")?.trim().replace(/^bearer\s+/i, "");
   if (!k) return h(req);
   const headers = new Headers(req.headers);
   headers.set("authorization", `Bearer ${k}`);
   headers.delete("x-voicebox-key");
-  return h(new Request(req, { headers }));
+  const res = await h(new Request(req, { headers }));
+  if (res.status !== 401) return res;
+  // a refusal says what arrived (the prefix and length only, never the key), so a script can tell a wrong key
+  // from one a proxy never sent
+  const out = new Response(res.body, res);
+  out.headers.set("x-voicebox-key-seen", `${k.slice(0, 5)}… (${k.length} chars)`);
+  return out;
 };
