@@ -24,7 +24,8 @@ export async function verifyMcp(_req: Request, token?: string): Promise<AuthInfo
 export const withKeyHeader = (h: (req: Request) => Response | Promise<Response>) => async (req: Request) => {
   // a proxy may store the key with a "Bearer " in front; the key itself is what counts
   const k = req.headers.get("x-voicebox-key")?.trim().replace(/^bearer\s+/i, "");
-  if (!k) return h(req);
+  // an upload key (vbup_) never opens the MCP: a proxy that injects one here must not hide the real key in Authorization
+  if (!k || k.startsWith("vbup_")) return h(req);
   const headers = new Headers(req.headers);
   headers.set("authorization", `Bearer ${k}`);
   headers.delete("x-voicebox-key");
