@@ -25,15 +25,21 @@ export const withKeyHeader = (h: (req: Request) => Response | Promise<Response>)
   // a proxy may store the key with a "Bearer " in front; the key itself is what counts
   const k = req.headers.get("x-voicebox-key")?.trim().replace(/^bearer\s+/i, "");
   // an upload key (vbup_) never opens the MCP: a proxy that injects one here must not hide the real key in Authorization
-  if (!k || k.startsWith("vbup_")) return h(req);
-  const headers = new Headers(req.headers);
-  headers.set("authorization", `Bearer ${k}`);
-  headers.delete("x-voicebox-key");
-  const res = await h(new Request(req, { headers }));
+  const use = k && !k.startsWith("vbup_") ? k : null;
+  let r = req;
+  if (use) {
+    const headers = new Headers(req.headers);
+    headers.set("authorization", `Bearer ${use}`);
+    headers.delete("x-voicebox-key");
+    r = new Request(req, { headers });
+  }
+  const res = await h(r);
   if (res.status !== 401) return res;
-  // a refusal says what arrived (the prefix and length only, never the key), so a script can tell a wrong key
+  // a refusal says what arrived (each key's prefix and length only, never the key), so a script can tell a wrong key
   // from one a proxy never sent
+  const seen = (v: string | null | undefined) => (v ? `${v.slice(0, 5)}… (${v.length} chars)` : "none");
   const out = new Response(res.body, res);
-  out.headers.set("x-voicebox-key-seen", `${k.slice(0, 5)}… (${k.length} chars)`);
+  out.headers.set("x-voicebox-key-seen", seen(k));
+  out.headers.set("x-voicebox-auth-seen", seen(r.headers.get("authorization")?.replace(/^bearer\s+/i, "").trim()));
   return out;
 };
