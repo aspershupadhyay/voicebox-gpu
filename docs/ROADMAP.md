@@ -120,6 +120,8 @@ that finishes it. Everything ships to `main`, which deploys the dashboard to Ver
       action bar per topic; the lane from phrases, not single words; plain words for every code on screen
 - [ ] R2 History and sources: daily snapshots and a timeline per topic; Bluesky, TikTok and Amazon suggestions, GDELT,
       Polymarket, Product Hunt, Lemmy, arXiv, podcasts, YouTube channel RSS; trend stages and seasonality
+      (sources in the sweep done 2026-11-13: `lib/radar-more.ts`, 17 groups, RADAR.md §4b; still to do: TikTok and Amazon
+      suggestions and iTunes podcast search in the keyword research, YouTube channel RSS, history, stages, seasonality)
 - [ ] R3 Win the topic: outlier finder, rival tracker for any channel, content gaps, thumbnail patterns, "vs" and
       question maps
 - [ ] R4 Don't miss it: spike alerts against each topic's own baseline, rival outlier alerts, the morning Brief,

@@ -159,6 +159,47 @@ they need one more check from Vercel's network before they ship, because some si
 | Instagram hashtag pages | login | — | No free read; hashtags come from YouTube, Bluesky and Mastodon |
 | Wikidata, OpenAlex | 429 here | — | Rate-limited from shared IPs; optional |
 
+### 4b. The wider net, live (2026-11-13)
+
+The owner: "add all of them which are no key ... make it palantir". `lib/radar-more.ts` adds 17 source groups (~70
+endpoints) to every sweep, each behind `Track` so it fails alone and shows in the Sources panel. All free, no key.
+Checked from a cloud container on 2026-11-13; the ones marked * were refused by that container's address (429 or an
+egress block) but answer from ordinary servers: check them in the Sources panel after the first live sweep.
+
+| Source id | What it reads | Sector |
+| --- | --- | --- |
+| `bluesky` | Trends with post counts (`app.bsky.unspecced.getTrends`); top posts on each seed in the last day (`api.bsky.app` search, 30+ likes) | Social |
+| `edits`* | Wikipedia's last ~1,000 human edits: an article several people are rewriting right now | Social |
+| `lemmy` | lemmy.world's front page | Social |
+| `apps`, `podcasts` | The App Store's top 25 free apps and top 25 podcasts in the Radar's first country | Social, Video |
+| `markets` | Polymarket and Manifold, by 24 h volume | Social |
+| `papers` | Hugging Face daily papers (upvotes), arXiv's new cs.AI and cs.CL | Builders |
+| `spaces` | Hugging Face's trending Spaces | Builders |
+| `launches` | Product Hunt's feed | Builders |
+| `packages` | This week's downloads against the month for the AI SDKs on npm and PyPI (only rises of 15%+) | Builders |
+| `labs` | OpenAI, Google DeepMind, Google AI, Hugging Face, Meta, Apple, Microsoft and Amazon newsroom feeds; the **sitemaps** of Anthropic, Mistral and Nvidia's newsroom (pages added or changed in 4 days, titled from their slugs: they show pages before they're announced) | News |
+| `status` | Open incidents on Claude, OpenAI, GitHub and Cloudflare's status pages | News |
+| `gdelt`* | The world's press on the seeds, last day (one call) | News |
+| `policy` | Federal Register (rules, proposed rules, presidential documents), the White House's sitemap, the European Commission, GOV.UK, UN News, the Pentagon, the WTO | News |
+| `filings` | SEC EDGAR full-text search: 8-Ks naming a seed in 4 days, with what they report (an executive change, an acquisition, results) | News |
+| `money` | The Fed, the ECB, the RBI, the SEC, the CFTC; Bloomberg Markets, the FT*, the Economic Times*, Mint* | News |
+| `world` | BBC*, Al Jazeera, DW*, The Guardian*, France 24, the South China Morning Post, Nikkei Asia | News |
+| `tech` | TechCrunch, The Verge, Ars Technica, MIT Technology Review | News |
+
+Sitemaps are read only where robots.txt allows (`allowed()`, wildcards honoured). A live sweep went from ~330 signals
+to ~690, and the top topics stayed real (Anthropic, Jensen Huang, Claude Code, Gemini, Ukraine); the generic words the
+new titles bring ("united", "global", "support") joined the noise list in `lib/radar.ts`.
+
+**Refused or too heavy here:** Reddit and Metaculus (a key), Kalshi (its open-market list is ~5 MB a read), X and
+Tesla's sitemaps, the State Department, the EU Parliament, the IEA, OPEC, Politico Europe, Reuters, AP and CNBC (403 or
+401 to servers), OFAC's and Treasury's feeds (moved), PIB and MEA (behind error pages).
+
+**Free with a key, next** (each a key in Settings → Automation → Keys, never in git): Reddit (OAuth app; check its
+commercial terms), Product Hunt API v2 (votes, not just launches), NYT Most Popular, The Guardian Open Platform,
+Semantic Scholar, FRED, the EIA (energy), Congress.gov (api.data.gov), UN Comtrade, Finnhub, Metaculus, ACLED and
+OpenSanctions (non-commercial terms), and Instagram Business Discovery through the Facebook Login rivals already use
+(any business account's followers and posts: the outlier test for Instagram).
+
 **Our own history is the moat.** The paid tools sell history. We start keeping it: every watched topic and every
 topic that reaches the Brief is snapshotted daily (bet, its parts, the raw counts) in R2. After 30 days we have
 our own trend lines; after a year, seasonality. Wikipedia pageviews (back to 2015) and GDELT (a year) fill the past on

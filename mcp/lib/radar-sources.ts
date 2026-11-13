@@ -5,16 +5,19 @@
 // Overflow's question count. The sweep adds what's moving everywhere at once: Google News' Technology front, Lobsters,
 // DEV Community, Mastodon's trending tags and links, Hugging Face's trending models, GitHub's fastest new repos and
 // Wikipedia's most read. The connected YouTube channel adds the subscriber counts of the channels on top (one quota unit
-// for fifty) and YouTube's trending chart. Each source has its own short time limit and fails on its own: the scores
-// use whatever answered and say what didn't. Reddit and Bluesky are left out: they refuse servers without a key.
+// for fifty) and YouTube's trending chart. lib/radar-more.ts adds the wider net (Bluesky, live Wikipedia edits, app
+// and podcast charts, prediction markets, papers, package downloads, AI labs' feeds and sitemaps, status pages, GDELT,
+// the Federal Register, SEC 8-Ks, the White House and the EU, world and tech news). Each source has its own short time limit and fails on its own: the scores
+// use whatever answered and say what didn't. Reddit and Bluesky's search are left out: they refuse servers without a key.
 import type { HnHit, NewsHit, Signals, SrcId, SrcState, SweepSignal, YtHit } from "./radar";
 import { norm, strength } from "./radar";
+import { moreSignals } from "./radar-more";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
-const BOT = "VoiceboxStudio/1.0 (https://voiceboxstudio.vercel.app; radar)"; // Wikimedia asks for a named client
+export const BOT = "VoiceboxStudio/1.0 (https://voiceboxstudio.vercel.app; radar)"; // Wikimedia asks for a named client
 const D = 86_400_000;
 
-class Track {
+export class Track {
   states: SrcState[] = [];
   async run<T>(id: SrcId, f: () => Promise<T>, empty: T, ok: (v: T) => boolean = () => true): Promise<T> {
     const t = Date.now();
@@ -41,12 +44,12 @@ async function get(url: string, o: { ms?: number; ua?: string; headers?: Record<
   if (!r.ok) throw new Error(r.status === 429 ? "rate limited, try later" : `HTTP ${r.status}`);
   return r;
 }
-const json = async <T>(url: string, o?: Parameters<typeof get>[1]) => (await get(url, o)).json() as Promise<T>;
-const text = async (url: string, o?: Parameters<typeof get>[1]) => (await get(url, o)).text();
+export const json = async <T>(url: string, o?: Parameters<typeof get>[1]) => (await get(url, o)).json() as Promise<T>;
+export const text = async (url: string, o?: Parameters<typeof get>[1]) => (await get(url, o)).text();
 const enc = encodeURIComponent;
 
 /** a few at a time, so a long list of calls doesn't trip anyone's rate limit */
-async function pool<T, R>(xs: T[], n: number, f: (x: T) => Promise<R>): Promise<R[]> {
+export async function pool<T, R>(xs: T[], n: number, f: (x: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(xs.length);
   let i = 0;
   await Promise.all(Array.from({ length: Math.min(n, xs.length) }, async () => { while (i < xs.length) { const k = i++; out[k] = await f(xs[k]); } }));
@@ -243,7 +246,7 @@ export async function sweepSignals(seeds: string[], geos: string[], rivals: Swee
   const ymd = new Date(now - D).toISOString().slice(0, 10);
   type Mt = { name: string; history?: { uses: string }[] };
   type Ml = { title: string; url: string; provider_name?: string; history?: { uses: string }[] };
-  const [tr, nw, top, front, lob, dev, mtags, mlinks, hf, gh, wtop, sug, chart] = await Promise.all([
+  const [tr, nw, top, front, lob, dev, mtags, mlinks, hf, gh, wtop, sug, chart, more] = await Promise.all([
     t.run("trends", async () => (await Promise.all(geos.map((g) => trends(g).catch(() => [])))).flat(), [] as Awaited<ReturnType<typeof trends>>, (v) => v.length > 0),
     t.run("news", async () => (await pool(seeds.slice(0, 8), 4, (s) => news(s, g0, 2).catch(() => null))).flatMap((r) => r?.items ?? []), [] as NewsHit[], (v) => v.length > 0),
     t.run("gnews_top", async () => items(await text(`https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-${g0}&gl=${g0}&ceid=${g0}:en`, { ms: 5000 }))
@@ -269,6 +272,7 @@ export async function sweepSignals(seeds: string[], geos: string[], rivals: Swee
       const r = await YT.ytGet<{ items?: { id: string; snippet: { title: string; publishedAt: string }; statistics?: { viewCount?: string } }[] }>(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&videoCategoryId=28&maxResults=25&regionCode=${g0}`, await YT.accessToken(a));
       return r.items ?? [];
     }, []),
+    moreSignals(seeds, g0, t).catch(() => [] as SweepSignal[]),
   ]);
   const uses = (h?: { uses: string }[]) => (h ?? []).slice(0, 2).reduce((a, x) => a + (+x.uses || 0), 0);
   const signals: SweepSignal[] = [
@@ -285,6 +289,7 @@ export async function sweepSignals(seeds: string[], geos: string[], rivals: Swee
     ...wtop.slice(0, 30).map((x) => ({ src: "wiki" as const, title: `${x.normalizedtitle}${x.description ? ` · ${x.description}` : ""}`, url: x.content_urls?.desktop?.page ?? `https://en.wikipedia.org/wiki/${enc(x.normalizedtitle)}`, at: now - D / 2, w: strength.wiki(x.views), metric: `${x.views.toLocaleString("en")} readers yesterday` })),
     ...[...new Set(sug.map(norm))].map((x) => ({ src: "suggest" as const, title: x, url: `https://www.youtube.com/results?search_query=${enc(x)}`, at: now, w: strength.suggest(), metric: "typed on YouTube" })),
     ...chart.map((v) => ({ src: "yt_chart" as const, title: v.snippet.title, url: `https://youtu.be/${v.id}`, at: Date.parse(v.snippet.publishedAt), w: 0.5, metric: `${Number(v.statistics?.viewCount ?? 0).toLocaleString("en")} views` })),
+    ...more,
     ...rivals,
   ];
   return { signals, sources: t.states };
