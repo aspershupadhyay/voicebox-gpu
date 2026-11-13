@@ -10,6 +10,11 @@
 //           its downloads are in (lib/colab.ts onHeartbeat). The worker runs several downloads side by side. The worker calls back when each one is done (/api/downloads/done), so it's saved at once.
 // Each site gets its own folder inside the one picked (default "Downloads"): Downloads/Instagram, Downloads/YouTube…
 // Every link the server fetches is checked first (http(s) only, no private or internal addresses, on every redirect).
+// Like a browser on a computer at home (the owner, 2026-11-13: "download anything, treated like a local system"): every
+// request carries the headers Chrome sends (sec-ch-ua, Sec-Fetch-*, the page as Referer), keeps the cookies a site sets
+// across its redirects, and sends the saved sign-ins to the sites they belong to, never to any other. Any file comes
+// down as it is (a PDF, a zip, an .ogg, a font…), not only photos and videos; a page that only shows a file (Wikimedia
+// Commons' File: pages, a link marked download) gives that file, never its preview picture.
 // The list lives in workspace/downloads.json (written with If-Match so two people never lose each other's).
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
@@ -35,7 +40,21 @@ type Actor = { id?: string; name: string };
 const KEY = "workspace/downloads.json";
 const COOKIES = "workspace/downloads/cookies.txt"; // optional sign-ins for yt-dlp (Netscape format), never sent back
 const MAX = 200;
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+/** What Chrome 131 on Windows sends: a page it opens ("page") or a file a page asks for ("file", with the page as
+ *  Referer). A site that checks for a real browser sees one. */
+function browserHeaders(as: "page" | "file", url: string, referer?: string | null): Record<string, string> {
+  const same = !!referer && (() => { try { return new URL(referer).hostname === new URL(url).hostname; } catch { return false; } })();
+  const h: Record<string, string> = {
+    "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9",
+    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"', "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"',
+  };
+  if (as === "page") Object.assign(h, { Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Upgrade-Insecure-Requests": "1", "Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": referer ? (same ? "same-origin" : "cross-site") : "none", "Sec-Fetch-User": "?1" });
+  else Object.assign(h, { Accept: "*/*", "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Site": referer ? (same ? "same-origin" : "cross-site") : "none" });
+  if (referer) h.Referer = referer;
+  return h;
+}
 const SERVER_MAX = 140e6; // bigger files go through the worker
 const BUFFER_MAX = 40e6; // a file with no stated size is read whole: only this much (a Worker has 128 MB)
 
@@ -110,18 +129,77 @@ export async function checkUrl(raw: string) {
   return u;
 }
 
-async function safeFetch(raw: string, init: { headers?: Record<string, string>; ms?: number; method?: string } = {}) {
-  let url = raw;
-  for (let hop = 0; hop < 6; hop++) {
+/** The cookies a browser would send to this address: the ones sites set during this download (`jar`) and the saved
+ *  sign-ins whose domain matches (a cookies.txt line for .example.com goes to example.com and its subdomains only). */
+function cookieHeader(url: string, jar: Map<string, string>, saved: Cookie[]) {
+  const u = new URL(url), host = u.hostname.toLowerCase(), now = Date.now() / 1000;
+  const out = new Map<string, string>();
+  for (const c of saved) {
+    const f = c.line.split("\t");
+    const dom = f[0].replace(/^#HttpOnly_/i, "").toLowerCase(), sub = f[1] === "TRUE" || dom.startsWith(".");
+    const d = dom.replace(/^\./, "");
+    if (!(host === d || (sub && host.endsWith(`.${d}`)))) continue;
+    if (f[3] === "TRUE" && u.protocol !== "https:") continue;
+    if (c.expires && c.expires < now) continue;
+    if (!u.pathname.startsWith(f[2] || "/")) continue;
+    out.set(c.name, f[6] ?? "");
+  }
+  for (const [k, v] of jar) { const [h, name] = k.split("\n"); if (host === h || host.endsWith(`.${h}`)) out.set(name, v); }
+  return [...out].map(([k, v]) => `${k}=${v}`).join("; ");
+}
+function keepCookies(r: Response, url: string, jar: Map<string, string>) {
+  const set = (r.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
+  const host = new URL(url).hostname.toLowerCase();
+  for (const line of set) {
+    const [pair, ...attrs] = line.split(";");
+    const i = pair.indexOf("=");
+    if (i < 1) continue;
+    const dom = attrs.map((a) => /^\s*domain=\.?([^;]+)/i.exec(a)?.[1]?.toLowerCase()).find(Boolean);
+    const at = dom && (host === dom || host.endsWith(`.${dom}`)) ? dom : host; // a site can't set cookies for another
+    jar.set(`${at}\n${pair.slice(0, i).trim()}`, pair.slice(i + 1).trim());
+  }
+}
+let savedCookies: { at: number; list: Cookie[] } | null = null;
+async function signIns() {
+  if (!savedCookies || Date.now() - savedCookies.at > 60_000) savedCookies = { at: Date.now(), list: parseCookies(await cookies().catch(() => "")) };
+  return savedCookies.list;
+}
+
+async function safeFetch(raw: string, init: { headers?: Record<string, string>; ms?: number; method?: string; as?: "page" | "file"; referer?: string | null; jar?: Map<string, string> } = {}) {
+  let url = raw, referer = init.referer ?? null;
+  const jar = init.jar ?? new Map<string, string>(), saved = await signIns();
+  for (let hop = 0; hop < 8; hop++) {
     await checkUrl(url);
+    const cookie = cookieHeader(url, jar, saved);
     const r = await fetch(url, { method: init.method ?? "GET", redirect: "manual", cache: "no-store", signal: AbortSignal.timeout(init.ms ?? 20_000),
-      headers: { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9", ...init.headers } });
+      headers: { ...browserHeaders(init.as ?? "page", url, referer), ...(cookie ? { Cookie: cookie } : {}), ...init.headers } });
+    keepCookies(r, url, jar);
     const to = r.status >= 300 && r.status < 400 ? r.headers.get("location") : null;
-    if (!to) return Object.assign(r, { finalUrl: url });
+    if (!to) return Object.assign(r, { finalUrl: url, jar });
+    r.body?.cancel().catch(() => null);
     url = new URL(to, url).toString();
   }
   throw new DlError("too many redirects");
 }
+
+/** The file name a download says it is (Content-Disposition), else the last part of its address. */
+function fileNameOf(r: Response & { finalUrl: string }, type: string) {
+  const cd = r.headers.get("content-disposition") ?? "";
+  const star = /filename\*\s*=\s*(?:UTF-8|utf-8)?''([^;]+)/i.exec(cd)?.[1];
+  const plainName = /filename\s*=\s*"?([^";]+)"?/i.exec(cd)?.[1];
+  let file = "";
+  try { file = star ? decodeURIComponent(star) : plainName ?? decodeURIComponent(new URL(r.finalUrl).pathname.split("/").pop() || ""); } catch { file = plainName ?? ""; }
+  file = file.replace(/[\\/:*?"<>|\n\r\t]+/g, " ").trim() || "file";
+  if (/\.[a-z0-9]{1,5}$/i.test(file)) return file;
+  const ext = EXT_OF[type] ?? type.split("/")[1]?.replace(/^x-/, "").replace("jpeg", "jpg").replace("quicktime", "mov").replace(/[^a-z0-9]/g, "").slice(0, 5);
+  return ext ? `${file}.${ext}` : file;
+}
+const EXT_OF: Record<string, string> = { "application/pdf": "pdf", "application/zip": "zip", "application/json": "json", "text/plain": "txt", "text/csv": "csv",
+  "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/x-wav": "wav", "audio/flac": "flac", "image/svg+xml": "svg", "application/x-7z-compressed": "7z",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx", "font/ttf": "ttf", "font/otf": "otf", "font/woff2": "woff2" };
+/** A response that is a file, not a page to read: any type but HTML (and not an XML feed or page), or one the site marks as a download. */
+const isFile = (r: Response, type: string) => /attachment/i.test(r.headers.get("content-disposition") ?? "") || (!!type && !/html|xhtml/.test(type));
 
 /* ───────────── the server's routes */
 
@@ -174,7 +252,7 @@ async function fromPinterest(url: string): Promise<Found | null> {
   if (video) return { title, author: null, thumb: img, files: [{ url: video, name: `${base}.mp4` }] };
   if (!img) return null;
   const orig = img.replace(/\/\d+x(\d+)?(_RS)?\//, "/originals/");
-  const ok = orig !== img && (await safeFetch(orig, { method: "HEAD", ms: 8000 }).then((x) => x.ok).catch(() => false));
+  const ok = orig !== img && (await safeFetch(orig, { method: "HEAD", ms: 8000, as: "file", referer: url }).then((x) => x.ok).catch(() => false));
   const pick = ok ? orig : img;
   return { title, author: null, thumb: img, files: [{ url: pick, name: `${base}.${extOf(pick, "jpg")}` }] };
 }
@@ -184,18 +262,27 @@ async function fromWeb(url: string, source: Source): Promise<Found | null> {
   const u = new URL(url);
   const inner = u.hostname.includes("google.") ? u.searchParams.get("imgurl") ?? u.searchParams.get("url") : null;
   if (inner && /^https?:\/\//.test(inner)) return fromWeb(inner, sourceOf(inner));
-  const r = await safeFetch(url, { headers: { Accept: "text/html,image/*,video/*,*/*;q=0.8" } });
+  // a Wikimedia File: page is about one file (a sound, a video, a PDF, a photo): the original, never the page's preview
+  const wiki = /(^|\.)(wikimedia|wikipedia|wiktionary|wikisource|wikibooks|wikinews|wikiversity|wikivoyage|mediawiki)\.org$/.test(u.hostname)
+    && /^\/wiki\/(File|Image|Datei|Fichier|Archivo):(.+)$/i.exec(u.pathname);
+  if (wiki) return fromWeb(`https://commons.wikimedia.org/wiki/Special:FilePath/${wiki[2]}`, source);
+  const r = await safeFetch(url);
   if (!r.ok) throw new DlError(`the site answered ${r.status}`);
-  const type = (r.headers.get("content-type") ?? "").split(";")[0].toLowerCase();
+  const type = (r.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
   const host = new URL(r.finalUrl).hostname.replace(/^www\./, "");
-  if (/^(image|video|audio)\//.test(type)) {
+  if (isFile(r, type)) {
     r.body?.cancel().catch(() => null);
-    const file = decodeURIComponent(new URL(r.finalUrl).pathname.split("/").pop() || "file");
-    const name = /\.[a-z0-9]{2,4}$/i.test(file) ? file : `${file}.${type.split("/")[1].replace("jpeg", "jpg").replace("quicktime", "mov")}`;
-    return { title: null, author: null, thumb: type.startsWith("image/") ? r.finalUrl : null, files: [{ url: r.finalUrl, name: `${host} - ${name}`.slice(0, 200) }] };
+    return { title: null, author: null, thumb: type.startsWith("image/") ? r.finalUrl : null, files: [{ url: r.finalUrl, name: `${host} - ${fileNameOf(r, type)}`.slice(0, 200) }] };
   }
-  if (!type.includes("html")) return null;
   const html = (await r.text()).slice(0, 2_000_000);
+  // a page that offers one file to download (<a download>, "Download original", a link to the file the address names)
+  const want = /\.([a-z0-9]{2,5})$/i.test(u.pathname) ? decodeURIComponent(u.pathname.split("/").pop() ?? "") : null;
+  const offered = /<a\b[^>]*\bdownload\b[^>]*\bhref=["']([^"'#]+)["']/i.exec(html)?.[1] ?? /<a\b[^>]*\bhref=["']([^"'#]+)["'][^>]*\bdownload\b/i.exec(html)?.[1]
+    ?? (want ? [...html.matchAll(/<a\b[^>]*\bhref=["']([^"'#]+)["']/gi)].map((m) => m[1]).find((h) => { try { return decodeURIComponent(h).endsWith(want) && new URL(unent(h), r.finalUrl).toString() !== r.finalUrl; } catch { return false; } }) : null);
+  if (offered && !/^(javascript|mailto|data):/i.test(offered) && (want || !meta(html, "og:video", "og:video:url", "og:video:secure_url"))) {
+    const f = new URL(unent(offered), r.finalUrl).toString();
+    if (/\.[a-z0-9]{2,5}(\?|$)/i.test(new URL(f).pathname)) return { title: null, author: null, thumb: null, files: [{ url: f, name: `${host} - ${decodeURIComponent(new URL(f).pathname.split("/").pop() || "file")}`.slice(0, 200) }] };
+  }
   const title = words(unent(meta(html, "og:title", "twitter:title") ?? /<title>([^<]*)/.exec(html)?.[1] ?? ""), 60) || null;
   const author = meta(html, "author", "twitter:creator", "article:author");
   const video = meta(html, "og:video:secure_url", "og:video:url", "og:video", "twitter:player:stream");
@@ -428,7 +515,7 @@ async function saveFromServer(d: Dl, found: Found, actor: Actor): Promise<DlItem
   const backup = (await getSettings()).backup_media;
   const items: DlItem[] = [];
   for (const [i, f] of found.files.entries()) {
-    const r = await safeFetch(f.url, { ms: 120_000, headers: { Referer: d.url } });
+    const r = await safeFetch(f.url, { ms: 120_000, as: "file", referer: f.url === d.url ? null : d.url });
     if (!r.ok) { r.body?.cancel().catch(() => null); throw new DlError(`${new URL(r.finalUrl).hostname.replace(/^www\./, "")} refused the file: HTTP ${r.status}`); }
     const size = Number(r.headers.get("content-length") ?? 0);
     if (size > SERVER_MAX) { r.body?.cancel().catch(() => null); return null; } // big: the worker streams it instead
@@ -586,11 +673,14 @@ async function saveFromWorker(d: Dl, actor: Actor) {
     if (!info?.items?.length) throw new DlError("the Colab downloader finished but sent no files back: Retry");
     const { addMediaFromR2 } = await import("./data");
     const who = (info.handle || info.uploader || "").replace(/^@/, "");
-    const base = `${who ? `@${words(who, 30).replace(/\s+/g, "")} on ` : ""}${SOURCES[d.source].name}${info.title ? ` - ${words(info.title, 60)}` : ""}`;
+    const host = (() => { try { return new URL(d.url).hostname.replace(/^www\./, ""); } catch { return "the web"; } })();
+    const base = `${who ? `@${words(who, 30).replace(/\s+/g, "")} on ` : ""}${d.source === "web" ? host : SOURCES[d.source].name}${info.title ? ` - ${words(info.title, 60)}` : ""}`;
     const items: DlItem[] = [];
     for (const it of info.items) {
       const ext = /\.[a-z0-9]{2,4}$/i.exec(it.name)?.[0] ?? "";
-      const name = nameFor(d, `${base}${info.items.length > 1 ? ` (${it.slot + 1})` : ""}${ext}`, it.slot, info.items.length);
+      // a file with no title of its own (a PDF, a sound from a plain link) keeps the name it came with
+      const own = !info.title && d.source === "web" ? it.name.replace(/^\d{2}-/, "") : null;
+      const name = nameFor(d, own ? `${host} - ${own}`.slice(0, 200) : `${base}${info.items.length > 1 ? ` (${it.slot + 1})` : ""}${ext}`, it.slot, info.items.length);
       const key = `workspace/downloads/${d.id}/${it.slot}`;
       const size = (await headObj(key))?.size ?? it.size;
       // a fixed file id per slot: a second save of the same download is refused by storage instead of copied twice
@@ -598,8 +688,9 @@ async function saveFromWorker(d: Dl, actor: Actor) {
       if (media) items.push(await itemOf(media));
     }
     const small = (info.warnings ?? []).filter((w) => /only came at/.test(w));
+    const page = (info.warnings ?? []).some((w) => /saved the page itself/.test(w));
     await patch(d.id, { title: info.title ?? d.title, author: who || d.author, thumb: info.thumbnail ?? d.thumb,
-      note: small.length ? `${small.length === 1 ? small[0].replace(/^photo/, "Photo").replace(/:.*$/, "") : `${small.length} photos only came at preview size (${/at (\d+x\d+)/.exec(small[0])?.[1] ?? "small"})`}: ${SOURCES[d.source].name} gave a signed-out downloader nothing bigger.` : null });
+      note: page ? "That page had no file, photo or video to take: saved the page itself (a PDF and a full screenshot)." : small.length ? `${small.length === 1 ? small[0].replace(/^photo/, "Photo").replace(/:.*$/, "") : `${small.length} photos only came at preview size (${/at (\d+x\d+)/.exec(small[0])?.[1] ?? "small"})`}: ${SOURCES[d.source].name} gave a signed-out downloader nothing bigger.` : null });
     await finish(d.id, items, actor);
   } catch (e) {
     await fail(d, (e as Error).message);

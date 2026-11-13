@@ -6,6 +6,18 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"Make our download download anything, and make it look exactly how a local system gets treated"** (2026-11-13):
+  Elite Minds' Jensen video lost an hour to downloads that came back wrong: a Wikimedia sound (`File:Dull_thud.ogg`)
+  came back as its PNG preview, SEC filings answered 403, a PDF had no route. `download` now takes any file (any
+  type that isn't a page, or one marked as a download, named from Content-Disposition); a Wikimedia File: page gives
+  the original; a page with one `download` link gives that file. Every request is Chrome's: its headers (sec-ch-ua,
+  Sec-Fetch-*, the page as Referer), the cookies a site sets across redirects, the saved sign-ins sent to their own
+  site only. On the worker a direct file comes through curl_cffi with Chrome's TLS fingerprint, and the last resort
+  is a real Chromium (no automation flags, a normal window, the sign-ins) that keeps the file it downloads or the
+  video it plays; a page with nothing to take comes as a PDF and a full screenshot. What it can't change: the
+  requests still leave from Cloudflare's and Colab's addresses, not a home connection, so a site that blocks data
+  centres by address still says no.
+
 - **"Commented from another account, still nothing"** (2026-11-12): the deliveries log showed Instagram sends only
   "seen" and reactions, never comments: the Meta app isn't published ("to receive webhooks, your app must be in
   published state"). Publishing needs a privacy policy, terms and data deletion URL, so the app now has public
