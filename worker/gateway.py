@@ -3041,7 +3041,83 @@ def _impersonate_target(yt_dlp):
 
 FETCH_TYPES = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska", ".m4a": "audio/mp4",
                ".mp3": "audio/mpeg", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif", ".heic": "image/heic"}
-UA_CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+UA_CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+# names the downloader leaves in a job's folder for itself: never uploaded as a download
+FETCH_SKIP = re.compile(r"(^info\.json$|^cookies\.txt$|\.(part|ytdl|temp|tmp|crdownload)$|\.part\.\d+$|^\.)", re.I)
+
+
+def _fetch_type(path):
+    """The type a downloaded file goes up as: the known media types, else whatever the name says (a PDF, a zip, an
+    .ogg, a font…: any file is a download), else plain bytes. None for the downloader's own working files."""
+    name = os.path.basename(path)
+    if FETCH_SKIP.search(name):
+        return None
+    ext = os.path.splitext(name)[1].lower()
+    if ext in FETCH_TYPES:
+        return FETCH_TYPES[ext]
+    import mimetypes
+    return mimetypes.guess_type(name)[0] or "application/octet-stream"
+
+
+def _direct_file(url, jdir, cookies_path=None, referer=None):
+    """A link that is a file (a PDF, a sound, a zip, a photo…), fetched the way Chrome on a computer fetches it: Chrome's
+    TLS fingerprint and headers (curl_cffi), the site's own cookies across redirects, the saved sign-ins for that site.
+    Returns the saved path, or None when the link is a page (the other routes read pages)."""
+    try:
+        from curl_cffi import requests as creq
+    except Exception:  # noqa: BLE001  no curl_cffi: urllib with Chrome's headers
+        creq = None
+    jar = None
+    if cookies_path:
+        import http.cookiejar
+        jar = http.cookiejar.MozillaCookieJar(cookies_path)
+        try:
+            jar.load(ignore_discard=True, ignore_expires=False)
+        except Exception:  # noqa: BLE001
+            jar = None
+    headers = {"User-Agent": UA_CHROME, "Accept": "*/*", "Accept-Language": "en-US,en;q=0.9"}
+    if referer:
+        headers["Referer"] = referer
+    if creq is not None:
+        s_ = creq.Session(impersonate="chrome")
+        if jar is not None:
+            for c in jar:
+                s_.cookies.set(c.name, c.value, domain=c.domain, path=c.path)
+        r = s_.get(url, headers={"Accept-Language": "en-US,en;q=0.9", **({"Referer": referer} if referer else {})}, stream=True, timeout=60, allow_redirects=True)
+        status, hdr, final = r.status_code, r.headers, str(r.url)
+        chunks = r.iter_content(chunk_size=1 << 20)
+    else:
+        op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar)) if jar is not None else urllib.request.build_opener()
+        r = op.open(urllib.request.Request(url, headers=headers), timeout=60)
+        status, hdr, final = r.status, r.headers, r.geturl()
+        chunks = iter(lambda: r.read(1 << 20), b"")
+    try:
+        if status >= 400:
+            raise RuntimeError(f"HTTP Error {status}")
+        ctype = (hdr.get("content-type") or "").split(";")[0].strip().lower()
+        cd = hdr.get("content-disposition") or ""
+        if "attachment" not in cd.lower() and (not ctype or "html" in ctype):
+            return None
+        m = re.search(r"filename\*\s*=\s*(?:UTF-8|utf-8)?''([^;]+)", cd) or re.search(r'filename\s*=\s*"?([^";]+)"?', cd)
+        name = urllib.parse.unquote(m.group(1)) if m else urllib.parse.unquote(os.path.basename(urlparse(final).path)) or "file"
+        if not os.path.splitext(name)[1]:
+            import mimetypes
+            name += mimetypes.guess_extension(ctype) or ""
+        name = re.sub(r"[^A-Za-z0-9._ -]+", "_", name).strip(" .")[:120] or "file"
+        path = os.path.join(jdir, f"01-{name}")
+        with open(path + ".part", "wb") as f:
+            for c in chunks:
+                if c:
+                    f.write(c)
+                    if f.tell() > 1900 * 1024 * 1024:
+                        raise RuntimeError("the file is over 1.9 GB")
+        os.replace(path + ".part", path)
+        return path
+    finally:
+        try:
+            r.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _put_file(url, path, ctype):
@@ -3077,7 +3153,8 @@ class _Uploader:
         path = os.path.abspath(path)
         ext = os.path.splitext(path)[1].lower()
         with self.lock:
-            if path in self.seen or ext not in FETCH_TYPES or not os.path.exists(path) or len(self.futs) >= len(self.puts):
+            ctype = _fetch_type(path)
+            if path in self.seen or not ctype or not os.path.isfile(path) or len(self.futs) >= len(self.puts):
                 return
             self.seen.add(path)
             # a carousel's items are named by their place in it ("03-…"): that place is their slot, so Files keeps
@@ -3089,7 +3166,7 @@ class _Uploader:
             if slot is None:
                 slot = next(i for i in range(len(self.puts)) if i not in taken)
             taken.add(slot)
-            self.futs.append(self.pool.submit(self._up, slot, path, FETCH_TYPES[ext]))
+            self.futs.append(self.pool.submit(self._up, slot, path, ctype))
 
     def _up(self, slot, path, ctype):
         _put_file(self.puts[slot], path, ctype)
@@ -3099,7 +3176,7 @@ class _Uploader:
     def sweep(self, jdir):
         """What landed without the post hook (gallery-dl, a run that failed after writing). A video-only or audio-only
         half (name.f137.mp4) left by a failed merge only goes when there's nothing whole."""
-        names = [f for f in sorted(os.listdir(jdir)) if not f.endswith((".part", ".ytdl", ".temp"))]
+        names = [f for f in sorted(os.listdir(jdir)) if _fetch_type(f)]
         whole = [f for f in names if not re.search(r"\.f\d+\.\w+$", f)]
         for f in whole if any(os.path.splitext(f)[1].lower() in FETCH_TYPES for f in whole) else names:
             self.add(os.path.join(jdir, f))
@@ -3194,7 +3271,7 @@ def run_fetch(job):
             job["dl"]["speed"] = d.get("speed")
     cpath = None
     if ft.get("cookies"):
-        cpath = os.path.join(jdir, "cookies.txt")
+        cpath = os.path.join(JOBS_DIR, f"{job['id']}-cookies.txt")  # beside the job's folder: never swept up as a download
         with open(cpath, "w") as f:
             f.write(ft["cookies"])
 
@@ -3337,6 +3414,12 @@ def run_fetch(job):
     # 1) yt-dlp, 2) the same as Chrome (sites that refuse plain clients), 3) gallery-dl (photo posts),
     # 4) every video link in the page itself. The first that gets a file wins.
     attempts = [lambda: whole(ft["url"])] + ([lambda: whole(ft["url"], impersonate=target)] if target is not None else [])
+    if not _social(ft["url"]):  # 0) a link that is a file (a PDF, a sound, a zip…): straight down, as Chrome would get it
+        def direct():
+            p_ = _direct_file(ft["url"], jdir, cpath)
+            if p_:
+                up.add(p_)
+        attempts.insert(0, direct)
     for attempt in attempts:
         try:
             info = attempt() or info
@@ -3367,6 +3450,36 @@ def run_fetch(job):
                     break
         except Exception as e:  # noqa: BLE001
             errors.append(f"the page: {e}"[:200])
+    if not have():
+        # 5) the page in a real browser, the way a person's Chrome opens it: a file it starts downloading, else the
+        # biggest video, sound or file it loads; a page with none of those (not a social post) comes as a PDF and a
+        # full screenshot of itself, so a link always gives something
+        job["stage"] = "opening it in a browser"
+        try:
+            got, seen = bench.grab(ft["url"], jdir, ft.get("cookies") or "", snapshot=not _social(ft["url"]))
+            for i, p_ in enumerate(got, 1):
+                dst = os.path.join(jdir, f"{i:02d}-{os.path.basename(p_)}")
+                os.replace(p_, dst)
+                up.add(dst)
+            for st in (seen.get("streams") or [])[:2]:
+                if have():
+                    break
+                try:
+                    ytdlp(st, referer=ft["url"])
+                except Exception as e:  # noqa: BLE001
+                    errors.append(str(e)[:200])
+            if seen.get("snapshot"):
+                job.setdefault("warnings", []).append("no file on that page: saved the page itself (a PDF and a full screenshot)")
+            if seen.get("error"):
+                errors.append(f"the browser: {seen['error']}"[:200])
+            info = info or {"title": seen.get("title"), "webpage_url": seen.get("url") or ft["url"]}
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"the browser: {e}"[:200])
+    if cpath:
+        try:
+            os.remove(cpath)
+        except OSError:
+            pass
     if not have():
         raise RuntimeError(_best_error(errors)[:300])
     job["stage"] = "uploading"

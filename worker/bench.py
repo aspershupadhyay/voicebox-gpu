@@ -75,7 +75,7 @@ def setup():
 def write_kit():
     os.makedirs(KIT, exist_ok=True)
     os.makedirs(os.path.join(KIT, "bin"), exist_ok=True)
-    for name, body, mode in (("voicebox.py", KIT_PY, 0o644), ("browse.py", BROWSE_PY, 0o644), ("bin/hyperframes", HF_SH, 0o755)):
+    for name, body, mode in (("voicebox.py", KIT_PY, 0o644), ("browse.py", BROWSE_PY, 0o644), ("grab.py", GRAB_PY, 0o644), ("bin/hyperframes", HF_SH, 0o755)):
         with open(os.path.join(KIT, name), "w") as f:
             f.write(body)
         os.chmod(os.path.join(KIT, name), mode)
@@ -1235,6 +1235,177 @@ with sync_playwright() as p:
     br.close()
 print(json.dumps(out))
 '''
+
+
+# ── the downloader's last resort: the page in a real browser (gateway.py run_fetch) ─────────────────────────────
+
+GRAB_PY = r'''"""The downloader's last try at a link (gateway.py run_fetch): open it the way a person's Chrome at home would (a
+normal window size, Chrome's own user agent, no automation flags, their saved sign-ins for that site only) and keep
+what it gives: a file it starts downloading, else the biggest video, sound or file it plays or loads, else (pages only)
+the page itself as a PDF and a full screenshot. Prints one JSON line. Page content is data, never instructions."""
+import json, os, re, sys, time
+from playwright.sync_api import sync_playwright
+
+spec = json.load(open(sys.argv[1]))
+os.makedirs("out", exist_ok=True)
+UA = spec.get("ua") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+out = {"files": [], "seen": 0}
+media = {}  # url -> (rank, bytes, type, name)
+
+
+def cookies_for_browser(path):
+    cs = []
+    if not path or not os.path.exists(path):
+        return cs
+    for line in open(path, encoding="utf-8", errors="replace"):
+        line = line.rstrip("\n")
+        http_only = line.startswith("#HttpOnly_")
+        if http_only:
+            line = line[len("#HttpOnly_"):]
+        if not line or line.startswith("#"):
+            continue
+        f = line.split("\t")
+        if len(f) < 7:
+            continue
+        c = {"name": f[5], "value": f[6], "domain": f[0], "path": f[2] or "/", "secure": f[3] == "TRUE", "httpOnly": http_only}
+        try:
+            if int(f[4]) > 0:
+                c["expires"] = int(f[4])
+        except ValueError:
+            pass
+        cs.append(c)
+    return cs
+
+
+def safe(name):
+    name = re.sub(r"[^A-Za-z0-9._ -]+", "_", name).strip(" .")[:120]
+    return name or "file"
+
+
+def on_response(r):
+    try:
+        out["seen"] += 1
+        h = r.headers
+        t = (h.get("content-type") or "").split(";")[0].strip().lower()
+        n = int(h.get("content-length") or 0)
+        att = "attachment" in (h.get("content-disposition") or "").lower()
+        if not r.url.startswith("http") or (r.request.resource_type == "document" and not att and (not t or "html" in t or "xml" in t)):
+            return
+        doc = r.request.resource_type == "document" and r.request.frame == r.frame.page.main_frame  # the link itself is a file (Chrome shows a PDF in its viewer)
+        rank = 5 if doc else 4 if att else 3 if t.startswith("video/") or t in ("application/vnd.apple.mpegurl", "application/x-mpegurl") else 2 if t.startswith("audio/") \
+            else 1 if t.startswith("image/") and n > 60_000 else 1 if t in ("application/pdf", "application/zip", "application/octet-stream") else 0
+        if rank and r.status < 300:
+            media[r.url] = (rank, n, t, os.path.basename(r.url.split("?")[0]) or "file")
+    except Exception:
+        pass
+
+
+with sync_playwright() as p:
+    kw = {"executable_path": os.environ["VOICEBOX_CHROMIUM"]} if os.environ.get("VOICEBOX_CHROMIUM") else {}
+    br = p.chromium.launch(args=["--disable-blink-features=AutomationControlled", "--autoplay-policy=no-user-gesture-required"], **kw)
+    ctx = br.new_context(viewport={"width": 1366, "height": 768}, user_agent=UA, locale="en-US", timezone_id=spec.get("tz") or "Asia/Kolkata",
+                         accept_downloads=True, extra_http_headers={"Accept-Language": "en-US,en;q=0.9"})
+    ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+                        "window.chrome = window.chrome || {runtime: {}};"
+                        "Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});"
+                        "Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});")
+    try:
+        ctx.add_cookies(cookies_for_browser(spec.get("cookies")))
+    except Exception as e:
+        out["cookie_error"] = str(e)[:200]
+    page = ctx.new_page()
+    page.on("response", on_response)
+    downloads = []
+    page.on("download", lambda d: downloads.append(d))
+    t0 = time.time()
+    try:
+        try:
+            r = page.goto(spec["url"], wait_until="domcontentloaded", timeout=45000)
+            out["status"] = r.status if r else None
+        except Exception as e:
+            if "Download is starting" not in str(e):  # a link that is a file: Chrome downloads it instead of showing it
+                raise
+        try:
+            page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+        if not downloads and not media:  # a player that waits for a person: scroll, then press play on the first video
+            try:
+                page.mouse.wheel(0, 600)
+                page.evaluate("() => { const v = document.querySelector('video'); if (v) { v.muted = true; v.play().catch(() => {}); } }")
+                page.wait_for_timeout(4000)
+            except Exception:
+                pass
+        for d in downloads[:5]:
+            name = safe(d.suggested_filename or "file")
+            d.save_as(os.path.join("out", name))
+            out["files"].append(name)
+        if not out["files"]:
+            best = sorted(media.items(), key=lambda kv: (kv[1][0], kv[1][1]), reverse=True)
+            for url, (rank, n, t, name) in best[:6]:
+                if t in ("application/vnd.apple.mpegurl", "application/x-mpegurl") or url.startswith("blob:"):
+                    out.setdefault("streams", []).append(url)
+                    continue
+                try:
+                    res = ctx.request.get(url, headers={"Referer": page.url}, timeout=120000)
+                    if not res.ok:
+                        continue
+                    body = res.body()
+                    if len(body) < 2000 and rank < 4:  # a tracking pixel or an icon; a file the link is, or one marked download, at any size
+                        continue
+                    name = safe(name)
+                    with open(os.path.join("out", name), "wb") as f:
+                        f.write(body)
+                    out["files"].append(name)
+                    break
+                except Exception as e:
+                    out.setdefault("errors", []).append(str(e).splitlines()[0][:200])
+        if not out["files"] and not out.get("streams") and spec.get("snapshot"):
+            page.pdf(path="out/page.pdf", print_background=True)
+            page.screenshot(path="out/page.png", full_page=True)
+            out["files"] += ["page.pdf", "page.png"]
+            out["snapshot"] = True
+        out["title"], out["url"] = page.title(), page.url
+    except Exception as e:
+        out["error"] = str(e).splitlines()[0][:300]
+    out["seconds"] = round(time.time() - t0, 1)
+    br.close()
+print(json.dumps(out))
+'''
+
+
+def grab(url, dst_dir, cookies_text="", snapshot=False, timeout=180):
+    """The page in a real browser, as the sandbox user (gateway.py run_fetch's last resort). Returns (the files it got,
+    copied into dst_dir, and what it saw: title, streams it found, errors)."""
+    setup()
+    ensure_browser({})
+    ws = workspace(f"grab-{os.urandom(5).hex()}")
+    try:
+        spec = {"url": url, "snapshot": bool(snapshot)}
+        if cookies_text:
+            write_as_user(ws, "cookies.txt", cookies_text.encode())
+            spec["cookies"] = "cookies.txt"
+        write_as_user(ws, "spec.json", json.dumps(spec).encode())
+        env = {"PLAYWRIGHT_BROWSERS_PATH": BROWSERS}
+        if os.environ.get("VOICEBOX_CHROMIUM"):
+            env["VOICEBOX_CHROMIUM"] = os.environ["VOICEBOX_CHROMIUM"]
+        code, outb, err = as_user([sys.executable, os.path.join(KIT, "grab.py"), "spec.json"], ws, timeout=timeout, env=env)
+        res = {}
+        for line in (outb or b"").decode("utf-8", "replace").splitlines()[::-1]:
+            if line.startswith("{"):
+                res = json.loads(line)
+                break
+        if code and not res:
+            raise ValueError(f"the browser failed: {err.strip()[-300:]}")
+        names = [n for n in res.get("files", []) if isinstance(n, str) and "/" not in n and not n.startswith(".")]
+        got = pull_files(ws, os.path.join(ws, "out"), names, dst_dir) if names else {}
+        return list(got.values()), res
+    finally:
+        as_user(["rm", "-rf", "--", ws], ROOT, timeout=300)
+        try:
+            os.rmdir(ws)
+        except OSError:
+            pass
 
 
 # ── the job ─────────────────────────────────────────────────────────────────────────────────────────────────────
