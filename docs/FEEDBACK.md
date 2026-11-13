@@ -6,6 +6,12 @@ for. Read this before touching the dashboard. Newest first. When something here 
 
 ## Latest round (Appwrite and Vercel gone, speed first, 2026-10-31)
 
+- **"what can we do in this to update our api so we can post the video through our apis in this case instead of mcp
+  and all...so we've at least a backup plan"** (2026-11-13, from content-creation, while claude.ai's connector relay
+  returned 502 for every connector): `/api/mcp` and `/api/mcp/lean` also read the key from `X-VoiceBox-Key`
+  (`withKeyHeader`, `lib/auto/auth.ts`), so a script or a sandbox proxy can call the MCP directly with a `vbmk_` model
+  key while `Authorization` carries an upload key on the same host. The client is content-creation's `lib/vb.js` and
+  its Actions → Post a video. Same keys, same checks: nothing new is opened.
 - **"go ahead and add all of them which are no key ... give me more which requires no key using their sitemap.xml ...
   make it more mature so we won't just need the content we can collect whatever the info need ... make it palantir"**
   (2026-11-13, from content-creation): Radar's sweep now reads 17 more free, no-key source groups (`lib/radar-more.ts`,

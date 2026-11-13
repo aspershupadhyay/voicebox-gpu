@@ -4,7 +4,7 @@
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { INSTRUCTIONS } from "@/lib/mcptools";
 import { buildServer } from "@/lib/auto/endpoint";
-import { verifyMcp } from "@/lib/auto/auth";
+import { verifyMcp, withKeyHeader } from "@/lib/auto/auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // starting a Colab GPU waits on the VM to boot (lib/colab.ts)
@@ -14,6 +14,6 @@ const handler = createMcpHandler(async (server) => { await buildServer(server, "
   instructions: `${INSTRUCTIONS}\nTools come in sets: the list starts with a small core; \`tools action=load set=<video|voice|files|posts|analytics|repo>\` adds a set, and any tool can be called by name or through call_tool (find_tools searches them all). Answers are short; pass detail: "full" for everything.`,
 });
 
-const authed = withMcpAuth(handler, verifyMcp, { required: true });
+const authed = withKeyHeader(withMcpAuth(handler, verifyMcp, { required: true }));
 
 export { authed as GET, authed as POST, authed as DELETE };
