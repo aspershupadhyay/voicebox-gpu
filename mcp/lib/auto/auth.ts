@@ -22,7 +22,8 @@ export async function verifyMcp(_req: Request, token?: string): Promise<AuthInfo
  *  proxy can inject that header while `Authorization` carries an upload key for the Files routes on the same host.
  *  It's the same check as the bearer token, only another place to carry it. */
 export const withKeyHeader = (h: (req: Request) => Response | Promise<Response>) => (req: Request) => {
-  const k = req.headers.get("x-voicebox-key")?.trim();
+  // a proxy may store the key with a "Bearer " in front; the key itself is what counts
+  const k = req.headers.get("x-voicebox-key")?.trim().replace(/^bearer\s+/i, "");
   if (!k) return h(req);
   const headers = new Headers(req.headers);
   headers.set("authorization", `Bearer ${k}`);
