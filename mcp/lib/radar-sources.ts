@@ -44,8 +44,19 @@ async function get(url: string, o: { ms?: number; ua?: string; headers?: Record<
   if (!r.ok) throw new Error(r.status === 429 ? "rate limited, try later" : `HTTP ${r.status}`);
   return r;
 }
-export const json = async <T>(url: string, o?: Parameters<typeof get>[1]) => (await get(url, o)).json() as Promise<T>;
-export const text = async (url: string, o?: Parameters<typeof get>[1]) => (await get(url, o)).text();
+/** Cloudflare lets a request keep six connections open and parks the rest, with their time limits already running:
+ *  a sweep of ~100 reads then times out sources that never got a turn. So reads queue here for one of six slots, and a
+ *  read's limit starts only when it does (the body is read inside the slot: the connection is open until then). */
+const SLOTS = 6;
+let busy = 0;
+const waiting: (() => void)[] = [];
+async function slot<T>(f: () => Promise<T>): Promise<T> {
+  while (busy >= SLOTS) await new Promise<void>((ok) => waiting.push(ok));
+  busy++;
+  try { return await f(); } finally { busy--; waiting.shift()?.(); }
+}
+export const json = <T>(url: string, o?: Parameters<typeof get>[1]) => slot(async () => (await (await get(url, o)).json()) as T);
+export const text = (url: string, o?: Parameters<typeof get>[1]) => slot(async () => (await get(url, o)).text());
 const enc = encodeURIComponent;
 
 /** a few at a time, so a long list of calls doesn't trip anyone's rate limit */

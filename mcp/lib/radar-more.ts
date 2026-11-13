@@ -21,6 +21,7 @@
 // Sitemaps are read only where robots.txt allows it, at most a few files a sweep.
 import type { SweepSignal } from "./radar";
 import { strength } from "./radar";
+import { STOP } from "./writing";
 import { BOT, Track, json, pool, text } from "./radar-sources";
 
 const D = 86_400_000;
@@ -118,6 +119,7 @@ const NPM = ["@anthropic-ai/sdk", "openai", "ai", "@modelcontextprotocol/sdk", "
 const PYPI = ["anthropic", "openai", "mcp", "google-genai", "langchain", "transformers", "vllm", "crewai", "litellm"];
 const ITEMS_8K: Record<string, string> = { "1.01": "a material agreement", "1.02": "an agreement ended", "2.01": "an acquisition closed", "2.02": "results", "2.05": "layoffs or exit costs", "5.02": "an executive or director change", "5.07": "a shareholder vote", "7.01": "a disclosure", "8.01": "other news" };
 
+const FILLER = new Set("has have had since first made make makes one two just now new more most over into from about after before than then also only very can will would could should still even back time year years day days week get got take takes says said like this that what when where which while".split(" "));
 const fresh = <T extends { at: number }>(xs: T[], days: number) => xs.filter((x) => x.at && Date.now() - x.at <= days * D);
 async function feedsOf(urls: string[], days: number, per: number) {
   // a feed with no dates at all (Nikkei Asia's) lists newest first: read its order as an hour apart
@@ -144,7 +146,8 @@ async function editBurst(): Promise<{ title: string; n: number; users: number }[
 export async function moreSignals(seeds: string[], g0: string, t: Track): Promise<SweepSignal[]> {
   const now = Date.now();
   const cc = g0.toLowerCase();
-  const terms = seeds.map((s) => s.trim()).filter((s) => s.length >= 3).slice(0, 6);
+  // a seed that's only filler ("has", "since": the auto lane picks some from titles) would search SEC, Bluesky and GDELT for nothing
+  const terms = seeds.map((s) => s.trim()).filter((s) => s.length >= 3 && !s.toLowerCase().split(/\s+/).every((w) => STOP.has(w) || FILLER.has(w))).slice(0, 6);
   type Bp = { uri: string; author: { handle: string }; record: { text?: string; createdAt?: string }; likeCount?: number; repostCount?: number };
   type Lm = { posts?: { post: { name: string; ap_id: string; url?: string; published: string }; counts: { score: number; comments: number }; community: { name: string } }[] };
   type Bt = { displayName: string; postCount?: number; startedAt?: string; status?: string; category?: string; link: string };

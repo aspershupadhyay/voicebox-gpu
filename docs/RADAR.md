@@ -186,7 +186,10 @@ egress block) but answer from ordinary servers: check them in the Sources panel 
 | `world` | BBC*, Al Jazeera, DW*, The Guardian*, France 24, the South China Morning Post, Nikkei Asia | News |
 | `tech` | TechCrunch, The Verge, Ars Technica, MIT Technology Review | News |
 
-Sitemaps are read only where robots.txt allows (`allowed()`, wildcards honoured). A live sweep went from ~330 signals
+Sitemaps are read only where robots.txt allows (`allowed()`, wildcards honoured). Every read waits for one of six slots (`slot()` in `lib/radar-sources.ts`): Cloudflare keeps
+only six connections open per request and parks the rest with their time limits already running, which on the first
+live sweep timed out sources that never got a turn (old ones too). Seeds that are only filler ("has", "since") are
+not searched on SEC, Bluesky or GDELT. A live sweep went from ~330 signals
 to ~690, and the top topics stayed real (Anthropic, Jensen Huang, Claude Code, Gemini, Ukraine); the generic words the
 new titles bring ("united", "global", "support") joined the noise list in `lib/radar.ts`.
 
